@@ -1,17 +1,20 @@
-# Firestore for Rust
+use firestore::*;
+use serde::{Deserialize, Serialize};
 
-Library provides a simple API for Google Firestore:
-- Create or update documents using Rust structures and Serde; 
-- Support for querying / streaming / listening documents from Firestore;
-- Full async based on Tokio runtime;
-- Macro that helps you use JSON paths as references to your structure fields;
-- Caching Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs) 
-  that automatically detects tokens or GKE environment;
+pub fn config_env_var(name: &str) -> Result<String, String> {
+    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+}
 
-## Quick start
+// Example structure to play with
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {
+    some_id: String,
+    some_string: String,
+    some_num: u64,
+}
 
-```rust
-
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
@@ -78,17 +81,6 @@ Library provides a simple API for Google Firestore:
     ).await?;
 
     println!("Now in the list: {:?}", objects);
-```
 
-All examples available at examples directory.
-
-To run example use with environment variables:
-```
-# PROJECT_ID=<your-google-project-id> cargo run --example simple-crud
-```
-
-## Licence
-Apache Software License (ASL)
-
-## Author
-Abdulla Abdurakhmanov
+    Ok(())
+}

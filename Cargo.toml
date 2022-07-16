@@ -1,0 +1,51 @@
+[package]
+name = "firestore"
+version = "0.1.0"
+authors = ["Abdulla Abdurakhmanov <me@abdolence.dev>"]
+edition = "2021"
+license = "Apache-2.0"
+description = "Library provides a simple API for Google Firestore for create/update/query/stream/listen data"
+homepage = "https://github.com/abdolence/firestore-rs"
+repository = "https://github.com/abdolence/firestore-rs"
+documentation = "https://docs.rs/firestore-rs"
+keywords = ["firestore", "google", "client"]
+categories = ["api-bindings"]
+readme = "README.md"
+include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE"]
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[lib]
+name = "firestore"
+path = "src/lib.rs"
+
+[dependencies]
+tracing = "0.1"
+gcloud-sdk = { version = "0.12.0", features = ["google-firestore-v1"] }
+tonic = { version = "0.7", features = ["tls"] }
+hyper = { version ="0.14", features = ["full"] }
+convert_case = "0.4"
+rvstruct = "0.3"
+rsb_derive = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_with = "1.14"
+tokio = { version = "1.19", features = ["full"] }
+tokio-stream = "0.1"
+tokio-util= "0.7"
+futures = "0.3"
+futures-util = "0.3"
+lazy_static = "1.4"
+chrono = { version = "0.4", features = ["serde"] }
+time = { version = "0.2" }
+bytes = "1.1"
+async-trait = "0.1"
+pin-project-lite = "0.2"
+signal-hook = { version = "0.3.13", features = ["extended-siginfo"]}
+signal-hook-tokio = { version = "0.3.1", features = ["futures-v0_3"] }
+
+[build-dependencies]
+
+[dev-dependencies]
+cargo-husky = { version = "1.5", default-features = false, features = ["run-for-all", "prepush-hook", "run-cargo-fmt"] }
