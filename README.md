@@ -14,6 +14,14 @@ Library provides a simple API for Google Firestore:
 
 ## Quick start
 
+
+Cargo.toml:
+```toml
+[dependencies]
+firestore = "0.1"
+```
+
+Example code:
 ```rust
 
     // Create an instance
