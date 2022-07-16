@@ -1,3 +1,7 @@
+[![Cargo](https://img.shields.io/crates/v/firestore.svg)](https://crates.io/crates/firestore)
+![tests and formatting](https://github.com/abdolence/firestore-rs/workflows/tests%20&amp;%20formatting/badge.svg)
+![security audit](https://github.com/abdolence/firestore-rs/workflows/security%20audit/badge.svg)
+
 # Firestore for Rust
 
 Library provides a simple API for Google Firestore:
