@@ -27,58 +27,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     // Remove if it already exist
-    db.delete_by_id(
-        TEST_COLLECTION_NAME,
-        &my_struct.some_id,
-    ).await?;
+    db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id)
+        .await?;
 
     // Let's insert some data
-    db.create_obj(
-        TEST_COLLECTION_NAME,
-        &my_struct.some_id,
-        &my_struct,
-    ).await?;
+    db.create_obj(TEST_COLLECTION_NAME, &my_struct.some_id, &my_struct)
+        .await?;
 
     // Update some field in it
-    let updated_obj = db.update_obj(
-        TEST_COLLECTION_NAME,
-        &my_struct.some_id,
-        &MyTestStructure {
-            some_num: my_struct.some_num + 1,
-            some_string: "updated-value".to_string(),
-            ..my_struct.clone()
-        },
-        Some(
-            paths!(MyTestStructure::{
+    let updated_obj = db
+        .update_obj(
+            TEST_COLLECTION_NAME,
+            &my_struct.some_id,
+            &MyTestStructure {
+                some_num: my_struct.some_num + 1,
+                some_string: "updated-value".to_string(),
+                ..my_struct.clone()
+            },
+            Some(paths!(MyTestStructure::{
                 some_num,
                 some_string
-            })
-        ),
-    ).await?;
+            })),
+        )
+        .await?;
 
     println!("Updated object: {:?}", updated_obj);
 
     // Get object by id
-    let find_it_again: MyTestStructure = db.get_obj(
-        TEST_COLLECTION_NAME,
-        &my_struct.some_id,
-    ).await?;
+    let find_it_again: MyTestStructure =
+        db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
 
     println!("Should be the same: {:?}", find_it_again);
 
     // Query our data
-    let objects: Vec<MyTestStructure> = db.query_obj(
-        FirestoreQueryParams::new(
-            TEST_COLLECTION_NAME.into()
-        ).with_filter(
-            FirestoreQueryFilter::Compare(Some(
-                FirestoreQueryFilterCompare::Equal(
+    let objects: Vec<MyTestStructure> = db
+        .query_obj(
+            FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()).with_filter(
+                FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::Equal(
                     path!(MyTestStructure::some_num),
                     find_it_again.some_num.into(),
-                ),
-            ))
+                ))),
+            ),
         )
-    ).await?;
+        .await?;
 
     println!("Now in the list: {:?}", objects);
 

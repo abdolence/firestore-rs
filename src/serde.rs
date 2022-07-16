@@ -58,10 +58,7 @@ fn serde_value_to_firestore_value(v: &serde_json::Value) -> Value {
         }
         serde_json::Value::Bool(bv) => Some(value::ValueType::BooleanValue(*bv)),
         serde_json::Value::Array(av) => Some(value::ValueType::ArrayValue(ArrayValue {
-            values: av
-                .iter()
-                .map(serde_value_to_firestore_value)
-                .collect(),
+            values: av.iter().map(serde_value_to_firestore_value).collect(),
         })),
         serde_json::Value::Object(mv) => Some(value::ValueType::MapValue(MapValue {
             fields: mv

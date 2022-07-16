@@ -102,11 +102,11 @@ impl<'a> FirestoreDb {
     where
         for<'de> T: Deserialize<'de>,
     {
-            let doc_vec = self.query_doc(params).await?;
-            doc_vec
-                .iter()
-                .map(|doc| firestore_document_to_serializable(doc))
-                .collect()
+        let doc_vec = self.query_doc(params).await?;
+        doc_vec
+            .iter()
+            .map(|doc| firestore_document_to_serializable(doc))
+            .collect()
     }
 
     pub fn stream_query_obj<'b, T>(
@@ -177,13 +177,15 @@ impl<'a> FirestoreDb {
         collection_id: &'a str,
         document_id: &'a String,
     ) -> Result<T, FirestoreError>
-        where
-                for<'de> T: Deserialize<'de> {
+    where
+        for<'de> T: Deserialize<'de>,
+    {
         self.get_obj_at(
             self.get_documents_path().as_str(),
             collection_id,
             document_id,
-        ).await
+        )
+        .await
     }
 
     pub async fn get_obj_at<T>(
@@ -195,22 +197,22 @@ impl<'a> FirestoreDb {
     where
         for<'de> T: Deserialize<'de>,
     {
-            let begin_query_utc: DateTime<Utc> = Utc::now();
-            let doc: Document = self
-                .get_doc_by_id(parent, collection_id, document_id)
-                .await?;
-            let end_query_utc: DateTime<Utc> = Utc::now();
-            let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+        let begin_query_utc: DateTime<Utc> = Utc::now();
+        let doc: Document = self
+            .get_doc_by_id(parent, collection_id, document_id)
+            .await?;
+        let end_query_utc: DateTime<Utc> = Utc::now();
+        let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
 
-            debug!(
-                "[DB]: Reading document by id: {}/{} took {}ms",
-                collection_id,
-                document_id,
-                query_duration.num_milliseconds()
-            );
+        debug!(
+            "[DB]: Reading document by id: {}/{} took {}ms",
+            collection_id,
+            document_id,
+            query_duration.num_milliseconds()
+        );
 
-            let obj: T = firestore_document_to_serializable(&doc)?;
-            Ok(obj)
+        let obj: T = firestore_document_to_serializable(&doc)?;
+        Ok(obj)
     }
 
     pub async fn create_obj<T>(
@@ -219,16 +221,17 @@ impl<'a> FirestoreDb {
         document_id: &'a str,
         obj: &'a T,
     ) -> Result<T, FirestoreError>
-        where
-            T: Serialize + Sync + Send,
-            for<'de> T: Deserialize<'de>,
+    where
+        T: Serialize + Sync + Send,
+        for<'de> T: Deserialize<'de>,
     {
         self.create_obj_at(
             self.get_documents_path().as_str(),
             collection_id,
             document_id,
-            obj
-        ).await
+            obj,
+        )
+        .await
     }
 
     pub async fn create_obj_at<T>(
@@ -267,13 +270,13 @@ impl<'a> FirestoreDb {
             document: Some(firestore_doc),
         });
 
-            let create_response = self
-                .google_firestore_client
-                .get()
-                .await?
-                .create_document(create_document_request)
-                .await?;
-            Ok(create_response.into_inner())
+        let create_response = self
+            .google_firestore_client
+            .get()
+            .await?
+            .create_document(create_document_request)
+            .await?;
+        Ok(create_response.into_inner())
     }
 
     pub async fn update_obj<T>(
@@ -282,17 +285,19 @@ impl<'a> FirestoreDb {
         document_id: &'a String,
         obj: &'a T,
         update_only: Option<Vec<String>>,
-    ) ->Result<T, FirestoreError>
-        where
-            T: Serialize + Sync + Send,
-            for<'de> T: Deserialize<'de> {
+    ) -> Result<T, FirestoreError>
+    where
+        T: Serialize + Sync + Send,
+        for<'de> T: Deserialize<'de>,
+    {
         self.update_obj_at(
             self.get_documents_path().as_str(),
             collection_id,
             document_id,
             obj,
-            update_only
-        ).await
+            update_only,
+        )
+        .await
     }
 
     pub async fn update_obj_at<T>(
@@ -302,16 +307,15 @@ impl<'a> FirestoreDb {
         document_id: &'a String,
         obj: &'a T,
         update_only: Option<Vec<String>>,
-    ) ->Result<T, FirestoreError>
+    ) -> Result<T, FirestoreError>
     where
         T: Serialize + Sync + Send,
         for<'de> T: Deserialize<'de>,
     {
-            let doc = self
-                .update_doc(parent, collection_id, document_id, obj, update_only)
-                .await?;
-            firestore_document_to_serializable(&doc)
-
+        let doc = self
+            .update_doc(parent, collection_id, document_id, obj, update_only)
+            .await?;
+        firestore_document_to_serializable(&doc)
     }
 
     pub async fn update_doc<T>(
@@ -341,13 +345,13 @@ impl<'a> FirestoreDb {
             current_document: None,
         });
 
-            let update_response = self
-                .google_firestore_client
-                .get()
-                .await?
-                .update_document(update_document_request)
-                .await?;
-            Ok(update_response.into_inner())
+        let update_response = self
+            .google_firestore_client
+            .get()
+            .await?
+            .update_document(update_document_request)
+            .await?;
+        Ok(update_response.into_inner())
     }
 
     pub async fn delete_by_id(
@@ -358,8 +362,9 @@ impl<'a> FirestoreDb {
         self.delete_by_id_at(
             self.get_documents_path().as_str(),
             collection_id,
-            document_id
-        ).await
+            document_id,
+        )
+        .await
     }
 
     pub async fn delete_by_id_at(
@@ -375,14 +380,13 @@ impl<'a> FirestoreDb {
             current_document: None,
         });
 
-            self
-                .google_firestore_client
-                .get()
-                .await?
-                .delete_document(request)
-                .await?;
+        self.google_firestore_client
+            .get()
+            .await?
+            .delete_document(request)
+            .await?;
 
-            Ok(())
+        Ok(())
     }
 
     pub async fn listen_doc<'b>(
@@ -392,8 +396,7 @@ impl<'a> FirestoreDb {
         labels: HashMap<String, String>,
         since_token_value: Option<Vec<u8>>,
         target_id: i32,
-    ) -> Result<BoxStream<'b, Result<ListenResponse, FirestoreError>>, FirestoreError>
-    {
+    ) -> Result<BoxStream<'b, Result<ListenResponse, FirestoreError>>, FirestoreError> {
         use futures::stream;
 
         let query_request = params.to_structured_query();
@@ -404,28 +407,31 @@ impl<'a> FirestoreDb {
                 target_id,
                 once: false,
                 target_type: Some(target::TargetType::Query(target::QueryTarget {
-                    parent: params.parent.as_ref().unwrap_or_else(|| self.get_documents_path()).clone(),
+                    parent: params
+                        .parent
+                        .as_ref()
+                        .unwrap_or_else(|| self.get_documents_path())
+                        .clone(),
                     query_type: Some(target::query_target::QueryType::StructuredQuery(
                         query_request,
                     )),
                 })),
-                resume_type: since_token_value
-                    .map(target::ResumeType::ResumeToken),
+                resume_type: since_token_value.map(target::ResumeType::ResumeToken),
             })),
         };
 
-            let request = tonic::Request::new(
-                futures::stream::iter(vec![listen_request]).chain(stream::pending()),
-            );
+        let request = tonic::Request::new(
+            futures::stream::iter(vec![listen_request]).chain(stream::pending()),
+        );
 
-            let response = self
-                .google_firestore_client
-                .get()
-                .await?
-                .listen(request)
-                .await?;
+        let response = self
+            .google_firestore_client
+            .get()
+            .await?
+            .listen(request)
+            .await?;
 
-            Ok(response.into_inner().map_err(|e| e.into()).boxed())
+        Ok(response.into_inner().map_err(|e| e.into()).boxed())
     }
 
     fn create_firestore_database_path(google_project_id: &String) -> String {
@@ -439,9 +445,16 @@ impl<'a> FirestoreDb {
         )
     }
 
-    fn create_query_request(&self, params: &FirestoreQueryParams) -> tonic::Request<RunQueryRequest> {
+    fn create_query_request(
+        &self,
+        params: &FirestoreQueryParams,
+    ) -> tonic::Request<RunQueryRequest> {
         tonic::Request::new(RunQueryRequest {
-            parent: params.parent.as_ref().unwrap_or_else(|| self.get_documents_path()).clone(),
+            parent: params
+                .parent
+                .as_ref()
+                .unwrap_or_else(|| self.get_documents_path())
+                .clone(),
             consistency_selector: None,
             query_type: Some(run_query_request::QueryType::StructuredQuery(
                 params.to_structured_query(),
@@ -470,7 +483,7 @@ impl<'a> FirestoreDb {
                     let query_stream: Pin<
                         Box<
                             dyn Stream<Item = gcloud_sdk::google::firestore::v1::Document>
-                            + std::marker::Send,
+                                + std::marker::Send,
                         >,
                     > = query_response
                         .into_inner()
@@ -501,22 +514,22 @@ impl<'a> FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                    if db_err.retry_possible && retries < self.options.max_retries =>
-                        {
-                            warn!(
+                        if db_err.retry_possible && retries < self.options.max_retries =>
+                    {
+                        warn!(
                             "[DB]: Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
                             self.options.max_retries
                         );
-                            self.stream_query_doc_with_retries(params, retries + 1)
-                                .await
-                        }
+                        self.stream_query_doc_with_retries(params, retries + 1)
+                            .await
+                    }
                     _ => Err(err),
                 },
             }
         }
-            .boxed()
+        .boxed()
     }
 
     fn query_doc_with_retries(
@@ -557,20 +570,20 @@ impl<'a> FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                    if db_err.retry_possible && retries < self.options.max_retries =>
-                        {
-                            warn!(
+                        if db_err.retry_possible && retries < self.options.max_retries =>
+                    {
+                        warn!(
                             "[DB]: Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
                             self.options.max_retries
                         );
-                            self.query_doc_with_retries(params, retries + 1).await
-                        }
+                        self.query_doc_with_retries(params, retries + 1).await
+                    }
                     _ => Err(err),
                 },
             }
         }
-            .boxed()
+        .boxed()
     }
 }
