@@ -109,18 +109,17 @@ impl<'a> FirestoreDb {
             .collect()
     }
 
-    pub fn stream_query_obj<'b, T>(
+    pub async fn stream_query_obj<'b, T>(
         &'a self,
         params: FirestoreQueryParams,
-    ) -> BoxFuture<'a, Result<BoxStream<'b, T>, FirestoreError>>
+    ) -> Result<BoxStream<'b, T>, FirestoreError>
     where
         for<'de> T: Deserialize<'de>,
     {
-        Box::pin(self.stream_query_doc(params).map_ok(|doc_stream| {
-            doc_stream
-                .map(|doc| firestore_document_to_serializable::<T>(&doc).unwrap())
-                .boxed()
-        }))
+        let doc_stream = self.stream_query_doc(params).await?;
+        Ok(Box::pin(doc_stream.map(|doc| {
+            firestore_document_to_serializable::<T>(&doc).unwrap()
+        })))
     }
 
     fn get_doc_by_path(
