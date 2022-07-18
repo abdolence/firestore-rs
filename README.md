@@ -18,7 +18,7 @@ Library provides a simple API for Google Firestore:
 Cargo.toml:
 ```toml
 [dependencies]
-firestore = "0.1"
+firestore = "0.2"
 ```
 
 Example code:

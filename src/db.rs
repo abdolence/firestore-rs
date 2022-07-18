@@ -28,8 +28,7 @@ pub struct FirestoreDb {
     database_path: String,
     doc_path: String,
     options: FirestoreDbOptions,
-    google_firestore_client:
-        GoogleApiClientFn<firestore_client::FirestoreClient<GoogleConnectorInterceptedService>>,
+    google_firestore_client: GoogleApi<firestore_client::FirestoreClient<GoogleAuthMiddleware>>,
 }
 
 impl<'a> FirestoreDb {
@@ -46,9 +45,8 @@ impl<'a> FirestoreDb {
         info!("Creating a new DB client: {}", firestore_database_path);
 
         let client = GoogleApiClient::from_function(
-            firestore_client::FirestoreClient::with_interceptor,
+            firestore_client::FirestoreClient::new,
             "https://firestore.googleapis.com",
-            chrono::Duration::minutes(15),
             Some(firestore_database_path.clone()),
         )
         .await?;
@@ -69,7 +67,6 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn ping(&self) -> Result<(), FirestoreError> {
-        self.google_firestore_client.get().await?;
         Ok(())
     }
 
@@ -136,7 +133,6 @@ impl<'a> FirestoreDb {
             match self
                 .google_firestore_client
                 .get()
-                .await?
                 .get_document(request)
                 .map_err(|e| e.into())
                 .await
@@ -272,7 +268,6 @@ impl<'a> FirestoreDb {
         let create_response = self
             .google_firestore_client
             .get()
-            .await?
             .create_document(create_document_request)
             .await?;
         Ok(create_response.into_inner())
@@ -347,7 +342,6 @@ impl<'a> FirestoreDb {
         let update_response = self
             .google_firestore_client
             .get()
-            .await?
             .update_document(update_document_request)
             .await?;
         Ok(update_response.into_inner())
@@ -381,7 +375,6 @@ impl<'a> FirestoreDb {
 
         self.google_firestore_client
             .get()
-            .await?
             .delete_document(request)
             .await?;
 
@@ -423,12 +416,7 @@ impl<'a> FirestoreDb {
             futures::stream::iter(vec![listen_request]).chain(stream::pending()),
         );
 
-        let response = self
-            .google_firestore_client
-            .get()
-            .await?
-            .listen(request)
-            .await?;
+        let response = self.google_firestore_client.get().listen(request).await?;
 
         Ok(response.into_inner().map_err(|e| e.into()).boxed())
     }
@@ -473,7 +461,6 @@ impl<'a> FirestoreDb {
             match self
                 .google_firestore_client
                 .get()
-                .await?
                 .run_query(query_request)
                 .map_err(|e| e.into())
                 .await
@@ -543,7 +530,6 @@ impl<'a> FirestoreDb {
             match self
                 .google_firestore_client
                 .get()
-                .await?
                 .run_query(query_request)
                 .map_err(|e| e.into())
                 .await
