@@ -36,7 +36,7 @@ futures = "0.3"
 futures-util = "0.3"
 lazy_static = "1.4"
 chrono = { version = "0.4", features = ["serde"] }
-time = { version = "0.2" }
+time = { version = "0.3" }
 async-trait = "0.1"
 
 [build-dependencies]
