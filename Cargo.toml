@@ -25,18 +25,18 @@ tracing = "0.1"
 gcloud-sdk = { version = "0.16", features = ["google-firestore-v1"] }
 tonic = { version = "0.7", features = ["tls"] }
 hyper = { version ="0.14", features = ["full"] }
-convert_case = "0.4"
+convert_case = "0.5"
 rvstruct = "0.3"
 rsb_derive = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.19", features = ["full"] }
+tokio = { version = "1.20", features = ["full"] }
 tokio-stream = "0.1"
 futures = "0.3"
 futures-util = "0.3"
 lazy_static = "1.4"
 chrono = { version = "0.4", features = ["serde"] }
-time = { version = "0.2" }
+time = { version = "0.3" }
 async-trait = "0.1"
 
 [build-dependencies]
