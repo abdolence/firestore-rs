@@ -7,6 +7,15 @@ pub enum FirestoreQueryCollection {
     Group(Vec<String>),
 }
 
+impl ToString for FirestoreQueryCollection {
+    fn to_string(&self) -> String {
+        match self {
+            FirestoreQueryCollection::Single(single) => single.to_string(),
+            FirestoreQueryCollection::Group(group) => group.join(","),
+        }
+    }
+}
+
 impl From<&str> for FirestoreQueryCollection {
     fn from(collection_id_str: &str) -> Self {
         FirestoreQueryCollection::Single(collection_id_str.to_string())

@@ -82,14 +82,29 @@ impl<'a> FirestoreDb {
         &'a self,
         params: FirestoreQueryParams,
     ) -> Result<Vec<Document>, FirestoreError> {
-        self.query_doc_with_retries(params, 0).await
+        let collection_str = params.collection_id.to_string();
+        let span = span!(
+            Level::DEBUG,
+            "Firestore Query",
+            "/firestore/collection_name" = collection_str.as_str(),
+            "/firestore/response_time" = field::Empty
+        );
+        self.query_doc_with_retries(params, 0, &span).await
     }
 
     pub async fn stream_query_doc<'b>(
         &'a self,
         params: FirestoreQueryParams,
     ) -> Result<BoxStream<'b, Document>, FirestoreError> {
-        self.stream_query_doc_with_retries(params, 0).await
+        let collection_str = params.collection_id.to_string();
+
+        let span = span!(
+            Level::DEBUG,
+            "Firestore Streaming Query",
+            "/firestore/collection_name" = collection_str.as_str(),
+            "/firestore/response_time" = field::Empty
+        );
+        self.stream_query_doc_with_retries(params, 0, &span).await
     }
 
     pub async fn query_obj<T>(
@@ -256,6 +271,12 @@ impl<'a> FirestoreDb {
     where
         T: Serialize,
     {
+        let _span = span!(
+            Level::DEBUG,
+            "Firestore Create Document",
+            "/firestore/collection_name" = collection_id
+        );
+
         let firestore_doc = firestore_document_from_serializable("", obj).unwrap();
         let create_document_request = tonic::Request::new(CreateDocumentRequest {
             parent: parent.into(),
@@ -270,6 +291,7 @@ impl<'a> FirestoreDb {
             .get()
             .create_document(create_document_request)
             .await?;
+
         Ok(create_response.into_inner())
     }
 
@@ -323,6 +345,12 @@ impl<'a> FirestoreDb {
     where
         T: Serialize,
     {
+        let _span = span!(
+            Level::DEBUG,
+            "Firestore Update Document",
+            "/firestore/collection_name" = collection_id
+        );
+
         let firestore_doc = firestore_document_from_serializable(
             format!("{}/{}/{}", parent, collection_id, document_id).as_str(),
             obj,
@@ -344,6 +372,7 @@ impl<'a> FirestoreDb {
             .get()
             .update_document(update_document_request)
             .await?;
+
         Ok(update_response.into_inner())
     }
 
@@ -453,6 +482,7 @@ impl<'a> FirestoreDb {
         &'a self,
         params: FirestoreQueryParams,
         retries: usize,
+        span: &'a Span,
     ) -> BoxFuture<'a, Result<BoxStream<'b, Document>, FirestoreError>> {
         let query_request = self.create_query_request(&params);
         async move {
@@ -490,11 +520,17 @@ impl<'a> FirestoreDb {
                     let end_query_utc: DateTime<Utc> = Utc::now();
                     let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
 
-                    debug!(
-                        "[DB]: Querying stream of documents in {:?} took {}ms",
-                        params.collection_id,
-                        query_duration.num_milliseconds()
+                    span.record(
+                        "/firestore/response_time",
+                        &query_duration.num_milliseconds(),
                     );
+                    span.in_scope(|| {
+                        debug!(
+                            "[DB]: Querying stream of documents in {:?} took {}ms",
+                            params.collection_id,
+                            query_duration.num_milliseconds()
+                        );
+                    });
 
                     Ok(query_stream)
                 }
@@ -508,7 +544,8 @@ impl<'a> FirestoreDb {
                             retries + 1,
                             self.options.max_retries
                         );
-                        self.stream_query_doc_with_retries(params, retries + 1)
+
+                        self.stream_query_doc_with_retries(params, retries + 1, span)
                             .await
                     }
                     _ => Err(err),
@@ -522,6 +559,7 @@ impl<'a> FirestoreDb {
         &'a self,
         params: FirestoreQueryParams,
         retries: usize,
+        span: &'a Span,
     ) -> BoxFuture<'a, Result<Vec<Document>, FirestoreError>> {
         let query_request = self.create_query_request(&params);
         async move {
@@ -546,11 +584,18 @@ impl<'a> FirestoreDb {
                     let end_query_utc: DateTime<Utc> = Utc::now();
                     let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
 
-                    debug!(
-                        "[DB]: Querying documents in {:?} took {}ms",
-                        params.collection_id,
-                        query_duration.num_milliseconds()
+                    span.record(
+                        "/firestore/response_time",
+                        &query_duration.num_milliseconds(),
                     );
+                    span.in_scope(|| {
+                        debug!(
+                            "[DB]: Querying documents in {:?} took {}ms",
+                            params.collection_id,
+                            query_duration.num_milliseconds()
+                        );
+                    });
+
                     Ok(query_stream)
                 }
                 Err(err) => match err {
@@ -563,7 +608,7 @@ impl<'a> FirestoreDb {
                             retries + 1,
                             self.options.max_retries
                         );
-                        self.query_doc_with_retries(params, retries + 1).await
+                        self.query_doc_with_retries(params, retries + 1, span).await
                     }
                     _ => Err(err),
                 },
