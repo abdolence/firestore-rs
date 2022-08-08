@@ -9,8 +9,8 @@ Library provides a simple API for Google Firestore:
 - Support for querying / streaming / listening documents from Firestore;
 - Full async based on Tokio runtime;
 - Macro that helps you use JSON paths as references to your structure fields;
-- Caching Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs) 
-  that automatically detects tokens or GKE environment;
+- Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs) 
+  that automatically detects GKE environment or application default accounts for local development;
 
 ## Quick start
 
