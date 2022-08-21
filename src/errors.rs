@@ -43,12 +43,12 @@ impl Error for FirestoreError {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Builder, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Clone, Builder, Serialize, Deserialize)]
 pub struct FirestoreErrorPublicGenericDetails {
     pub code: String,
 }
 
-#[derive(Debug, PartialEq, Clone, Builder)]
+#[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreSystemError {
     pub public: FirestoreErrorPublicGenericDetails,
     pub message: String,
@@ -105,7 +105,7 @@ impl Display for FirestoreDataNotFoundError {
 
 impl std::error::Error for FirestoreDataNotFoundError {}
 
-#[derive(Debug, PartialEq, Clone, Builder, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Clone, Builder, Serialize, Deserialize)]
 pub struct FirestoreInvalidParametersPublicDetails {
     pub field: String,
     pub error: String,
@@ -124,7 +124,7 @@ impl Display for FirestoreInvalidParametersError {
 
 impl std::error::Error for FirestoreInvalidParametersError {}
 
-#[derive(Debug, PartialEq, Clone, Builder, Serialize, Deserialize)]
+#[derive(Debug, Eq, PartialEq, Clone, Builder, Serialize, Deserialize)]
 pub struct FirestoreInvalidJsonErrorPublicDetails {
     pub code: String,
 }
@@ -143,7 +143,7 @@ impl Display for FirestoreInvalidJsonError {
 
 impl std::error::Error for FirestoreInvalidJsonError {}
 
-#[derive(Debug, PartialEq, Clone, Builder)]
+#[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreNetworkError {
     pub public: FirestoreErrorPublicGenericDetails,
     pub message: String,

@@ -1,7 +1,7 @@
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::Builder;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreQueryCollection {
     Single(String),
     Group(Vec<String>),
@@ -241,7 +241,7 @@ impl FirestoreQueryFilter {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Builder)]
+#[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreQueryOrder {
     field_name: String,
     direction: FirestoreQueryDirection,
@@ -263,7 +263,7 @@ impl FirestoreQueryOrder {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreQueryDirection {
     Ascending,
     Descending,
@@ -274,7 +274,7 @@ pub struct FirestoreQueryFilterComposite {
     pub for_all_filters: Vec<FirestoreQueryFilter>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreQueryFilterUnary {
     IsNan(String),
     IsNull(String),

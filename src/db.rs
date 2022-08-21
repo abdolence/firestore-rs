@@ -16,7 +16,7 @@ use rsb_derive::Builder;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
-#[derive(Debug, PartialEq, Clone, Builder)]
+#[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreDbOptions {
     pub google_project_id: String,
 
