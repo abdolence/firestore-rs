@@ -1,6 +1,6 @@
 [package]
 name = "firestore"
-version = "0.6.1"
+version = "0.6.2"
 authors = ["Abdulla Abdurakhmanov <me@abdolence.dev>"]
 edition = "2021"
 license = "Apache-2.0"
@@ -24,7 +24,7 @@ path = "src/lib.rs"
 tracing = "0.1"
 gcloud-sdk = { version = "0.18", features = ["google-firestore-v1"] }
 tonic = { version = "0.8", features = ["tls"] }
-hyper = { version ="0.14", features = ["full"] }
+hyper = { version ="0.14" }
 convert_case = "0.5"
 rvstruct = "0.3"
 rsb_derive = "0.5"
