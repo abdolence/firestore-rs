@@ -3,11 +3,10 @@ use crate::query::*;
 use crate::serde::*;
 use chrono::prelude::*;
 use std::collections::HashMap;
-use std::pin::Pin;
 
 use futures::future::{BoxFuture, FutureExt};
+use futures::TryFutureExt;
 use futures::TryStreamExt;
-use futures::{Stream, TryFutureExt};
 use futures_util::stream::BoxStream;
 use futures_util::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
@@ -109,7 +108,46 @@ impl<'a> FirestoreDb {
             "/firestore/collection_name" = collection_str.as_str(),
             "/firestore/response_time" = field::Empty
         );
-        self.stream_query_doc_with_retries(params, 0, &span).await
+
+        let doc_stream = self.stream_query_doc_with_retries(params, 0, &span).await?;
+
+        Ok(Box::pin(doc_stream.filter_map(|doc_res| {
+            future::ready(match doc_res {
+                Ok(Some(doc)) => Some(doc),
+                Ok(None) => None,
+                Err(err) => {
+                    error!("[DB] Error occurred while consuming query: {}", err);
+                    None
+                }
+            })
+        })))
+    }
+
+    pub async fn stream_query_doc_with_errors<'b>(
+        &'a self,
+        params: FirestoreQueryParams,
+    ) -> Result<BoxStream<'b, Result<Document, FirestoreError>>, FirestoreError> {
+        let collection_str = params.collection_id.to_string();
+
+        let span = span!(
+            Level::DEBUG,
+            "Firestore Streaming Query",
+            "/firestore/collection_name" = collection_str.as_str(),
+            "/firestore/response_time" = field::Empty
+        );
+
+        let doc_stream = self.stream_query_doc_with_retries(params, 0, &span).await?;
+
+        Ok(Box::pin(doc_stream.filter_map(|doc_res| {
+            future::ready(match doc_res {
+                Ok(Some(doc)) => Some(Ok(doc)),
+                Ok(None) => None,
+                Err(err) => {
+                    error!("[DB] Error occurred while consuming query: {}", err);
+                    Some(Err(err))
+                }
+            })
+        })))
     }
 
     pub async fn query_obj<T>(
@@ -145,6 +183,20 @@ impl<'a> FirestoreDb {
                     None
                 }
             }
+        })))
+    }
+
+    pub async fn stream_query_obj_with_errors<'b, T>(
+        &'a self,
+        params: FirestoreQueryParams,
+    ) -> Result<BoxStream<'b, Result<T, FirestoreError>>, FirestoreError>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b,
+    {
+        let doc_stream = self.stream_query_doc_with_errors(params).await?;
+        Ok(Box::pin(doc_stream.and_then(|doc| {
+            future::ready(firestore_document_to_serializable::<T>(&doc))
         })))
     }
 
@@ -497,7 +549,10 @@ impl<'a> FirestoreDb {
         params: FirestoreQueryParams,
         retries: usize,
         span: &'a Span,
-    ) -> BoxFuture<'a, Result<BoxStream<'b, Document>, FirestoreError>> {
+    ) -> BoxFuture<
+        'a,
+        Result<BoxStream<'b, Result<Option<Document>, FirestoreError>>, FirestoreError>,
+    > {
         let query_request = self.create_query_request(&params);
         async move {
             let begin_query_utc: DateTime<Utc> = Utc::now();
@@ -510,24 +565,10 @@ impl<'a> FirestoreDb {
                 .await
             {
                 Ok(query_response) => {
-                    let query_stream: Pin<
-                        Box<
-                            dyn Stream<Item = gcloud_sdk::google::firestore::v1::Document>
-                                + std::marker::Send,
-                        >,
-                    > = query_response
+                    let query_stream = query_response
                         .into_inner()
                         .map_ok(|r| r.document)
-                        .filter_map(|dr| {
-                            future::ready(match dr {
-                                Ok(Some(obj)) => Some(obj),
-                                Ok(None) => None,
-                                Err(err) => {
-                                    error!("[DB] Error occurred while consuming query: {}", err);
-                                    None
-                                }
-                            })
-                        })
+                        .map_err(|e| e.into())
                         .boxed();
 
                     let end_query_utc: DateTime<Utc> = Utc::now();
