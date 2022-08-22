@@ -10,6 +10,7 @@ use futures::TryStreamExt;
 use futures::{Stream, TryFutureExt};
 use futures_util::stream::BoxStream;
 use futures_util::{future, StreamExt};
+use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::*;
 use rsb_derive::Builder;
@@ -76,6 +77,10 @@ impl<'a> FirestoreDb {
 
     pub fn get_documents_path(&self) -> &String {
         &self.doc_path
+    }
+
+    pub fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
+        &self.google_firestore_client
     }
 
     pub async fn query_doc(
