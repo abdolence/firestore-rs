@@ -134,8 +134,17 @@ impl<'a> FirestoreDb {
         for<'de> T: Deserialize<'de>,
     {
         let doc_stream = self.stream_query_doc(params).await?;
-        Ok(Box::pin(doc_stream.map(|doc| {
-            firestore_document_to_serializable::<T>(&doc).unwrap()
+        Ok(Box::pin(doc_stream.filter_map(|doc| async move {
+            match firestore_document_to_serializable::<T>(&doc) {
+                Ok(obj) => Some(obj),
+                Err(err) => {
+                    error!(
+                        "[DB] Error occurred while consuming query document as a stream: {}",
+                        err
+                    );
+                    None
+                }
+            }
         })))
     }
 
@@ -282,7 +291,7 @@ impl<'a> FirestoreDb {
             "/firestore/collection_name" = collection_id
         );
 
-        let firestore_doc = firestore_document_from_serializable("", obj).unwrap();
+        let firestore_doc = firestore_document_from_serializable("", obj)?;
         let create_document_request = tonic::Request::new(CreateDocumentRequest {
             parent: parent.into(),
             document_id: document_id.to_string(),
@@ -359,8 +368,8 @@ impl<'a> FirestoreDb {
         let firestore_doc = firestore_document_from_serializable(
             format!("{}/{}/{}", parent, collection_id, document_id).as_str(),
             obj,
-        )
-        .unwrap();
+        )?;
+
         let update_document_request = tonic::Request::new(UpdateDocumentRequest {
             mask: None,
             update_mask: update_only.map({
@@ -509,17 +518,16 @@ impl<'a> FirestoreDb {
                     > = query_response
                         .into_inner()
                         .map_ok(|r| r.document)
-                        .take_while(|dr| {
+                        .filter_map(|dr| {
                             future::ready(match dr {
-                                Ok(Some(_)) => true,
-                                Ok(None) => false,
+                                Ok(Some(obj)) => Some(obj),
+                                Ok(None) => None,
                                 Err(err) => {
                                     error!("[DB] Error occurred while consuming query: {}", err);
-                                    false
+                                    None
                                 }
                             })
                         })
-                        .map(|dr| dr.unwrap().unwrap())
                         .boxed();
 
                     let end_query_utc: DateTime<Utc> = Utc::now();

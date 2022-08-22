@@ -16,6 +16,12 @@ struct MyTestStructure {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Logging with debug enabled
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter("firestore=debug")
+        .finish();
+    tracing::subscriber::set_global_default(subscriber)?;
+
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 

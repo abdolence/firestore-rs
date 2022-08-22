@@ -40,3 +40,4 @@ async-trait = "0.1"
 
 [dev-dependencies]
 cargo-husky = { version = "1.5", default-features = false, features = ["run-for-all", "prepush-hook", "run-cargo-fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
