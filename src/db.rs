@@ -17,6 +17,8 @@ use rsb_derive::Builder;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
+pub type FirestoreCursor = gcloud_sdk::google::firestore::v1::Cursor;
+
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreDbOptions {
     pub google_project_id: String,
