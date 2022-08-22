@@ -4,6 +4,7 @@ use crate::serde::*;
 use chrono::prelude::*;
 use std::collections::HashMap;
 
+use crate::FirestoreResult;
 use futures::future::{BoxFuture, FutureExt};
 use futures::TryFutureExt;
 use futures::TryStreamExt;
@@ -32,11 +33,11 @@ pub struct FirestoreDb {
 }
 
 impl<'a> FirestoreDb {
-    pub async fn new(google_project_id: &str) -> Result<Self, FirestoreError> {
+    pub async fn new(google_project_id: &str) -> FirestoreResult<Self> {
         Self::with_options(FirestoreDbOptions::new(google_project_id.to_string())).await
     }
 
-    pub async fn with_options(options: FirestoreDbOptions) -> Result<Self, FirestoreError> {
+    pub async fn with_options(options: FirestoreDbOptions) -> FirestoreResult<Self> {
         let firestore_database_path =
             Self::create_firestore_database_path(&options.google_project_id);
         let firestore_database_doc_path =
@@ -59,14 +60,14 @@ impl<'a> FirestoreDb {
         })
     }
 
-    pub fn deserialize_doc_to<T>(doc: &Document) -> Result<T, FirestoreError>
+    pub fn deserialize_doc_to<T>(doc: &Document) -> FirestoreResult<T>
     where
         for<'de> T: Deserialize<'de>,
     {
         firestore_document_to_serializable(doc)
     }
 
-    pub async fn ping(&self) -> Result<(), FirestoreError> {
+    pub async fn ping(&self) -> FirestoreResult<()> {
         Ok(())
     }
 
@@ -85,7 +86,7 @@ impl<'a> FirestoreDb {
     pub async fn query_doc(
         &'a self,
         params: FirestoreQueryParams,
-    ) -> Result<Vec<Document>, FirestoreError> {
+    ) -> FirestoreResult<Vec<Document>> {
         let collection_str = params.collection_id.to_string();
         let span = span!(
             Level::DEBUG,
@@ -99,7 +100,7 @@ impl<'a> FirestoreDb {
     pub async fn stream_query_doc<'b>(
         &'a self,
         params: FirestoreQueryParams,
-    ) -> Result<BoxStream<'b, Document>, FirestoreError> {
+    ) -> FirestoreResult<BoxStream<'b, Document>> {
         let collection_str = params.collection_id.to_string();
 
         let span = span!(
@@ -126,7 +127,7 @@ impl<'a> FirestoreDb {
     pub async fn stream_query_doc_with_errors<'b>(
         &'a self,
         params: FirestoreQueryParams,
-    ) -> Result<BoxStream<'b, Result<Document, FirestoreError>>, FirestoreError> {
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         let collection_str = params.collection_id.to_string();
 
         let span = span!(
@@ -150,10 +151,7 @@ impl<'a> FirestoreDb {
         })))
     }
 
-    pub async fn query_obj<T>(
-        &'a self,
-        params: FirestoreQueryParams,
-    ) -> Result<Vec<T>, FirestoreError>
+    pub async fn query_obj<T>(&'a self, params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
     where
         for<'de> T: Deserialize<'de>,
     {
@@ -167,7 +165,7 @@ impl<'a> FirestoreDb {
     pub async fn stream_query_obj<'b, T>(
         &'a self,
         params: FirestoreQueryParams,
-    ) -> Result<BoxStream<'b, T>, FirestoreError>
+    ) -> FirestoreResult<BoxStream<'b, T>>
     where
         for<'de> T: Deserialize<'de>,
     {
@@ -189,7 +187,7 @@ impl<'a> FirestoreDb {
     pub async fn stream_query_obj_with_errors<'b, T>(
         &'a self,
         params: FirestoreQueryParams,
-    ) -> Result<BoxStream<'b, Result<T, FirestoreError>>, FirestoreError>
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
     where
         for<'de> T: Deserialize<'de>,
         T: Send + 'b,
@@ -204,7 +202,7 @@ impl<'a> FirestoreDb {
         &'a self,
         document_path: String,
         retries: usize,
-    ) -> BoxFuture<'a, Result<Document, FirestoreError>> {
+    ) -> BoxFuture<'a, FirestoreResult<Document>> {
         let request = tonic::Request::new(GetDocumentRequest {
             name: document_path.clone(),
             consistency_selector: None,
@@ -243,7 +241,7 @@ impl<'a> FirestoreDb {
         parent: &'a str,
         collection_id: &'a str,
         document_id: &'a String,
-    ) -> Result<Document, FirestoreError> {
+    ) -> FirestoreResult<Document> {
         let document_path = format!("{}/{}/{}", parent, collection_id, document_id);
         self.get_doc_by_path(document_path, 0).await
     }
@@ -252,7 +250,7 @@ impl<'a> FirestoreDb {
         &'a self,
         collection_id: &'a str,
         document_id: &'a String,
-    ) -> Result<T, FirestoreError>
+    ) -> FirestoreResult<T>
     where
         for<'de> T: Deserialize<'de>,
     {
@@ -269,7 +267,7 @@ impl<'a> FirestoreDb {
         parent: &'a str,
         collection_id: &'a str,
         document_id: &'a String,
-    ) -> Result<T, FirestoreError>
+    ) -> FirestoreResult<T>
     where
         for<'de> T: Deserialize<'de>,
     {
@@ -296,7 +294,7 @@ impl<'a> FirestoreDb {
         collection_id: &'a str,
         document_id: &'a str,
         obj: &'a T,
-    ) -> Result<T, FirestoreError>
+    ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
         for<'de> T: Deserialize<'de>,
@@ -316,7 +314,7 @@ impl<'a> FirestoreDb {
         collection_id: &'a str,
         document_id: &'a str,
         obj: &'a T,
-    ) -> Result<T, FirestoreError>
+    ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
         for<'de> T: Deserialize<'de>,
@@ -333,7 +331,7 @@ impl<'a> FirestoreDb {
         collection_id: &'a str,
         document_id: &str,
         obj: &T,
-    ) -> Result<Document, FirestoreError>
+    ) -> FirestoreResult<Document>
     where
         T: Serialize,
     {
@@ -367,7 +365,7 @@ impl<'a> FirestoreDb {
         document_id: &'a String,
         obj: &'a T,
         update_only: Option<Vec<String>>,
-    ) -> Result<T, FirestoreError>
+    ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
         for<'de> T: Deserialize<'de>,
@@ -389,7 +387,7 @@ impl<'a> FirestoreDb {
         document_id: &'a String,
         obj: &'a T,
         update_only: Option<Vec<String>>,
-    ) -> Result<T, FirestoreError>
+    ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
         for<'de> T: Deserialize<'de>,
@@ -407,7 +405,7 @@ impl<'a> FirestoreDb {
         document_id: &String,
         obj: &T,
         update_only: Option<Vec<String>>,
-    ) -> Result<Document, FirestoreError>
+    ) -> FirestoreResult<Document>
     where
         T: Serialize,
     {
@@ -446,7 +444,7 @@ impl<'a> FirestoreDb {
         &'a self,
         collection_id: &'a str,
         document_id: &'a String,
-    ) -> Result<(), FirestoreError> {
+    ) -> FirestoreResult<()> {
         self.delete_by_id_at(
             self.get_documents_path().as_str(),
             collection_id,
@@ -460,7 +458,7 @@ impl<'a> FirestoreDb {
         parent: &'a str,
         collection_id: &'a str,
         document_id: &'a String,
-    ) -> Result<(), FirestoreError> {
+    ) -> FirestoreResult<()> {
         let document_path = format!("{}/{}/{}", parent, collection_id, document_id);
 
         let request = tonic::Request::new(DeleteDocumentRequest {
@@ -483,7 +481,7 @@ impl<'a> FirestoreDb {
         labels: HashMap<String, String>,
         since_token_value: Option<Vec<u8>>,
         target_id: i32,
-    ) -> Result<BoxStream<'b, Result<ListenResponse, FirestoreError>>, FirestoreError> {
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
         use futures::stream;
 
         let query_request = params.to_structured_query();
@@ -549,10 +547,7 @@ impl<'a> FirestoreDb {
         params: FirestoreQueryParams,
         retries: usize,
         span: &'a Span,
-    ) -> BoxFuture<
-        'a,
-        Result<BoxStream<'b, Result<Option<Document>, FirestoreError>>, FirestoreError>,
-    > {
+    ) -> BoxFuture<'a, FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
         let query_request = self.create_query_request(&params);
         async move {
             let begin_query_utc: DateTime<Utc> = Utc::now();
@@ -614,7 +609,7 @@ impl<'a> FirestoreDb {
         params: FirestoreQueryParams,
         retries: usize,
         span: &'a Span,
-    ) -> BoxFuture<'a, Result<Vec<Document>, FirestoreError>> {
+    ) -> BoxFuture<'a, FirestoreResult<Vec<Document>>> {
         let query_request = self.create_query_request(&params);
         async move {
             let begin_query_utc: DateTime<Utc> = Utc::now();

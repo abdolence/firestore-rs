@@ -106,4 +106,7 @@ pub use db::*;
 
 mod serde;
 mod struct_path_macro;
+use crate::errors::FirestoreError;
 pub use struct_path_macro::*;
+
+type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
