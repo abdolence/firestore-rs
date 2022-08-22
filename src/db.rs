@@ -29,7 +29,7 @@ pub struct FirestoreDb {
     database_path: String,
     doc_path: String,
     options: FirestoreDbOptions,
-    google_firestore_client: GoogleApi<firestore_client::FirestoreClient<GoogleAuthMiddleware>>,
+    google_firestore_client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
 }
 
 impl<'a> FirestoreDb {
@@ -46,7 +46,7 @@ impl<'a> FirestoreDb {
         info!("Creating a new DB client: {}", firestore_database_path);
 
         let client = GoogleApiClient::from_function(
-            firestore_client::FirestoreClient::new,
+            FirestoreClient::new,
             "https://firestore.googleapis.com",
             Some(firestore_database_path.clone()),
         )
