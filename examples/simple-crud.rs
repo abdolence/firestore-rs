@@ -10,6 +10,7 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 struct MyTestStructure {
     some_id: String,
     some_string: String,
+    one_more_string: String,
     some_num: u64,
 }
 
@@ -23,7 +24,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),
         some_string: "Test".to_string(),
-        some_num: 42,
+        one_more_string: "Test2".to_string(),
+        some_num: 41,
     };
 
     // Remove if it already exist

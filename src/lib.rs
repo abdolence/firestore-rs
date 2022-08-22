@@ -23,6 +23,7 @@
 //!struct MyTestStructure {
 //!    some_id: String,
 //!    some_string: String,
+//!    one_more_string: String,
 //!    some_num: u64,
 //!}
 //!
@@ -36,6 +37,7 @@
 //!    let my_struct = MyTestStructure {
 //!        some_id: "test-1".to_string(),
 //!        some_string: "Test".to_string(),
+//!        one_more_string: "Test2".to_string(),
 //!        some_num: 42,
 //!    };
 //!
