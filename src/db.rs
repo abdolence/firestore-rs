@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::*;
 
 pub type FirestoreCursor = gcloud_sdk::google::firestore::v1::Cursor;
+pub type FirestoreTransactionId = Vec<u8>;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreDbOptions {
