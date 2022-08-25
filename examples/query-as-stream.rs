@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .await?;
     }
 
-    println!("Querying a test collection");
+    println!("Querying a test collection as a stream");
     // Query as a stream our data
     let mut object_stream: BoxStream<MyTestStructure> = db
         .stream_query_obj(
