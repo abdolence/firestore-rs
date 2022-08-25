@@ -294,19 +294,19 @@ pub enum FirestoreQueryFilterUnary {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreQueryFilterCompare {
-    LessThan(String, FirestoreValue),
-    LessThanOrEqual(String, FirestoreValue),
-    GreaterThan(String, FirestoreValue),
-    GreaterThanOrEqual(String, FirestoreValue),
-    Equal(String, FirestoreValue),
-    NotEqual(String, FirestoreValue),
-    ArrayContains(String, FirestoreValue),
-    In(String, FirestoreValue),
-    ArrayContainsAny(String, FirestoreValue),
-    NotIn(String, FirestoreValue),
+    LessThan(String, FirestoreQueryValue),
+    LessThanOrEqual(String, FirestoreQueryValue),
+    GreaterThan(String, FirestoreQueryValue),
+    GreaterThanOrEqual(String, FirestoreQueryValue),
+    Equal(String, FirestoreQueryValue),
+    NotEqual(String, FirestoreQueryValue),
+    ArrayContains(String, FirestoreQueryValue),
+    In(String, FirestoreQueryValue),
+    ArrayContainsAny(String, FirestoreQueryValue),
+    NotIn(String, FirestoreQueryValue),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct FirestoreValue {
+pub struct FirestoreQueryValue {
     pub value: Value,
 }

@@ -6,7 +6,7 @@ use gcloud_sdk::google::firestore::v1::*;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::*;
-use crate::FirestoreValue;
+use crate::FirestoreQueryValue;
 
 fn firestore_value_to_serde_value(v: &Value) -> serde_json::Value {
     match v.value_type.as_ref() {
@@ -21,6 +21,9 @@ fn firestore_value_to_serde_value(v: &Value) -> serde_json::Value {
                 NaiveDateTime::from_timestamp(ts.seconds, ts.nanos as u32),
                 Utc,
             );
+
+            #[derive(Serialize)]
+            struct DtWrapper(#[serde(with = "ts_seconds")] DateTime<Utc>);
 
             serde_json::Value::String(serde_json::to_string(&DtWrapper(dt)).unwrap())
         }
@@ -126,16 +129,13 @@ where
     Ok(result_object)
 }
 
-impl<T> std::convert::From<T> for FirestoreValue
+impl<T> std::convert::From<T> for FirestoreQueryValue
 where
     T: Serialize,
 {
     fn from(value: T) -> Self {
-        FirestoreValue {
+        FirestoreQueryValue {
             value: firestore_value_from_serializable(&value).unwrap_or(Value { value_type: None }),
         }
     }
 }
-
-#[derive(Serialize)]
-struct DtWrapper(#[serde(with = "ts_seconds")] DateTime<Utc>);
