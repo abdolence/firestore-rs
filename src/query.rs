@@ -31,7 +31,7 @@ pub struct FirestoreQueryParams {
     pub order_by: Option<Vec<FirestoreQueryOrder>>,
     pub filter: Option<FirestoreQueryFilter>,
     pub all_descendants: Option<bool>,
-    pub select_only_fields: Option<Vec<String>>,
+    pub return_only_fields: Option<Vec<String>>,
 }
 
 impl FirestoreQueryParams {
@@ -39,7 +39,7 @@ impl FirestoreQueryParams {
         let query_filter = self.filter.as_ref().map(|f| f.to_structured_query_filter());
 
         StructuredQuery {
-            select: self.select_only_fields.as_ref().map(|select_only_fields| {
+            select: self.return_only_fields.as_ref().map(|select_only_fields| {
                 structured_query::Projection {
                     fields: select_only_fields
                         .iter()

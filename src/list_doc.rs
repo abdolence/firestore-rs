@@ -14,7 +14,7 @@ pub struct FirestoreListDocParams {
 
     pub page_token: Option<String>,
     pub order_by: Option<Vec<FirestoreQueryOrder>>,
-    pub doc_masks: Option<Vec<String>>,
+    pub return_only_fields: Option<Vec<String>>,
 }
 
 #[derive(Debug, PartialEq, Clone, Builder)]

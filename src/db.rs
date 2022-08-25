@@ -374,21 +374,24 @@ impl<'a> FirestoreDb {
         for<'de> T: Deserialize<'de>,
         S: AsRef<str>,
     {
+        let input_doc = firestore_document_from_serializable("", obj)?;
+
         let doc = self
-            .create_doc(parent, collection_id, document_id, obj)
+            .create_doc(parent, collection_id, document_id, input_doc, None)
             .await?;
+
         firestore_document_to_serializable(&doc)
     }
 
-    pub async fn create_doc<T, S>(
+    pub async fn create_doc<S>(
         &self,
         parent: &str,
         collection_id: &str,
         document_id: S,
-        obj: &T,
+        input_doc: Document,
+        return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<Document>
     where
-        T: Serialize,
         S: AsRef<str>,
     {
         let _span = span!(
@@ -397,13 +400,14 @@ impl<'a> FirestoreDb {
             "/firestore/collection_name" = collection_id
         );
 
-        let firestore_doc = firestore_document_from_serializable("", obj)?;
         let create_document_request = tonic::Request::new(CreateDocumentRequest {
             parent: parent.into(),
             document_id: document_id.as_ref().to_string(),
-            mask: None,
+            mask: return_only_fields.as_ref().map(|masks| DocumentMask {
+                field_paths: masks.clone(),
+            }),
             collection_id: collection_id.into(),
-            document: Some(firestore_doc),
+            document: Some(input_doc),
         });
 
         let create_response = self
@@ -450,43 +454,40 @@ impl<'a> FirestoreDb {
         for<'de> T: Deserialize<'de>,
         S: AsRef<str>,
     {
+        let firestore_doc = firestore_document_from_serializable(
+            format!("{}/{}/{}", parent, collection_id, document_id.as_ref()).as_str(),
+            obj,
+        )?;
+
         let doc = self
-            .update_doc(parent, collection_id, document_id, obj, update_only)
+            .update_doc(collection_id, firestore_doc, update_only, None)
             .await?;
         firestore_document_to_serializable(&doc)
     }
 
-    pub async fn update_doc<T, S>(
+    pub async fn update_doc(
         &self,
-        parent: &str,
         collection_id: &str,
-        document_id: S,
-        obj: &T,
+        firestore_doc: Document,
         update_only: Option<Vec<String>>,
-    ) -> FirestoreResult<Document>
-    where
-        T: Serialize,
-        S: AsRef<str>,
-    {
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<Document> {
         let _span = span!(
             Level::DEBUG,
             "Firestore Update Document",
             "/firestore/collection_name" = collection_id
         );
 
-        let firestore_doc = firestore_document_from_serializable(
-            format!("{}/{}/{}", parent, collection_id, document_id.as_ref()).as_str(),
-            obj,
-        )?;
-
         let update_document_request = tonic::Request::new(UpdateDocumentRequest {
-            mask: None,
             update_mask: update_only.map({
                 |vf| DocumentMask {
                     field_paths: vf.iter().map(|f| f.to_string()).collect(),
                 }
             }),
             document: Some(firestore_doc),
+            mask: return_only_fields.as_ref().map(|masks| DocumentMask {
+                field_paths: masks.clone(),
+            }),
             current_document: None,
         });
 
@@ -827,9 +828,12 @@ impl<'a> FirestoreDb {
                         .join(", ")
                 })
                 .unwrap_or_else(|| "".to_string()),
-            mask: params.doc_masks.as_ref().map(|masks| DocumentMask {
-                field_paths: masks.clone(),
-            }),
+            mask: params
+                .return_only_fields
+                .as_ref()
+                .map(|masks| DocumentMask {
+                    field_paths: masks.clone(),
+                }),
             consistency_selector: None,
             show_missing: false,
         })
