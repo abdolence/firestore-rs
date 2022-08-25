@@ -746,7 +746,7 @@ impl<'a> FirestoreDb {
         params: FirestoreListDocParams,
     ) -> FirestoreResult<BoxStream<'a, Document>> {
         let stream: BoxStream<'a, Document> = Box::pin(
-            futures_util::stream::unfold(Some(params.clone()), move |maybe_params| async move {
+            futures_util::stream::unfold(Some(params), move |maybe_params| async move {
                 if let Some(params) = maybe_params {
                     let collection_str = params.collection_id.to_string();
 
@@ -760,10 +760,7 @@ impl<'a> FirestoreDb {
                     match self.list_doc_with_retries(params.clone(), 0, &span).await {
                         Ok(results) => {
                             if let Some(next_page_token) = results.page_token.clone() {
-                                Some((
-                                    results,
-                                    Some(params.with_page_token(next_page_token.clone())),
-                                ))
+                                Some((results, Some(params.with_page_token(next_page_token))))
                             } else {
                                 Some((results, None))
                             }
@@ -858,7 +855,7 @@ impl<'a> FirestoreDb {
                 Ok(listing_response) => {
                     let list_inner = listing_response.into_inner();
                     let result = FirestoreListDocResult::new(list_inner.documents).opt_page_token(
-                        if list_inner.next_page_token != "" {
+                        if !list_inner.next_page_token.is_empty() {
                             Some(list_inner.next_page_token)
                         } else {
                             None

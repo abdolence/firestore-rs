@@ -3,7 +3,7 @@ use gcloud_sdk::google::firestore::v1::Document;
 
 use rsb_derive::*;
 
-#[derive(Debug, PartialEq, Clone, Builder)]
+#[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreListDocParams {
     pub collection_id: String,
 
