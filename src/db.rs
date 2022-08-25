@@ -70,6 +70,10 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn ping(&self) -> FirestoreResult<()> {
+        // Reading non-existing document just to check that database is available to read
+        self.get_doc_by_path(self.get_database_path().clone(), 0)
+            .await
+            .ok();
         Ok(())
     }
 
@@ -289,6 +293,44 @@ impl<'a> FirestoreDb {
 
         let obj: T = firestore_document_to_serializable(&doc)?;
         Ok(obj)
+    }
+
+    pub async fn get_obj_if_exists<T>(
+        &'a self,
+        collection_id: &'a str,
+        document_id: &'a String,
+    ) -> FirestoreResult<Option<T>>
+    where
+        for<'de> T: Deserialize<'de>,
+    {
+        match self.get_obj::<T>(collection_id, document_id).await {
+            Ok(obj) => Ok(Some(obj)),
+            Err(err) => match err {
+                FirestoreError::DataNotFoundError(_) => Ok(None),
+                _ => Err(err),
+            },
+        }
+    }
+
+    pub async fn get_obj_at_if_exists<T>(
+        &'a self,
+        parent: &'a str,
+        collection_id: &'a str,
+        document_id: &'a String,
+    ) -> FirestoreResult<Option<T>>
+    where
+        for<'de> T: Deserialize<'de>,
+    {
+        match self
+            .get_obj_at::<T>(parent, collection_id, document_id)
+            .await
+        {
+            Ok(obj) => Ok(Some(obj)),
+            Err(err) => match err {
+                FirestoreError::DataNotFoundError(_) => Ok(None),
+                _ => Err(err),
+            },
+        }
     }
 
     pub async fn create_obj<T>(
