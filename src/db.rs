@@ -47,9 +47,8 @@ impl<'a> FirestoreDb {
 
     pub async fn with_options(options: FirestoreDbOptions) -> FirestoreResult<Self> {
         let firestore_database_path =
-            Self::create_firestore_database_path(&options.google_project_id);
-        let firestore_database_doc_path =
-            Self::create_firestore_database_documents_path(&options.google_project_id);
+            format!("projects/{}/databases/(default)", options.google_project_id);
+        let firestore_database_doc_path = format!("{}/documents", firestore_database_path);
 
         info!("Creating a new DB client: {}", firestore_database_path);
 
@@ -574,17 +573,6 @@ impl<'a> FirestoreDb {
         let response = self.google_firestore_client.get().listen(request).await?;
 
         Ok(response.into_inner().map_err(|e| e.into()).boxed())
-    }
-
-    fn create_firestore_database_path(google_project_id: &String) -> String {
-        format!("projects/{}/databases/(default)", google_project_id)
-    }
-
-    fn create_firestore_database_documents_path(google_project_id: &String) -> String {
-        format!(
-            "{}/documents",
-            Self::create_firestore_database_path(google_project_id)
-        )
     }
 
     fn create_query_request(
