@@ -2,7 +2,7 @@
 //!
 //! Library provides a simple API for Google Firestore:
 //! - Create or update documents using Rust structures and Serde;
-//! - Support for querying / streaming / listening documents from Firestore;
+//! - Support for querying / streaming / listing / listening changes documents from Firestore;
 //! - Full async based on Tokio runtime;
 //! - Macro that helps you use JSON paths as references to your structure fields;
 //! - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
@@ -98,9 +98,13 @@
 #![allow(clippy::new_without_default)]
 
 pub mod errors;
-mod query;
 
+mod query;
 pub use query::*;
+
+mod list_doc;
+pub use list_doc::*;
+
 mod db;
 pub use db::*;
 

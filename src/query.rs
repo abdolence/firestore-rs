@@ -271,12 +271,25 @@ impl FirestoreQueryOrder {
             }),
         }
     }
+
+    pub fn to_string_format(&self) -> String {
+        format!("{} {}", self.field_name, self.direction.to_string())
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreQueryDirection {
     Ascending,
     Descending,
+}
+
+impl ToString for FirestoreQueryDirection {
+    fn to_string(&self) -> String {
+        match self {
+            FirestoreQueryDirection::Ascending => "asc".to_string(),
+            FirestoreQueryDirection::Descending => "desc".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Builder)]
