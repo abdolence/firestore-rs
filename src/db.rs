@@ -243,20 +243,16 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn get_doc_by_id(
-        &'a self,
-        parent: &'a str,
-        collection_id: &'a str,
-        document_id: &'a String,
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: &String,
     ) -> FirestoreResult<Document> {
         let document_path = format!("{}/{}/{}", parent, collection_id, document_id);
         self.get_doc_by_path(document_path, 0).await
     }
 
-    pub async fn get_obj<T>(
-        &'a self,
-        collection_id: &'a str,
-        document_id: &'a String,
-    ) -> FirestoreResult<T>
+    pub async fn get_obj<T>(&self, collection_id: &str, document_id: &String) -> FirestoreResult<T>
     where
         for<'de> T: Deserialize<'de>,
     {
@@ -269,10 +265,10 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn get_obj_at<T>(
-        &'a self,
-        parent: &'a str,
-        collection_id: &'a str,
-        document_id: &'a String,
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: &String,
     ) -> FirestoreResult<T>
     where
         for<'de> T: Deserialize<'de>,
@@ -296,9 +292,9 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn get_obj_if_exists<T>(
-        &'a self,
-        collection_id: &'a str,
-        document_id: &'a String,
+        &self,
+        collection_id: &str,
+        document_id: &String,
     ) -> FirestoreResult<Option<T>>
     where
         for<'de> T: Deserialize<'de>,
@@ -313,10 +309,10 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn get_obj_at_if_exists<T>(
-        &'a self,
-        parent: &'a str,
-        collection_id: &'a str,
-        document_id: &'a String,
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: &String,
     ) -> FirestoreResult<Option<T>>
     where
         for<'de> T: Deserialize<'de>,
@@ -334,10 +330,10 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn create_obj<T>(
-        &'a self,
-        collection_id: &'a str,
-        document_id: &'a str,
-        obj: &'a T,
+        &self,
+        collection_id: &str,
+        document_id: &str,
+        obj: &T,
     ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
@@ -353,11 +349,11 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn create_obj_at<T>(
-        &'a self,
-        parent: &'a str,
-        collection_id: &'a str,
-        document_id: &'a str,
-        obj: &'a T,
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: &str,
+        obj: &T,
     ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
@@ -370,9 +366,9 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn create_doc<T>(
-        &'a self,
-        parent: &'a str,
-        collection_id: &'a str,
+        &self,
+        parent: &str,
+        collection_id: &str,
         document_id: &str,
         obj: &T,
     ) -> FirestoreResult<Document>
@@ -404,10 +400,10 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn update_obj<T>(
-        &'a self,
-        collection_id: &'a str,
-        document_id: &'a String,
-        obj: &'a T,
+        &self,
+        collection_id: &str,
+        document_id: &String,
+        obj: &T,
         update_only: Option<Vec<String>>,
     ) -> FirestoreResult<T>
     where
@@ -425,11 +421,11 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn update_obj_at<T>(
-        &'a self,
-        parent: &'a str,
-        collection_id: &'a str,
-        document_id: &'a String,
-        obj: &'a T,
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: &String,
+        obj: &T,
         update_only: Option<Vec<String>>,
     ) -> FirestoreResult<T>
     where
@@ -443,9 +439,9 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn update_doc<T>(
-        &'a self,
-        parent: &'a str,
-        collection_id: &'a str,
+        &self,
+        parent: &str,
+        collection_id: &str,
         document_id: &String,
         obj: &T,
         update_only: Option<Vec<String>>,
@@ -485,9 +481,9 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn delete_by_id(
-        &'a self,
-        collection_id: &'a str,
-        document_id: &'a String,
+        &self,
+        collection_id: &str,
+        document_id: &String,
     ) -> FirestoreResult<()> {
         self.delete_by_id_at(
             self.get_documents_path().as_str(),
@@ -498,10 +494,10 @@ impl<'a> FirestoreDb {
     }
 
     pub async fn delete_by_id_at(
-        &'a self,
-        parent: &'a str,
-        collection_id: &'a str,
-        document_id: &'a String,
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: &String,
     ) -> FirestoreResult<()> {
         let document_path = format!("{}/{}/{}", parent, collection_id, document_id);
 
