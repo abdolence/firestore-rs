@@ -35,8 +35,14 @@ pub struct FirestoreDb {
 }
 
 impl<'a> FirestoreDb {
-    pub async fn new(google_project_id: &str) -> FirestoreResult<Self> {
-        Self::with_options(FirestoreDbOptions::new(google_project_id.to_string())).await
+    pub async fn new<S>(google_project_id: S) -> FirestoreResult<Self>
+    where
+        S: AsRef<str>,
+    {
+        Self::with_options(FirestoreDbOptions::new(
+            google_project_id.as_ref().to_string(),
+        ))
+        .await
     }
 
     pub async fn with_options(options: FirestoreDbOptions) -> FirestoreResult<Self> {
@@ -157,7 +163,7 @@ impl<'a> FirestoreDb {
         })))
     }
 
-    pub async fn query_obj<T>(&'a self, params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
+    pub async fn query_obj<T>(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
     where
         for<'de> T: Deserialize<'de>,
     {
@@ -242,40 +248,45 @@ impl<'a> FirestoreDb {
         .boxed()
     }
 
-    pub async fn get_doc_by_id(
+    pub async fn get_doc_by_id<S>(
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: &String,
-    ) -> FirestoreResult<Document> {
-        let document_path = format!("{}/{}/{}", parent, collection_id, document_id);
+        document_id: S,
+    ) -> FirestoreResult<Document>
+    where
+        S: AsRef<str>,
+    {
+        let document_path = format!("{}/{}/{}", parent, collection_id, document_id.as_ref());
         self.get_doc_by_path(document_path, 0).await
     }
 
-    pub async fn get_obj<T>(&self, collection_id: &str, document_id: &String) -> FirestoreResult<T>
+    pub async fn get_obj<T, S>(&self, collection_id: &str, document_id: S) -> FirestoreResult<T>
     where
         for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
     {
         self.get_obj_at(
             self.get_documents_path().as_str(),
             collection_id,
-            document_id,
+            &document_id.as_ref().to_string(),
         )
         .await
     }
 
-    pub async fn get_obj_at<T>(
+    pub async fn get_obj_at<T, S>(
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: &String,
+        document_id: S,
     ) -> FirestoreResult<T>
     where
         for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
     {
         let begin_query_utc: DateTime<Utc> = Utc::now();
         let doc: Document = self
-            .get_doc_by_id(parent, collection_id, document_id)
+            .get_doc_by_id(parent, collection_id, document_id.as_ref())
             .await?;
         let end_query_utc: DateTime<Utc> = Utc::now();
         let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
@@ -283,7 +294,7 @@ impl<'a> FirestoreDb {
         debug!(
             "[DB]: Reading document by id: {}/{} took {}ms",
             collection_id,
-            document_id,
+            document_id.as_ref(),
             query_duration.num_milliseconds()
         );
 
@@ -291,15 +302,16 @@ impl<'a> FirestoreDb {
         Ok(obj)
     }
 
-    pub async fn get_obj_if_exists<T>(
+    pub async fn get_obj_if_exists<T, S>(
         &self,
         collection_id: &str,
-        document_id: &String,
+        document_id: S,
     ) -> FirestoreResult<Option<T>>
     where
         for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
     {
-        match self.get_obj::<T>(collection_id, document_id).await {
+        match self.get_obj::<T, S>(collection_id, document_id).await {
             Ok(obj) => Ok(Some(obj)),
             Err(err) => match err {
                 FirestoreError::DataNotFoundError(_) => Ok(None),
@@ -308,17 +320,18 @@ impl<'a> FirestoreDb {
         }
     }
 
-    pub async fn get_obj_at_if_exists<T>(
+    pub async fn get_obj_at_if_exists<T, S>(
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: &String,
+        document_id: S,
     ) -> FirestoreResult<Option<T>>
     where
         for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
     {
         match self
-            .get_obj_at::<T>(parent, collection_id, document_id)
+            .get_obj_at::<T, S>(parent, collection_id, document_id)
             .await
         {
             Ok(obj) => Ok(Some(obj)),
@@ -329,15 +342,16 @@ impl<'a> FirestoreDb {
         }
     }
 
-    pub async fn create_obj<T>(
+    pub async fn create_obj<T, S>(
         &self,
         collection_id: &str,
-        document_id: &str,
+        document_id: S,
         obj: &T,
     ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
         for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
     {
         self.create_obj_at(
             self.get_documents_path().as_str(),
@@ -348,16 +362,17 @@ impl<'a> FirestoreDb {
         .await
     }
 
-    pub async fn create_obj_at<T>(
+    pub async fn create_obj_at<T, S>(
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: &str,
+        document_id: S,
         obj: &T,
     ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
         for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
     {
         let doc = self
             .create_doc(parent, collection_id, document_id, obj)
@@ -365,15 +380,16 @@ impl<'a> FirestoreDb {
         firestore_document_to_serializable(&doc)
     }
 
-    pub async fn create_doc<T>(
+    pub async fn create_doc<T, S>(
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: &str,
+        document_id: S,
         obj: &T,
     ) -> FirestoreResult<Document>
     where
         T: Serialize,
+        S: AsRef<str>,
     {
         let _span = span!(
             Level::DEBUG,
@@ -384,7 +400,7 @@ impl<'a> FirestoreDb {
         let firestore_doc = firestore_document_from_serializable("", obj)?;
         let create_document_request = tonic::Request::new(CreateDocumentRequest {
             parent: parent.into(),
-            document_id: document_id.to_string(),
+            document_id: document_id.as_ref().to_string(),
             mask: None,
             collection_id: collection_id.into(),
             document: Some(firestore_doc),
@@ -399,16 +415,17 @@ impl<'a> FirestoreDb {
         Ok(create_response.into_inner())
     }
 
-    pub async fn update_obj<T>(
+    pub async fn update_obj<T, S>(
         &self,
         collection_id: &str,
-        document_id: &String,
+        document_id: S,
         obj: &T,
         update_only: Option<Vec<String>>,
     ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
         for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
     {
         self.update_obj_at(
             self.get_documents_path().as_str(),
@@ -420,17 +437,18 @@ impl<'a> FirestoreDb {
         .await
     }
 
-    pub async fn update_obj_at<T>(
+    pub async fn update_obj_at<T, S>(
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: &String,
+        document_id: S,
         obj: &T,
         update_only: Option<Vec<String>>,
     ) -> FirestoreResult<T>
     where
         T: Serialize + Sync + Send,
         for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
     {
         let doc = self
             .update_doc(parent, collection_id, document_id, obj, update_only)
@@ -438,16 +456,17 @@ impl<'a> FirestoreDb {
         firestore_document_to_serializable(&doc)
     }
 
-    pub async fn update_doc<T>(
+    pub async fn update_doc<T, S>(
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: &String,
+        document_id: S,
         obj: &T,
         update_only: Option<Vec<String>>,
     ) -> FirestoreResult<Document>
     where
         T: Serialize,
+        S: AsRef<str>,
     {
         let _span = span!(
             Level::DEBUG,
@@ -456,7 +475,7 @@ impl<'a> FirestoreDb {
         );
 
         let firestore_doc = firestore_document_from_serializable(
-            format!("{}/{}/{}", parent, collection_id, document_id).as_str(),
+            format!("{}/{}/{}", parent, collection_id, document_id.as_ref()).as_str(),
             obj,
         )?;
 
@@ -480,11 +499,10 @@ impl<'a> FirestoreDb {
         Ok(update_response.into_inner())
     }
 
-    pub async fn delete_by_id(
-        &self,
-        collection_id: &str,
-        document_id: &String,
-    ) -> FirestoreResult<()> {
+    pub async fn delete_by_id<S>(&self, collection_id: &str, document_id: S) -> FirestoreResult<()>
+    where
+        S: AsRef<str>,
+    {
         self.delete_by_id_at(
             self.get_documents_path().as_str(),
             collection_id,
@@ -493,13 +511,16 @@ impl<'a> FirestoreDb {
         .await
     }
 
-    pub async fn delete_by_id_at(
+    pub async fn delete_by_id_at<S>(
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: &String,
-    ) -> FirestoreResult<()> {
-        let document_path = format!("{}/{}/{}", parent, collection_id, document_id);
+        document_id: S,
+    ) -> FirestoreResult<()>
+    where
+        S: AsRef<str>,
+    {
+        let document_path = format!("{}/{}/{}", parent, collection_id, document_id.as_ref());
 
         let request = tonic::Request::new(DeleteDocumentRequest {
             name: document_path,
