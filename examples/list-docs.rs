@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     let list_params = FirestoreListDocParams::new(TEST_COLLECTION_NAME.into())
-        .with_page_size(3)
+        .with_page_size(3) // This is decreased just to show an example, in real life please use bigger figure (default is 100)
         .with_order_by(vec![FirestoreQueryOrder::new(
             path!(MyTestStructure::some_id),
             FirestoreQueryDirection::Descending,
