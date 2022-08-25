@@ -8,7 +8,7 @@ Library provides a simple API for Google Firestore:
 - Create or update documents using Rust structures and Serde; 
 - Support for:
   - Querying/streaming docs/objects;
-  - Listing documents/objects;
+  - Listing documents/objects (and auto pages scrolling support);
   - Listening changes from Firestore;
 - Full async based on Tokio runtime;
 - Macro that helps you use JSON paths as references to your structure fields;
