@@ -47,17 +47,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .await?;
     }
 
-    let list_params = FirestoreListDocParams::new(TEST_COLLECTION_NAME.into())
-        .with_page_size(3) // This is decreased just to show an example, in real life please use bigger figure (default is 100)
-        .with_order_by(vec![FirestoreQueryOrder::new(
-            path!(MyTestStructure::some_id),
-            FirestoreQueryDirection::Descending,
-        )]);
-
     println!("Listing objects as a stream");
     // Query as a stream our data
-    let mut objs_stream: BoxStream<MyTestStructure> =
-        db.stream_list_obj(list_params.clone()).await?;
+    let mut objs_stream: BoxStream<MyTestStructure> = db
+        .stream_list_obj(
+            FirestoreListDocParams::new(TEST_COLLECTION_NAME.into())
+                .with_page_size(3) // This is decreased just to show an example, in real life please use bigger figure (default is 100)
+                .with_order_by(vec![FirestoreQueryOrder::new(
+                    path!(MyTestStructure::some_id),
+                    FirestoreQueryDirection::Descending,
+                )]),
+        )
+        .await?;
 
     while let Some(object) = objs_stream.next().await {
         println!("Object in stream: {:?}", object);
