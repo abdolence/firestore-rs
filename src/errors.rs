@@ -248,3 +248,16 @@ fn check_hyper_errors(status: tonic::Status) -> FirestoreError {
         )),
     }
 }
+
+impl serde::ser::Error for FirestoreError {
+    fn custom<T>(msg: T) -> Self
+    where
+        T: Display,
+    {
+        let msg_str = msg.to_string();
+        FirestoreError::SystemError(FirestoreSystemError::new(
+            FirestoreErrorPublicGenericDetails::new(msg_str.clone()),
+            msg_str,
+        ))
+    }
+}

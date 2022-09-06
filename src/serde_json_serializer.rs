@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::*;
 use crate::FirestoreQueryValue;
 
-fn firestore_value_to_serde_value(v: &Value) -> serde_json::Value {
+fn firestore_value_to_serde_json_value(v: &Value) -> serde_json::Value {
     match v.value_type.as_ref() {
         Some(value::ValueType::StringValue(sv)) => serde_json::Value::String(sv.into()),
         Some(value::ValueType::IntegerValue(iv)) => serde_json::Value::Number((*iv).into()),
@@ -31,7 +31,7 @@ fn firestore_value_to_serde_value(v: &Value) -> serde_json::Value {
             let serde_value_array: Vec<serde_json::Value> = av
                 .values
                 .iter()
-                .map(firestore_value_to_serde_value)
+                .map(firestore_value_to_serde_json_value)
                 .collect();
             serde_json::Value::Array(serde_value_array)
         }
@@ -39,7 +39,7 @@ fn firestore_value_to_serde_value(v: &Value) -> serde_json::Value {
             let mut serde_map = serde_json::Map::new();
 
             for (k, v) in mv.fields.iter() {
-                serde_map.insert(k.clone(), firestore_value_to_serde_value(v));
+                serde_map.insert(k.clone(), firestore_value_to_serde_json_value(v));
             }
             serde_json::Value::Object(serde_map)
         }
@@ -47,7 +47,7 @@ fn firestore_value_to_serde_value(v: &Value) -> serde_json::Value {
     }
 }
 
-fn serde_value_to_firestore_value(v: &serde_json::Value) -> Value {
+fn serde_json_value_to_firestore_value(v: &serde_json::Value) -> Value {
     let value_type = match v {
         serde_json::Value::String(str) => Some(value::ValueType::StringValue(str.clone())),
         serde_json::Value::Number(numb) if numb.is_i64() => {
@@ -61,12 +61,12 @@ fn serde_value_to_firestore_value(v: &serde_json::Value) -> Value {
         }
         serde_json::Value::Bool(bv) => Some(value::ValueType::BooleanValue(*bv)),
         serde_json::Value::Array(av) => Some(value::ValueType::ArrayValue(ArrayValue {
-            values: av.iter().map(serde_value_to_firestore_value).collect(),
+            values: av.iter().map(serde_json_value_to_firestore_value).collect(),
         })),
         serde_json::Value::Object(mv) => Some(value::ValueType::MapValue(MapValue {
             fields: mv
                 .iter()
-                .map(|(k, v)| (k.clone(), serde_value_to_firestore_value(v)))
+                .map(|(k, v)| (k.clone(), serde_json_value_to_firestore_value(v)))
                 .collect(),
         })),
         _ => None,
@@ -80,7 +80,7 @@ where
     T: Serialize,
 {
     let serde_object_value = serde_json::to_value(object)?;
-    Ok(serde_value_to_firestore_value(&serde_object_value))
+    Ok(serde_json_value_to_firestore_value(&serde_object_value))
 }
 
 pub fn firestore_document_from_serializable<T>(
@@ -91,7 +91,7 @@ where
     T: Serialize,
 {
     let serde_object_value = serde_json::to_value(object)?;
-    match serde_value_to_firestore_value(&serde_object_value)
+    match serde_json_value_to_firestore_value(&serde_object_value)
         .value_type
         .as_ref()
     {
@@ -121,7 +121,7 @@ where
         fields: document
             .fields
             .iter()
-            .map(|(k, v)| (k.to_owned(), firestore_value_to_serde_value(v)))
+            .map(|(k, v)| (k.to_owned(), firestore_value_to_serde_json_value(v)))
             .collect(),
     };
     let serde_value = serde_json::to_value(wrapper)?;

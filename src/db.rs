@@ -1,6 +1,6 @@
 use crate::errors::*;
 use crate::query::*;
-use crate::serde::*;
+use crate::serde_json_serializer::*;
 use chrono::prelude::*;
 use std::collections::HashMap;
 

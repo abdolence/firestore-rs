@@ -108,7 +108,9 @@ pub use list_doc::*;
 mod db;
 pub use db::*;
 
-mod serde;
+mod serde_json_serializer;
+mod serde_native_serializer;
+
 mod struct_path_macro;
 use crate::errors::FirestoreError;
 pub use struct_path_macro::*;

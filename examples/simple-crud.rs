@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use firestore::*;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +13,7 @@ struct MyTestStructure {
     some_string: String,
     one_more_string: String,
     some_num: u64,
+    created_at: DateTime<Utc>,
 }
 
 #[tokio::main]
@@ -32,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_string: "Test".to_string(),
         one_more_string: "Test2".to_string(),
         some_num: 41,
+        created_at: Utc::now(),
     };
 
     // Remove if it already exist
