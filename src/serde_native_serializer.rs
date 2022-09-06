@@ -1,6 +1,6 @@
 use crate::FirestoreError;
 use gcloud_sdk::google::firestore::v1::value;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use std::collections::HashMap;
 
 pub struct FirestoreValueSerializer;
@@ -14,11 +14,9 @@ pub struct SerializeTupleVariant {
     vec: Vec<gcloud_sdk::google::firestore::v1::Value>,
 }
 
-pub enum SerializeMap {
-    Map {
-        map: HashMap<String, gcloud_sdk::google::firestore::v1::Value>,
-        next_key: Option<String>,
-    },
+pub struct SerializeMap {
+    fields: HashMap<String, gcloud_sdk::google::firestore::v1::Value>,
+    next_key: Option<String>,
 }
 
 pub struct SerializeStructVariant {
@@ -211,8 +209,8 @@ impl serde::Serializer for FirestoreValueSerializer {
     }
 
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        Ok(SerializeMap::Map {
-            map: HashMap::with_capacity(len.unwrap_or(0)),
+        Ok(SerializeMap {
+            fields: HashMap::with_capacity(len.unwrap_or(0)),
             next_key: None,
         })
     }
@@ -247,11 +245,16 @@ impl serde::ser::SerializeSeq for SerializeVec {
     where
         T: Serialize,
     {
-        todo!()
+        self.vec.push(value.serialize(FirestoreValueSerializer {})?);
+        Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Ok(Self::Ok {
+            value_type: Some(value::ValueType::ArrayValue(
+                gcloud_sdk::google::firestore::v1::ArrayValue { values: self.vec },
+            )),
+        })
     }
 }
 
@@ -263,11 +266,11 @@ impl serde::ser::SerializeTuple for SerializeVec {
     where
         T: Serialize,
     {
-        todo!()
+        serde::ser::SerializeSeq::serialize_element(self, value)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        serde::ser::SerializeSeq::end(self)
     }
 }
 
@@ -279,11 +282,11 @@ impl serde::ser::SerializeTupleStruct for SerializeVec {
     where
         T: Serialize,
     {
-        todo!()
+        serde::ser::SerializeSeq::serialize_element(self, value)
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        serde::ser::SerializeSeq::end(self)
     }
 }
 
@@ -295,11 +298,26 @@ impl serde::ser::SerializeTupleVariant for SerializeTupleVariant {
     where
         T: Serialize,
     {
-        todo!()
+        self.vec.push(value.serialize(FirestoreValueSerializer {})?);
+        Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        let mut fields = HashMap::new();
+        fields.insert(
+            self.name,
+            Self::Ok {
+                value_type: Some(value::ValueType::ArrayValue(
+                    gcloud_sdk::google::firestore::v1::ArrayValue { values: self.vec },
+                )),
+            },
+        );
+
+        Ok(Self::Ok {
+            value_type: Some(value::ValueType::MapValue(
+                gcloud_sdk::google::firestore::v1::MapValue { fields },
+            )),
+        })
     }
 }
 
@@ -311,7 +329,20 @@ impl serde::ser::SerializeMap for SerializeMap {
     where
         T: Serialize,
     {
-        todo!()
+        let serializer = FirestoreValueSerializer {};
+        match key.serialize(serializer)?.value_type {
+            Some(value::ValueType::StringValue(str)) => {
+                self.next_key = Some(str);
+                Ok(())
+            }
+            Some(value::ValueType::IntegerValue(num)) => {
+                self.next_key = Some(num.to_string());
+                Ok(())
+            }
+            _ => {
+                todo!()
+            }
+        }
     }
 
     fn serialize_value<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
