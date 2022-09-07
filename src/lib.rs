@@ -110,7 +110,6 @@ pub use list_doc::*;
 mod db;
 pub use db::*;
 
-mod serde_json_serializer;
 mod serde_native_deserializer;
 mod serde_native_serializer;
 

@@ -257,11 +257,16 @@ impl serde::ser::Error for FirestoreError {
     where
         T: Display,
     {
-        let msg_str = msg.to_string();
-        FirestoreError::SystemError(FirestoreSystemError::new(
-            FirestoreErrorPublicGenericDetails::new(msg_str.clone()),
-            msg_str,
-        ))
+        FirestoreSerializeError::from_message(msg.to_string())
+    }
+}
+
+impl serde::de::Error for FirestoreError {
+    fn custom<T>(msg: T) -> Self
+    where
+        T: Display,
+    {
+        FirestoreSerializeError::from_message(msg.to_string())
     }
 }
 

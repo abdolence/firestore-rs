@@ -1,4 +1,4 @@
-use crate::errors::FirestoreSerializeError;
+use crate::errors::*;
 use crate::{FirestoreError, FirestoreValue};
 use gcloud_sdk::google::firestore::v1::value;
 use serde::Serialize;
@@ -484,5 +484,29 @@ impl serde::ser::SerializeStructVariant for SerializeStructVariant {
                 )),
             },
         ))
+    }
+}
+
+pub fn firestore_document_from_serializable<T>(
+    document_path: &str,
+    object: &T,
+) -> Result<gcloud_sdk::google::firestore::v1::Document, FirestoreError>
+where
+    T: Serialize,
+{
+    let serializer = crate::serde_native_serializer::FirestoreValueSerializer {};
+    let document_value = object.serialize(serializer)?;
+
+    match document_value.value.value_type {
+        Some(value::ValueType::MapValue(mv)) => Ok(gcloud_sdk::google::firestore::v1::Document {
+            fields: mv.fields.clone(),
+            name: document_path.into(),
+            create_time: None,
+            update_time: None,
+        }),
+        _ => Err(FirestoreError::SystemError(FirestoreSystemError::new(
+            FirestoreErrorPublicGenericDetails::new("SystemError".into()),
+            "Unable to create document from value. No object found".into(),
+        ))),
     }
 }
