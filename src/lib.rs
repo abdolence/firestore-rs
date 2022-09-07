@@ -96,6 +96,7 @@
 //!
 
 #![allow(clippy::new_without_default)]
+#![forbid(unsafe_code)]
 
 pub mod errors;
 mod value_type;
@@ -110,8 +111,8 @@ pub use list_doc::*;
 mod db;
 pub use db::*;
 
-mod serde_native_deserializer;
-mod serde_native_serializer;
+mod serde_deserializer;
+mod serde_serializer;
 
 mod struct_path_macro;
 use crate::errors::FirestoreError;

@@ -494,7 +494,7 @@ pub fn firestore_document_from_serializable<T>(
 where
     T: Serialize,
 {
-    let serializer = crate::serde_native_serializer::FirestoreValueSerializer {};
+    let serializer = crate::serde_serializer::FirestoreValueSerializer {};
     let document_value = object.serialize(serializer)?;
 
     match document_value.value.value_type {

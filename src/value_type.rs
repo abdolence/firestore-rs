@@ -1,4 +1,4 @@
-use crate::serde_native_serializer::FirestoreValueSerializer;
+use crate::serde_serializer::FirestoreValueSerializer;
 use gcloud_sdk::google::firestore::v1::Value;
 use serde::Serialize;
 

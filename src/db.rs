@@ -3,8 +3,8 @@ use crate::query::*;
 use chrono::prelude::*;
 use std::collections::HashMap;
 
-use crate::serde_native_deserializer::firestore_document_to_serializable;
-use crate::serde_native_serializer::firestore_document_from_serializable;
+use crate::serde_deserializer::firestore_document_to_serializable;
+use crate::serde_serializer::firestore_document_from_serializable;
 use crate::{FirestoreListDocParams, FirestoreListDocResult, FirestoreResult};
 use futures::future::{BoxFuture, FutureExt};
 use futures::TryFutureExt;
