@@ -12,6 +12,7 @@ pub enum FirestoreError {
     DataNotFoundError(FirestoreDataNotFoundError),
     InvalidParametersError(FirestoreInvalidParametersError),
     InvalidJsonError(FirestoreInvalidJsonError),
+    SerializeError(FirestoreSerializeError),
     NetworkError(FirestoreNetworkError),
 }
 
@@ -24,6 +25,7 @@ impl Display for FirestoreError {
             FirestoreError::DataNotFoundError(ref err) => err.fmt(f),
             FirestoreError::InvalidParametersError(ref err) => err.fmt(f),
             FirestoreError::InvalidJsonError(ref err) => err.fmt(f),
+            FirestoreError::SerializeError(ref err) => err.fmt(f),
             FirestoreError::NetworkError(ref err) => err.fmt(f),
         }
     }
@@ -38,6 +40,7 @@ impl Error for FirestoreError {
             FirestoreError::DataNotFoundError(ref err) => Some(err),
             FirestoreError::InvalidParametersError(ref err) => Some(err),
             FirestoreError::InvalidJsonError(ref err) => Some(err),
+            FirestoreError::SerializeError(ref err) => Some(err),
             FirestoreError::NetworkError(ref err) => Some(err),
         }
     }
@@ -261,3 +264,25 @@ impl serde::ser::Error for FirestoreError {
         ))
     }
 }
+
+#[derive(Debug, Builder)]
+pub struct FirestoreSerializeError {
+    pub public: FirestoreErrorPublicGenericDetails,
+}
+
+impl FirestoreSerializeError {
+    pub fn from_message<S: AsRef<str>>(message: S) -> FirestoreError {
+        let message_str = message.as_ref().to_string();
+        FirestoreError::SerializeError(FirestoreSerializeError::new(
+            FirestoreErrorPublicGenericDetails::new(message_str.clone()),
+        ))
+    }
+}
+
+impl Display for FirestoreSerializeError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "Invalid serialization: {:?}", self.public)
+    }
+}
+
+impl std::error::Error for FirestoreSerializeError {}

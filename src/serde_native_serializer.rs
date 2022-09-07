@@ -1,6 +1,7 @@
+use crate::errors::FirestoreSerializeError;
 use crate::FirestoreError;
 use gcloud_sdk::google::firestore::v1::value;
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 use std::collections::HashMap;
 
 pub struct FirestoreValueSerializer;
@@ -21,7 +22,7 @@ pub struct SerializeMap {
 
 pub struct SerializeStructVariant {
     name: String,
-    map: HashMap<String, gcloud_sdk::google::firestore::v1::Value>,
+    fields: HashMap<String, gcloud_sdk::google::firestore::v1::Value>,
 }
 
 impl serde::Serializer for FirestoreValueSerializer {
@@ -232,7 +233,7 @@ impl serde::Serializer for FirestoreValueSerializer {
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         Ok(SerializeStructVariant {
             name: String::from(variant),
-            map: HashMap::with_capacity(len),
+            fields: HashMap::with_capacity(len),
         })
     }
 }
@@ -339,9 +340,9 @@ impl serde::ser::SerializeMap for SerializeMap {
                 self.next_key = Some(num.to_string());
                 Ok(())
             }
-            _ => {
-                todo!()
-            }
+            _ => Err(FirestoreSerializeError::from_message(
+                "Map key should be a string format",
+            )),
         }
     }
 
@@ -349,11 +350,26 @@ impl serde::ser::SerializeMap for SerializeMap {
     where
         T: Serialize,
     {
-        todo!()
+        match self.next_key.take() {
+            Some(key) => {
+                let serializer = FirestoreValueSerializer {};
+                self.fields.insert(key, value.serialize(serializer)?);
+                Ok(())
+            }
+            None => Err(FirestoreSerializeError::from_message(
+                "Unexpected map value without key",
+            )),
+        }
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Ok(Self::Ok {
+            value_type: Some(value::ValueType::MapValue(
+                gcloud_sdk::google::firestore::v1::MapValue {
+                    fields: self.fields,
+                },
+            )),
+        })
     }
 }
 
@@ -369,11 +385,20 @@ impl serde::ser::SerializeStruct for SerializeMap {
     where
         T: Serialize,
     {
-        todo!()
+        let serializer = FirestoreValueSerializer {};
+        self.fields
+            .insert(key.to_string(), value.serialize(serializer)?);
+        Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Ok(Self::Ok {
+            value_type: Some(value::ValueType::MapValue(
+                gcloud_sdk::google::firestore::v1::MapValue {
+                    fields: self.fields,
+                },
+            )),
+        })
     }
 }
 
@@ -389,10 +414,29 @@ impl serde::ser::SerializeStructVariant for SerializeStructVariant {
     where
         T: Serialize,
     {
-        todo!()
+        let serializer = FirestoreValueSerializer {};
+        self.fields
+            .insert(key.to_string(), value.serialize(serializer)?);
+        Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        let mut object = HashMap::new();
+        object.insert(
+            self.name,
+            Self::Ok {
+                value_type: Some(value::ValueType::MapValue(
+                    gcloud_sdk::google::firestore::v1::MapValue {
+                        fields: self.fields,
+                    },
+                )),
+            },
+        );
+
+        Ok(Self::Ok {
+            value_type: Some(value::ValueType::MapValue(
+                gcloud_sdk::google::firestore::v1::MapValue { fields: object },
+            )),
+        })
     }
 }

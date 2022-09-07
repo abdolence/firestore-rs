@@ -90,11 +90,26 @@ pub fn firestore_document_from_serializable<T>(
 where
     T: Serialize,
 {
-    let serde_object_value = serde_json::to_value(object)?;
-    match serde_json_value_to_firestore_value(&serde_object_value)
-        .value_type
-        .as_ref()
-    {
+    // let serde_object_value = serde_json::to_value(object)?;
+    // match serde_json_value_to_firestore_value(&serde_object_value)
+    //     .value_type
+    //     .as_ref()
+    // {
+    //     Some(value::ValueType::MapValue(mv)) => Ok(Document {
+    //         fields: mv.fields.clone(),
+    //         name: document_path.into(),
+    //         create_time: None,
+    //         update_time: None,
+    //     }),
+    //     _ => Err(FirestoreError::SystemError(FirestoreSystemError::new(
+    //         FirestoreErrorPublicGenericDetails::new("SystemError".into()),
+    //         "Unable to create document from serde value. No object found".into(),
+    //     ))),
+    // }
+    let serializer = crate::serde_native_serializer::FirestoreValueSerializer {};
+    let document_value = object.serialize(serializer)?;
+
+    match document_value.value_type {
         Some(value::ValueType::MapValue(mv)) => Ok(Document {
             fields: mv.fields.clone(),
             name: document_path.into(),
@@ -103,7 +118,7 @@ where
         }),
         _ => Err(FirestoreError::SystemError(FirestoreSystemError::new(
             FirestoreErrorPublicGenericDetails::new("SystemError".into()),
-            "Unable to create document from serde value. No object found".into(),
+            "Unable to create document from value. No object found".into(),
         ))),
     }
 }
