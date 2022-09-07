@@ -11,7 +11,8 @@ pub enum FirestoreError {
     DataConflictError(FirestoreDataConflictError),
     DataNotFoundError(FirestoreDataNotFoundError),
     InvalidParametersError(FirestoreInvalidParametersError),
-    InvalidJsonError(FirestoreInvalidJsonError),
+    SerializeError(FirestoreSerializationError),
+    DeserializeError(FirestoreSerializationError),
     NetworkError(FirestoreNetworkError),
 }
 
@@ -23,7 +24,8 @@ impl Display for FirestoreError {
             FirestoreError::DataConflictError(ref err) => err.fmt(f),
             FirestoreError::DataNotFoundError(ref err) => err.fmt(f),
             FirestoreError::InvalidParametersError(ref err) => err.fmt(f),
-            FirestoreError::InvalidJsonError(ref err) => err.fmt(f),
+            FirestoreError::SerializeError(ref err) => err.fmt(f),
+            FirestoreError::DeserializeError(ref err) => err.fmt(f),
             FirestoreError::NetworkError(ref err) => err.fmt(f),
         }
     }
@@ -37,7 +39,8 @@ impl Error for FirestoreError {
             FirestoreError::DataConflictError(ref err) => Some(err),
             FirestoreError::DataNotFoundError(ref err) => Some(err),
             FirestoreError::InvalidParametersError(ref err) => Some(err),
-            FirestoreError::InvalidJsonError(ref err) => Some(err),
+            FirestoreError::SerializeError(ref err) => Some(err),
+            FirestoreError::DeserializeError(ref err) => Some(err),
             FirestoreError::NetworkError(ref err) => Some(err),
         }
     }
@@ -129,20 +132,6 @@ pub struct FirestoreInvalidJsonErrorPublicDetails {
     pub code: String,
 }
 
-#[derive(Debug, Builder)]
-pub struct FirestoreInvalidJsonError {
-    pub public: FirestoreInvalidJsonErrorPublicDetails,
-    pub details: serde_json::Error,
-}
-
-impl Display for FirestoreInvalidJsonError {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Invalid JSON: {:?}", self.public)
-    }
-}
-
-impl std::error::Error for FirestoreInvalidJsonError {}
-
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreNetworkError {
     pub public: FirestoreErrorPublicGenericDetails,
@@ -162,18 +151,6 @@ impl From<gcloud_sdk::error::Error> for FirestoreError {
         FirestoreError::SystemError(FirestoreSystemError::new(
             FirestoreErrorPublicGenericDetails::new(format!("{:?}", e.kind())),
             format!("GCloud system error: {}", e),
-        ))
-    }
-}
-
-impl From<serde_json::Error> for FirestoreError {
-    fn from(e: serde_json::Error) -> Self {
-        FirestoreError::InvalidJsonError(FirestoreInvalidJsonError::new(
-            FirestoreInvalidJsonErrorPublicDetails::new(format!(
-                "Firestore json parse error: {:?}",
-                e.classify()
-            )),
-            e,
         ))
     }
 }
@@ -246,5 +223,52 @@ fn check_hyper_errors(status: tonic::Status) -> FirestoreError {
             format!("{}", status),
             false,
         )),
+    }
+}
+
+impl serde::ser::Error for FirestoreError {
+    fn custom<T>(msg: T) -> Self
+    where
+        T: Display,
+    {
+        FirestoreError::SerializeError(FirestoreSerializationError::from_message(msg.to_string()))
+    }
+}
+
+impl serde::de::Error for FirestoreError {
+    fn custom<T>(msg: T) -> Self
+    where
+        T: Display,
+    {
+        FirestoreError::DeserializeError(FirestoreSerializationError::from_message(msg.to_string()))
+    }
+}
+
+#[derive(Debug, Builder)]
+pub struct FirestoreSerializationError {
+    pub public: FirestoreErrorPublicGenericDetails,
+}
+
+impl FirestoreSerializationError {
+    pub fn from_message<S: AsRef<str>>(message: S) -> FirestoreSerializationError {
+        let message_str = message.as_ref().to_string();
+        FirestoreSerializationError::new(FirestoreErrorPublicGenericDetails::new(message_str))
+    }
+}
+
+impl Display for FirestoreSerializationError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "Invalid serialization: {:?}", self.public)
+    }
+}
+
+impl std::error::Error for FirestoreSerializationError {}
+
+impl From<chrono::ParseError> for FirestoreError {
+    fn from(parse_err: chrono::ParseError) -> Self {
+        FirestoreError::DeserializeError(FirestoreSerializationError::from_message(format!(
+            "Parse error: {}",
+            parse_err
+        )))
     }
 }

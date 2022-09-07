@@ -1,9 +1,10 @@
 use crate::errors::*;
 use crate::query::*;
-use crate::serde::*;
 use chrono::prelude::*;
 use std::collections::HashMap;
 
+use crate::serde_deserializer::firestore_document_to_serializable;
+use crate::serde_serializer::firestore_document_from_serializable;
 use crate::{FirestoreListDocParams, FirestoreListDocResult, FirestoreResult};
 use futures::future::{BoxFuture, FutureExt};
 use futures::TryFutureExt;

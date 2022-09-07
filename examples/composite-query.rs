@@ -31,34 +31,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     const TEST_COLLECTION_NAME: &'static str = "test";
 
-    println!("Populating a test collection");
-    for i in 0..10 {
-        let my_struct = MyTestStructure {
-            some_id: format!("test-{}", i),
-            some_string: "Test".to_string(),
-            one_more_string: "Test2".to_string(),
-            some_num: 42,
-            created_at: Utc::now(),
-        };
-
-        // Remove if it already exist
-        db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id)
-            .await?;
-
-        // Let's insert some data
-        db.create_obj(TEST_COLLECTION_NAME, &my_struct.some_id, &my_struct)
-            .await?;
-    }
-
     println!("Querying a test collection as a stream");
     // Query as a stream our data
     let mut object_stream: BoxStream<MyTestStructure> = db
         .stream_query_obj(
             FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()).with_filter(
-                FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::Equal(
-                    path!(MyTestStructure::some_num),
-                    42.into(),
-                ))),
+                FirestoreQueryFilter::Composite(FirestoreQueryFilterComposite::new(vec![
+                    FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::Equal(
+                        path!(MyTestStructure::some_num),
+                        42.into(),
+                    ))),
+                    FirestoreQueryFilter::Compare(Some(
+                        FirestoreQueryFilterCompare::LessThanOrEqual(
+                            path!(MyTestStructure::created_at),
+                            Utc::now().into(),
+                        ),
+                    )),
+                ])),
             ),
         )
         .await?;
