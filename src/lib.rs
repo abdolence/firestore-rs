@@ -5,6 +5,8 @@
 //! - Support for querying / streaming / listing / listening changes documents from Firestore;
 //! - Full async based on Tokio runtime;
 //! - Macro that helps you use JSON paths as references to your structure fields;
+//! - Implements own Serde serializer to Firestore values;
+//! - Supports for Firestore timestamp with `#[serde(with)]`;
 //! - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
 //!   that automatically detects GKE environment or application default accounts for local development;
 //!
@@ -114,8 +116,8 @@ pub use db::*;
 mod serde_deserializer;
 mod serde_serializer;
 
-mod types_serializers;
-pub use types_serializers::*;
+mod serde_types_serializers;
+pub use serde_types_serializers::*;
 
 mod struct_path_macro;
 use crate::errors::FirestoreError;
