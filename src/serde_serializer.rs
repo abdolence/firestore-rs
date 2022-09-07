@@ -71,7 +71,7 @@ impl serde::Serializer for FirestoreValueSerializer {
     fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
         Ok(FirestoreValue::from(
             gcloud_sdk::google::firestore::v1::Value {
-                value_type: Some(value::ValueType::IntegerValue(v.into())),
+                value_type: Some(value::ValueType::IntegerValue(v)),
             },
         ))
     }
@@ -119,7 +119,7 @@ impl serde::Serializer for FirestoreValueSerializer {
     fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
         Ok(FirestoreValue::from(
             gcloud_sdk::google::firestore::v1::Value {
-                value_type: Some(value::ValueType::DoubleValue(v.into())),
+                value_type: Some(value::ValueType::DoubleValue(v)),
             },
         ))
     }
@@ -504,7 +504,7 @@ where
 
     match document_value.value.value_type {
         Some(value::ValueType::MapValue(mv)) => Ok(gcloud_sdk::google::firestore::v1::Document {
-            fields: mv.fields.clone(),
+            fields: mv.fields,
             name: document_path.into(),
             create_time: None,
             update_time: None,

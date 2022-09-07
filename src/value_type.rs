@@ -21,6 +21,6 @@ where
         let serializer = FirestoreValueSerializer {};
         value
             .serialize(serializer)
-            .unwrap_or(FirestoreValue::from(Value { value_type: None }))
+            .unwrap_or_else(|_| FirestoreValue::from(Value { value_type: None }))
     }
 }

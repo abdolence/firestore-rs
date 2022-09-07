@@ -250,7 +250,7 @@ impl FirestoreSerializeError {
     pub fn from_message<S: AsRef<str>>(message: S) -> FirestoreError {
         let message_str = message.as_ref().to_string();
         FirestoreError::SerializeError(FirestoreSerializeError::new(
-            FirestoreErrorPublicGenericDetails::new(message_str.clone()),
+            FirestoreErrorPublicGenericDetails::new(message_str),
         ))
     }
 }

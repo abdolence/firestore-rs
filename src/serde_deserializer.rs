@@ -150,7 +150,7 @@ impl FirestoreValueSeqAccess {
         FirestoreValueSeqAccess {
             iter: vec
                 .into_iter()
-                .map(|v| FirestoreValue::from(v))
+                .map(FirestoreValue::from)
                 .collect::<Vec<FirestoreValue>>()
                 .into_iter(),
         }
@@ -506,7 +506,7 @@ where
 
     let firestore_value = FirestoreValue::from(gcloud_sdk::google::firestore::v1::Value {
         value_type: Some(value::ValueType::MapValue(
-            gcloud_sdk::google::firestore::v1::MapValue { fields: fields },
+            gcloud_sdk::google::firestore::v1::MapValue { fields },
         )),
     });
 
