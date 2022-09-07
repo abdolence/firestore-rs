@@ -387,8 +387,8 @@ impl serde::ser::SerializeMap for SerializeMap {
                 self.next_key = Some(num.to_string());
                 Ok(())
             }
-            _ => Err(FirestoreSerializeError::from_message(
-                "Map key should be a string format",
+            _ => Err(FirestoreError::SerializeError(
+                FirestoreSerializationError::from_message("Map key should be a string format"),
             )),
         }
     }
@@ -403,8 +403,8 @@ impl serde::ser::SerializeMap for SerializeMap {
                 self.fields.insert(key, value.serialize(serializer)?.value);
                 Ok(())
             }
-            None => Err(FirestoreSerializeError::from_message(
-                "Unexpected map value without key",
+            None => Err(FirestoreError::SerializeError(
+                FirestoreSerializationError::from_message("Unexpected map value without key"),
             )),
         }
     }

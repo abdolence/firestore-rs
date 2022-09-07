@@ -1,4 +1,4 @@
-use crate::errors::FirestoreSerializeError;
+use crate::errors::FirestoreSerializationError;
 use crate::{FirestoreError, FirestoreValue};
 use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::value;
@@ -257,8 +257,8 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
             Some(value::ValueType::DoubleValue(v)) => visitor.visit_f64(v),
             Some(value::ValueType::BytesValue(ref v)) => visitor.visit_bytes(v),
             Some(value::ValueType::ReferenceValue(v)) => visitor.visit_string(v),
-            Some(value::ValueType::GeoPointValue(_)) => Err(FirestoreSerializeError::from_message(
-                "LatLng not supported yet",
+            Some(value::ValueType::GeoPointValue(_)) => Err(FirestoreError::DeserializeError(
+                FirestoreSerializationError::from_message("LatLng not supported yet"),
             )),
             Some(value::ValueType::TimestampValue(ts)) => {
                 let dt = DateTime::<Utc>::from_utc(
@@ -387,7 +387,11 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     where
         V: Visitor<'de>,
     {
-        self.deserialize_any(visitor)
+        match self.value.value_type {
+            Some(value::ValueType::NullValue(_)) => visitor.visit_none(),
+            None => visitor.visit_none(),
+            _ => visitor.visit_some(self),
+        }
     }
 
     fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -405,7 +409,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     where
         V: Visitor<'de>,
     {
-        self.deserialize_any(visitor)
+        self.deserialize_unit(visitor)
     }
 
     fn deserialize_newtype_struct<V>(
@@ -416,7 +420,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     where
         V: Visitor<'de>,
     {
-        self.deserialize_any(visitor)
+        visitor.visit_newtype_struct(self)
     }
 
     fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
@@ -442,7 +446,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     where
         V: Visitor<'de>,
     {
-        self.deserialize_any(visitor)
+        self.deserialize_seq(visitor)
     }
 
     fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>

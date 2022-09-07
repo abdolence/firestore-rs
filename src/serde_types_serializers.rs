@@ -39,74 +39,98 @@ pub mod serialize_as_timestamp {
             type SerializeStructVariant = crate::serde_serializer::SerializeStructVariant;
 
             fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_i8(self, _v: i8) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_i16(self, _v: i16) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_i32(self, _v: i32) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_i64(self, _v: i64) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_u8(self, _v: u8) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_u16(self, _v: u16) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_u32(self, _v: u32) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_u64(self, _v: u64) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_f32(self, _v: f32) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_f64(self, _v: f64) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
@@ -125,14 +149,18 @@ pub mod serialize_as_timestamp {
             }
 
             fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
@@ -183,20 +211,26 @@ pub mod serialize_as_timestamp {
             where
                 T: Serialize,
             {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
@@ -205,8 +239,10 @@ pub mod serialize_as_timestamp {
                 _name: &'static str,
                 _len: usize,
             ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
@@ -217,14 +253,18 @@ pub mod serialize_as_timestamp {
                 _variant: &'static str,
                 _len: usize,
             ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
             fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
@@ -233,8 +273,10 @@ pub mod serialize_as_timestamp {
                 _name: &'static str,
                 _len: usize,
             ) -> Result<Self::SerializeStruct, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
 
@@ -245,8 +287,10 @@ pub mod serialize_as_timestamp {
                 _variant: &'static str,
                 _len: usize,
             ) -> Result<Self::SerializeStructVariant, Self::Error> {
-                Err(FirestoreSerializeError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                Err(FirestoreError::DeserializeError(
+                    FirestoreSerializationError::from_message(
+                        "Timestamp serializer doesn't support this type",
+                    ),
                 ))
             }
         }

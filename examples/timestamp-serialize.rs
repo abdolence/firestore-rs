@@ -6,6 +6,15 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|e| format!("{}: {}", name, e))
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Test1(u8);
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Test2 {
+    some_id: String,
+    some_bool: Option<bool>,
+}
+
 // Example structure to play with
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
@@ -15,6 +24,10 @@ struct MyTestStructure {
     some_num: u64,
     #[serde(with = "firestore::serialize_as_timestamp")]
     created_at: DateTime<Utc>,
+    test1: Test1,
+    test11: Option<Test1>,
+    test2: Option<Test2>,
+    test3: Vec<Test2>,
 }
 
 #[tokio::main]
@@ -36,6 +49,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         one_more_string: "Test2".to_string(),
         some_num: 41,
         created_at: Utc::now(),
+        test1: Test1(1),
+        test11: Some(Test1(1)),
+        test2: Some(Test2 {
+            some_id: "test-1".to_string(),
+            some_bool: Some(true),
+        }),
+        test3: vec![
+            Test2 {
+                some_id: "test-2".to_string(),
+                some_bool: Some(false),
+            },
+            Test2 {
+                some_id: "test-2".to_string(),
+                some_bool: Some(true),
+            },
+        ],
     };
 
     // Remove if it already exist
