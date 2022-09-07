@@ -182,13 +182,18 @@ impl serde::Serializer for FirestoreValueSerializer {
 
     fn serialize_newtype_struct<T: ?Sized>(
         self,
-        _name: &'static str,
+        name: &'static str,
         value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
         T: Serialize,
     {
-        value.serialize(self)
+        match name {
+            crate::types_serializers::serialize_as_timestamp::NEWTYPE_TAG_TYPE => {
+                crate::types_serializers::serialize_as_timestamp::serialize_for_firestore(value)
+            }
+            _ => value.serialize(self),
+        }
     }
 
     fn serialize_newtype_variant<T: ?Sized>(

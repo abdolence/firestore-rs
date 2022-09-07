@@ -1,4 +1,6 @@
+use crate::errors::FirestoreSerializeError;
 use crate::{FirestoreError, FirestoreValue};
+use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::value;
 use serde::de::{DeserializeSeed, Visitor};
 use serde::Deserialize;
@@ -255,8 +257,16 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
             Some(value::ValueType::DoubleValue(v)) => visitor.visit_f64(v),
             Some(value::ValueType::BytesValue(ref v)) => visitor.visit_bytes(v),
             Some(value::ValueType::ReferenceValue(v)) => visitor.visit_string(v),
-            Some(value::ValueType::GeoPointValue(v)) => todo!(),
-            Some(value::ValueType::TimestampValue(v)) => todo!(),
+            Some(value::ValueType::GeoPointValue(_)) => Err(FirestoreSerializeError::from_message(
+                "LatLng not supported yet",
+            )),
+            Some(value::ValueType::TimestampValue(ts)) => {
+                let dt = DateTime::<Utc>::from_utc(
+                    chrono::NaiveDateTime::from_timestamp(ts.seconds, ts.nanos as u32),
+                    Utc,
+                );
+                visitor.visit_string(dt.to_rfc3339())
+            }
             None => visitor.visit_unit(),
         }
     }
@@ -389,7 +399,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
 
     fn deserialize_unit_struct<V>(
         self,
-        name: &'static str,
+        _name: &'static str,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
@@ -400,7 +410,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
 
     fn deserialize_newtype_struct<V>(
         self,
-        name: &'static str,
+        _name: &'static str,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
@@ -416,7 +426,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
         self.deserialize_any(visitor)
     }
 
-    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
@@ -425,8 +435,8 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
 
     fn deserialize_tuple_struct<V>(
         self,
-        name: &'static str,
-        len: usize,
+        _name: &'static str,
+        _len: usize,
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
@@ -444,8 +454,8 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
 
     fn deserialize_struct<V>(
         self,
-        name: &'static str,
-        fields: &'static [&'static str],
+        _name: &'static str,
+        _fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
@@ -456,8 +466,8 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
 
     fn deserialize_enum<V>(
         self,
-        name: &'static str,
-        variants: &'static [&'static str],
+        _name: &'static str,
+        _variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where

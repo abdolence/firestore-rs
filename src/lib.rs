@@ -114,6 +114,9 @@ pub use db::*;
 mod serde_deserializer;
 mod serde_serializer;
 
+mod types_serializers;
+pub use types_serializers::*;
+
 mod struct_path_macro;
 use crate::errors::FirestoreError;
 pub use struct_path_macro::*;
