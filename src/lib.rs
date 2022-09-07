@@ -98,6 +98,8 @@
 #![allow(clippy::new_without_default)]
 
 pub mod errors;
+mod value_type;
+pub use value_type::*;
 
 mod query;
 pub use query::*;
@@ -109,6 +111,7 @@ mod db;
 pub use db::*;
 
 mod serde_json_serializer;
+mod serde_native_deserializer;
 mod serde_native_serializer;
 
 mod struct_path_macro;
