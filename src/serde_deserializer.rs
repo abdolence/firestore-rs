@@ -236,41 +236,88 @@ impl<'de> serde::de::MapAccess<'de> for FirestoreValueMapAccess {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-struct FirestoreUnitVariantAccess {
+struct FirestoreVariantAccess {
     de: FirestoreValue,
 }
 
-impl FirestoreUnitVariantAccess {
+impl FirestoreVariantAccess {
     fn new(de: FirestoreValue) -> Self {
         Self { de }
     }
 }
 
-impl<'de> serde::de::VariantAccess<'de> for FirestoreUnitVariantAccess {
+impl<'de> serde::de::EnumAccess<'de> for FirestoreVariantAccess {
+    type Error = FirestoreError;
+    type Variant = FirestoreValue;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+    where
+        V: DeserializeSeed<'de>,
+    {
+        match self.de.value.value_type.clone() {
+            Some(value::ValueType::MapValue(v)) => {
+                if let Some((k, v)) = v.fields.iter().next() {
+                    let variant = seed.deserialize(FirestoreValue::from(
+                        gcloud_sdk::google::firestore::v1::Value {
+                            value_type: Some(value::ValueType::StringValue(k.clone())),
+                        },
+                    ))?;
+                    Ok((variant, FirestoreValue::from(v.clone())))
+                } else {
+                    Err(FirestoreError::DeserializeError(
+                        FirestoreSerializationError::from_message(format!(
+                            "Unexpected enum empty map type: {:?}",
+                            self.de.value.value_type
+                        )),
+                    ))
+                }
+            }
+            Some(value::ValueType::StringValue(v)) => {
+                let variant = seed.deserialize(FirestoreValue::from(
+                    gcloud_sdk::google::firestore::v1::Value {
+                        value_type: Some(value::ValueType::StringValue(v)),
+                    },
+                ))?;
+                Ok((variant, self.de))
+            }
+            _ => Err(FirestoreError::DeserializeError(
+                FirestoreSerializationError::from_message(format!(
+                    "Unexpected enum type: {:?}",
+                    self.de.value.value_type
+                )),
+            )),
+        }
+    }
+}
+
+impl<'de> serde::de::VariantAccess<'de> for FirestoreValue {
     type Error = FirestoreError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn newtype_variant_seed<T>(self, _seed: T) -> Result<T::Value, Self::Error>
+    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value, Self::Error>
     where
         T: DeserializeSeed<'de>,
     {
-        Err(FirestoreError::DeserializeError(
-            FirestoreSerializationError::from_message("Unexpected new type for variant access"),
-        ))
+        seed.deserialize(self)
     }
 
-    fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
+    fn tuple_variant<V>(self, _len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
-        Err(FirestoreError::DeserializeError(
-            FirestoreSerializationError::from_message(
-                "Unexpected tuple_variant for variant access",
-            ),
-        ))
+        match self.value.value_type {
+            Some(value::ValueType::ArrayValue(v)) => {
+                visitor.visit_seq(FirestoreValueSeqAccess::new(v.values))
+            }
+            _ => Err(FirestoreError::DeserializeError(
+                FirestoreSerializationError::from_message(
+                    "Unexpected tuple_variant for variant access",
+                ),
+            )),
+        }
     }
 
     fn struct_variant<V>(
@@ -286,19 +333,6 @@ impl<'de> serde::de::VariantAccess<'de> for FirestoreUnitVariantAccess {
                 "Unexpected struct_variant for variant access",
             ),
         ))
-    }
-}
-
-impl<'de> serde::de::EnumAccess<'de> for FirestoreUnitVariantAccess {
-    type Error = FirestoreError;
-    type Variant = Self;
-
-    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
-    where
-        V: DeserializeSeed<'de>,
-    {
-        let variant = seed.deserialize(self.de.clone())?;
-        Ok((variant, self))
     }
 }
 
@@ -544,7 +578,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     where
         V: Visitor<'de>,
     {
-        visitor.visit_enum(FirestoreUnitVariantAccess::new(self))
+        visitor.visit_enum(FirestoreVariantAccess::new(self))
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
