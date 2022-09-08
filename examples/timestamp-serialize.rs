@@ -15,6 +15,11 @@ pub struct Test2 {
     some_bool: Option<bool>,
 }
 
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub enum TestEnum {
+    TestChoice,
+}
+
 // Example structure to play with
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
@@ -28,6 +33,8 @@ struct MyTestStructure {
     test11: Option<Test1>,
     test2: Option<Test2>,
     test3: Vec<Test2>,
+    test4: TestEnum,
+    test5: (TestEnum, TestEnum),
 }
 
 #[tokio::main]
@@ -65,6 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 some_bool: Some(true),
             },
         ],
+        test4: TestEnum::TestChoice,
+        test5: (TestEnum::TestChoice, TestEnum::TestChoice),
     };
 
     // Remove if it already exist

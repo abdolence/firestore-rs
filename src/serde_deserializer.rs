@@ -235,6 +235,73 @@ impl<'de> serde::de::MapAccess<'de> for FirestoreValueMapAccess {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+struct FirestoreUnitVariantAccess {
+    de: FirestoreValue,
+}
+
+impl FirestoreUnitVariantAccess {
+    fn new(de: FirestoreValue) -> Self {
+        Self { de }
+    }
+}
+
+impl<'de> serde::de::VariantAccess<'de> for FirestoreUnitVariantAccess {
+    type Error = FirestoreError;
+
+    fn unit_variant(self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn newtype_variant_seed<T>(self, _seed: T) -> Result<T::Value, Self::Error>
+    where
+        T: DeserializeSeed<'de>,
+    {
+        Err(FirestoreError::DeserializeError(
+            FirestoreSerializationError::from_message("Unexpected new type for variant access"),
+        ))
+    }
+
+    fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        Err(FirestoreError::DeserializeError(
+            FirestoreSerializationError::from_message(
+                "Unexpected tuple_variant for variant access",
+            ),
+        ))
+    }
+
+    fn struct_variant<V>(
+        self,
+        _fields: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        Err(FirestoreError::DeserializeError(
+            FirestoreSerializationError::from_message(
+                "Unexpected struct_variant for variant access",
+            ),
+        ))
+    }
+}
+
+impl<'de> serde::de::EnumAccess<'de> for FirestoreUnitVariantAccess {
+    type Error = FirestoreError;
+    type Variant = Self;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+    where
+        V: DeserializeSeed<'de>,
+    {
+        let variant = seed.deserialize(self.de.clone())?;
+        Ok((variant, self))
+    }
+}
+
 impl<'de> serde::Deserializer<'de> for FirestoreValue {
     type Error = FirestoreError;
 
@@ -477,7 +544,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     where
         V: Visitor<'de>,
     {
-        self.deserialize_any(visitor)
+        visitor.visit_enum(FirestoreUnitVariantAccess::new(self))
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
