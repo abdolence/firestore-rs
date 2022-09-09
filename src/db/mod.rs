@@ -10,8 +10,6 @@ mod query_models;
 pub use query_models::*;
 mod query;
 pub use query::*;
-mod list_doc_models;
-pub use list_doc_models::*;
 mod list_doc;
 pub use list_doc::*;
 

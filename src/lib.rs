@@ -101,8 +101,8 @@
 #![forbid(unsafe_code)]
 
 pub mod errors;
-mod value_type;
-pub use value_type::*;
+mod firestore_value;
+pub use firestore_value::*;
 
 mod db;
 pub use db::*;
