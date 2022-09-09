@@ -98,22 +98,22 @@ impl FirestoreDb {
     }
 
     #[inline]
-    pub fn get_database_path(&self) -> &String {
+    pub const fn get_database_path(&self) -> &String {
         &self.database_path
     }
 
     #[inline]
-    pub fn get_documents_path(&self) -> &String {
+    pub const fn get_documents_path(&self) -> &String {
         &self.doc_path
     }
 
     #[inline]
-    pub fn get_options(&self) -> &FirestoreDbOptions {
+    pub const fn get_options(&self) -> &FirestoreDbOptions {
         &self.options
     }
 
     #[inline]
-    pub fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
+    pub const fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
         &self.client
     }
 }
