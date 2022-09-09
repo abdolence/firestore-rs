@@ -30,13 +30,14 @@ pub mod serialize_as_timestamp {
         impl Serializer for TimestampSerializer {
             type Ok = FirestoreValue;
             type Error = FirestoreError;
-            type SerializeSeq = crate::serde_serializer::SerializeVec;
-            type SerializeTuple = crate::serde_serializer::SerializeVec;
-            type SerializeTupleStruct = crate::serde_serializer::SerializeVec;
-            type SerializeTupleVariant = crate::serde_serializer::SerializeTupleVariant;
-            type SerializeMap = crate::serde_serializer::SerializeMap;
-            type SerializeStruct = crate::serde_serializer::SerializeMap;
-            type SerializeStructVariant = crate::serde_serializer::SerializeStructVariant;
+            type SerializeSeq = crate::firestore_serde::serializer::SerializeVec;
+            type SerializeTuple = crate::firestore_serde::serializer::SerializeVec;
+            type SerializeTupleStruct = crate::firestore_serde::serializer::SerializeVec;
+            type SerializeTupleVariant = crate::firestore_serde::serializer::SerializeTupleVariant;
+            type SerializeMap = crate::firestore_serde::serializer::SerializeMap;
+            type SerializeStruct = crate::firestore_serde::serializer::SerializeMap;
+            type SerializeStructVariant =
+                crate::firestore_serde::serializer::SerializeStructVariant;
 
             fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
                 Err(FirestoreError::DeserializeError(

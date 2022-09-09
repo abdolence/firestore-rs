@@ -189,8 +189,8 @@ impl serde::Serializer for FirestoreValueSerializer {
         T: Serialize,
     {
         match name {
-            crate::serde_types_serializers::serialize_as_timestamp::NEWTYPE_TAG_TYPE => {
-                crate::serde_types_serializers::serialize_as_timestamp::serialize_for_firestore(
+            crate::firestore_serde::types_serializers::serialize_as_timestamp::NEWTYPE_TAG_TYPE => {
+                crate::firestore_serde::types_serializers::serialize_as_timestamp::serialize_for_firestore(
                     value,
                 )
             }
@@ -501,7 +501,7 @@ pub fn firestore_document_from_serializable<T>(
 where
     T: Serialize,
 {
-    let serializer = crate::serde_serializer::FirestoreValueSerializer {};
+    let serializer = crate::firestore_serde::serializer::FirestoreValueSerializer {};
     let document_value = object.serialize(serializer)?;
 
     match document_value.value.value_type {

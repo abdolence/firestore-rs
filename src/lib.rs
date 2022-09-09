@@ -104,20 +104,11 @@ pub mod errors;
 mod value_type;
 pub use value_type::*;
 
-mod query;
-pub use query::*;
-
-mod list_doc;
-pub use list_doc::*;
-
 mod db;
 pub use db::*;
 
-mod serde_deserializer;
-mod serde_serializer;
-
-mod serde_types_serializers;
-pub use serde_types_serializers::*;
+mod firestore_serde;
+pub use firestore_serde::*;
 
 mod struct_path_macro;
 use crate::errors::FirestoreError;
