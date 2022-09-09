@@ -635,7 +635,7 @@ impl<'a> FirestoreDb {
         Ok(())
     }
 
-    pub async fn listen_doc<'b>(
+    pub async fn listen_doc_changes<'b>(
         &'a self,
         database_path: &'a str,
         params: &'a FirestoreQueryParams,
