@@ -26,11 +26,11 @@ impl FirestoreDb {
         self.list_doc_with_retries(params, 0, &span).await
     }
 
-    pub async fn stream_list_doc<'a>(
-        &'a self,
+    pub async fn stream_list_doc(
+        &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<'a, Document>> {
-        let stream: BoxStream<'a, Document> = Box::pin(
+    ) -> FirestoreResult<BoxStream<Document>> {
+        let stream: BoxStream<Document> = Box::pin(
             futures_util::stream::unfold(Some(params), move |maybe_params| async move {
                 if let Some(params) = maybe_params {
                     let collection_str = params.collection_id.to_string();
@@ -65,10 +65,10 @@ impl FirestoreDb {
         Ok(stream)
     }
 
-    pub async fn stream_list_obj<'a, T>(
-        &'a self,
+    pub async fn stream_list_obj<T>(
+        &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<'a, T>>
+    ) -> FirestoreResult<BoxStream<T>>
     where
         for<'de> T: Deserialize<'de>,
     {

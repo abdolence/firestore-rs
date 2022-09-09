@@ -72,7 +72,7 @@ impl FirestoreDb {
         Ok(Self {
             database_path: firestore_database_path,
             doc_path: firestore_database_doc_path,
-            client: client,
+            client,
             options,
         })
     }

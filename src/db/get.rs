@@ -9,11 +9,11 @@ use serde::Deserialize;
 use tracing::*;
 
 impl FirestoreDb {
-    pub(crate) fn get_doc_by_path<'a>(
-        &'a self,
+    pub(crate) fn get_doc_by_path(
+        &self,
         document_path: String,
         retries: usize,
-    ) -> BoxFuture<'a, FirestoreResult<Document>> {
+    ) -> BoxFuture<FirestoreResult<Document>> {
         let request = tonic::Request::new(GetDocumentRequest {
             name: document_path.clone(),
             consistency_selector: None,
