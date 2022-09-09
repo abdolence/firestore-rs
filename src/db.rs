@@ -343,6 +343,104 @@ impl<'a> FirestoreDb {
         }
     }
 
+    pub async fn batch_stream_get_docs_by_ids<S, I>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_ids: I,
+    ) -> FirestoreResult<BoxStream<(String, Option<Document>)>>
+    where
+        S: AsRef<str>,
+        I: IntoIterator<Item = S>,
+    {
+        let request = tonic::Request::new(BatchGetDocumentsRequest {
+            database: self.database_path.clone(),
+            documents: document_ids
+                .into_iter()
+                .map(|document_id| format!("{}/{}/{}", parent, collection_id, document_id.as_ref()))
+                .collect(),
+            consistency_selector: None,
+            mask: None,
+        });
+        match self
+            .google_firestore_client
+            .get()
+            .batch_get_documents(request)
+            .await
+        {
+            Ok(response) => {
+                let stream = response
+                    .into_inner()
+                    .filter_map(|r| {
+                        future::ready(match r {
+                            Ok(doc_response) => doc_response.result.map(|doc_res| match doc_res {
+                                batch_get_documents_response::Result::Found(document) => {
+                                    let doc_id = document
+                                        .name
+                                        .split('/')
+                                        .last()
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| document.name.clone());
+                                    (doc_id, Some(document))
+                                }
+                                batch_get_documents_response::Result::Missing(full_doc_id) => {
+                                    let doc_id = full_doc_id
+                                        .split('/')
+                                        .last()
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| full_doc_id);
+                                    (doc_id, None)
+                                }
+                            }),
+                            Err(err) => {
+                                error!(
+                                    "[DB] Error occurred while consuming batch get as a stream: {}",
+                                    err
+                                );
+                                None
+                            }
+                        })
+                    })
+                    .boxed();
+                Ok(stream)
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    pub async fn batch_stream_get_objects_by_ids<T, S, I>(
+        &self,
+        collection_id: &str,
+        document_ids: I,
+    ) -> FirestoreResult<BoxStream<(String, Option<T>)>>
+    where
+        for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
+        I: IntoIterator<Item = S>,
+    {
+        let doc_stream = self
+            .batch_stream_get_docs_by_ids(self.get_documents_path(), collection_id, document_ids)
+            .await?;
+
+        Ok(Box::pin(doc_stream.filter_map(|(doc_id,maybe_doc)| async move {
+            match maybe_doc {
+                Some(doc) => {
+                    match firestore_document_to_serializable::<T>(&doc) {
+                        Ok(obj) => Some((doc_id, Some(obj))),
+                        Err(err) => {
+                            error!(
+                                "[DB] Error occurred while consuming batch documents as a stream: {}",
+                                err
+                            );
+                            None
+                        }
+                    }
+                },
+                None => Some((doc_id, None))
+            }
+        })))
+    }
+
     pub async fn create_obj<T, S>(
         &self,
         collection_id: &str,
