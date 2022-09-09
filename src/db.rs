@@ -76,6 +76,13 @@ impl<'a> FirestoreDb {
         firestore_document_to_serializable(doc)
     }
 
+    pub fn serialize_to_doc<T>(document_path: &str, obj: &T) -> FirestoreResult<Document>
+    where
+        T: Serialize,
+    {
+        firestore_document_from_serializable(document_path, obj)
+    }
+
     pub async fn ping(&self) -> FirestoreResult<()> {
         // Reading non-existing document just to check that database is available to read
         self.get_doc_by_path(self.get_database_path().clone(), 0)
