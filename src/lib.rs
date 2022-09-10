@@ -7,6 +7,7 @@
 //! - Macro that helps you use JSON paths as references to your structure fields;
 //! - Implements own Serde serializer to Firestore values;
 //! - Supports for Firestore timestamp with `#[serde(with)]`;
+//! - Transactions support;
 //! - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
 //!   that automatically detects GKE environment or application default accounts for local development;
 //!

@@ -10,6 +10,7 @@ Library provides a simple API for Google Firestore:
   - Querying/streaming docs/objects;
   - Listing documents/objects (and auto pages scrolling support);
   - Listening changes from Firestore;
+  - Transactions;
 - Full async based on Tokio runtime;
 - Macro that helps you use JSON paths as references to your structure fields;
 - Implements own Serde serializer to Firestore values;
