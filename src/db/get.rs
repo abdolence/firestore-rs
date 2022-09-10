@@ -110,13 +110,12 @@ impl FirestoreDb {
         for<'de> T: Deserialize<'de>,
         S: AsRef<str>,
     {
-        match self.get_obj::<T, S>(collection_id, document_id).await {
-            Ok(obj) => Ok(Some(obj)),
-            Err(err) => match err {
-                FirestoreError::DataNotFoundError(_) => Ok(None),
-                _ => Err(err),
-            },
-        }
+        self.get_obj_at_if_exists(
+            self.get_documents_path().as_str(),
+            collection_id,
+            &document_id.as_ref().to_string(),
+        )
+        .await
     }
 
     pub async fn get_obj_at_if_exists<T, S>(
