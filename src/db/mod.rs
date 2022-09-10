@@ -20,20 +20,14 @@ use crate::FirestoreResult;
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::*;
-use rsb_derive::Builder;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
+mod options;
+pub use options::*;
+
 pub type FirestoreCursor = gcloud_sdk::google::firestore::v1::Cursor;
 pub type FirestoreTransactionId = Vec<u8>;
-
-#[derive(Debug, Eq, PartialEq, Clone, Builder)]
-pub struct FirestoreDbOptions {
-    pub google_project_id: String,
-
-    #[default = "3"]
-    pub max_retries: usize,
-}
 
 pub struct FirestoreDb {
     database_path: String,
