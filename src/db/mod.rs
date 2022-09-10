@@ -26,8 +26,12 @@ use tracing::*;
 mod options;
 pub use options::*;
 
+mod transaction;
+pub use transaction::*;
+mod transaction_ops;
+pub use transaction_ops::*;
+
 pub type FirestoreCursor = gcloud_sdk::google::firestore::v1::Cursor;
-pub type FirestoreTransactionId = Vec<u8>;
 
 pub struct FirestoreDb {
     database_path: String,

@@ -25,7 +25,7 @@ tracing = "0.1"
 gcloud-sdk = { version = "0.18", features = ["google-firestore-v1"] }
 tonic = { version = "0.8", features = ["tls"] }
 hyper = { version ="0.14" }
-convert_case = "0.5"
+convert_case = "0.6"
 rvstruct = "0.3"
 rsb_derive = "0.5"
 serde = { version = "1.0", features = ["derive"] }
@@ -37,6 +37,8 @@ futures-util = "0.3"
 lazy_static = "1.4"
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
+hex = "0.4"
+
 
 [dev-dependencies]
 cargo-husky = { version = "1.5", default-features = false, features = ["run-for-all", "prepush-hook", "run-cargo-fmt"] }
