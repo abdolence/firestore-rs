@@ -150,17 +150,27 @@ impl FirestoreDb {
         S: AsRef<str>,
         I: IntoIterator<Item = S>,
     {
+        let full_doc_ids: Vec<String> = document_ids
+            .into_iter()
+            .map(|document_id| format!("{}/{}/{}", parent, collection_id, document_id.as_ref()))
+            .collect();
+
+        let span = span!(
+            Level::DEBUG,
+            "Firestore Batch Get",
+            "/firestore/collection_name" = collection_id,
+            "/firestore/ids_count" = full_doc_ids.len()
+        );
+
         let request = tonic::Request::new(BatchGetDocumentsRequest {
             database: self.get_database_path().clone(),
-            documents: document_ids
-                .into_iter()
-                .map(|document_id| format!("{}/{}/{}", parent, collection_id, document_id.as_ref()))
-                .collect(),
+            documents: full_doc_ids,
             consistency_selector: None,
             mask: None,
         });
         match self.client().get().batch_get_documents(request).await {
             Ok(response) => {
+                span.in_scope(|| debug!("Start consuming a batch of documents by ids"));
                 let stream = response
                     .into_inner()
                     .filter_map(|r| {
