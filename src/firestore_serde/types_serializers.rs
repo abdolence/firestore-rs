@@ -1,6 +1,12 @@
+use chrono::prelude::*;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct FirestoreTimestamp(pub DateTime<Utc>);
+
 pub mod serialize_as_timestamp {
 
-    pub(crate) const NEWTYPE_TAG_TYPE: &str = "firestore_timestamp";
+    pub(crate) const NEWTYPE_TAG_TYPE: &str = "FirestoreTimestamp";
 
     use crate::errors::*;
     use crate::{FirestoreError, FirestoreValue};

@@ -10,6 +10,8 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
     some_id: String,
+    // Using a special attribute to indicate timestamp serialization for Firestore
+    // (for serde_json it will be still the same, usually String serialization, so you can reuse the models)
     #[serde(with = "firestore::serialize_as_timestamp")]
     created_at: DateTime<Utc>,
 }
@@ -45,6 +47,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
 
     println!("Should be the same: {:?}", find_it_again);
+
+    // Query our data
+    let objects: Vec<MyTestStructure> = db
+        .query_obj(
+            FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()).with_filter(
+                FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::LessThanOrEqual(
+                    path!(MyTestStructure::created_at),
+                    firestore::FirestoreTimestamp(Utc::now()).into(), // Using the wrapping type to indicate serialization without attribute
+                ))),
+            ),
+        )
+        .await?;
+
+    println!("Now in the list: {:?}", objects);
 
     Ok(())
 }
