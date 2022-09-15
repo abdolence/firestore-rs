@@ -3,6 +3,7 @@ name = "firestore"
 version = "0.10.1"
 authors = ["Abdulla Abdurakhmanov <me@abdolence.dev>"]
 edition = "2021"
+rust-version = "1.63"
 license = "Apache-2.0"
 description = "Library provides a simple API for Google Firestore for create/update/query/stream/listen data and Serde serializer"
 homepage = "https://github.com/abdolence/firestore-rs"
