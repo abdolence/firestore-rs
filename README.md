@@ -120,6 +120,23 @@ struct MyTestStructure {
 This will change it only for firestore serialization and it still serializes as string
 to JSON (so you can reuse the same model for JSON and Firestore).
 
+In queries you need to use a special wrapping class `firestore::FirestoreTimestamp`, for example:
+```
+FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::LessThanOrEqual(
+    path!(MyTestStructure::created_at),
+    // Using the wrapping type to indicate serialization without attribute
+    firestore::FirestoreTimestamp(Utc::now()).into(),
+)))
+```
+
+## Google authentication
+
+Looks for credentials in the following places, preferring the first location found:
+- A JSON file whose path is specified by the GOOGLE_APPLICATION_CREDENTIALS environment variable.
+- A JSON file in a location known to the gcloud command-line tool using `gcloud auth application-default login`.
+- On Google Compute Engine, it fetches credentials from the metadata server.
+
+
 ## Licence
 Apache Software License (ASL)
 
