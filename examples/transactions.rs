@@ -61,6 +61,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     transaction.delete_by_id(TEST_COLLECTION_NAME, "test-5")?;
 
+    // Working with consistency selector for reading when necessary
+    let cdb = db.clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
+        transaction.transaction_id.clone(),
+    ));
+
+    let test_not_exist_in_tr: Option<MyTestStructure> = cdb
+        .get_obj_if_exists(TEST_COLLECTION_NAME, "test-5")
+        .await?;
+    println!("{:?}", test_not_exist_in_tr);
+
     transaction.commit().await?;
 
     println!("Listing objects as a stream with updated test-0 and removed test-5");
