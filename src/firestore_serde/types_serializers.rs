@@ -9,8 +9,9 @@ pub mod serialize_as_timestamp {
     pub(crate) const NEWTYPE_TAG_TYPE: &str = "FirestoreTimestamp";
 
     use crate::errors::*;
+    use crate::timestamp_utils::to_timestamp;
     use crate::{FirestoreError, FirestoreValue};
-    use chrono::{DateTime, Timelike, Utc};
+    use chrono::prelude::*;
     use gcloud_sdk::google::firestore::v1::value;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -145,12 +146,7 @@ pub mod serialize_as_timestamp {
                 let dt = v.parse::<DateTime<Utc>>()?;
                 Ok(FirestoreValue::from(
                     gcloud_sdk::google::firestore::v1::Value {
-                        value_type: Some(value::ValueType::TimestampValue(
-                            prost_types::Timestamp {
-                                seconds: dt.timestamp(),
-                                nanos: dt.nanosecond() as i32,
-                            },
-                        )),
+                        value_type: Some(value::ValueType::TimestampValue(to_timestamp(dt))),
                     },
                 ))
             }

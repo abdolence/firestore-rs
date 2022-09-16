@@ -1,6 +1,6 @@
 use crate::errors::FirestoreSerializationError;
+use crate::timestamp_utils::from_timestamp;
 use crate::{FirestoreError, FirestoreValue};
-use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::value;
 use serde::de::{DeserializeSeed, Visitor};
 use serde::Deserialize;
@@ -362,11 +362,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
                 FirestoreSerializationError::from_message("LatLng not supported yet"),
             )),
             Some(value::ValueType::TimestampValue(ts)) => {
-                let dt = DateTime::<Utc>::from_utc(
-                    chrono::NaiveDateTime::from_timestamp(ts.seconds, ts.nanos as u32),
-                    Utc,
-                );
-                visitor.visit_string(dt.to_rfc3339())
+                visitor.visit_string(from_timestamp(ts).to_rfc3339())
             }
             None => visitor.visit_unit(),
         }

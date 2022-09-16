@@ -14,12 +14,18 @@ impl FirestoreDb {
         document_path: String,
         retries: usize,
     ) -> BoxFuture<FirestoreResult<Document>> {
-        let request = tonic::Request::new(GetDocumentRequest {
-            name: document_path.clone(),
-            consistency_selector: None,
-            mask: None,
-        });
         async move {
+            let request = tonic::Request::new(GetDocumentRequest {
+                name: document_path.clone(),
+                consistency_selector: self
+                    .session_params
+                    .consistency_selector
+                    .as_ref()
+                    .map(|selector| selector.try_into())
+                    .transpose()?,
+                mask: None,
+            });
+
             match self
                 .client()
                 .get()
@@ -165,7 +171,12 @@ impl FirestoreDb {
         let request = tonic::Request::new(BatchGetDocumentsRequest {
             database: self.get_database_path().clone(),
             documents: full_doc_ids,
-            consistency_selector: None,
+            consistency_selector: self
+                .session_params
+                .consistency_selector
+                .as_ref()
+                .map(|selector| selector.try_into())
+                .transpose()?,
             mask: None,
         });
         match self.client().get().batch_get_documents(request).await {

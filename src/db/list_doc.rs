@@ -110,8 +110,8 @@ impl FirestoreDb {
     fn create_list_request(
         &self,
         params: &FirestoreListDocParams,
-    ) -> tonic::Request<ListDocumentsRequest> {
-        tonic::Request::new(ListDocumentsRequest {
+    ) -> FirestoreResult<tonic::Request<ListDocumentsRequest>> {
+        Ok(tonic::Request::new(ListDocumentsRequest {
             parent: params
                 .parent
                 .as_ref()
@@ -137,9 +137,14 @@ impl FirestoreDb {
                 .map(|masks| DocumentMask {
                     field_paths: masks.clone(),
                 }),
-            consistency_selector: None,
+            consistency_selector: self
+                .session_params
+                .consistency_selector
+                .as_ref()
+                .map(|selector| selector.try_into())
+                .transpose()?,
             show_missing: false,
-        })
+        }))
     }
 
     fn list_doc_with_retries<'a>(
@@ -148,8 +153,8 @@ impl FirestoreDb {
         retries: usize,
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<FirestoreListDocResult>> {
-        let list_request = self.create_list_request(&params);
         async move {
+            let list_request = self.create_list_request(&params)?;
             let begin_utc: DateTime<Utc> = Utc::now();
 
             match self

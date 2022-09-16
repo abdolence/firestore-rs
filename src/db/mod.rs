@@ -31,13 +31,21 @@ pub use transaction::*;
 mod transaction_ops;
 pub use transaction_ops::*;
 
+mod session_params;
+pub use session_params::*;
+
+mod consistency_selector;
+pub use consistency_selector::*;
+
 pub type FirestoreCursor = gcloud_sdk::google::firestore::v1::Cursor;
 
+#[derive(Clone)]
 pub struct FirestoreDb {
     database_path: String,
     doc_path: String,
     options: FirestoreDbOptions,
     client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
+    session_params: FirestoreDbSessionParams,
 }
 
 impl FirestoreDb {
@@ -70,6 +78,7 @@ impl FirestoreDb {
             doc_path: firestore_database_doc_path,
             client,
             options,
+            session_params: FirestoreDbSessionParams::new(),
         })
     }
 
@@ -111,7 +120,34 @@ impl FirestoreDb {
     }
 
     #[inline]
+    pub const fn get_session_params(&self) -> &FirestoreDbSessionParams {
+        &self.session_params
+    }
+
+    #[inline]
     pub const fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
         &self.client
+    }
+
+    #[inline]
+    pub fn clone_with_session_params(&self, session_params: FirestoreDbSessionParams) -> Self {
+        Self {
+            session_params,
+            ..self.clone()
+        }
+    }
+
+    #[inline]
+    pub fn clone_with_consistency_selector(
+        &self,
+        consistency_selector: FirestoreConsistencySelector,
+    ) -> Self {
+        Self {
+            session_params: self
+                .session_params
+                .clone()
+                .with_consistency_selector(consistency_selector),
+            ..self.clone()
+        }
     }
 }

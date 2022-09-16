@@ -25,7 +25,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing::subscriber::set_global_default(subscriber)?;
 
     // Create an instance
-    let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+    let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?)
+        .await?
+        .clone();
 
     const TEST_COLLECTION_NAME: &'static str = "test";
 

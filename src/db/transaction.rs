@@ -1,5 +1,5 @@
+use crate::timestamp_utils::from_timestamp;
 use crate::{FirestoreDb, FirestoreError, FirestoreResult};
-use chrono::prelude::*;
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
 use rsb_derive::Builder;
 use tracing::*;
@@ -124,13 +124,10 @@ impl<'a> FirestoreTransaction<'a> {
         let response = self.db.client().get().commit(request).await?.into_inner();
 
         if let Some(commit_time) = response.commit_time {
-            let dt = DateTime::<Utc>::from_utc(
-                NaiveDateTime::from_timestamp(commit_time.seconds, commit_time.nanos as u32),
-                Utc,
+            self.transaction_span.record(
+                "/firestore/commit_time",
+                from_timestamp(commit_time).to_rfc3339().as_str(),
             );
-
-            self.transaction_span
-                .record("/firestore/commit_time", dt.to_rfc3339().as_str());
         }
 
         self.transaction_span.in_scope(|| {

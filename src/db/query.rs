@@ -126,18 +126,23 @@ impl FirestoreDb {
     fn create_query_request(
         &self,
         params: &FirestoreQueryParams,
-    ) -> tonic::Request<RunQueryRequest> {
-        tonic::Request::new(RunQueryRequest {
+    ) -> FirestoreResult<tonic::Request<RunQueryRequest>> {
+        Ok(tonic::Request::new(RunQueryRequest {
             parent: params
                 .parent
                 .as_ref()
                 .unwrap_or_else(|| self.get_documents_path())
                 .clone(),
-            consistency_selector: None,
+            consistency_selector: self
+                .session_params
+                .consistency_selector
+                .as_ref()
+                .map(|selector| selector.try_into())
+                .transpose()?,
             query_type: Some(run_query_request::QueryType::StructuredQuery(
                 params.to_structured_query(),
             )),
-        })
+        }))
     }
 
     fn stream_query_doc_with_retries<'a, 'b>(
@@ -146,8 +151,8 @@ impl FirestoreDb {
         retries: usize,
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
-        let query_request = self.create_query_request(&params);
         async move {
+            let query_request = self.create_query_request(&params)?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
@@ -208,8 +213,8 @@ impl FirestoreDb {
         retries: usize,
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<Vec<Document>>> {
-        let query_request = self.create_query_request(&params);
         async move {
+            let query_request = self.create_query_request(&params)?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self

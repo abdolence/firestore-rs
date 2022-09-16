@@ -115,4 +115,6 @@ mod struct_path_macro;
 use crate::errors::FirestoreError;
 pub use struct_path_macro::*;
 
+pub mod timestamp_utils;
+
 type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
