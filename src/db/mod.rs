@@ -138,6 +138,14 @@ impl FirestoreDb {
     }
 
     #[inline]
+    pub fn with_session_params(self, session_params: FirestoreDbSessionParams) -> Self {
+        Self {
+            session_params,
+            ..self
+        }
+    }
+
+    #[inline]
     pub fn clone_with_consistency_selector(
         &self,
         consistency_selector: FirestoreConsistencySelector,
