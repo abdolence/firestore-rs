@@ -142,12 +142,10 @@ impl FirestoreDb {
         &self,
         consistency_selector: FirestoreConsistencySelector,
     ) -> Self {
-        Self {
-            session_params: self
-                .session_params
+        self.clone_with_session_params(
+            self.session_params
                 .clone()
                 .with_consistency_selector(consistency_selector),
-            ..self.clone()
-        }
+        )
     }
 }
