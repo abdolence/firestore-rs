@@ -1,3 +1,5 @@
+#![allow(clippy::derive_partial_eq_without_eq)] // Since we may not be able to implement Eq for the changes coming from Firestore protos
+
 use crate::FirestoreValue;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::Builder;
@@ -318,4 +320,53 @@ pub enum FirestoreQueryFilterCompare {
     In(String, FirestoreValue),
     ArrayContainsAny(String, FirestoreValue),
     NotIn(String, FirestoreValue),
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreAggregatedQueryParams {
+    pub query_params: FirestoreQueryParams,
+    pub aggregations: Vec<FirestoreAggregation>,
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreAggregation {
+    pub alias: String,
+    pub operator: Option<FirestoreAggregationOperator>,
+}
+
+impl From<&FirestoreAggregation> for structured_aggregation_query::Aggregation {
+    fn from(aggregation: &FirestoreAggregation) -> Self {
+        structured_aggregation_query::Aggregation {
+            alias: aggregation.alias.clone(),
+            operator: aggregation.operator.as_ref().map(|agg| agg.into()),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum FirestoreAggregationOperator {
+    Count(FirestoreAggregationOperatorCount),
+}
+
+impl From<&FirestoreAggregationOperator> for structured_aggregation_query::aggregation::Operator {
+    fn from(op: &FirestoreAggregationOperator) -> Self {
+        match op {
+            FirestoreAggregationOperator::Count(cnt) => {
+                structured_aggregation_query::aggregation::Operator::Count(cnt.into())
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreAggregationOperatorCount {
+    pub up_to: Option<usize>,
+}
+
+impl From<&FirestoreAggregationOperatorCount> for structured_aggregation_query::aggregation::Count {
+    fn from(cnt: &FirestoreAggregationOperatorCount) -> Self {
+        structured_aggregation_query::aggregation::Count {
+            up_to: cnt.up_to.map(|v| v as i64),
+        }
+    }
 }
