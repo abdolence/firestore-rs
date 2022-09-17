@@ -1,5 +1,5 @@
 use crate::timestamp_utils::from_timestamp;
-use crate::{FirestoreDb, FirestoreError, FirestoreResult};
+use crate::{FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreResult};
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
 use rsb_derive::Builder;
 use tracing::*;
@@ -10,13 +10,15 @@ pub struct FirestoreTransactionOptions {
     pub mode: FirestoreTransactionMode,
 }
 
-impl From<FirestoreTransactionOptions> for gcloud_sdk::google::firestore::v1::TransactionOptions {
-    fn from(
-        options: FirestoreTransactionOptions,
-    ) -> gcloud_sdk::google::firestore::v1::TransactionOptions {
+impl TryFrom<FirestoreTransactionOptions>
+    for gcloud_sdk::google::firestore::v1::TransactionOptions
+{
+    type Error = FirestoreError;
+
+    fn try_from(options: FirestoreTransactionOptions) -> Result<Self, Self::Error> {
         match options.mode {
             FirestoreTransactionMode::ReadOnly => {
-                gcloud_sdk::google::firestore::v1::TransactionOptions {
+                Ok(gcloud_sdk::google::firestore::v1::TransactionOptions {
                     mode: Some(
                         gcloud_sdk::google::firestore::v1::transaction_options::Mode::ReadOnly(
                             gcloud_sdk::google::firestore::v1::transaction_options::ReadOnly {
@@ -24,10 +26,21 @@ impl From<FirestoreTransactionOptions> for gcloud_sdk::google::firestore::v1::Tr
                             },
                         ),
                     ),
-                }
+                })
+            }
+            FirestoreTransactionMode::ReadOnlyWithConsistency(ref selector) => {
+                Ok(gcloud_sdk::google::firestore::v1::TransactionOptions {
+                    mode: Some(
+                        gcloud_sdk::google::firestore::v1::transaction_options::Mode::ReadOnly(
+                            gcloud_sdk::google::firestore::v1::transaction_options::ReadOnly {
+                                consistency_selector: Some(selector.try_into()?),
+                            },
+                        ),
+                    ),
+                })
             }
             FirestoreTransactionMode::ReadWrite => {
-                gcloud_sdk::google::firestore::v1::TransactionOptions {
+                Ok(gcloud_sdk::google::firestore::v1::TransactionOptions {
                     mode: Some(
                         gcloud_sdk::google::firestore::v1::transaction_options::Mode::ReadWrite(
                             gcloud_sdk::google::firestore::v1::transaction_options::ReadWrite {
@@ -35,7 +48,18 @@ impl From<FirestoreTransactionOptions> for gcloud_sdk::google::firestore::v1::Tr
                             },
                         ),
                     ),
-                }
+                })
+            }
+            FirestoreTransactionMode::ReadWriteRetry(tid) => {
+                Ok(gcloud_sdk::google::firestore::v1::TransactionOptions {
+                    mode: Some(
+                        gcloud_sdk::google::firestore::v1::transaction_options::Mode::ReadWrite(
+                            gcloud_sdk::google::firestore::v1::transaction_options::ReadWrite {
+                                retry_transaction: tid,
+                            },
+                        ),
+                    ),
+                })
             }
         }
     }
@@ -45,6 +69,8 @@ impl From<FirestoreTransactionOptions> for gcloud_sdk::google::firestore::v1::Tr
 pub enum FirestoreTransactionMode {
     ReadOnly,
     ReadWrite,
+    ReadOnlyWithConsistency(FirestoreConsistencySelector),
+    ReadWriteRetry(FirestoreTransactionId),
 }
 
 pub type FirestoreTransactionId = Vec<u8>;
@@ -71,7 +97,7 @@ impl<'a> FirestoreTransaction<'a> {
 
         let request = tonic::Request::new(BeginTransactionRequest {
             database: db.get_database_path().clone(),
-            options: Some(options.clone().into()),
+            options: Some(options.clone().try_into()?),
         });
 
         let response = db

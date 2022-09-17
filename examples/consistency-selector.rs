@@ -43,23 +43,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .await?;
     }
 
-    println!("Transaction update/delete on collection");
+    println!("Read only transaction to read the state before changes");
 
-    let mut transaction = db.begin_transaction().await?;
+    let transaction = db
+        .begin_transaction_with_options(
+            FirestoreTransactionOptions::new().with_mode(FirestoreTransactionMode::ReadOnly),
+        )
+        .await?;
 
-    transaction.update_object(
-        TEST_COLLECTION_NAME,
-        "test-0",
-        &MyTestStructure {
-            some_id: format!("test-0"),
-            some_string: "UpdatedTest".to_string(),
-        },
-        Some(paths!(MyTestStructure::{
-            some_string
-        })),
-    )?;
+    // Working with consistency selector for reading when necessary
+    let cdb = db.clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
+        transaction.transaction_id.clone(),
+    ));
 
-    transaction.delete_by_id(TEST_COLLECTION_NAME, "test-5")?;
+    let consistency_read_test: Option<MyTestStructure> = cdb
+        .get_obj_if_exists(TEST_COLLECTION_NAME, "test-0")
+        .await?;
+
+    println!("Should be the original one: {:?}", consistency_read_test);
 
     transaction.commit().await?;
 
