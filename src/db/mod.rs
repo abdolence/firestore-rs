@@ -10,8 +10,12 @@ mod query_models;
 pub use query_models::*;
 mod query;
 pub use query::*;
+
+#[cfg(feature = "experimental-aggregated-queries")]
 mod aggregated_query;
+#[cfg(feature = "experimental-aggregated-queries")]
 pub use aggregated_query::*;
+
 mod list_doc;
 pub use list_doc::*;
 
@@ -62,16 +66,31 @@ impl FirestoreDb {
     }
 
     pub async fn with_options(options: FirestoreDbOptions) -> FirestoreResult<Self> {
+        Self::with_options_token_source(
+            options,
+            GCP_DEFAULT_SCOPES.clone(),
+            TokenSourceType::Default,
+        )
+        .await
+    }
+
+    pub async fn with_options_token_source(
+        options: FirestoreDbOptions,
+        token_scopes: Vec<String>,
+        token_source_type: TokenSourceType,
+    ) -> FirestoreResult<Self> {
         let firestore_database_path =
             format!("projects/{}/databases/(default)", options.google_project_id);
         let firestore_database_doc_path = format!("{}/documents", firestore_database_path);
 
         info!("Creating a new DB client: {}", firestore_database_path);
 
-        let client = GoogleApiClient::from_function(
+        let client = GoogleApiClient::from_function_with_token_source(
             FirestoreClient::new,
             "https://firestore.googleapis.com",
             Some(firestore_database_path.clone()),
+            token_scopes,
+            token_source_type,
         )
         .await?;
 
