@@ -4,7 +4,7 @@
 
 # Firestore for Rust
 
-Library provides a simple API for Google Firestore:
+Library provides a simple API for Google Firestore based on the official gRPC API:
 - Create or update documents using Rust structures and Serde; 
 - Support for:
   - Querying/streaming docs/objects;
@@ -13,7 +13,7 @@ Library provides a simple API for Google Firestore:
   - Transactions;
 - Full async based on Tokio runtime;
 - Macro that helps you use JSON paths as references to your structure fields;
-- Implements own Serde serializer to Firestore values;
+- Implements own Serde serializer to Firestore protobuf values;
 - Supports for Firestore timestamp with `#[serde(with)]`
 - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs) 
   that automatically detects GKE environment or application default accounts for local development;
