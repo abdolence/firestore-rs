@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )
     .await?;
 
-    println!("Listing all childs");
+    println!("Listing all children");
 
     let mut objs_stream: BoxStream<MyChildStructure> = db
         .stream_list_obj(

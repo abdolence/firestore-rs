@@ -129,6 +129,45 @@ FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::LessThanOrEqual(
 )))
 ```
 
+## Nested collections
+You can work with nested collection using functions like `db.create_object_at` and specifying path/location to documents:
+
+```rust
+
+// Creating a parent doc
+db.create_obj(
+    TEST_PARENT_COLLECTION_NAME,
+    &parent_struct.some_id,
+    &parent_struct,
+)
+.await?;
+
+// The doc path where we store our childs
+let parent_path = format!(
+  "{}/{}/{}",
+  db.get_documents_path(),
+  TEST_PARENT_COLLECTION_NAME,
+  parent_struct.some_id
+);
+
+// Create a child doc
+db.create_obj_at(
+    parent_path.as_str(),
+    TEST_CHILD_COLLECTION_NAME,
+    &child_struct.some_id,
+    &child_struct,
+)
+.await?;
+
+// Querying children
+let mut objs_stream: BoxStream<MyChildStructure> = db
+.stream_list_obj(
+    FirestoreListDocParams::new(TEST_CHILD_COLLECTION_NAME.into())
+        .with_parent(parent_path),
+)
+.await?;
+```
+
 ## Google authentication
 
 Looks for credentials in the following places, preferring the first location found:
