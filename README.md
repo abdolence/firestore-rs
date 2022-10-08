@@ -167,6 +167,7 @@ let mut objs_stream: BoxStream<MyChildStructure> = db
 )
 .await?;
 ```
+Complete example available [here](examples/nested_collections.rs).
 
 ## Google authentication
 
