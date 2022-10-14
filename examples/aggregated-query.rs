@@ -26,8 +26,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     const TEST_COLLECTION_NAME: &'static str = "test";
 
-    // WARNING: This is not supported yet for Firestore officially and will fail with internal error
-
     println!("Aggregated query a test collection as a stream");
     // Query as a stream our data
     let mut object_stream: BoxStream<MyAggTestStructure> = db

@@ -1,25 +1,37 @@
 mod get;
+
 pub use get::*;
+use std::fmt::Formatter;
+
 mod create;
+
 pub use create::*;
+
 mod update;
+
 pub use update::*;
+
 mod delete;
+
 pub use delete::*;
+
 mod query_models;
+
 pub use query_models::*;
+
 mod query;
+
 pub use query::*;
 
-#[cfg(feature = "experimental-aggregated-queries")]
 mod aggregated_query;
-#[cfg(feature = "experimental-aggregated-queries")]
 pub use aggregated_query::*;
 
 mod list_doc;
+
 pub use list_doc::*;
 
 mod listen_changes;
+
 pub use listen_changes::*;
 
 use crate::FirestoreResult;
@@ -30,17 +42,23 @@ use serde::{Deserialize, Serialize};
 use tracing::*;
 
 mod options;
+
 pub use options::*;
 
 mod transaction;
+
 pub use transaction::*;
+
 mod transaction_ops;
+
 pub use transaction_ops::*;
 
 mod session_params;
+
 pub use session_params::*;
 
 mod consistency_selector;
+
 pub use consistency_selector::*;
 
 pub type FirestoreCursor = gcloud_sdk::google::firestore::v1::Cursor;
@@ -176,5 +194,11 @@ impl FirestoreDb {
                 .clone()
                 .with_consistency_selector(consistency_selector),
         )
+    }
+}
+
+impl std::fmt::Debug for FirestoreDb {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FirestoreDb {{ options: {:?}, database_path:{:?}, doc_path: {:?}, session_params: {:?} }}", self.options, self.database_path, self.doc_path, self.session_params)
     }
 }
