@@ -95,7 +95,7 @@
 //!}
 //! ```
 //!
-//! All examples available at: [github](https://github.com/abdolence/firestore-rs/tree/master/src/examples)
+//! All examples and more docs available at: [github](https://github.com/abdolence/firestore-rs/tree/master/examples)
 //!
 
 #![allow(clippy::new_without_default)]
