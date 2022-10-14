@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use firestore::*;
 use futures_util::stream::BoxStream;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use tokio_stream::StreamExt;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|e| format!("{}: {}", name, e))
@@ -66,6 +66,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     while let Some(object) = object_stream.next().await {
         println!("Object in stream: {:?}", object);
     }
+
+    // Querying as a stream with errors when needed
+    let object_stream_with_errors =
+        Box::pin(db
+            .stream_query_obj_with_errors::<MyTestStructure>(
+                FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()).with_filter(
+                    FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::Equal(
+                        path!(MyTestStructure::some_num),
+                        42.into(),
+                    ))),
+                ),
+            )
+            .await?
+            .filter_map(|item| {std::future::ready(
+                match item {
+                    Ok(maybe_item) => Some(maybe_item),
+                    Err(err) => {
+                        println!("Err occurred: {}", err);
+                        None
+                    }
+                }
+            )})
+        );
+
+    let as_vec: Vec<MyTestStructure> = object_stream_with_errors.collect().await;
+    println!("{:?}", as_vec);
 
     Ok(())
 }

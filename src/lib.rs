@@ -117,4 +117,4 @@ pub use struct_path_macro::*;
 
 pub mod timestamp_utils;
 
-type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
+pub type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
