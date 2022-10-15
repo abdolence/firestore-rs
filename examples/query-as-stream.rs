@@ -68,27 +68,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     // Querying as a stream with errors when needed
-    let object_stream_with_errors =
-        Box::pin(db
-            .stream_query_obj_with_errors::<MyTestStructure>(
-                FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()).with_filter(
-                    FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::Equal(
-                        path!(MyTestStructure::some_num),
-                        42.into(),
-                    ))),
-                ),
-            )
-            .await?
-            .filter_map(|item| {std::future::ready(
-                match item {
-                    Ok(maybe_item) => Some(maybe_item),
-                    Err(err) => {
-                        println!("Err occurred: {}", err);
-                        None
-                    }
+    let object_stream_with_errors = Box::pin(
+        db.stream_query_obj_with_errors::<MyTestStructure>(
+            FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()).with_filter(
+                FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::Equal(
+                    path!(MyTestStructure::some_num),
+                    42.into(),
+                ))),
+            ),
+        )
+        .await?
+        .filter_map(|item| {
+            std::future::ready(match item {
+                Ok(item) => Some(item),
+                Err(err) => {
+                    println!("Err occurred: {}", err);
+                    None
                 }
-            )})
-        );
+            })
+        }),
+    );
 
     let as_vec: Vec<MyTestStructure> = object_stream_with_errors.collect().await;
     println!("{:?}", as_vec);
