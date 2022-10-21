@@ -353,7 +353,7 @@ impl From<&FirestoreQueryCursor> for gcloud_sdk::google::firestore::v1::Cursor {
             }
             FirestoreQueryCursor::AfterValue(values) => gcloud_sdk::google::firestore::v1::Cursor {
                 values: values.iter().map(|value| value.value.clone()).collect(),
-                before: true,
+                before: false,
             },
         }
     }
