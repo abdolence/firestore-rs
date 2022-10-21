@@ -139,9 +139,7 @@ impl FirestoreDb {
                 .as_ref()
                 .map(|selector| selector.try_into())
                 .transpose()?,
-            query_type: Some(run_query_request::QueryType::StructuredQuery(
-                params.to_structured_query(),
-            )),
+            query_type: Some(run_query_request::QueryType::StructuredQuery(params.into())),
         }))
     }
 

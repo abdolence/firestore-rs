@@ -61,8 +61,6 @@ mod consistency_selector;
 
 pub use consistency_selector::*;
 
-pub type FirestoreCursor = gcloud_sdk::google::firestore::v1::Cursor;
-
 #[derive(Clone)]
 pub struct FirestoreDb {
     database_path: String,

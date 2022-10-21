@@ -5,7 +5,7 @@
 //! - Support for querying / streaming / listing / listening changes / aggregated queries of documents from Firestore;
 //! - Full async based on Tokio runtime;
 //! - Macro that helps you use JSON paths as references to your structure fields;
-//! - Implements own Serde serializer to Firestore values;
+//! - Implements own Serde serializer to Firestore gRPC values;
 //! - Supports for Firestore timestamp with `#[serde(with)]`;
 //! - Transactions support;
 //! - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
