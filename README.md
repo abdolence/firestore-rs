@@ -189,9 +189,8 @@ db.create_obj_at(
 )
 .await?;
 
-// Querying children
-let mut objs_stream: BoxStream<MyChildStructure> = db
-.stream_list_obj(
+// Listing children
+let mut objs_stream: BoxStream<MyChildStructure> = db.stream_list_obj(
     FirestoreListDocParams::new(TEST_CHILD_COLLECTION_NAME.into())
         .with_parent(parent_path),
 )
