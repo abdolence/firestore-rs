@@ -56,13 +56,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let object_stream: BoxStream<MyTestStructure> = db
         .fluent()
         .select()
-        .fields([
-            path!(MyTestStructure::some_id),
-            path!(MyTestStructure::some_num),
-            path!(MyTestStructure::some_string),
-            path!(MyTestStructure::one_more_string),
-            path!(MyTestStructure::created_at),
-        ])
+        .fields(
+            paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at}),
+        )
         .from(TEST_COLLECTION_NAME)
         .filter(|q| {
             q.for_all([
