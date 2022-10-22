@@ -118,3 +118,6 @@ pub use struct_path_macro::*;
 pub mod timestamp_utils;
 
 pub type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
+
+mod fluent_api;
+pub use fluent_api::*;

@@ -288,6 +288,15 @@ impl FirestoreQueryOrder {
     }
 }
 
+impl<S> From<(S, FirestoreQueryDirection)> for FirestoreQueryOrder
+where
+    S: AsRef<str>,
+{
+    fn from(field_order: (S, FirestoreQueryDirection)) -> Self {
+        FirestoreQueryOrder::new(field_order.0.as_ref().to_string(), field_order.1)
+    }
+}
+
 impl From<&FirestoreQueryOrder> for structured_query::Order {
     fn from(order: &FirestoreQueryOrder) -> Self {
         order.to_structured_query_order()
