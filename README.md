@@ -82,7 +82,6 @@ Example code:
 
     println!("Should be the same: {:?}", find_it_again);
 
-    // Query our data
     let objects: Vec<MyTestStructure> = db.query_obj(
         FirestoreQueryParams::new(
             TEST_COLLECTION_NAME.into()
@@ -104,6 +103,41 @@ All examples available at [examples](examples) directory.
 To run example use it with environment variables:
 ```
 # PROJECT_ID=<your-google-project-id> cargo run --example simple-crud
+```
+
+## Fluent Query API
+To simplify development and developer experience the library provides the Fluent API:
+
+```rust
+// Query as a stream our data
+let object_stream: BoxStream<MyTestStructure> = db.fluent()
+    .select()
+    .fields([
+        path!(MyTestStructure::some_id),
+        path!(MyTestStructure::some_num),
+        path!(MyTestStructure::some_string),
+        path!(MyTestStructure::one_more_string),
+    ]) // Optionally select the fields needed
+    .from(TEST_COLLECTION_NAME)
+    .filter(|q| { // Fluent filter API example
+        q.for_all([
+            q.field(path!(MyTestStructure::some_num)).is_not_null(),
+            q.field(path!(MyTestStructure::some_string)).eq("Test"),
+            // Sometimes you have optional filters
+            Some("Test2")
+                .and_then(|value| q.field(path!(MyTestStructure::one_more_string)).eq(value)),
+        ])
+    })
+    .order_by([(
+        path!(MyTestStructure::some_num),
+        FirestoreQueryDirection::Descending,
+    )])
+    .obj() // Reading documents as structures using Serde gRPC deserializer
+    .stream_query()
+    .await?;
+
+let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
+println!("{:?}", as_vec);
 ```
 
 ## Timestamps support

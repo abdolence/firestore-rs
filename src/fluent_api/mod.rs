@@ -1,4 +1,6 @@
+pub mod filter_builder;
 pub mod query_builder;
+
 use crate::fluent_api::query_builder::FirestoreSelectInitialBuilder;
 use crate::{FirestoreDb, FirestoreQuerySupport};
 

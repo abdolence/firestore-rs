@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use firestore::*;
-use futures_util::stream::BoxStream;
-use futures_util::StreamExt;
+use futures::stream::BoxStream;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
@@ -56,7 +56,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let object_stream: BoxStream<MyTestStructure> = db
         .fluent()
         .select()
+        .fields([
+            path!(MyTestStructure::some_id),
+            path!(MyTestStructure::some_num),
+            path!(MyTestStructure::some_string),
+            path!(MyTestStructure::one_more_string),
+            path!(MyTestStructure::created_at),
+        ])
         .from(TEST_COLLECTION_NAME)
+        .filter(|q| {
+            q.for_all([
+                q.field(path!(MyTestStructure::some_num)).is_not_null(),
+                q.field(path!(MyTestStructure::some_string)).eq("Test"),
+                Some("Test2")
+                    .and_then(|value| q.field(path!(MyTestStructure::one_more_string)).eq(value)),
+            ])
+        })
         .order_by([(
             path!(MyTestStructure::some_num),
             FirestoreQueryDirection::Descending,

@@ -1,7 +1,8 @@
+use crate::filter_builder::FirestoreQueryFilterBuilder;
 use crate::fluent_api::FirestoreExprBuilder;
 use crate::{
-    FirestoreQueryCollection, FirestoreQueryOrder, FirestoreQueryParams, FirestoreQuerySupport,
-    FirestoreResult,
+    FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
+    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult,
 };
 use futures_util::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -14,7 +15,7 @@ where
     D: FirestoreQuerySupport,
 {
     builder: FirestoreExprBuilder<'a, D>,
-    select_only_fields: Option<Vec<String>>,
+    return_only_fields: Option<Vec<String>>,
 }
 
 impl<'a, D> FirestoreSelectInitialBuilder<'a, D>
@@ -24,18 +25,18 @@ where
     pub(crate) fn new(builder: FirestoreExprBuilder<'a, D>) -> Self {
         Self {
             builder,
-            select_only_fields: None,
+            return_only_fields: None,
         }
     }
 
-    pub fn fields<I>(self, select_only_fields: I) -> Self
+    pub fn fields<I>(self, return_only_fields: I) -> Self
     where
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
         Self {
-            select_only_fields: Some(
-                select_only_fields
+            return_only_fields: Some(
+                return_only_fields
                     .into_iter()
                     .map(|field| field.as_ref().to_string())
                     .collect(),
@@ -49,7 +50,7 @@ where
         C: Into<FirestoreQueryCollection>,
     {
         let params: FirestoreQueryParams = FirestoreQueryParams::new(collection.into())
-            .opt_return_only_fields(self.select_only_fields);
+            .opt_return_only_fields(self.return_only_fields);
         FirestoreSelectDocBuilder::new(self.builder, params)
     }
 }
@@ -109,6 +110,39 @@ where
             params: self
                 .params
                 .with_order_by(fields.into_iter().map(|field| field.into()).collect()),
+            ..self
+        }
+    }
+
+    pub fn start_at<I>(self, cursor: FirestoreQueryCursor) -> Self {
+        Self {
+            params: self.params.with_start_at(cursor),
+            ..self
+        }
+    }
+
+    pub fn end_at<I>(self, cursor: FirestoreQueryCursor) -> Self {
+        Self {
+            params: self.params.with_end_at(cursor),
+            ..self
+        }
+    }
+
+    pub fn all_descendants(self) -> Self {
+        Self {
+            params: self.params.with_all_descendants(true),
+            ..self
+        }
+    }
+
+    pub fn filter<FN>(self, filter: FN) -> Self
+    where
+        FN: Fn(FirestoreQueryFilterBuilder) -> Option<FirestoreQueryFilter>,
+    {
+        let filter_builder = FirestoreQueryFilterBuilder::new();
+
+        Self {
+            params: self.params.opt_filter(filter(filter_builder)),
             ..self
         }
     }
@@ -192,7 +226,7 @@ mod tests {
         let select_only_fields = FirestoreExprBuilder::new(&MockDatabase {})
             .select()
             .fields(paths!(TestStructure::{some_id, one_more_string, some_num}))
-            .select_only_fields;
+            .return_only_fields;
 
         assert_eq!(
             select_only_fields,
