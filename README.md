@@ -25,6 +25,7 @@ Cargo.toml:
 ```toml
 [dependencies]
 firestore = "0.12"
+struct-path = "0.1" # For compile time path! macro support
 ```
 
 Example code:
