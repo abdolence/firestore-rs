@@ -1,64 +1,27 @@
 #[macro_export]
 macro_rules! path {
-    ($($t:ident :: $f:ident),+) => {{
-        let mut vec_path= vec![];
-
-        $(
-            #[allow(dead_code, unused_variables)]
-            {
-                fn _test_struct_field(test_struct: &$t) {
-                    let _t = &test_struct.$f;
-                }
-                vec_path.push(
-                    stringify!($f)
-                );
-            }
-        )*
-
-        vec_path.join(".")
+    ($($x:tt)*) => {{
+        struct_path::path!($($x)*).to_string()
     }};
 }
 
 #[macro_export]
 macro_rules! paths {
-    ($t:ident::{$($fs:ident),+}) => {{
-        vec![
-            $(
-                path!($t::$fs)
-            ),*
-        ]
+    ($($x:tt)*) => {{
+        struct_path::path!($($x)*).into_iter().map(|s| s.to_string()).collect::<Vec<String>>()
     }};
 }
 
 #[macro_export]
 macro_rules! path_camel_case {
-    ($($t:ident :: $f:ident),+) => {{
-        use convert_case::{Case, Casing};
-        let mut vec_path= vec![];
-
-        $(
-            #[allow(dead_code, unused_variables)]
-            {
-                fn _test_struct_field(test_struct: &$t) {
-                    let _t = &test_struct.$f;
-                }
-                vec_path.push(
-                    stringify!($f).to_case(Case::Camel)
-                );
-            }
-        )*
-
-        vec_path.join(".")
+    ($($x:tt)*) => {{
+        struct_path::path!($($x)*;case="camel").to_string()
     }};
 }
 
 #[macro_export]
 macro_rules! paths_camel_case {
-    ($t:ident::{$($fs:ident),+}) => {{
-        vec![
-            $(
-                path_camel_case!($t::$fs)
-            ),*
-        ]
-    }};
+    ($($x:tt)*) => {{
+        struct_path::path!($($x)*;case="camel").into_iter().map(|s| s.to_string()).collect::<Vec<String>>()
+    }}
 }
