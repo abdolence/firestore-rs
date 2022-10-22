@@ -14,7 +14,7 @@
 //! ## Example:
 //!
 //! ```rust,no_run
-//! use firestore::*;
+//!use firestore::*;
 //!use serde::{Deserialize, Serialize};
 //!
 //!pub fn config_env_var(name: &str) -> Result<String, String> {
@@ -95,6 +95,70 @@
 //!}
 //! ```
 //!
+//! ## Fluent Query API
+//! To simplify development and developer experience the library provides the Fluent API:
+//!
+//! ```rust,no_run
+//!
+//!use firestore::*;
+//!use serde::{Deserialize, Serialize};
+//!use futures::stream::BoxStream;
+//!use futures::StreamExt;
+//!
+//!pub fn config_env_var(name: &str) -> Result<String, String> {
+//!    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+//!}
+//!
+//!// Example structure to play with
+//!#[derive(Debug, Clone, Deserialize, Serialize)]
+//!struct MyTestStructure {
+//!    some_id: String,
+//!    some_string: String,
+//!    one_more_string: String,
+//!    some_num: u64,
+//!}
+//!
+//!#[tokio::main]
+//!async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {//!
+//!    // Create an instance
+//!    let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+//!
+//!    const TEST_COLLECTION_NAME: &'static str = "test";
+//!
+//!    // Query as a stream our data
+//!    let object_stream: BoxStream<MyTestStructure> = db.fluent()
+//!     .select()
+//!     .fields([
+//!         path!(MyTestStructure::some_id),
+//!         path!(MyTestStructure::some_num),
+//!         path!(MyTestStructure::some_string),
+//!         path!(MyTestStructure::one_more_string),
+//!     ]) // Optionally select the fields needed
+//!     .from(TEST_COLLECTION_NAME)
+//!     .filter(|q| { // Fluent filter API example
+//!         q.for_all([
+//!             q.field(path!(MyTestStructure::some_num)).is_not_null(),
+//!             q.field(path!(MyTestStructure::some_string)).eq("Test"),
+//!             // Sometimes you have optional filters
+//!             Some("Test2")
+//!                 .and_then(|value| q.field(path!(MyTestStructure::one_more_string)).eq(value)),
+//!         ])
+//!     })
+//!     .order_by([(
+//!         path!(MyTestStructure::some_num),
+//!         FirestoreQueryDirection::Descending,
+//!     )])
+//!     .obj() // Reading documents as structures using Serde gRPC deserializer
+//!     .stream_query()
+//!     .await?;
+//!
+//!     let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
+//!     println!("{:?}", as_vec);
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
 //! All examples and more docs available at: [github](https://github.com/abdolence/firestore-rs/tree/master/examples)
 //!
 
@@ -118,3 +182,6 @@ pub use struct_path_macro::*;
 pub mod timestamp_utils;
 
 pub type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
+
+mod fluent_api;
+pub use fluent_api::*;
