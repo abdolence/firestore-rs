@@ -1,5 +1,4 @@
 use crate::filter_builder::FirestoreQueryFilterBuilder;
-use crate::fluent_api::FirestoreExprBuilder;
 use crate::{
     FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
     FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult,
@@ -14,7 +13,7 @@ pub struct FirestoreSelectInitialBuilder<'a, D>
 where
     D: FirestoreQuerySupport,
 {
-    builder: FirestoreExprBuilder<'a, D>,
+    db: &'a D,
     return_only_fields: Option<Vec<String>>,
 }
 
@@ -22,13 +21,15 @@ impl<'a, D> FirestoreSelectInitialBuilder<'a, D>
 where
     D: FirestoreQuerySupport,
 {
-    pub(crate) fn new(builder: FirestoreExprBuilder<'a, D>) -> Self {
+    #[inline]
+    pub(crate) fn new(db: &'a D) -> Self {
         Self {
-            builder,
+            db,
             return_only_fields: None,
         }
     }
 
+    #[inline]
     pub fn fields<I>(self, return_only_fields: I) -> Self
     where
         I: IntoIterator,
@@ -45,13 +46,14 @@ where
         }
     }
 
+    #[inline]
     pub fn from<C>(self, collection: C) -> FirestoreSelectDocBuilder<'a, D>
     where
         C: Into<FirestoreQueryCollection>,
     {
         let params: FirestoreQueryParams = FirestoreQueryParams::new(collection.into())
             .opt_return_only_fields(self.return_only_fields);
-        FirestoreSelectDocBuilder::new(self.builder, params)
+        FirestoreSelectDocBuilder::new(self.db, params)
     }
 }
 
@@ -60,7 +62,7 @@ pub struct FirestoreSelectDocBuilder<'a, D>
 where
     D: FirestoreQuerySupport,
 {
-    builder: FirestoreExprBuilder<'a, D>,
+    db: &'a D,
     params: FirestoreQueryParams,
 }
 
@@ -68,25 +70,32 @@ impl<'a, D> FirestoreSelectDocBuilder<'a, D>
 where
     D: FirestoreQuerySupport,
 {
-    pub(crate) fn new(builder: FirestoreExprBuilder<'a, D>, params: FirestoreQueryParams) -> Self {
-        Self { builder, params }
+    #[inline]
+    pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
+        Self { db, params }
     }
 
+    #[inline]
     pub fn obj<T>(self) -> FirestoreSelectObjBuilder<'a, D, T>
     where
         T: Send,
         for<'de> T: Deserialize<'de>,
     {
-        FirestoreSelectObjBuilder::new(self.builder, self.params)
+        FirestoreSelectObjBuilder::new(self.db, self.params)
     }
 
-    pub fn parent(self, parent: String) -> Self {
+    #[inline]
+    pub fn parent<S>(self, parent: S) -> Self
+    where
+        S: AsRef<str>,
+    {
         Self {
-            params: self.params.with_parent(parent),
+            params: self.params.with_parent(parent.as_ref().to_string()),
             ..self
         }
     }
 
+    #[inline]
     pub fn limit(self, value: u32) -> Self {
         Self {
             params: self.params.with_limit(value),
@@ -94,6 +103,7 @@ where
         }
     }
 
+    #[inline]
     pub fn offset(self, value: u32) -> Self {
         Self {
             params: self.params.with_offset(value),
@@ -101,6 +111,7 @@ where
         }
     }
 
+    #[inline]
     pub fn order_by<I>(self, fields: I) -> Self
     where
         I: IntoIterator,
@@ -114,6 +125,7 @@ where
         }
     }
 
+    #[inline]
     pub fn start_at<I>(self, cursor: FirestoreQueryCursor) -> Self {
         Self {
             params: self.params.with_start_at(cursor),
@@ -121,6 +133,7 @@ where
         }
     }
 
+    #[inline]
     pub fn end_at<I>(self, cursor: FirestoreQueryCursor) -> Self {
         Self {
             params: self.params.with_end_at(cursor),
@@ -128,6 +141,7 @@ where
         }
     }
 
+    #[inline]
     pub fn all_descendants(self) -> Self {
         Self {
             params: self.params.with_all_descendants(true),
@@ -135,6 +149,7 @@ where
         }
     }
 
+    #[inline]
     pub fn filter<FN>(self, filter: FN) -> Self
     where
         FN: Fn(FirestoreQueryFilterBuilder) -> Option<FirestoreQueryFilter>,
@@ -148,20 +163,17 @@ where
     }
 
     pub async fn query(self) -> FirestoreResult<Vec<Document>> {
-        self.builder.db.query_doc(self.params).await
+        self.db.query_doc(self.params).await
     }
 
     pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, Document>> {
-        self.builder.db.stream_query_doc(self.params).await
+        self.db.stream_query_doc(self.params).await
     }
 
     pub async fn stream_query_with_errors<'b>(
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
-        self.builder
-            .db
-            .stream_query_doc_with_errors(self.params)
-            .await
+        self.db.stream_query_doc_with_errors(self.params).await
     }
 }
 
@@ -172,7 +184,7 @@ where
     T: Send,
     for<'de> T: Deserialize<'de>,
 {
-    builder: FirestoreExprBuilder<'a, D>,
+    db: &'a D,
     params: FirestoreQueryParams,
     _pd: PhantomData<T>,
 }
@@ -184,22 +196,22 @@ where
     for<'de> T: Deserialize<'de>,
 {
     pub(crate) fn new(
-        builder: FirestoreExprBuilder<'a, D>,
+        db: &'a D,
         params: FirestoreQueryParams,
     ) -> FirestoreSelectObjBuilder<'a, D, T> {
         Self {
-            builder,
+            db,
             params,
             _pd: PhantomData::default(),
         }
     }
 
     pub async fn query(self) -> FirestoreResult<Vec<T>> {
-        self.builder.db.query_obj(self.params).await
+        self.db.query_obj(self.params).await
     }
 
     pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, T>> {
-        self.builder.db.stream_query_obj(self.params).await
+        self.db.stream_query_obj(self.params).await
     }
 
     pub async fn stream_query_with_errors<'b>(
@@ -208,10 +220,7 @@ where
     where
         T: 'b,
     {
-        self.builder
-            .db
-            .stream_query_obj_with_errors(self.params)
-            .await
+        self.db.stream_query_obj_with_errors(self.params).await
     }
 }
 
