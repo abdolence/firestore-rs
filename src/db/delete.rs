@@ -1,10 +1,28 @@
 use crate::{FirestoreDb, FirestoreResult};
+use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
 
-impl FirestoreDb {
-    pub async fn delete_by_id<S>(&self, collection_id: &str, document_id: S) -> FirestoreResult<()>
+#[async_trait]
+pub trait FirestoreDeleteSupport {
+    async fn delete_by_id<S>(&self, collection_id: &str, document_id: S) -> FirestoreResult<()>
     where
-        S: AsRef<str>,
+        S: AsRef<str> + Send;
+
+    async fn delete_by_id_at<S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+    ) -> FirestoreResult<()>
+    where
+        S: AsRef<str> + Send;
+}
+
+#[async_trait]
+impl FirestoreDeleteSupport for FirestoreDb {
+    async fn delete_by_id<S>(&self, collection_id: &str, document_id: S) -> FirestoreResult<()>
+    where
+        S: AsRef<str> + Send,
     {
         self.delete_by_id_at(
             self.get_documents_path().as_str(),
@@ -14,14 +32,14 @@ impl FirestoreDb {
         .await
     }
 
-    pub async fn delete_by_id_at<S>(
+    async fn delete_by_id_at<S>(
         &self,
         parent: &str,
         collection_id: &str,
         document_id: S,
     ) -> FirestoreResult<()>
     where
-        S: AsRef<str>,
+        S: AsRef<str> + Send,
     {
         let document_path = format!("{}/{}/{}", parent, collection_id, document_id.as_ref());
 

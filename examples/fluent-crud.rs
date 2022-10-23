@@ -37,6 +37,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         created_at: Utc::now(),
     };
 
+    db.fluent()
+        .delete()
+        .from(TEST_COLLECTION_NAME)
+        .document_id(&my_struct.some_id)
+        .execute()
+        .await?;
+
     // A fluent version of create document/object
     let object_returned: MyTestStructure = db
         .fluent()

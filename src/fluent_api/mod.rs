@@ -1,10 +1,12 @@
 pub mod create_builder;
+pub mod delete_builder;
 pub mod filter_builder;
 pub mod query_builder;
 
 use crate::create_builder::FirestoreInsertInitialBuilder;
+use crate::delete_builder::FirestoreDeleteInitialBuilder;
 use crate::fluent_api::query_builder::FirestoreSelectInitialBuilder;
-use crate::{FirestoreCreateSupport, FirestoreDb, FirestoreQuerySupport};
+use crate::{FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport, FirestoreQuerySupport};
 
 #[derive(Clone, Debug)]
 pub struct FirestoreExprBuilder<'a, D>
@@ -16,7 +18,7 @@ where
 
 impl<'a, D> FirestoreExprBuilder<'a, D>
 where
-    D: FirestoreQuerySupport + FirestoreCreateSupport,
+    D: FirestoreQuerySupport + FirestoreCreateSupport + FirestoreDeleteSupport,
 {
     pub(crate) fn new(db: &'a D) -> Self {
         Self { db }
@@ -30,6 +32,11 @@ where
     #[inline]
     pub fn insert(self) -> FirestoreInsertInitialBuilder<'a, D> {
         FirestoreInsertInitialBuilder::new(self.db)
+    }
+
+    #[inline]
+    pub fn delete(self) -> FirestoreDeleteInitialBuilder<'a, D> {
+        FirestoreDeleteInitialBuilder::new(self.db)
     }
 }
 
