@@ -180,3 +180,5 @@ pub type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
 
 mod fluent_api;
 pub use fluent_api::*;
+
+pub extern crate struct_path;
