@@ -139,9 +139,9 @@ let object_updated: MyTestStructure = db.fluent()
   .in_col(TEST_COLLECTION_NAME)
   .document_id(&my_struct.some_id)
   .object(&MyTestStructure {
-  some_num: my_struct.some_num + 1,
-  one_more_string: "updated-value".to_string(),
-  ..my_struct.clone()
+    some_num: my_struct.some_num + 1,
+    one_more_string: "updated-value".to_string(),
+    ..my_struct.clone()
   })
   .execute()
   .await?;
@@ -170,6 +170,15 @@ let object_stream: BoxStream<MyTestStructure> = db.fluent()
 
 let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
 println!("{:?}", as_vec);
+
+// Delete data
+db.fluent()
+  .delete()
+  .from(TEST_COLLECTION_NAME)
+  .document_id(&my_struct.some_id)
+  .execute()
+  .await?;
+
 ```
 
 ## Timestamps support
