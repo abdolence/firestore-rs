@@ -1,83 +1,66 @@
-use crate::{FirestoreDb, FirestoreResult};
+use crate::{
+    FirestoreCreateSupport, FirestoreDeleteSupport, FirestoreQueryParams, FirestoreQuerySupport,
+    FirestoreResult, FirestoreUpdateSupport,
+};
 use async_trait::async_trait;
-use gcloud_sdk::google::firestore::v1::*;
+use futures::stream::BoxStream;
+use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
-use tracing::*;
+
+pub struct MockDatabase;
 
 #[async_trait]
-pub trait FirestoreCreateSupport {
-    async fn create_obj<I, O, S>(
-        &self,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
+impl FirestoreQuerySupport for MockDatabase {
+    async fn query_doc(&self, _params: FirestoreQueryParams) -> FirestoreResult<Vec<Document>> {
+        unreachable!()
+    }
 
-    async fn create_obj_return_fields<I, O, S>(
+    async fn stream_query_doc<'b>(
         &self,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
+        _params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, Document>> {
+        unreachable!()
+    }
 
-    async fn create_obj_at<I, O, S>(
+    async fn stream_query_doc_with_errors<'b>(
         &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
+        _params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
+        unreachable!()
+    }
 
-    async fn create_obj_at_return_fields<I, O, S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
+    async fn query_obj<T>(&self, _params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
     where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
+        for<'de> T: Deserialize<'de>,
+    {
+        unreachable!()
+    }
 
-    async fn create_doc_root<S>(
+    async fn stream_query_obj<'b, T>(
         &self,
-        collection_id: &str,
-        document_id: S,
-        input_doc: Document,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<Document>
+        _params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, T>>
     where
-        S: AsRef<str> + Send;
+        for<'de> T: Deserialize<'de>,
+    {
+        unreachable!()
+    }
 
-    async fn create_doc<S>(
+    async fn stream_query_obj_with_errors<'b, T>(
         &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        input_doc: Document,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<Document>
+        _params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
     where
-        S: AsRef<str> + Send;
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b,
+    {
+        unreachable!()
+    }
 }
 
+#[allow(unused)]
 #[async_trait]
-impl FirestoreCreateSupport for FirestoreDb {
+impl FirestoreCreateSupport for MockDatabase {
     async fn create_obj<I, O, S>(
         &self,
         collection_id: &str,
@@ -89,13 +72,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         for<'de> O: Deserialize<'de>,
         S: AsRef<str> + Send,
     {
-        self.create_obj_at(
-            self.get_documents_path().as_str(),
-            collection_id,
-            document_id,
-            obj,
-        )
-        .await
+        unreachable!()
     }
 
     async fn create_obj_return_fields<I, O, S>(
@@ -110,14 +87,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         for<'de> O: Deserialize<'de>,
         S: AsRef<str> + Send,
     {
-        self.create_obj_at_return_fields(
-            self.get_documents_path().as_str(),
-            collection_id,
-            document_id,
-            obj,
-            return_only_fields,
-        )
-        .await
+        unreachable!()
     }
 
     async fn create_obj_at<I, O, S>(
@@ -132,8 +102,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         for<'de> O: Deserialize<'de>,
         S: AsRef<str> + Send,
     {
-        self.create_obj_at_return_fields(parent, collection_id, document_id, obj, None)
-            .await
+        unreachable!()
     }
 
     async fn create_obj_at_return_fields<I, O, S>(
@@ -149,19 +118,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         for<'de> O: Deserialize<'de>,
         S: AsRef<str> + Send,
     {
-        let input_doc = Self::serialize_to_doc("", obj)?;
-
-        let doc = self
-            .create_doc(
-                parent,
-                collection_id,
-                document_id,
-                input_doc,
-                return_only_fields,
-            )
-            .await?;
-
-        Self::deserialize_doc_to(&doc)
+        unreachable!()
     }
 
     async fn create_doc_root<S>(
@@ -174,14 +131,7 @@ impl FirestoreCreateSupport for FirestoreDb {
     where
         S: AsRef<str> + Send,
     {
-        self.create_doc(
-            self.get_documents_path().as_str(),
-            collection_id,
-            document_id,
-            input_doc,
-            return_only_fields,
-        )
-        .await
+        unreachable!()
     }
 
     async fn create_doc<S>(
@@ -195,28 +145,107 @@ impl FirestoreCreateSupport for FirestoreDb {
     where
         S: AsRef<str> + Send,
     {
-        let _span = span!(
-            Level::DEBUG,
-            "Firestore Create Document",
-            "/firestore/collection_name" = collection_id
-        );
+        unreachable!()
+    }
+}
 
-        let create_document_request = tonic::Request::new(CreateDocumentRequest {
-            parent: parent.into(),
-            document_id: document_id.as_ref().to_string(),
-            mask: return_only_fields.as_ref().map(|masks| DocumentMask {
-                field_paths: masks.clone(),
-            }),
-            collection_id: collection_id.into(),
-            document: Some(input_doc),
-        });
+#[allow(unused)]
+#[async_trait]
+impl FirestoreUpdateSupport for MockDatabase {
+    async fn update_obj<I, O, S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
 
-        let create_response = self
-            .client()
-            .get()
-            .create_document(create_document_request)
-            .await?;
+    async fn update_obj_return_fields<I, O, S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
 
-        Ok(create_response.into_inner())
+    async fn update_obj_at<I, O, S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn update_obj_at_return_fields<I, O, S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn update_doc(
+        &self,
+        collection_id: &str,
+        firestore_doc: Document,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<Document> {
+        unreachable!()
+    }
+}
+
+#[allow(unused)]
+#[async_trait]
+impl FirestoreDeleteSupport for MockDatabase {
+    async fn delete_by_id<S>(&self, collection_id: &str, document_id: S) -> FirestoreResult<()>
+    where
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn delete_by_id_at<S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+    ) -> FirestoreResult<()>
+    where
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
     }
 }
