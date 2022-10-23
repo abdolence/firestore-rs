@@ -197,6 +197,11 @@ impl FirestoreDb {
 
 impl std::fmt::Debug for FirestoreDb {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "FirestoreDb {{ options: {:?}, database_path:{:?}, doc_path: {:?}, session_params: {:?} }}", self.options, self.database_path, self.doc_path, self.session_params)
+        f.debug_struct("FirestoreDb")
+            .field("options", &self.options)
+            .field("database_path", &self.database_path)
+            .field("doc_path", &self.doc_path)
+            .field("session_params", &self.session_params)
+            .finish()
     }
 }
