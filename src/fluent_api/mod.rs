@@ -2,11 +2,16 @@ pub mod create_builder;
 pub mod delete_builder;
 pub mod filter_builder;
 pub mod query_builder;
+pub mod update_builder;
 
 use crate::create_builder::FirestoreInsertInitialBuilder;
 use crate::delete_builder::FirestoreDeleteInitialBuilder;
 use crate::fluent_api::query_builder::FirestoreSelectInitialBuilder;
-use crate::{FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport, FirestoreQuerySupport};
+use crate::update_builder::FirestoreUpdateInitialBuilder;
+use crate::{
+    FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport, FirestoreQuerySupport,
+    FirestoreUpdateSupport,
+};
 
 #[derive(Clone, Debug)]
 pub struct FirestoreExprBuilder<'a, D>
@@ -18,7 +23,10 @@ where
 
 impl<'a, D> FirestoreExprBuilder<'a, D>
 where
-    D: FirestoreQuerySupport + FirestoreCreateSupport + FirestoreDeleteSupport,
+    D: FirestoreQuerySupport
+        + FirestoreCreateSupport
+        + FirestoreDeleteSupport
+        + FirestoreUpdateSupport,
 {
     pub(crate) fn new(db: &'a D) -> Self {
         Self { db }
@@ -32,6 +40,11 @@ where
     #[inline]
     pub fn insert(self) -> FirestoreInsertInitialBuilder<'a, D> {
         FirestoreInsertInitialBuilder::new(self.db)
+    }
+
+    #[inline]
+    pub fn update(self) -> FirestoreUpdateInitialBuilder<'a, D> {
+        FirestoreUpdateInitialBuilder::new(self.db)
     }
 
     #[inline]
@@ -49,13 +62,7 @@ impl FirestoreDb {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::{FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult};
-    use async_trait::async_trait;
-    use futures_util::stream::BoxStream;
-    use gcloud_sdk::google::firestore::v1::Document;
-    use serde::Deserialize;
-
-    mod mockdb;
+    pub mod mockdb;
 
     pub struct TestStructure {
         pub some_id: String,

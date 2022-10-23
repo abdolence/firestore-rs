@@ -12,6 +12,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
   - Listening changes from Firestore;
   - Transactions;
   - Aggregated Queries;
+- Fluent high-level and strongly typed API;
 - Full async based on Tokio runtime;
 - Macro that helps you use JSON paths as references to your structure fields;
 - Implements own Serde serializer to Firestore protobuf values;
@@ -128,6 +129,20 @@ let object_returned: MyTestStructure = db.fluent()
   .into(TEST_COLLECTION_NAME)
   .document_id(&my_struct.some_id)
   .object(&my_struct)
+  .execute()
+  .await?;
+
+// Update data
+let object_updated: MyTestStructure = db.fluent()
+  .update()
+  .fields(paths!(MyTestStructure::{some_num, one_more_string}))
+  .in_col(TEST_COLLECTION_NAME)
+  .document_id(&my_struct.some_id)
+  .object(&MyTestStructure {
+  some_num: my_struct.some_num + 1,
+  one_more_string: "updated-value".to_string(),
+  ..my_struct.clone()
+  })
   .execute()
   .await?;
 

@@ -46,7 +46,7 @@ where
     #[inline]
     pub fn document_id<S>(self, document_id: S) -> FirestoreInsertDocObjBuilder<'a, D>
     where
-        S: AsRef<str>,
+        S: AsRef<str> + Send,
     {
         FirestoreInsertDocObjBuilder::new(
             self.db,

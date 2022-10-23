@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn select_query_builder_test_fields() {
-        let select_only_fields = FirestoreExprBuilder::new(&MockDatabase {})
+        let select_only_fields = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
             .select()
             .fields(paths!(TestStructure::{some_id, one_more_string, some_num}))
             .return_only_fields;
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn select_query_builder_from_collection() {
-        let select_only_fields = FirestoreExprBuilder::new(&MockDatabase {})
+        let select_only_fields = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
             .select()
             .from("test");
 

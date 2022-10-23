@@ -60,7 +60,7 @@ where
     #[inline]
     pub fn document_id<S>(self, document_id: S) -> FirestoreDeleteExecuteBuilder<'a, D>
     where
-        S: AsRef<str>,
+        S: AsRef<str> + Send,
     {
         FirestoreDeleteExecuteBuilder::new(
             self.db,
