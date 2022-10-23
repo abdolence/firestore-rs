@@ -50,7 +50,7 @@ where
     {
         FirestoreInsertDocObjBuilder::new(
             self.db,
-            self.collection_id.to_string(),
+            self.collection_id,
             document_id.as_ref().to_string(),
         )
     }
