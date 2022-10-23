@@ -1,20 +1,85 @@
 use crate::{FirestoreDb, FirestoreResult};
+use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
-impl FirestoreDb {
-    pub async fn update_obj<T, S>(
+#[async_trait]
+pub trait FirestoreUpdateSupport {
+    async fn update_obj<I, O, S>(
         &self,
         collection_id: &str,
         document_id: S,
-        obj: &T,
+        obj: &I,
         update_only: Option<Vec<String>>,
-    ) -> FirestoreResult<T>
+    ) -> FirestoreResult<O>
     where
-        T: Serialize + Sync + Send,
-        for<'de> T: Deserialize<'de>,
-        S: AsRef<str>,
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send;
+
+    async fn update_obj_return_fields<I, O, S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send;
+
+    async fn update_obj_at<I, O, S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send;
+
+    async fn update_obj_at_return_fields<I, O, S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send;
+
+    async fn update_doc(
+        &self,
+        collection_id: &str,
+        firestore_doc: Document,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<Document>;
+}
+
+#[async_trait]
+impl FirestoreUpdateSupport for FirestoreDb {
+    async fn update_obj<I, O, S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
     {
         self.update_obj_at(
             self.get_documents_path().as_str(),
@@ -26,18 +91,60 @@ impl FirestoreDb {
         .await
     }
 
-    pub async fn update_obj_at<T, S>(
+    async fn update_obj_return_fields<I, O, S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        self.update_obj_at_return_fields(
+            self.get_documents_path().as_str(),
+            collection_id,
+            document_id,
+            obj,
+            update_only,
+            return_only_fields,
+        )
+        .await
+    }
+
+    async fn update_obj_at<I, O, S>(
         &self,
         parent: &str,
         collection_id: &str,
         document_id: S,
-        obj: &T,
+        obj: &I,
         update_only: Option<Vec<String>>,
-    ) -> FirestoreResult<T>
+    ) -> FirestoreResult<O>
     where
-        T: Serialize + Sync + Send,
-        for<'de> T: Deserialize<'de>,
-        S: AsRef<str>,
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        self.update_obj_at_return_fields(parent, collection_id, document_id, obj, update_only, None)
+            .await
+    }
+
+    async fn update_obj_at_return_fields<I, O, S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
     {
         let firestore_doc = Self::serialize_to_doc(
             format!("{}/{}/{}", parent, collection_id, document_id.as_ref()).as_str(),
@@ -45,12 +152,18 @@ impl FirestoreDb {
         )?;
 
         let doc = self
-            .update_doc(collection_id, firestore_doc, update_only, None)
+            .update_doc(
+                collection_id,
+                firestore_doc,
+                update_only,
+                return_only_fields,
+            )
             .await?;
+
         Self::deserialize_doc_to(&doc)
     }
 
-    pub async fn update_doc(
+    async fn update_doc(
         &self,
         collection_id: &str,
         firestore_doc: Document,

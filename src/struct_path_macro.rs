@@ -8,7 +8,7 @@ macro_rules! path {
 #[macro_export]
 macro_rules! paths {
     ($($x:tt)*) => {{
-        struct_path::paths!($($x)*).into_iter().map(|s| s.to_string()).collect::<Vec<String>>()
+        struct_path::paths!($($x)*).iter().map(|s| s.to_string()).collect::<Vec<String>>()
     }};
 }
 

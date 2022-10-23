@@ -12,6 +12,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
   - Listening changes from Firestore;
   - Transactions;
   - Aggregated Queries;
+- Fluent high-level and strongly typed API;
 - Full async based on Tokio runtime;
 - Macro that helps you use JSON paths as references to your structure fields;
 - Implements own Serde serializer to Firestore protobuf values;
@@ -105,10 +106,46 @@ To run example use it with environment variables:
 # PROJECT_ID=<your-google-project-id> cargo run --example simple-crud
 ```
 
-## Fluent Query API
+## Fluent API
 To simplify development and developer experience the library provides the Fluent API:
 
 ```rust
+
+// Create an instance
+let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+
+const TEST_COLLECTION_NAME: &'static str = "test";
+
+let my_struct = MyTestStructure {
+  some_id: "test-1".to_string(),
+  some_string: "Test".to_string(),
+  one_more_string: "Test2".to_string(),
+  some_num: 42,
+};
+
+// Create data
+let object_returned: MyTestStructure = db.fluent()
+  .insert()
+  .into(TEST_COLLECTION_NAME)
+  .document_id(&my_struct.some_id)
+  .object(&my_struct)
+  .execute()
+  .await?;
+
+// Update data
+let object_updated: MyTestStructure = db.fluent()
+  .update()
+  .fields(paths!(MyTestStructure::{some_num, one_more_string}))
+  .in_col(TEST_COLLECTION_NAME)
+  .document_id(&my_struct.some_id)
+  .object(&MyTestStructure {
+  some_num: my_struct.some_num + 1,
+  one_more_string: "updated-value".to_string(),
+  ..my_struct.clone()
+  })
+  .execute()
+  .await?;
+
 // Query as a stream our data
 let object_stream: BoxStream<MyTestStructure> = db.fluent()
     .select()
