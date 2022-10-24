@@ -495,8 +495,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     where
         V: Visitor<'de>,
     {
-        //visitor.visit_unit()
-        self.deserialize_any(visitor)
+        visitor.visit_unit()
     }
 
     fn deserialize_unit_struct<V>(
