@@ -1,4 +1,5 @@
 use crate::{FirestoreDb, FirestoreError, FirestoreQueryOrder, FirestoreResult};
+use async_trait::async_trait;
 use chrono::prelude::*;
 use futures::FutureExt;
 use futures::StreamExt;
@@ -30,8 +31,29 @@ pub struct FirestoreListDocResult {
     pub page_token: Option<String>,
 }
 
-impl FirestoreDb {
-    pub async fn list_doc(
+#[async_trait]
+pub trait FirestoreListingSupport {
+    async fn list_doc(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<FirestoreListDocResult>;
+
+    async fn stream_list_doc(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<Document>>;
+
+    async fn stream_list_obj<T>(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<T>>
+    where
+        for<'de> T: Deserialize<'de>;
+}
+
+#[async_trait]
+impl FirestoreListingSupport for FirestoreDb {
+    async fn list_doc(
         &self,
         params: FirestoreListDocParams,
     ) -> FirestoreResult<FirestoreListDocResult> {
@@ -45,7 +67,7 @@ impl FirestoreDb {
         self.list_doc_with_retries(params, 0, &span).await
     }
 
-    pub async fn stream_list_doc(
+    async fn stream_list_doc(
         &self,
         params: FirestoreListDocParams,
     ) -> FirestoreResult<BoxStream<Document>> {
@@ -84,7 +106,7 @@ impl FirestoreDb {
         Ok(stream)
     }
 
-    pub async fn stream_list_obj<T>(
+    async fn stream_list_obj<T>(
         &self,
         params: FirestoreListDocParams,
     ) -> FirestoreResult<BoxStream<T>>
@@ -106,7 +128,9 @@ impl FirestoreDb {
             }
         })))
     }
+}
 
+impl FirestoreDb {
     fn create_list_request(
         &self,
         params: &FirestoreListDocParams,

@@ -1,5 +1,5 @@
 use firestore::*;
-use futures_util::stream::BoxStream;
+use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
@@ -51,20 +51,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Listing objects as a stream");
     // Query as a stream our data
-    let mut objs_stream: BoxStream<MyTestStructure> = db
-        .stream_list_obj(
-            FirestoreListDocParams::new(TEST_COLLECTION_NAME.into())
-                .with_page_size(3) // This is decreased just to show an example, in real life please use bigger figure (default is 100)
-                .with_order_by(vec![FirestoreQueryOrder::new(
-                    path!(MyTestStructure::some_id),
-                    FirestoreQueryDirection::Descending,
-                )]),
-        )
+    let objs_stream: BoxStream<MyTestStructure> = db
+        .fluent()
+        .list()
+        .from(TEST_COLLECTION_NAME)
+        .page_size(3) // This is decreased just to show an example of automatic pagination, in the real usage please use bigger figure or don't specify it (default is 100)
+        .order_by([(
+            path!(MyTestStructure::some_id),
+            FirestoreQueryDirection::Descending,
+        )])
+        .obj()
+        .stream_all()
         .await?;
 
-    while let Some(object) = objs_stream.next().await {
-        println!("Object in stream: {:?}", object);
-    }
+    let as_vec: Vec<MyTestStructure> = objs_stream.collect().await;
+    println!("{:?}", as_vec);
 
     Ok(())
 }
