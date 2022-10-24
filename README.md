@@ -37,9 +37,10 @@ To run example use it with environment variables:
 ```
 
 ## Fluent API
-To simplify development and developer experience the library provides the Fluent API starting with v0.12.x:
 
-The (a bit low-level) API existing before 0.12 is still available and not deprecated, so it is fine to continue to use when needed. 
+The library provides two APIs:
+- Fluent API: To simplify development and developer experience the library provides more high level API starting with v0.12.x.
+- Classic API: the API existing before 0.12 is still available and not deprecated, so it is fine to continue to use when needed. Furthermore the Fluent API is based on the same classic API and generally speaking are something like smart yet convenient constructors.
 
 ```rust
 
