@@ -176,6 +176,8 @@ impl FirestoreUpdateSupport for FirestoreDb {
             "/firestore/collection_name" = collection_id
         );
 
+        let document_id = firestore_doc.name.clone();
+
         let update_document_request = tonic::Request::new(UpdateDocumentRequest {
             update_mask: update_only.map({
                 |vf| DocumentMask {
@@ -198,8 +200,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
         span.in_scope(|| {
             debug!(
                 "[DB]: Updated the document: {}/{}",
-                collection_id,
-                document_id.as_ref()
+                collection_id, document_id
             );
         });
 
