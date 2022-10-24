@@ -74,7 +74,7 @@
 //!   let find_it_again: MyTestStructure =
 //!     db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
 //!
-//!   // Query as a stream our data
+//!   // Query and read stream of objects
 //!   let object_stream: BoxStream<MyTestStructure> = db.fluent()
 //!     .select()
 //!     .fields(paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string})) // Optionally select the fields needed
@@ -96,6 +96,9 @@
 //!     .stream_query()
 //!     .await?;
 //!
+//!     let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
+//!     println!("{:?}", as_vec);
+//!
 //!     // Delete docs
 //!     db.fluent()
 //!         .delete()
@@ -103,9 +106,6 @@
 //!         .document_id(&my_struct.some_id)
 //!         .execute()
 //!         .await?;
-//!
-//!     let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
-//!     println!("{:?}", as_vec);
 //!
 //!     Ok(())
 //! }
