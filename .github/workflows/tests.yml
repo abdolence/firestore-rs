@@ -3,12 +3,16 @@ on:
   push:
   pull_request:
     types: [opened]
+  workflow_dispatch:
 env:
   GCP_PROJECT: latestbit
   GCP_PROJECT_ID: 288860578009
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rs/toolchain@v1
