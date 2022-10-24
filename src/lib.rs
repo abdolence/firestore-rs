@@ -12,92 +12,7 @@
 //! - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
 //!   that automatically detects GKE environment or application default accounts for local development;
 //!
-//! ## Example:
-//!
-//! ```rust,no_run
-//!use firestore::*;
-//!use serde::{Deserialize, Serialize};
-//!
-//!pub fn config_env_var(name: &str) -> Result<String, String> {
-//!    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
-//!}
-//!
-//!// Example structure to play with
-//!#[derive(Debug, Clone, Deserialize, Serialize)]
-//!struct MyTestStructure {
-//!    some_id: String,
-//!    some_string: String,
-//!    one_more_string: String,
-//!    some_num: u64,
-//!}
-//!
-//!#[tokio::main]
-//!async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-//!    // Create an instance
-//!    let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
-//!
-//!    const TEST_COLLECTION_NAME: &'static str = "test";
-//!
-//!    let my_struct = MyTestStructure {
-//!        some_id: "test-1".to_string(),
-//!        some_string: "Test".to_string(),
-//!        one_more_string: "Test2".to_string(),
-//!        some_num: 42,
-//!    };
-//!
-//!    // Remove if it already exist
-//!    db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id)
-//!        .await?;
-//!
-//!    // Let's insert some data
-//!    db.create_obj(TEST_COLLECTION_NAME, &my_struct.some_id, &my_struct)
-//!        .await?;
-//!
-//!    // Update some field in it
-//!    let updated_obj = db
-//!        .update_obj(
-//!            TEST_COLLECTION_NAME,
-//!            &my_struct.some_id,
-//!            &MyTestStructure {
-//!                some_num: my_struct.some_num + 1,
-//!                some_string: "updated-value".to_string(),
-//!                ..my_struct.clone()
-//!            },
-//!            Some(paths!(MyTestStructure::{
-//!                some_num,
-//!                some_string
-//!            })),
-//!        )
-//!        .await?;
-//!
-//!    println!("Updated object: {:?}", updated_obj);
-//!
-//!    // Get object by id
-//!    let find_it_again: MyTestStructure =
-//!        db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
-//!
-//!    println!("Should be the same: {:?}", find_it_again);
-//!
-//!    // Query our data
-//!    let objects: Vec<MyTestStructure> = db
-//!        .query_obj(
-//!            FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()).with_filter(
-//!                FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::Equal(
-//!                    path!(MyTestStructure::some_num),
-//!                    find_it_again.some_num.into(),
-//!                ))),
-//!            ),
-//!        )
-//!        .await?;
-//!
-//!    println!("Now in the list: {:?}", objects);
-//!
-//!    Ok(())
-//!}
-//! ```
-//!
-//! ## Fluent API
-//! To simplify development and developer experience the library provides the Fluent API:
+//! ## Example using the Fluent API:
 //!
 //! ```rust,no_run
 //!
@@ -126,6 +41,35 @@
 //!
 //!    const TEST_COLLECTION_NAME: &'static str = "test";
 //!
+//!   let my_struct = MyTestStructure {
+//!        some_id: "test-1".to_string(),
+//!        some_string: "Test".to_string(),
+//!        one_more_string: "Test2".to_string(),
+//!        some_num: 42,
+//!   };
+//!
+//!    // Create document/object
+//!   let object_returned: MyTestStructure = db.fluent()
+//!       .insert()
+//!       .into(TEST_COLLECTION_NAME)
+//!       .document_id(&my_struct.some_id)
+//!       .object(&my_struct)
+//!       .execute()
+//!       .await?;
+//!
+//!   let object_updated: MyTestStructure = db.fluent()
+//!       .update()
+//!       .fields(paths!(MyTestStructure::{some_num, one_more_string})) // Update only specified fields
+//!       .in_col(TEST_COLLECTION_NAME)
+//!       .document_id(&my_struct.some_id)
+//!       .object(&MyTestStructure {
+//!           some_num: my_struct.some_num + 1,
+//!          one_more_string: "updated-value".to_string(),
+//!           ..my_struct.clone()
+//!       })
+//!       .execute()
+//!      .await?;
+//!
 //!    // Query as a stream our data
 //!    let object_stream: BoxStream<MyTestStructure> = db.fluent()
 //!     .select()
@@ -147,6 +91,14 @@
 //!     .obj() // Reading documents as structures using Serde gRPC deserializer
 //!     .stream_query()
 //!     .await?;
+//!
+//!     // Delete docs
+//!     db.fluent()
+//!         .delete()
+//!         .from(TEST_COLLECTION_NAME)
+//!         .document_id(&my_struct.some_id)
+//!         .execute()
+//!         .await?;
 //!
 //!     let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
 //!     println!("{:?}", as_vec);

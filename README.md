@@ -28,77 +28,7 @@ Cargo.toml:
 firestore = "0.12"
 ```
 
-Example code:
-```rust
-
-    // Create an instance
-    let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
-
-    const TEST_COLLECTION_NAME: &'static str = "test";
-
-    let my_struct = MyTestStructure {
-        some_id: "test-1".to_string(),
-        some_string: "Test".to_string(),
-        one_more_string: "Test2".to_string(),
-        some_num: 42,
-    };
-
-    // Remove if it already exist
-    db.delete_by_id(
-        TEST_COLLECTION_NAME,
-        &my_struct.some_id,
-    ).await?;
-
-    // Let's insert some data
-    db.create_obj(
-        TEST_COLLECTION_NAME,
-        &my_struct.some_id,
-        &my_struct,
-    ).await?;
-
-    // Update some field in it
-    let updated_obj = db.update_obj(
-        TEST_COLLECTION_NAME,
-        &my_struct.some_id,
-        &MyTestStructure {
-            some_num: my_struct.some_num + 1,
-            some_string: "updated-value".to_string(),
-            ..my_struct.clone()
-        },
-        Some(
-            paths!(MyTestStructure::{
-                some_num,
-                some_string
-            })
-        ),
-    ).await?;
-
-    println!("Updated object: {:?}", updated_obj);
-
-    // Get object by id
-    let find_it_again: MyTestStructure = db.get_obj(
-        TEST_COLLECTION_NAME,
-        &my_struct.some_id,
-    ).await?;
-
-    println!("Should be the same: {:?}", find_it_again);
-
-    let objects: Vec<MyTestStructure> = db.query_obj(
-        FirestoreQueryParams::new(
-            TEST_COLLECTION_NAME.into()
-        ).with_filter(
-            FirestoreQueryFilter::Compare(Some(
-                FirestoreQueryFilterCompare::Equal(
-                    path!(MyTestStructure::some_num),
-                    find_it_again.some_num.into(),
-                ),
-            ))
-        )
-    ).await?;
-
-    println!("Now in the list: {:?}", objects);
-```
-
+## Examples
 All examples available at [examples](examples) directory.
 
 To run example use it with environment variables:
@@ -181,6 +111,8 @@ db.fluent()
 
 ```
 
+## 
+
 ## Timestamps support
 By default, the types such as DateTime<Utc> serializes as a string
 to Firestore (while deserialization works from Timestamps and Strings).
@@ -198,11 +130,8 @@ to JSON (so you can reuse the same model for JSON and Firestore).
 
 In queries you need to use a special wrapping class `firestore::FirestoreTimestamp`, for example:
 ```
-FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::LessThanOrEqual(
-    path!(MyTestStructure::created_at),
-    // Using the wrapping type to indicate serialization without attribute
-    firestore::FirestoreTimestamp(Utc::now()).into(),
-)))
+   q.field(path!(MyTestStructure::created_at))
+     .eq(firestore::FirestoreTimestamp(Utc::now()).into())
 ```
 
 ## Nested collections
@@ -211,12 +140,13 @@ You can work with nested collection using functions like `db.create_object_at` a
 ```rust
 
 // Creating a parent doc
-db.create_obj(
-    TEST_PARENT_COLLECTION_NAME,
-    &parent_struct.some_id,
-    &parent_struct,
-)
-.await?;
+db.fluent()
+  .insert()
+  .into(TEST_PARENT_COLLECTION_NAME)
+  .document_id(&parent_struct.some_id)
+  .object(&parent_struct)
+  .execute()
+  .await?;
 
 // The doc path where we store our childs
 let parent_path = format!(
@@ -227,13 +157,14 @@ let parent_path = format!(
 );
 
 // Create a child doc
-db.create_obj_at(
-    parent_path.as_str(),
-    TEST_CHILD_COLLECTION_NAME,
-    &child_struct.some_id,
-    &child_struct,
-)
-.await?;
+db.fluent()
+  .insert()
+  .into(TEST_CHILD_COLLECTION_NAME)
+  .document_id(&child_struct.some_id)
+  .parent(&parent_path)
+  .object(&child_struct)
+  .execute()
+  .await?;
 
 // Listing children
 let mut objs_stream: BoxStream<MyChildStructure> = db.stream_list_obj(

@@ -41,15 +41,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     // Remove if it already exist
-    db.delete_by_id(TEST_PARENT_COLLECTION_NAME, &parent_struct.some_id)
+    db.fluent()
+        .delete()
+        .from(TEST_PARENT_COLLECTION_NAME)
+        .document_id(&parent_struct.some_id)
+        .execute()
         .await?;
 
-    db.create_obj(
-        TEST_PARENT_COLLECTION_NAME,
-        &parent_struct.some_id,
-        &parent_struct,
-    )
-    .await?;
+    // Creating a parent doc
+    db.fluent()
+        .insert()
+        .into(TEST_PARENT_COLLECTION_NAME)
+        .document_id(&parent_struct.some_id)
+        .object(&parent_struct)
+        .execute()
+        .await?;
 
     // Creating a child doc
     let child_struct = MyChildStructure {
@@ -66,21 +72,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
 
     // Remove child doc if exists
-    db.delete_by_id_at(
-        parent_path.as_str(),
-        TEST_CHILD_COLLECTION_NAME,
-        &child_struct.some_id,
-    )
-    .await?;
+    db.fluent()
+        .delete()
+        .from(TEST_CHILD_COLLECTION_NAME)
+        .parent(&parent_path)
+        .document_id(&child_struct.some_id)
+        .execute()
+        .await?;
 
     // Create a child doc
-    db.create_obj_at(
-        parent_path.as_str(),
-        TEST_CHILD_COLLECTION_NAME,
-        &child_struct.some_id,
-        &child_struct,
-    )
-    .await?;
+    db.fluent()
+        .insert()
+        .into(TEST_CHILD_COLLECTION_NAME)
+        .document_id(&child_struct.some_id)
+        .parent(&parent_path)
+        .object(&child_struct)
+        .execute()
+        .await?;
 
     println!("Listing all children");
 
