@@ -1,6 +1,7 @@
 use crate::{
-    FirestoreCreateSupport, FirestoreDeleteSupport, FirestoreQueryParams, FirestoreQuerySupport,
-    FirestoreResult, FirestoreUpdateSupport,
+    FirestoreCreateSupport, FirestoreDeleteSupport, FirestoreListDocParams, FirestoreListDocResult,
+    FirestoreListingSupport, FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult,
+    FirestoreUpdateSupport,
 };
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -245,6 +246,34 @@ impl FirestoreDeleteSupport for MockDatabase {
     ) -> FirestoreResult<()>
     where
         S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+}
+
+#[allow(unused)]
+#[async_trait]
+impl FirestoreListingSupport for MockDatabase {
+    async fn list_doc(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<FirestoreListDocResult> {
+        unreachable!()
+    }
+
+    async fn stream_list_doc(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<Document>> {
+        unreachable!()
+    }
+
+    async fn stream_list_obj<T>(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<T>>
+    where
+        for<'de> T: Deserialize<'de>,
     {
         unreachable!()
     }

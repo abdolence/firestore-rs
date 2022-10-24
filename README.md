@@ -76,6 +76,10 @@ let object_updated: MyTestStructure = db.fluent()
   .execute()
   .await?;
 
+// Get object by id
+let find_it_again: MyTestStructure =
+    db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
+
 // Query as a stream our data
 let object_stream: BoxStream<MyTestStructure> = db.fluent()
     .select()
@@ -110,8 +114,6 @@ db.fluent()
   .await?;
 
 ```
-
-## 
 
 ## Timestamps support
 By default, the types such as DateTime<Utc> serializes as a string

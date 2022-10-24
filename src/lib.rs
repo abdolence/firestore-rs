@@ -36,10 +36,10 @@
 //!
 //!#[tokio::main]
 //!async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {//!
-//!    // Create an instance
-//!    let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+//!   // Create an instance
+//!   let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 //!
-//!    const TEST_COLLECTION_NAME: &'static str = "test";
+//!   const TEST_COLLECTION_NAME: &'static str = "test";
 //!
 //!   let my_struct = MyTestStructure {
 //!        some_id: "test-1".to_string(),
@@ -48,7 +48,7 @@
 //!        some_num: 42,
 //!   };
 //!
-//!    // Create document/object
+//!   // Create document/object
 //!   let object_returned: MyTestStructure = db.fluent()
 //!       .insert()
 //!       .into(TEST_COLLECTION_NAME)
@@ -69,9 +69,13 @@
 //!       })
 //!       .execute()
 //!      .await?;
+//!  
+//!   // Get object by id
+//!   let find_it_again: MyTestStructure =
+//!     db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
 //!
-//!    // Query as a stream our data
-//!    let object_stream: BoxStream<MyTestStructure> = db.fluent()
+//!   // Query as a stream our data
+//!   let object_stream: BoxStream<MyTestStructure> = db.fluent()
 //!     .select()
 //!     .fields(paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string})) // Optionally select the fields needed
 //!     .from(TEST_COLLECTION_NAME)
