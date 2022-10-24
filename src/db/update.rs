@@ -170,7 +170,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<Document> {
-        let _span = span!(
+        let span = span!(
             Level::DEBUG,
             "Firestore Update Document",
             "/firestore/collection_name" = collection_id
@@ -194,6 +194,14 @@ impl FirestoreUpdateSupport for FirestoreDb {
             .get()
             .update_document(update_document_request)
             .await?;
+
+        span.in_scope(|| {
+            debug!(
+                "[DB]: Updated the document: {}/{}",
+                collection_id,
+                document_id.as_ref()
+            );
+        });
 
         Ok(update_response.into_inner())
     }

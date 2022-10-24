@@ -195,7 +195,7 @@ impl FirestoreCreateSupport for FirestoreDb {
     where
         S: AsRef<str> + Send,
     {
-        let _span = span!(
+        let span = span!(
             Level::DEBUG,
             "Firestore Create Document",
             "/firestore/collection_name" = collection_id
@@ -216,6 +216,14 @@ impl FirestoreCreateSupport for FirestoreDb {
             .get()
             .create_document(create_document_request)
             .await?;
+
+        span.in_scope(|| {
+            debug!(
+                "[DB]: Created a new document: {}/{}",
+                collection_id,
+                document_id.as_ref()
+            );
+        });
 
         Ok(create_response.into_inner())
     }
