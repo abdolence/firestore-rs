@@ -43,6 +43,7 @@ The library provides two APIs:
 - Classic API: the API existing before 0.12 is still available and not deprecated, so it is fine to continue to use when needed. Furthermore the Fluent API is based on the same classic API and generally speaking are something like smart yet convenient constructors.
 
 ```rust
+use firestore::*;
 
 // Create an instance
 let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
