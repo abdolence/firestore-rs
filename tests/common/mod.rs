@@ -12,7 +12,7 @@ pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + S
     tracing::subscriber::set_global_default(subscriber)?;
 
     // Create an instance
-    let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+    let db = FirestoreDb::new(&config_env_var("GCP_PROJECT_ID")?).await?;
 
     Ok(db)
 }
