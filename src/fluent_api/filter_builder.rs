@@ -53,6 +53,7 @@ impl FirestoreQueryFilterFieldExpr {
         Self { field_name }
     }
 
+    #[inline]
     pub fn eq<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -60,6 +61,7 @@ impl FirestoreQueryFilterFieldExpr {
         self.equal(value)
     }
 
+    #[inline]
     pub fn neq<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -67,6 +69,7 @@ impl FirestoreQueryFilterFieldExpr {
         self.not_equal(value)
     }
 
+    #[inline]
     pub fn equal<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -76,6 +79,7 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn not_equal<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -85,6 +89,7 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn less_than<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -94,6 +99,7 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn less_than_or_equal<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -103,6 +109,7 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn greater_than<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -112,6 +119,7 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn greater_than_or_equal<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -121,6 +129,7 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn intersect<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -130,6 +139,7 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn not_intersect<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -139,6 +149,7 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn array_contains<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -148,6 +159,7 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn array_contains_any<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
@@ -157,24 +169,28 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
+    #[inline]
     pub fn is_nan(self) -> Option<FirestoreQueryFilter> {
         Some(FirestoreQueryFilter::Unary(
             FirestoreQueryFilterUnary::IsNan(self.field_name),
         ))
     }
 
+    #[inline]
     pub fn is_not_nan(self) -> Option<FirestoreQueryFilter> {
         Some(FirestoreQueryFilter::Unary(
             FirestoreQueryFilterUnary::IsNotNan(self.field_name),
         ))
     }
 
+    #[inline]
     pub fn is_null(self) -> Option<FirestoreQueryFilter> {
         Some(FirestoreQueryFilter::Unary(
             FirestoreQueryFilterUnary::IsNull(self.field_name),
         ))
     }
 
+    #[inline]
     pub fn is_not_null(self) -> Option<FirestoreQueryFilter> {
         Some(FirestoreQueryFilter::Unary(
             FirestoreQueryFilterUnary::IsNotNull(self.field_name),
