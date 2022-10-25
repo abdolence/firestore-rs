@@ -101,8 +101,8 @@ impl FirestoreDb {
 
         info!(
             "Creating a new DB client: {}. API: {} Token scopes: {}",
-            effective_firebase_api_url,
             firestore_database_path,
+            effective_firebase_api_url,
             token_scopes.join(", ")
         );
 
