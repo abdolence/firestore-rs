@@ -1,37 +1,28 @@
 mod get;
-
 pub use get::*;
-use std::fmt::Formatter;
 
 mod create;
-
 pub use create::*;
 
 mod update;
-
 pub use update::*;
 
 mod delete;
-
 pub use delete::*;
 
 mod query_models;
-
 pub use query_models::*;
 
 mod query;
-
 pub use query::*;
 
 mod aggregated_query;
 pub use aggregated_query::*;
 
 mod list_doc;
-
 pub use list_doc::*;
 
 mod listen_changes;
-
 pub use listen_changes::*;
 
 use crate::FirestoreResult;
@@ -42,24 +33,24 @@ use serde::{Deserialize, Serialize};
 use tracing::*;
 
 mod options;
-
 pub use options::*;
 
 mod transaction;
-
 pub use transaction::*;
 
 mod transaction_ops;
-
 pub use transaction_ops::*;
 
 mod session_params;
-
 pub use session_params::*;
 
 mod consistency_selector;
-
 pub use consistency_selector::*;
+
+mod parent_path_builder;
+pub use parent_path_builder::*;
+
+use std::fmt::Formatter;
 
 #[derive(Clone)]
 pub struct FirestoreDb {
@@ -149,6 +140,23 @@ impl FirestoreDb {
     #[inline]
     pub const fn get_documents_path(&self) -> &String {
         &self.doc_path
+    }
+
+    #[inline]
+    pub fn parent_path<S>(
+        &self,
+        parent_collection_name: &str,
+        parent_document_id: S,
+    ) -> ParentPathBuilder
+    where
+        S: AsRef<str>,
+    {
+        ParentPathBuilder::new(format!(
+            "{}/{}/{}",
+            &self.doc_path.as_str(),
+            parent_collection_name,
+            parent_document_id.as_ref()
+        ))
     }
 
     #[inline]
