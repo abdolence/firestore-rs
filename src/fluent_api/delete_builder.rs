@@ -101,6 +101,17 @@ where
         }
     }
 
+    #[inline]
+    pub fn parent<S>(self, parent: S) -> Self
+    where
+        S: AsRef<str>,
+    {
+        Self {
+            parent: Some(parent.as_ref().to_string()),
+            ..self
+        }
+    }
+
     pub async fn execute(self) -> FirestoreResult<()> {
         if let Some(parent) = self.parent {
             self.db

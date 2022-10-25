@@ -42,15 +42,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
 
         // Remove if it already exist
-        db.delete_by_id(TEST_PARENT_COLLECTION_NAME, &parent_struct.some_id)
+        db.fluent()
+            .delete()
+            .from(TEST_PARENT_COLLECTION_NAME)
+            .document_id(&parent_struct.some_id)
+            .execute()
             .await?;
 
-        db.create_obj(
-            TEST_PARENT_COLLECTION_NAME,
-            &parent_struct.some_id,
-            &parent_struct,
-        )
-        .await?;
+        db.fluent()
+            .insert()
+            .into(TEST_PARENT_COLLECTION_NAME)
+            .document_id(&parent_struct.some_id)
+            .object(&parent_struct)
+            .execute()
+            .await?;
 
         for child_idx in 0..3 {
             // Creating a child doc
@@ -60,51 +65,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
 
             // The doc path where we store our childs
-            let parent_path = format!(
-                "{}/{}/{}",
-                db.get_documents_path(),
-                TEST_PARENT_COLLECTION_NAME,
-                parent_struct.some_id
-            );
+            let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, &parent_struct.some_id);
 
             // Remove child doc if exists
-            db.delete_by_id_at(
-                parent_path.as_str(),
-                TEST_CHILD_COLLECTION_NAME,
-                &child_struct.some_id,
-            )
-            .await?;
+            db.fluent()
+                .delete()
+                .from(TEST_CHILD_COLLECTION_NAME)
+                .parent(&parent_path)
+                .document_id(&child_struct.some_id)
+                .execute()
+                .await?;
 
-            // Create a child doc
-            db.create_obj_at(
-                parent_path.as_str(),
-                TEST_CHILD_COLLECTION_NAME,
-                &child_struct.some_id,
-                &child_struct,
-            )
-            .await?;
+            db.fluent()
+                .insert()
+                .into(TEST_CHILD_COLLECTION_NAME)
+                .document_id(&child_struct.some_id)
+                .parent(&parent_path)
+                .object(&child_struct)
+                .execute()
+                .await?;
         }
     }
 
     println!("Query children");
 
     let mut objs_stream: BoxStream<MyChildStructure> = db
-        .stream_query_obj(
-            FirestoreQueryParams::new(TEST_CHILD_COLLECTION_NAME.into())
-                // .with_parent(format!(
-                //     "{}/{}/{}",
-                //     db.get_documents_path(),
-                //     TEST_PARENT_COLLECTION_NAME,
-                //     "test-parent-0"
-                // )) // if you need to search for only one root you need do disable with_all_descendants below
-                .with_all_descendants(true)
-                .with_filter(FirestoreQueryFilter::Compare(Some(
-                    FirestoreQueryFilterCompare::Equal(
-                        path!(MyChildStructure::another_string),
-                        "TestChild".into(),
-                    ),
-                ))),
-        )
+        .fluent()
+        .select()
+        .from(TEST_CHILD_COLLECTION_NAME)
+        //.parent(db.parent_path(TEST_PARENT_COLLECTION_NAME, "test-parent-0")) // if you need to search for only one root you need do disable with_all_descendants below
+        .all_descendants()
+        .filter(|q| {
+            q.for_all([q
+                .field(path!(MyChildStructure::another_string))
+                .eq("TestChild")])
+        })
+        .obj()
+        .stream_query()
         .await?;
 
     while let Some(object) = objs_stream.next().await {
