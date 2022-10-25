@@ -70,6 +70,9 @@ pub struct FirestoreDb {
     session_params: FirestoreDbSessionParams,
 }
 
+const GOOGLE_FIREBASE_API_URL: &str = "https://firestore.googleapis.com";
+const GOOGLE_FIRESTORE_EMULATOR_HOST_ENV: &str = "FIRESTORE_EMULATOR_HOST";
+
 impl FirestoreDb {
     pub async fn new<S>(google_project_id: S) -> FirestoreResult<Self>
     where
@@ -99,11 +102,22 @@ impl FirestoreDb {
             format!("projects/{}/databases/(default)", options.google_project_id);
         let firestore_database_doc_path = format!("{}/documents", firestore_database_path);
 
-        info!("Creating a new DB client: {}", firestore_database_path);
+        let effective_firebase_api_url = options
+            .firebase_api_url
+            .clone()
+            .or_else(|| std::env::var(GOOGLE_FIRESTORE_EMULATOR_HOST_ENV).ok())
+            .unwrap_or_else(|| GOOGLE_FIREBASE_API_URL.to_string());
+
+        info!(
+            "Creating a new DB client: {}. API: {} Token scopes: {}",
+            effective_firebase_api_url,
+            firestore_database_path,
+            token_scopes.join(", ")
+        );
 
         let client = GoogleApiClient::from_function_with_token_source(
             FirestoreClient::new,
-            "https://firestore.googleapis.com",
+            effective_firebase_api_url,
             Some(firestore_database_path.clone()),
             token_scopes,
             token_source_type,

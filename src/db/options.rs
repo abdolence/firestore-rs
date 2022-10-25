@@ -6,4 +6,6 @@ pub struct FirestoreDbOptions {
 
     #[default = "3"]
     pub max_retries: usize,
+
+    pub firebase_api_url: Option<String>,
 }

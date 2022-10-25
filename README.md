@@ -173,11 +173,16 @@ db.fluent()
   .await?;
 
 // Listing children
-let mut objs_stream: BoxStream<MyChildStructure> = db.stream_list_obj(
-    FirestoreListDocParams::new(TEST_CHILD_COLLECTION_NAME.into())
-        .with_parent(parent_path),
-)
-.await?;
+println!("Listing all children");
+
+let objs_stream: BoxStream<MyChildStructure> = db.fluent()
+  .list()
+  .from(TEST_CHILD_COLLECTION_NAME)
+  .parent(&parent_path)
+  .obj()
+  .stream_all()
+  .await?;
+
 ```
 Complete example available [here](examples/nested_collections.rs).
 
@@ -196,6 +201,12 @@ The latter obtains user access credentials via a web flow and puts them in the w
 This command is useful when you are developing code that would normally use a service account but need to run the code in a local development environment where it's easier to provide user credentials.
 So to work for local development you need to use `gcloud auth application-default login`.
 
+## Firestore emulator
+To work with the Google Firestore emulator you can use environment variable:
+```
+export FIRESTORE_EMULATOR_HOST="localhost:8080"
+```
+or specify it as an option using `FirestoreDb::with_options()`
 
 ## Licence
 Apache Software License (ASL)
