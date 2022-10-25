@@ -1,4 +1,4 @@
-use crate::{FirestoreResult, FirestoreUpdateSupport};
+use crate::{FirestoreResult, FirestoreTransaction, FirestoreUpdateSupport};
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
 
@@ -301,6 +301,29 @@ where
                     self.return_only_fields,
                 )
                 .await
+        }
+    }
+
+    #[inline]
+    pub fn add_to_transaction<'t>(
+        self,
+        transaction: &'a mut FirestoreTransaction<'t>,
+    ) -> FirestoreResult<&'a mut FirestoreTransaction<'t>> {
+        if let Some(parent) = self.parent {
+            transaction.update_object_at(
+                parent.as_str(),
+                self.collection_id.as_str(),
+                self.document_id,
+                self.object,
+                self.update_only_fields,
+            )
+        } else {
+            transaction.update_object(
+                self.collection_id.as_str(),
+                self.document_id,
+                self.object,
+                self.update_only_fields,
+            )
         }
     }
 }
