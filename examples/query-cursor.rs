@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use firestore::*;
-use futures_util::StreamExt;
+use futures::stream::BoxStream;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
@@ -52,15 +53,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Querying a test collection in defined order");
 
     // Querying as a stream with errors when needed
-    let object_stream = db
-        .stream_query_obj::<MyTestStructure>(
-            FirestoreQueryParams::new(TEST_COLLECTION_NAME.into())
-                .with_order_by(vec![FirestoreQueryOrder::new(
-                    path!(MyTestStructure::some_id),
-                    FirestoreQueryDirection::Ascending,
-                )])
-                .with_start_at(FirestoreQueryCursor::BeforeValue(vec!["test-5".into()])),
-        )
+    let object_stream: BoxStream<MyTestStructure> = db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .start_at(FirestoreQueryCursor::BeforeValue(vec!["test-5".into()]))
+        .order_by([(
+            path!(MyTestStructure::some_id),
+            FirestoreQueryDirection::Ascending,
+        )])
+        .obj()
+        .stream_query()
         .await?;
 
     let as_vec: Vec<MyTestStructure> = object_stream.collect().await;

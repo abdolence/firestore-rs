@@ -126,7 +126,7 @@ where
     }
 
     #[inline]
-    pub fn start_at<I>(self, cursor: FirestoreQueryCursor) -> Self {
+    pub fn start_at(self, cursor: FirestoreQueryCursor) -> Self {
         Self {
             params: self.params.with_start_at(cursor),
             ..self
@@ -134,7 +134,7 @@ where
     }
 
     #[inline]
-    pub fn end_at<I>(self, cursor: FirestoreQueryCursor) -> Self {
+    pub fn end_at(self, cursor: FirestoreQueryCursor) -> Self {
         Self {
             params: self.params.with_end_at(cursor),
             ..self
