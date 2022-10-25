@@ -173,11 +173,16 @@ db.fluent()
   .await?;
 
 // Listing children
-let mut objs_stream: BoxStream<MyChildStructure> = db.stream_list_obj(
-    FirestoreListDocParams::new(TEST_CHILD_COLLECTION_NAME.into())
-        .with_parent(parent_path),
-)
-.await?;
+println!("Listing all children");
+
+let objs_stream: BoxStream<MyChildStructure> = db.fluent()
+  .list()
+  .from(TEST_CHILD_COLLECTION_NAME)
+  .parent(&parent_path)
+  .obj()
+  .stream_all()
+  .await?;
+
 ```
 Complete example available [here](examples/nested_collections.rs).
 
