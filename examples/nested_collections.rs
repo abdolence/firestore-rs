@@ -92,15 +92,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Listing all children");
 
-    let mut objs_stream: BoxStream<MyChildStructure> = db
-        .stream_list_obj(
-            FirestoreListDocParams::new(TEST_CHILD_COLLECTION_NAME.into()).with_parent(parent_path),
-        )
+    let objs_stream: BoxStream<MyChildStructure> = db
+        .fluent()
+        .list()
+        .from(TEST_CHILD_COLLECTION_NAME)
+        .parent(&parent_path)
+        .obj()
+        .stream_all()
         .await?;
 
-    while let Some(object) = objs_stream.next().await {
-        println!("Object in stream: {:?}", object);
-    }
+    let as_vec: Vec<MyChildStructure> = objs_stream.collect().await;
+    println!("{:?}", as_vec);
 
     Ok(())
 }
