@@ -137,7 +137,7 @@ to JSON (so you can reuse the same model for JSON and Firestore).
 In queries you need to use a special wrapping class `firestore::FirestoreTimestamp`, for example:
 ```
    q.field(path!(MyTestStructure::created_at))
-     .eq(firestore::FirestoreTimestamp(Utc::now()).into())
+     .eq(firestore::FirestoreTimestamp(Utc::now()))
 ```
 
 ## Nested collections

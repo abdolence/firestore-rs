@@ -50,14 +50,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Query our data
     let objects: Vec<MyTestStructure> = db
-        .query_obj(
-            FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()).with_filter(
-                FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::LessThanOrEqual(
-                    path!(MyTestStructure::created_at),
-                    firestore::FirestoreTimestamp(Utc::now()).into(), // Using the wrapping type to indicate serialization without attribute
-                ))),
-            ),
-        )
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .filter(|q| {
+            q.for_all([q
+                .field(path!(MyTestStructure::created_at))
+                .less_than_or_equal(
+                    firestore::FirestoreTimestamp(Utc::now()), // Using the wrapping type to indicate serialization without attribute
+                )])
+        })
+        .obj()
+        .query()
         .await?;
 
     println!("Now in the list: {:?}", objects);
