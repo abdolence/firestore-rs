@@ -63,10 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .from(TEST_COLLECTION_NAME)
         .filter(|q| {
             q.for_all([
-                q.field(path_camel_case!(MyTestStructure::some_num)).is_not_null(),
                 q.field(path_camel_case!(MyTestStructure::some_string)).eq("Test"),
-                Some("Test2")
-                    .and_then(|value| q.field(path!(MyTestStructure::one_more_string)).eq(value)),
             ])
         })
         .order_by([(
