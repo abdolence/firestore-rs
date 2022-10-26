@@ -66,10 +66,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 q.field(path_camel_case!(MyTestStructure::some_string)).eq("Test"),
             ])
         })
-        .order_by([(
-            path_camel_case!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Descending,
-        )])
         .obj()
         .stream_query()
         .await?;
