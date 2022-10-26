@@ -43,11 +43,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
 
         // Remove if it already exist
-        db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id)
+        db.fluent()
+            .delete()
+            .from(TEST_COLLECTION_NAME)
+            .document_id(&my_struct.some_id)
+            .execute()
             .await?;
 
         // Let's insert some data
-        db.create_obj(TEST_COLLECTION_NAME, &my_struct.some_id, &my_struct)
+        db.fluent()
+            .insert()
+            .into(TEST_COLLECTION_NAME)
+            .document_id(&my_struct.some_id)
+            .object(&my_struct)
+            .execute()
             .await?;
     }
 
