@@ -1,4 +1,4 @@
-use crate::{FirestoreDeleteSupport, FirestoreResult};
+use crate::{FirestoreDeleteSupport, FirestoreResult, FirestoreTransaction};
 
 #[derive(Clone, Debug)]
 pub struct FirestoreDeleteInitialBuilder<'a, D>
@@ -125,6 +125,22 @@ where
             self.db
                 .delete_by_id(self.collection_id.as_str(), self.document_id)
                 .await
+        }
+    }
+
+    #[inline]
+    pub fn add_to_transaction<'t>(
+        self,
+        transaction: &'a mut FirestoreTransaction<'t>,
+    ) -> FirestoreResult<&'a mut FirestoreTransaction<'t>> {
+        if let Some(parent) = self.parent {
+            transaction.delete_by_id_at(
+                parent.as_str(),
+                self.collection_id.as_str(),
+                self.document_id,
+            )
+        } else {
+            transaction.delete_by_id(self.collection_id.as_str(), self.document_id)
         }
     }
 }

@@ -35,11 +35,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
 
         // Remove if it already exist
-        db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id)
+        db.fluent()
+            .delete()
+            .from(TEST_COLLECTION_NAME)
+            .document_id(&my_struct.some_id)
+            .execute()
             .await?;
 
         // Let's insert some data
-        db.create_obj(TEST_COLLECTION_NAME, &my_struct.some_id, &my_struct)
+        db.fluent()
+            .insert()
+            .into(TEST_COLLECTION_NAME)
+            .document_id(&my_struct.some_id)
+            .object(&my_struct)
+            .execute()
             .await?;
     }
 
@@ -47,33 +56,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let mut transaction = db.begin_transaction().await?;
 
-    transaction.update_object(
-        TEST_COLLECTION_NAME,
-        "test-0",
-        &MyTestStructure {
+    db.fluent()
+        .update()
+        .fields(paths!(MyTestStructure::{
+            some_string
+        }))
+        .in_col(TEST_COLLECTION_NAME)
+        .document_id("test-0")
+        .object(&MyTestStructure {
             some_id: format!("test-0"),
             some_string: "UpdatedTest".to_string(),
-        },
-        Some(paths!(MyTestStructure::{
-            some_string
-        })),
-    )?;
+        })
+        .add_to_transaction(&mut transaction)?;
 
-    transaction.delete_by_id(TEST_COLLECTION_NAME, "test-5")?;
+    db.fluent()
+        .delete()
+        .from(TEST_COLLECTION_NAME)
+        .document_id("test-5")
+        .add_to_transaction(&mut transaction)?;
 
     transaction.commit().await?;
 
     println!("Listing objects as a stream with updated test-0 and removed test-5");
     // Query as a stream our data
     let mut objs_stream: BoxStream<MyTestStructure> = db
-        .stream_list_obj(
-            FirestoreListDocParams::new(TEST_COLLECTION_NAME.into()).with_order_by(vec![
-                FirestoreQueryOrder::new(
-                    path!(MyTestStructure::some_id),
-                    FirestoreQueryDirection::Descending,
-                ),
-            ]),
-        )
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .order_by([(
+            path!(MyTestStructure::some_id),
+            FirestoreQueryDirection::Descending,
+        )])
+        .obj()
+        .stream_query()
         .await?;
 
     while let Some(object) = objs_stream.next().await {
