@@ -86,8 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     println!("Listing all children");
-
-    let objs_stream: BoxStream<MyChildStructure> = db
+    let list_stream: BoxStream<MyChildStructure> = db
         .fluent()
         .list()
         .from(TEST_CHILD_COLLECTION_NAME)
@@ -96,7 +95,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .stream_all()
         .await?;
 
-    let as_vec: Vec<MyChildStructure> = objs_stream.collect().await;
+    let as_vec: Vec<MyChildStructure> = list_stream.collect().await;
+    println!("{:?}", as_vec);
+
+    println!("Querying in children");
+    let query_stream: BoxStream<MyChildStructure> = db
+        .fluent()
+        .select()
+        .from(TEST_CHILD_COLLECTION_NAME)
+        .parent(&parent_path)
+        .filter(|q| {
+            q.for_all([q
+                .field(path!(MyChildStructure::another_string))
+                .eq("TestChild")])
+        })
+        .obj()
+        .stream_query()
+        .await?;
+
+    let as_vec: Vec<MyChildStructure> = query_stream.collect().await;
     println!("{:?}", as_vec);
 
     Ok(())
