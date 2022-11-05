@@ -2,6 +2,7 @@ use crate::{FirestoreDb, FirestoreError, FirestoreResult};
 use chrono::prelude::*;
 use futures::future::{BoxFuture, FutureExt};
 use futures::TryFutureExt;
+use futures::TryStreamExt;
 use futures_util::stream::BoxStream;
 use futures_util::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
@@ -156,6 +157,67 @@ impl FirestoreDb {
         S: AsRef<str>,
         I: IntoIterator<Item = S>,
     {
+        let doc_stream = self
+            .batch_stream_get_docs_by_ids_with_errors(parent, collection_id, document_ids)
+            .await?;
+
+        Ok(Box::pin(doc_stream.filter_map(|doc_res| {
+            future::ready(match doc_res {
+                Ok(doc_pair) => Some(doc_pair),
+                Err(err) => {
+                    error!(
+                        "[DB] Error occurred while consuming batch get as a stream: {}",
+                        err
+                    );
+                    None
+                }
+            })
+        })))
+    }
+
+    pub async fn batch_stream_get_objects_by_ids<T, S, I>(
+        &self,
+        collection_id: &str,
+        document_ids: I,
+    ) -> FirestoreResult<BoxStream<(String, Option<T>)>>
+    where
+        for<'de> T: Deserialize<'de>,
+        S: AsRef<str>,
+        I: IntoIterator<Item = S>,
+    {
+        let doc_stream = self
+            .batch_stream_get_docs_by_ids(self.get_documents_path(), collection_id, document_ids)
+            .await?;
+
+        Ok(Box::pin(doc_stream.filter_map(|(doc_id,maybe_doc)| async move {
+            match maybe_doc {
+                Some(doc) => {
+                    match Self::deserialize_doc_to(&doc) {
+                        Ok(obj) => Some((doc_id, Some(obj))),
+                        Err(err) => {
+                            error!(
+                                "[DB] Error occurred while consuming batch documents as a stream: {}",
+                                err
+                            );
+                            None
+                        }
+                    }
+                },
+                None => Some((doc_id, None))
+            }
+        })))
+    }
+
+    pub async fn batch_stream_get_docs_by_ids_with_errors<S, I>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_ids: I,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<(String, Option<Document>)>>>
+    where
+        S: AsRef<str>,
+        I: IntoIterator<Item = S>,
+    {
         let full_doc_ids: Vec<String> = document_ids
             .into_iter()
             .map(|document_id| format!("{}/{}/{}", parent, collection_id, document_id.as_ref()))
@@ -194,7 +256,7 @@ impl FirestoreDb {
                                         .last()
                                         .map(|s| s.to_string())
                                         .unwrap_or_else(|| document.name.clone());
-                                    (doc_id, Some(document))
+                                    Ok((doc_id, Some(document)))
                                 }
                                 batch_get_documents_response::Result::Missing(full_doc_id) => {
                                     let doc_id = full_doc_id
@@ -202,16 +264,10 @@ impl FirestoreDb {
                                         .last()
                                         .map(|s| s.to_string())
                                         .unwrap_or_else(|| full_doc_id);
-                                    (doc_id, None)
+                                    Ok((doc_id, None))
                                 }
                             }),
-                            Err(err) => {
-                                error!(
-                                    "[DB] Error occurred while consuming batch get as a stream: {}",
-                                    err
-                                );
-                                None
-                            }
+                            Err(err) => Some(Err(err.into())),
                         })
                     })
                     .boxed();
@@ -221,36 +277,31 @@ impl FirestoreDb {
         }
     }
 
-    pub async fn batch_stream_get_objects_by_ids<T, S, I>(
-        &self,
+    pub async fn batch_stream_get_objects_by_ids_with_errors<'a, T, S, I>(
+        &'a self,
         collection_id: &str,
         document_ids: I,
-    ) -> FirestoreResult<BoxStream<(String, Option<T>)>>
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<T>)>>>
     where
-        for<'de> T: Deserialize<'de>,
+        for<'de> T: Deserialize<'de> + Send + 'a,
         S: AsRef<str>,
         I: IntoIterator<Item = S>,
     {
         let doc_stream = self
-            .batch_stream_get_docs_by_ids(self.get_documents_path(), collection_id, document_ids)
+            .batch_stream_get_docs_by_ids_with_errors(
+                self.get_documents_path(),
+                collection_id,
+                document_ids,
+            )
             .await?;
 
-        Ok(Box::pin(doc_stream.filter_map(|(doc_id,maybe_doc)| async move {
-            match maybe_doc {
-                Some(doc) => {
-                    match Self::deserialize_doc_to(&doc) {
-                        Ok(obj) => Some((doc_id, Some(obj))),
-                        Err(err) => {
-                            error!(
-                                "[DB] Error occurred while consuming batch documents as a stream: {}",
-                                err
-                            );
-                            None
-                        }
-                    }
-                },
-                None => Some((doc_id, None))
-            }
+        Ok(Box::pin(doc_stream.and_then(|(doc_id, maybe_doc)| {
+            future::ready({
+                maybe_doc
+                    .map(|doc| Self::deserialize_doc_to::<T>(&doc))
+                    .transpose()
+                    .map(|obj| (doc_id, obj))
+            })
         })))
     }
 }

@@ -50,13 +50,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .await?;
     }
 
-    println!("Querying a test collection as a stream");
+    println!("Getting objects by IDs as a stream");
     // Query as a stream our data
     let mut object_stream: BoxStream<(String, Option<MyTestStructure>)> = db
         .batch_stream_get_objects_by_ids(TEST_COLLECTION_NAME.into(), vec!["test-0", "test-5"])
         .await?;
 
     while let Some(object) = object_stream.next().await {
+        println!("Object in stream: {:?}", object);
+    }
+
+    // Getting as a stream with errors when needed
+    let mut object_stream_with_errors: BoxStream<
+        FirestoreResult<(String, Option<MyTestStructure>)>,
+    > = db
+        .batch_stream_get_objects_by_ids_with_errors(
+            TEST_COLLECTION_NAME.into(),
+            vec!["test-0", "test-5"],
+        )
+        .await?;
+
+    while let Some(object) = object_stream_with_errors.try_next().await? {
         println!("Object in stream: {:?}", object);
     }
 

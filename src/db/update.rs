@@ -1,5 +1,6 @@
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::*;
 use serde::{Deserialize, Serialize};
 use tracing::*;
@@ -173,7 +174,8 @@ impl FirestoreUpdateSupport for FirestoreDb {
         let span = span!(
             Level::DEBUG,
             "Firestore Update Document",
-            "/firestore/collection_name" = collection_id
+            "/firestore/collection_name" = collection_id,
+            "/firestore/response_time" = field::Empty
         );
 
         let document_id = firestore_doc.name.clone();
@@ -191,11 +193,19 @@ impl FirestoreUpdateSupport for FirestoreDb {
             current_document: None,
         });
 
+        let begin_query_utc: DateTime<Utc> = Utc::now();
         let update_response = self
             .client()
             .get()
             .update_document(update_document_request)
             .await?;
+        let end_query_utc: DateTime<Utc> = Utc::now();
+        let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+
+        span.record(
+            "/firestore/response_time",
+            &query_duration.num_milliseconds(),
+        );
 
         span.in_scope(|| {
             debug!(

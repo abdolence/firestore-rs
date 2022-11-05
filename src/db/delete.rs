@@ -1,6 +1,8 @@
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::*;
+use tracing::*;
 
 #[async_trait]
 pub trait FirestoreDeleteSupport {
@@ -43,12 +45,35 @@ impl FirestoreDeleteSupport for FirestoreDb {
     {
         let document_path = format!("{}/{}/{}", parent, collection_id, document_id.as_ref());
 
+        let span = span!(
+            Level::DEBUG,
+            "Firestore Delete Document",
+            "/firestore/collection_name" = collection_id,
+            "/firestore/response_time" = field::Empty
+        );
+
         let request = tonic::Request::new(DeleteDocumentRequest {
             name: document_path,
             current_document: None,
         });
 
+        let begin_query_utc: DateTime<Utc> = Utc::now();
         self.client().get().delete_document(request).await?;
+        let end_query_utc: DateTime<Utc> = Utc::now();
+        let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+
+        span.record(
+            "/firestore/response_time",
+            &query_duration.num_milliseconds(),
+        );
+
+        span.in_scope(|| {
+            debug!(
+                "[DB]: Deleted a document: {}/{}",
+                collection_id,
+                document_id.as_ref()
+            );
+        });
 
         Ok(())
     }

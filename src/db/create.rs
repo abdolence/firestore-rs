@@ -1,5 +1,6 @@
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::*;
 use serde::{Deserialize, Serialize};
 use tracing::*;
@@ -198,7 +199,8 @@ impl FirestoreCreateSupport for FirestoreDb {
         let span = span!(
             Level::DEBUG,
             "Firestore Create Document",
-            "/firestore/collection_name" = collection_id
+            "/firestore/collection_name" = collection_id,
+            "/firestore/response_time" = field::Empty
         );
 
         let create_document_request = tonic::Request::new(CreateDocumentRequest {
@@ -211,11 +213,21 @@ impl FirestoreCreateSupport for FirestoreDb {
             document: Some(input_doc),
         });
 
+        let begin_query_utc: DateTime<Utc> = Utc::now();
+
         let create_response = self
             .client()
             .get()
             .create_document(create_document_request)
             .await?;
+
+        let end_query_utc: DateTime<Utc> = Utc::now();
+        let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+
+        span.record(
+            "/firestore/response_time",
+            &query_duration.num_milliseconds(),
+        );
 
         span.in_scope(|| {
             debug!(
