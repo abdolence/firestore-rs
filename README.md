@@ -141,7 +141,7 @@ In queries you need to use a special wrapping class `firestore::FirestoreTimesta
 ```
 
 ## Nested collections
-You can work with nested collection using functions like `db.create_object_at` and specifying path/location to documents:
+You can work with nested collection specifying path/location to a parent for documents:
 
 ```rust
 
@@ -154,7 +154,7 @@ db.fluent()
   .execute()
   .await?;
 
-// The doc path where we store our childs
+// The doc path where we store our children
 let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id);
 
 // Create a child doc
