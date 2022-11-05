@@ -2,23 +2,22 @@ use chrono::{DateTime, Utc};
 use firestore::*;
 use serde::{Deserialize, Serialize};
 
-pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
-}
+mod common;
+use crate::common::setup;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 pub struct Test1(pub u8);
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 pub struct Test1i(pub Test1);
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 pub struct Test2 {
     some_id: String,
     some_bool: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum TestEnum {
     TestChoice,
     TestWithParam(String),
@@ -27,7 +26,7 @@ pub enum TestEnum {
 }
 
 // Example structure to play with
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 struct MyTestStructure {
     some_id: String,
     some_string: String,
@@ -45,18 +44,11 @@ struct MyTestStructure {
     test7: TestEnum,
 }
 
-#[tokio::main]
+#[tokio::test]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Logging with debug enabled
-    let subscriber = tracing_subscriber::fmt()
-        .with_env_filter("firestore=debug")
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
+    let db = setup().await?;
 
-    // Create an instance
-    let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
-
-    const TEST_COLLECTION_NAME: &'static str = "test-ts1";
+    const TEST_COLLECTION_NAME: &'static str = "integration-test-complex";
 
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),
@@ -97,16 +89,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     db.create_obj(TEST_COLLECTION_NAME, &my_struct.some_id, &my_struct)
         .await?;
 
+    let to_update = MyTestStructure {
+        some_num: my_struct.some_num + 1,
+        some_string: "updated-value".to_string(),
+        ..my_struct.clone()
+    };
+
     // Update some field in it
-    let updated_obj = db
+    let updated_obj: MyTestStructure = db
         .update_obj(
             TEST_COLLECTION_NAME,
             &my_struct.some_id,
-            &MyTestStructure {
-                some_num: my_struct.some_num + 1,
-                some_string: "updated-value".to_string(),
-                ..my_struct.clone()
-            },
+            &to_update,
             Some(paths!(MyTestStructure::{
                 some_num,
                 some_string
@@ -114,27 +108,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .await?;
 
-    println!("Updated object: {:?}", updated_obj);
-
     // Get object by id
     let find_it_again: MyTestStructure =
         db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
 
-    println!("Should be the same: {:?}", find_it_again);
+    assert_eq!(updated_obj.some_num, to_update.some_num);
+    assert_eq!(updated_obj.some_string, to_update.some_string);
+    assert_eq!(updated_obj.test1, to_update.test1);
 
-    // Query our data
-    let objects: Vec<MyTestStructure> = db
-        .query_obj(
-            FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()).with_filter(
-                FirestoreQueryFilter::Compare(Some(FirestoreQueryFilterCompare::Equal(
-                    path!(MyTestStructure::some_num),
-                    find_it_again.some_num.into(),
-                ))),
-            ),
-        )
-        .await?;
-
-    println!("Now in the list: {:?}", objects);
+    assert_eq!(updated_obj.some_num, find_it_again.some_num);
+    assert_eq!(updated_obj.some_string, find_it_again.some_string);
+    assert_eq!(updated_obj.test1, find_it_again.test1);
 
     Ok(())
 }

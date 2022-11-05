@@ -33,7 +33,7 @@ All examples available at [examples](examples) directory.
 
 To run example use it with environment variables:
 ```
-# PROJECT_ID=<your-google-project-id> cargo run --example simple-crud
+# PROJECT_ID=<your-google-project-id> cargo run --example crud
 ```
 
 ## Fluent API
@@ -123,6 +123,25 @@ db.fluent()
 
 ```
 
+## Get and batch get support
+
+```rust
+
+let find_it_again: Option<MyTestStructure> = db.fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .one(&my_struct.some_id)
+  .await?;
+
+let object_stream: BoxStream<(String, Option<MyTestStructure>)> = db.fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .batch(vec!["test-0", "test-5"])
+  .await?;
+```
+
 ## Timestamps support
 By default, the types such as DateTime<Utc> serializes as a string
 to Firestore (while deserialization works from Timestamps and Strings).
@@ -184,25 +203,6 @@ let objs_stream: BoxStream<MyChildStructure> = db.fluent()
 
 ```
 Complete example available [here](examples/nested_collections.rs).
-
-## Get and batch get support
-
-```rust
-
-let find_it_again: Option<MyTestStructure> = db.fluent()
-  .select()
-  .by_id_in(TEST_COLLECTION_NAME)
-  .obj()
-  .one(&my_struct.some_id)
-  .await?;
-
-let object_stream: BoxStream<(String, Option<MyTestStructure>)> = db.fluent()
-  .select()
-  .by_id_in(TEST_COLLECTION_NAME)
-  .obj()
-  .batch(vec!["test-0", "test-5"])
-  .await?;
-```
 
 ## Google authentication
 
