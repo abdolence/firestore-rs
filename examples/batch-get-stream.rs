@@ -42,18 +42,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
 
         // Remove if it already exist
-        db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id)
+        db.fluent()
+            .delete()
+            .from(TEST_COLLECTION_NAME)
+            .document_id(&my_struct.some_id)
+            .execute()
             .await?;
 
         // Let's insert some data
-        db.create_obj(TEST_COLLECTION_NAME, &my_struct.some_id, &my_struct)
+        db.fluent()
+            .insert()
+            .into(TEST_COLLECTION_NAME)
+            .document_id(&my_struct.some_id)
+            .object(&my_struct)
+            .execute()
             .await?;
     }
 
     println!("Getting objects by IDs as a stream");
     // Query as a stream our data
     let mut object_stream: BoxStream<(String, Option<MyTestStructure>)> = db
-        .batch_stream_get_objects_by_ids(TEST_COLLECTION_NAME.into(), vec!["test-0", "test-5"])
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .batch(vec!["test-0", "test-5"])
         .await?;
 
     while let Some(object) = object_stream.next().await {
@@ -64,10 +77,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut object_stream_with_errors: BoxStream<
         FirestoreResult<(String, Option<MyTestStructure>)>,
     > = db
-        .batch_stream_get_objects_by_ids_with_errors(
-            TEST_COLLECTION_NAME.into(),
-            vec!["test-0", "test-5"],
-        )
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .batch_with_errors(vec!["test-0", "test-5"])
         .await?;
 
     while let Some(object) = object_stream_with_errors.try_next().await? {

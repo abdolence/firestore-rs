@@ -55,7 +55,7 @@ pub trait FirestoreCreateSupport {
         for<'de> O: Deserialize<'de>,
         S: AsRef<str> + Send;
 
-    async fn create_doc_root<S>(
+    async fn create_doc<S>(
         &self,
         collection_id: &str,
         document_id: S,
@@ -65,7 +65,7 @@ pub trait FirestoreCreateSupport {
     where
         S: AsRef<str> + Send;
 
-    async fn create_doc<S>(
+    async fn create_doc_at<S>(
         &self,
         parent: &str,
         collection_id: &str,
@@ -153,7 +153,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         let input_doc = Self::serialize_to_doc("", obj)?;
 
         let doc = self
-            .create_doc(
+            .create_doc_at(
                 parent,
                 collection_id,
                 document_id,
@@ -165,7 +165,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         Self::deserialize_doc_to(&doc)
     }
 
-    async fn create_doc_root<S>(
+    async fn create_doc<S>(
         &self,
         collection_id: &str,
         document_id: S,
@@ -175,7 +175,7 @@ impl FirestoreCreateSupport for FirestoreDb {
     where
         S: AsRef<str> + Send,
     {
-        self.create_doc(
+        self.create_doc_at(
             self.get_documents_path().as_str(),
             collection_id,
             document_id,
@@ -185,7 +185,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         .await
     }
 
-    async fn create_doc<S>(
+    async fn create_doc_at<S>(
         &self,
         parent: &str,
         collection_id: &str,

@@ -48,7 +48,7 @@
 //!        some_num: 42,
 //!   };
 //!
-//!   // Create document/object
+//!   // Create documents
 //!   let object_returned: MyTestStructure = db.fluent()
 //!       .insert()
 //!       .into(TEST_COLLECTION_NAME)
@@ -57,6 +57,7 @@
 //!       .execute()
 //!       .await?;
 //!
+//!   // Update documents
 //!   let object_updated: MyTestStructure = db.fluent()
 //!       .update()
 //!       .fields(paths!(MyTestStructure::{some_num, one_more_string})) // Update only specified fields
@@ -70,9 +71,13 @@
 //!       .execute()
 //!      .await?;
 //!  
-//!   // Get object by id
-//!   let find_it_again: MyTestStructure =
-//!     db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
+//!   // Get a document as an object by id
+//!   let find_it_again: Option<MyTestStructure> = db.fluent()
+//!         .select()
+//!         .by_id_in(TEST_COLLECTION_NAME)
+//!         .obj()
+//!         .one(&my_struct.some_id)
+//!         .await?;
 //!
 //!   // Query and read stream of objects
 //!   let object_stream: BoxStream<MyTestStructure> = db.fluent()
@@ -99,7 +104,7 @@
 //!     let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
 //!     println!("{:?}", as_vec);
 //!
-//!     // Delete docs
+//!     // Delete documents
 //!     db.fluent()
 //!         .delete()
 //!         .from(TEST_COLLECTION_NAME)

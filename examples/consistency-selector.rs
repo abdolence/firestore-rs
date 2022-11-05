@@ -57,7 +57,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ));
 
     let consistency_read_test: Option<MyTestStructure> = cdb
-        .get_obj_if_exists(TEST_COLLECTION_NAME, "test-0")
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .one("test-0")
         .await?;
 
     println!("Should be the original one: {:?}", consistency_read_test);

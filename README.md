@@ -40,7 +40,7 @@ To run example use it with environment variables:
 
 The library provides two APIs:
 - Fluent API: To simplify development and developer experience the library provides more high level API starting with v0.12.x.
-- Classic API: the API existing before 0.12 is still available and not deprecated, so it is fine to continue to use when needed. Furthermore the Fluent API is based on the same classic API and generally speaking are something like smart yet convenient constructors.
+- Classic API: the API existing before 0.12 is still available and not deprecated, so it is fine to continue to use when needed. Furthermore the Fluent API is based on the same classic API and generally speaking are something like smart and convenient constructors.
 
 ```rust
 use firestore::*;
@@ -81,8 +81,12 @@ let object_updated: MyTestStructure = db.fluent()
   .await?;
 
 // Get object by id
-let find_it_again: MyTestStructure =
-    db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
+let find_it_again: Option<MyTestStructure> = db.fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .one(&my_struct.some_id)
+  .await?;
 
 // Query as a stream our data
 let object_stream: BoxStream<MyTestStructure> = db.fluent()
@@ -180,6 +184,25 @@ let objs_stream: BoxStream<MyChildStructure> = db.fluent()
 
 ```
 Complete example available [here](examples/nested_collections.rs).
+
+## Get and batch get support
+
+```rust
+
+let find_it_again: Option<MyTestStructure> = db.fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .one(&my_struct.some_id)
+  .await?;
+
+let object_stream: BoxStream<(String, Option<MyTestStructure>)> = db.fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .batch(vec!["test-0", "test-5"])
+  .await?;
+```
 
 ## Google authentication
 

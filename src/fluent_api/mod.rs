@@ -1,18 +1,18 @@
-pub mod create_builder;
 pub mod delete_builder;
-pub mod filter_builder;
+pub mod insert_builder;
 pub mod listing_builder;
-pub mod query_builder;
+pub mod query_filter_builder;
+pub mod select_builder;
 pub mod update_builder;
 
-use crate::create_builder::FirestoreInsertInitialBuilder;
 use crate::delete_builder::FirestoreDeleteInitialBuilder;
-use crate::fluent_api::query_builder::FirestoreSelectInitialBuilder;
+use crate::fluent_api::select_builder::FirestoreSelectInitialBuilder;
+use crate::insert_builder::FirestoreInsertInitialBuilder;
 use crate::listing_builder::FirestoreListingInitialBuilder;
 use crate::update_builder::FirestoreUpdateInitialBuilder;
 use crate::{
-    FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport, FirestoreListingSupport,
-    FirestoreQuerySupport, FirestoreUpdateSupport,
+    FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport, FirestoreGetByIdSupport,
+    FirestoreListingSupport, FirestoreQuerySupport, FirestoreUpdateSupport,
 };
 
 #[derive(Clone, Debug)]
@@ -26,7 +26,8 @@ where
         + FirestoreCreateSupport
         + FirestoreDeleteSupport
         + FirestoreUpdateSupport
-        + FirestoreListingSupport,
+        + FirestoreListingSupport
+        + FirestoreGetByIdSupport,
 {
     pub(crate) fn new(db: &'a D) -> Self {
         Self { db }

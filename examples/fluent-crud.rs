@@ -56,6 +56,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Created {:?}", object_returned);
 
+    // Get by id
+    let obj_by_id: Option<MyTestStructure> = db
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .one(&my_struct.some_id)
+        .await?;
+
+    println!("Get by id {:?}", obj_by_id);
+
     let object_updated: MyTestStructure = db
         .fluent()
         .update()

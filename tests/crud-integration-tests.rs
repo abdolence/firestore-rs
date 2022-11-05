@@ -6,6 +6,7 @@ use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 mod common;
+use firestore::*;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct MyTestStructure {
@@ -95,16 +96,21 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     );
 
-    let find_it_again: MyTestStructure = db
-        .get_obj(TEST_COLLECTION_NAME, &my_struct1.some_id)
+    let find_it_again: Option<MyTestStructure> = db
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .one(&my_struct1.some_id)
         .await?;
 
-    assert_eq!(object_updated, find_it_again);
+    assert_eq!(Some(object_updated.clone()), find_it_again);
 
     let get_both_stream: BoxStream<Option<MyTestStructure>> = Box::pin(
-        db.batch_stream_get_objects_by_ids(
+        db.batch_stream_get_objects(
             TEST_COLLECTION_NAME,
             [&my_struct1.some_id, &my_struct2.some_id],
+            None,
         )
         .await?
         .map(|(_, obj)| obj),
@@ -112,10 +118,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let get_both_stream_vec: Vec<Option<MyTestStructure>> = get_both_stream.collect().await;
 
-    assert_eq!(
-        vec![Some(find_it_again), Some(my_struct2)],
-        get_both_stream_vec
-    );
+    assert_eq!(vec![find_it_again, Some(my_struct2)], get_both_stream_vec);
 
     let object_stream: BoxStream<MyTestStructure> = db
         .fluent()

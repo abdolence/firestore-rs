@@ -2,6 +2,7 @@ use crate::common::setup;
 use serde::{Deserialize, Serialize};
 
 mod common;
+use firestore::*;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct MyParentStructure {

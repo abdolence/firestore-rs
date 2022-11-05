@@ -1,7 +1,7 @@
 use crate::{
-    FirestoreCreateSupport, FirestoreDeleteSupport, FirestoreListDocParams, FirestoreListDocResult,
-    FirestoreListingSupport, FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult,
-    FirestoreUpdateSupport,
+    FirestoreCreateSupport, FirestoreDeleteSupport, FirestoreGetByIdSupport,
+    FirestoreListDocParams, FirestoreListDocResult, FirestoreListingSupport, FirestoreQueryParams,
+    FirestoreQuerySupport, FirestoreResult, FirestoreUpdateSupport,
 };
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -122,7 +122,7 @@ impl FirestoreCreateSupport for MockDatabase {
         unreachable!()
     }
 
-    async fn create_doc_root<S>(
+    async fn create_doc<S>(
         &self,
         collection_id: &str,
         document_id: S,
@@ -135,7 +135,7 @@ impl FirestoreCreateSupport for MockDatabase {
         unreachable!()
     }
 
-    async fn create_doc<S>(
+    async fn create_doc_at<S>(
         &self,
         parent: &str,
         collection_id: &str,
@@ -274,6 +274,222 @@ impl FirestoreListingSupport for MockDatabase {
     ) -> FirestoreResult<BoxStream<T>>
     where
         for<'de> T: Deserialize<'de>,
+    {
+        unreachable!()
+    }
+}
+
+#[allow(unused)]
+#[async_trait]
+impl FirestoreGetByIdSupport for MockDatabase {
+    async fn get_doc<S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<Document>
+    where
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn get_doc_at<S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<Document>
+    where
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn get_obj<T, S>(&self, collection_id: &str, document_id: S) -> FirestoreResult<T>
+    where
+        for<'de> T: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn get_obj_at<T, S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+    ) -> FirestoreResult<T>
+    where
+        for<'de> T: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn get_obj_at_return_fields<T, S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<T>
+    where
+        for<'de> T: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn get_obj_if_exists<T, S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<Option<T>>
+    where
+        for<'de> T: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn get_obj_at_if_exists<T, S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<Option<T>>
+    where
+        for<'de> T: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn batch_stream_get_docs_at<S, I>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_ids: I,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<(String, Option<Document>)>>
+    where
+        S: AsRef<str> + Send,
+        I: IntoIterator<Item = S> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn batch_stream_get_objects<'a, T, S, I>(
+        &'a self,
+        collection_id: &str,
+        document_ids: I,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<'a, (String, Option<T>)>>
+    where
+        for<'de> T: Deserialize<'de> + 'a,
+        S: AsRef<str> + Send,
+        I: IntoIterator<Item = S> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn batch_stream_get_docs_at_with_errors<S, I>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_ids: I,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<(String, Option<Document>)>>>
+    where
+        S: AsRef<str> + Send,
+        I: IntoIterator<Item = S> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn batch_stream_get_objects_with_errors<'a, T, S, I>(
+        &'a self,
+        collection_id: &str,
+        document_ids: I,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<T>)>>>
+    where
+        for<'de> T: Deserialize<'de> + Send + 'a,
+        S: AsRef<str> + Send,
+        I: IntoIterator<Item = S> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn batch_stream_get_docs<S, I>(
+        &self,
+        collection_id: &str,
+        document_ids: I,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<(String, Option<Document>)>>
+    where
+        S: AsRef<str> + Send,
+        I: IntoIterator<Item = S> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn batch_stream_get_docs_with_errors<S, I>(
+        &self,
+        collection_id: &str,
+        document_ids: I,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<(String, Option<Document>)>>>
+    where
+        S: AsRef<str> + Send,
+        I: IntoIterator<Item = S> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn batch_stream_get_objects_at<'a, T, S, I>(
+        &'a self,
+        parent: &str,
+        collection_id: &str,
+        document_ids: I,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<'a, (String, Option<T>)>>
+    where
+        for<'de> T: Deserialize<'de> + Send + 'a,
+        S: AsRef<str> + Send,
+        I: IntoIterator<Item = S> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn batch_stream_get_objects_at_with_errors<'a, T, S, I>(
+        &'a self,
+        parent: &str,
+        collection_id: &str,
+        document_ids: I,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<T>)>>>
+    where
+        for<'de> T: Deserialize<'de> + Send,
+        S: AsRef<str> + Send,
+        I: IntoIterator<Item = S> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn get_obj_return_fields<T, S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<T>
+    where
+        for<'de> T: Deserialize<'de>,
+        S: AsRef<str> + Send,
     {
         unreachable!()
     }

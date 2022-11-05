@@ -130,7 +130,7 @@ impl FirestoreQueryFilterFieldExpr {
     }
 
     #[inline]
-    pub fn intersect<V>(self, value: V) -> Option<FirestoreQueryFilter>
+    pub fn is_in<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
     {
@@ -140,7 +140,7 @@ impl FirestoreQueryFilterFieldExpr {
     }
 
     #[inline]
-    pub fn not_intersect<V>(self, value: V) -> Option<FirestoreQueryFilter>
+    pub fn is_not_in<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
         V: Into<FirestoreValue>,
     {

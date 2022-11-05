@@ -179,7 +179,7 @@ where
     pub async fn execute(self) -> FirestoreResult<Document> {
         if let Some(parent) = self.parent {
             self.db
-                .create_doc(
+                .create_doc_at(
                     parent.as_str(),
                     self.collection_id.as_str(),
                     self.document_id,
@@ -189,7 +189,7 @@ where
                 .await
         } else {
             self.db
-                .create_doc_root(
+                .create_doc(
                     self.collection_id.as_str(),
                     self.document_id,
                     self.document,
