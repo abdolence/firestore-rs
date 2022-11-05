@@ -64,7 +64,7 @@ impl FirestoreDeleteSupport for FirestoreDb {
 
         span.record(
             "/firestore/response_time",
-            &query_duration.num_milliseconds(),
+            query_duration.num_milliseconds(),
         );
 
         span.in_scope(|| {

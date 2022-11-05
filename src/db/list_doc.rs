@@ -143,7 +143,7 @@ impl FirestoreDb {
                 .clone(),
             collection_id: params.collection_id.clone(),
             page_size: params.page_size as i32,
-            page_token: params.page_token.clone().unwrap_or_else(|| "".to_string()),
+            page_token: params.page_token.clone().unwrap_or_default(),
             order_by: params
                 .order_by
                 .as_ref()
@@ -202,7 +202,7 @@ impl FirestoreDb {
 
                     span.record(
                         "/firestore/response_time",
-                        &listing_duration.num_milliseconds(),
+                        listing_duration.num_milliseconds(),
                     );
                     span.in_scope(|| {
                         debug!(
