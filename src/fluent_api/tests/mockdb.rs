@@ -65,7 +65,7 @@ impl FirestoreCreateSupport for MockDatabase {
     async fn create_obj<I, O, S>(
         &self,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
     ) -> FirestoreResult<O>
     where
@@ -79,7 +79,7 @@ impl FirestoreCreateSupport for MockDatabase {
     async fn create_obj_return_fields<I, O, S>(
         &self,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<O>
@@ -95,7 +95,7 @@ impl FirestoreCreateSupport for MockDatabase {
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
     ) -> FirestoreResult<O>
     where
@@ -110,7 +110,7 @@ impl FirestoreCreateSupport for MockDatabase {
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<O>
@@ -125,7 +125,7 @@ impl FirestoreCreateSupport for MockDatabase {
     async fn create_doc<S>(
         &self,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         input_doc: Document,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<Document>
@@ -139,7 +139,7 @@ impl FirestoreCreateSupport for MockDatabase {
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         input_doc: Document,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<Document>

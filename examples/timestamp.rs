@@ -34,19 +34,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         created_at: Utc::now(),
     };
 
-    // Remove if it already exist
-    db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id)
+    db.fluent()
+        .delete()
+        .from(TEST_COLLECTION_NAME)
+        .document_id(&my_struct.some_id)
+        .execute()
         .await?;
 
-    // Let's insert some data
-    db.create_obj(TEST_COLLECTION_NAME, &my_struct.some_id, &my_struct)
+    // A fluent version of create document/object
+    let object_returned: MyTestStructure = db
+        .fluent()
+        .insert()
+        .into(TEST_COLLECTION_NAME)
+        .document_id(&my_struct.some_id)
+        .object(&my_struct)
+        .execute()
         .await?;
 
-    // Get object by id
-    let find_it_again: MyTestStructure =
-        db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
-
-    println!("Should be the same: {:?}", find_it_again);
+    println!("Created: {:?}", object_returned);
 
     // Query our data
     let objects: Vec<MyTestStructure> = db

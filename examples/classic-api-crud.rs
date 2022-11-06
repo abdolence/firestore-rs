@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     // Let's insert some data
-    db.create_obj(TEST_COLLECTION_NAME, &my_struct.some_id, &my_struct)
+    db.create_obj(TEST_COLLECTION_NAME, Some(&my_struct.some_id), &my_struct)
         .await?;
 
     // Update some field in it
