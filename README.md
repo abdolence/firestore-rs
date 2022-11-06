@@ -147,7 +147,7 @@ By default, the types such as DateTime<Utc> serializes as a string
 to Firestore (while deserialization works from Timestamps and Strings).
 To change it to support Timestamp natively use `#[serde(with)]`:
 
-```
+```rust
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
     #[serde(with = "firestore::serialize_as_timestamp")]
@@ -158,7 +158,7 @@ This will change it only for firestore serialization and it still serializes as 
 to JSON (so you can reuse the same model for JSON and Firestore).
 
 In queries you need to use a special wrapping class `firestore::FirestoreTimestamp`, for example:
-```
+```rust
    q.field(path!(MyTestStructure::created_at))
      .eq(firestore::FirestoreTimestamp(Utc::now()))
 ```
