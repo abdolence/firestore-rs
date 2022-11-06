@@ -51,8 +51,13 @@ where
         FirestoreInsertDocObjBuilder::new(
             self.db,
             self.collection_id,
-            document_id.as_ref().to_string(),
+            Some(document_id.as_ref().to_string()),
         )
+    }
+
+    #[inline]
+    pub fn generate_document_id(self) -> FirestoreInsertDocObjBuilder<'a, D> {
+        FirestoreInsertDocObjBuilder::new(self.db, self.collection_id, None)
     }
 }
 
@@ -63,7 +68,7 @@ where
 {
     db: &'a D,
     collection_id: String,
-    document_id: String,
+    document_id: Option<String>,
     parent: Option<String>,
     return_only_fields: Option<Vec<String>>,
 }
@@ -73,7 +78,7 @@ where
     D: FirestoreCreateSupport,
 {
     #[inline]
-    pub(crate) fn new(db: &'a D, collection_id: String, document_id: String) -> Self {
+    pub(crate) fn new(db: &'a D, collection_id: String, document_id: Option<String>) -> Self {
         Self {
             db,
             collection_id,
@@ -147,7 +152,7 @@ where
 {
     db: &'a D,
     collection_id: String,
-    document_id: String,
+    document_id: Option<String>,
     parent: Option<String>,
     document: Document,
     return_only_fields: Option<Vec<String>>,
@@ -161,7 +166,7 @@ where
     pub(crate) fn new(
         db: &'a D,
         collection_id: String,
-        document_id: String,
+        document_id: Option<String>,
         parent: Option<String>,
         document: Document,
         return_only_fields: Option<Vec<String>>,
@@ -209,7 +214,7 @@ where
     db: &'a D,
     collection_id: String,
     parent: Option<String>,
-    document_id: String,
+    document_id: Option<String>,
     object: &'a T,
     return_only_fields: Option<Vec<String>>,
 }
@@ -224,7 +229,7 @@ where
         db: &'a D,
         collection_id: String,
         parent: Option<String>,
-        document_id: String,
+        document_id: Option<String>,
         object: &'a T,
         return_only_fields: Option<Vec<String>>,
     ) -> Self {

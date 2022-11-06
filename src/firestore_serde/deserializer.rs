@@ -605,6 +605,46 @@ where
         fields.insert(k.to_owned(), v.to_owned());
     }
 
+    let doc_name = document.name.clone();
+
+    let doc_id = doc_name
+        .split('/')
+        .last()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| doc_name.clone());
+
+    fields.insert(
+        "_firestore_id".to_string(),
+        gcloud_sdk::google::firestore::v1::Value {
+            value_type: Some(value::ValueType::StringValue(doc_id)),
+        },
+    );
+
+    fields.insert(
+        "_firestore_full_id".to_string(),
+        gcloud_sdk::google::firestore::v1::Value {
+            value_type: Some(value::ValueType::StringValue(doc_name)),
+        },
+    );
+
+    if let Some(created_time) = &document.create_time {
+        fields.insert(
+            "_firestore_created".to_string(),
+            gcloud_sdk::google::firestore::v1::Value {
+                value_type: Some(value::ValueType::TimestampValue(created_time.clone())),
+            },
+        );
+    }
+
+    if let Some(updated_time) = &document.update_time {
+        fields.insert(
+            "_firestore_updated".to_string(),
+            gcloud_sdk::google::firestore::v1::Value {
+                value_type: Some(value::ValueType::TimestampValue(updated_time.clone())),
+            },
+        );
+    }
+
     let firestore_value = FirestoreValue::from(gcloud_sdk::google::firestore::v1::Value {
         value_type: Some(value::ValueType::MapValue(
             gcloud_sdk::google::firestore::v1::MapValue { fields },

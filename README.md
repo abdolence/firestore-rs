@@ -204,6 +204,33 @@ let objs_stream: BoxStream<MyChildStructure> = db.fluent()
 ```
 Complete example available [here](examples/nested_collections.rs).
 
+## Reading Firestore document metadata as struct fields
+
+Firestore provides additional generated fields for each of document you create:
+- Generated document ID (when it is not specified from the client);
+- The time at which the document was created;
+- The time at which the document was last changed;
+
+To be able to read them the library make the available as system fields for deserializer with reserved names,
+so you can specify them in your structures as:
+
+```rust
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {
+    #[serde(alias = "_firestore_id")]
+    id: Option<String>,
+    #[serde(alias = "_firestore_created")]
+    created_at: Option<DateTime<Utc>>,
+    #[serde(alias = "_firestore_updated")]
+    updated_at: Option<DateTime<Utc>>,
+    some_string: String,
+    one_more_string: String,
+    some_num: u64,
+}
+```
+
+Complete example available [here](examples/generated-document-id.rs).
+
 ## Google authentication
 
 Looks for credentials in the following places, preferring the first location found:

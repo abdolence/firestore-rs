@@ -10,7 +10,7 @@ pub trait FirestoreCreateSupport {
     async fn create_doc<S>(
         &self,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         input_doc: Document,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<Document>
@@ -21,7 +21,7 @@ pub trait FirestoreCreateSupport {
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         input_doc: Document,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<Document>
@@ -31,7 +31,7 @@ pub trait FirestoreCreateSupport {
     async fn create_obj<I, O, S>(
         &self,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
     ) -> FirestoreResult<O>
     where
@@ -42,7 +42,7 @@ pub trait FirestoreCreateSupport {
     async fn create_obj_return_fields<I, O, S>(
         &self,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<O>
@@ -55,7 +55,7 @@ pub trait FirestoreCreateSupport {
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
     ) -> FirestoreResult<O>
     where
@@ -67,7 +67,7 @@ pub trait FirestoreCreateSupport {
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<O>
@@ -82,7 +82,7 @@ impl FirestoreCreateSupport for FirestoreDb {
     async fn create_doc<S>(
         &self,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         input_doc: Document,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<Document>
@@ -103,7 +103,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         input_doc: Document,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<Document>
@@ -119,7 +119,10 @@ impl FirestoreCreateSupport for FirestoreDb {
 
         let create_document_request = tonic::Request::new(CreateDocumentRequest {
             parent: parent.into(),
-            document_id: document_id.as_ref().to_string(),
+            document_id: document_id
+                .as_ref()
+                .map(|id| id.as_ref().to_string())
+                .unwrap_or_default(),
             mask: return_only_fields.as_ref().map(|masks| DocumentMask {
                 field_paths: masks.clone(),
             }),
@@ -145,9 +148,9 @@ impl FirestoreCreateSupport for FirestoreDb {
 
         span.in_scope(|| {
             debug!(
-                "[DB]: Created a new document: {}/{}",
+                "[DB]: Created a new document: {}/{:?}",
                 collection_id,
-                document_id.as_ref()
+                document_id.as_ref().map(|id| id.as_ref())
             );
         });
 
@@ -157,7 +160,7 @@ impl FirestoreCreateSupport for FirestoreDb {
     async fn create_obj<I, O, S>(
         &self,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
     ) -> FirestoreResult<O>
     where
@@ -178,7 +181,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
     ) -> FirestoreResult<O>
     where
@@ -190,11 +193,33 @@ impl FirestoreCreateSupport for FirestoreDb {
             .await
     }
 
+    async fn create_obj_return_fields<I, O, S>(
+        &self,
+        collection_id: &str,
+        document_id: Option<S>,
+        obj: &I,
+        return_only_fields: Option<Vec<String>>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        self.create_obj_at_return_fields(
+            self.get_documents_path().as_str(),
+            collection_id,
+            document_id,
+            obj,
+            return_only_fields,
+        )
+        .await
+    }
+
     async fn create_obj_at_return_fields<I, O, S>(
         &self,
         parent: &str,
         collection_id: &str,
-        document_id: S,
+        document_id: Option<S>,
         obj: &I,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<O>
@@ -216,27 +241,5 @@ impl FirestoreCreateSupport for FirestoreDb {
             .await?;
 
         Self::deserialize_doc_to(&doc)
-    }
-
-    async fn create_obj_return_fields<I, O, S>(
-        &self,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send,
-    {
-        self.create_obj_at_return_fields(
-            self.get_documents_path().as_str(),
-            collection_id,
-            document_id,
-            obj,
-            return_only_fields,
-        )
-        .await
     }
 }

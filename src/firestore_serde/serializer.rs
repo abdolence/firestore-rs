@@ -287,8 +287,10 @@ impl serde::ser::SerializeSeq for SerializeVec {
     where
         T: Serialize,
     {
-        self.vec
-            .push(value.serialize(FirestoreValueSerializer {})?.value);
+        let serialized_value = value.serialize(FirestoreValueSerializer {})?.value;
+        if serialized_value.value_type.is_some() {
+            self.vec.push(serialized_value);
+        }
         Ok(())
     }
 
@@ -343,8 +345,10 @@ impl serde::ser::SerializeTupleVariant for SerializeTupleVariant {
     where
         T: Serialize,
     {
-        self.vec
-            .push(value.serialize(FirestoreValueSerializer {})?.value);
+        let serialized_value = value.serialize(FirestoreValueSerializer {})?.value;
+        if serialized_value.value_type.is_some() {
+            self.vec.push(serialized_value)
+        };
         Ok(())
     }
 
@@ -400,7 +404,10 @@ impl serde::ser::SerializeMap for SerializeMap {
         match self.next_key.take() {
             Some(key) => {
                 let serializer = FirestoreValueSerializer {};
-                self.fields.insert(key, value.serialize(serializer)?.value);
+                let serialized_value = value.serialize(serializer)?.value;
+                if serialized_value.value_type.is_some() {
+                    self.fields.insert(key, serialized_value);
+                }
                 Ok(())
             }
             None => Err(FirestoreError::SerializeError(
@@ -435,8 +442,10 @@ impl serde::ser::SerializeStruct for SerializeMap {
         T: Serialize,
     {
         let serializer = FirestoreValueSerializer {};
-        self.fields
-            .insert(key.to_string(), value.serialize(serializer)?.value);
+        let serialized_value = value.serialize(serializer)?.value;
+        if serialized_value.value_type.is_some() {
+            self.fields.insert(key.to_string(), serialized_value);
+        }
         Ok(())
     }
 
@@ -466,8 +475,10 @@ impl serde::ser::SerializeStructVariant for SerializeStructVariant {
         T: Serialize,
     {
         let serializer = FirestoreValueSerializer {};
-        self.fields
-            .insert(key.to_string(), value.serialize(serializer)?.value);
+        let serialized_value = value.serialize(serializer)?.value;
+        if serialized_value.value_type.is_some() {
+            self.fields.insert(key.to_string(), serialized_value);
+        }
         Ok(())
     }
 
