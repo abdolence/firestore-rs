@@ -207,11 +207,12 @@ Complete example available [here](examples/nested_collections.rs).
 ## Reading Firestore document metadata as struct fields
 
 Firestore provides additional generated fields for each of document you create:
-- Generated document ID (when it is not specified from the client);
-- The time at which the document was created;
-- The time at which the document was last changed;
+- `_firestore_id`: Generated document ID (when it is not specified from the client);
+- `_firestore_created`: The time at which the document was created;
+- `_firestore_updated`: The time at which the document was last changed;
 
-To be able to read them the library make the available as system fields for deserializer with reserved names,
+To be able to read them the library makes them available
+as system fields for the Serde deserializer with reserved names,
 so you can specify them in your structures as:
 
 ```rust
