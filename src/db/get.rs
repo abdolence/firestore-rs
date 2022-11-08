@@ -1,3 +1,4 @@
+use crate::db::safe_document_path;
 use crate::{FirestoreDb, FirestoreError, FirestoreResult};
 use async_trait::async_trait;
 use chrono::prelude::*;
@@ -189,7 +190,7 @@ impl FirestoreGetByIdSupport for FirestoreDb {
     where
         S: AsRef<str> + Send,
     {
-        let document_path = format!("{}/{}/{}", parent, collection_id, document_id.as_ref());
+        let document_path = safe_document_path(parent, collection_id, document_id.as_ref())?;
         self.get_doc_by_path(document_path, return_only_fields, 0)
             .await
     }
@@ -341,8 +342,8 @@ impl FirestoreGetByIdSupport for FirestoreDb {
     {
         let full_doc_ids: Vec<String> = document_ids
             .into_iter()
-            .map(|document_id| format!("{}/{}/{}", parent, collection_id, document_id.as_ref()))
-            .collect();
+            .map(|document_id| safe_document_path(parent, collection_id, document_id.as_ref()))
+            .collect::<FirestoreResult<Vec<String>>>()?;
 
         let span = span!(
             Level::DEBUG,

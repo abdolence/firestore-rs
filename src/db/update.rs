@@ -1,3 +1,4 @@
+use crate::db::safe_document_path;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -148,7 +149,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
         S: AsRef<str> + Send,
     {
         let firestore_doc = Self::serialize_to_doc(
-            format!("{}/{}/{}", parent, collection_id, document_id.as_ref()).as_str(),
+            safe_document_path(parent, collection_id, document_id.as_ref())?.as_str(),
             obj,
         )?;
 

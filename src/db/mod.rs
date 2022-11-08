@@ -50,6 +50,9 @@ pub use consistency_selector::*;
 mod parent_path_builder;
 pub use parent_path_builder::*;
 
+use crate::errors::{
+    FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
+};
 use std::fmt::Formatter;
 
 #[derive(Clone)]
@@ -225,5 +228,32 @@ impl std::fmt::Debug for FirestoreDb {
             .field("doc_path", &self.doc_path)
             .field("session_params", &self.session_params)
             .finish()
+    }
+}
+
+pub(crate) fn safe_document_path<S>(
+    parent: &str,
+    collection_id: &str,
+    document_id: S,
+) -> FirestoreResult<String>
+where
+    S: AsRef<str> + Send,
+{
+    // All restrictions described here: https://firebase.google.com/docs/firestore/quotas#collections_documents_and_fields
+    // Here we check only the most dangerous one for `/` to avoid document_id injections, leaving other validation to the server side.
+    if document_id.as_ref().chars().all(|c| c != '/') && document_id.as_ref().len() <= 1500 {
+        Ok(format!(
+            "{}/{}/{}",
+            parent,
+            collection_id,
+            document_id.as_ref()
+        ))
+    } else {
+        Err(FirestoreError::InvalidParametersError(
+            FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
+                "document_id".to_string(),
+                format!("Invalid document ID provided: {}", document_id.as_ref()),
+            )),
+        ))
     }
 }

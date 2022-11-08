@@ -1,3 +1,4 @@
+use crate::db::safe_document_path;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -43,7 +44,7 @@ impl FirestoreDeleteSupport for FirestoreDb {
     where
         S: AsRef<str> + Send,
     {
-        let document_path = format!("{}/{}/{}", parent, collection_id, document_id.as_ref());
+        let document_path = safe_document_path(parent, collection_id, document_id.as_ref())?;
 
         let span = span!(
             Level::DEBUG,
