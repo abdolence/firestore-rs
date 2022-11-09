@@ -32,8 +32,8 @@ firestore = "0.15"
 All examples available at [examples](examples) directory.
 
 To run example use it with environment variables:
-```
-# PROJECT_ID=<your-google-project-id> cargo run --example crud
+```bash
+PROJECT_ID=<your-google-project-id> cargo run --example crud
 ```
 
 ## Fluent API
