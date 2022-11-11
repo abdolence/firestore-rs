@@ -79,15 +79,16 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     assert_eq!(find_parent, parent_struct);
 
-    let find_child: MyChildStructure = db
-        .get_obj_at(
-            parent_path.as_str(),
-            TEST_CHILD_COLLECTION_NAME,
-            &child_struct.some_id,
-        )
+    let find_child: Option<MyChildStructure> = db
+        .fluent()
+        .select()
+        .by_id_in(TEST_CHILD_COLLECTION_NAME)
+        .parent(&parent_path)
+        .obj()
+        .one(&child_struct.some_id)
         .await?;
 
-    assert_eq!(find_child, child_struct);
+    assert_eq!(find_child, Some(child_struct));
 
     Ok(())
 }
