@@ -164,16 +164,15 @@ impl FirestoreDb {
         &self,
         parent_collection_name: &str,
         parent_document_id: S,
-    ) -> ParentPathBuilder
+    ) -> FirestoreResult<ParentPathBuilder>
     where
         S: AsRef<str>,
     {
-        ParentPathBuilder::new(format!(
-            "{}/{}/{}",
-            &self.doc_path.as_str(),
+        Ok(ParentPathBuilder::new(safe_document_path(
+            self.doc_path.as_str(),
             parent_collection_name,
-            parent_document_id.as_ref()
-        ))
+            parent_document_id.as_ref(),
+        )?))
     }
 
     #[inline]
