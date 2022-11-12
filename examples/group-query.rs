@@ -65,7 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
 
             // The doc path where we store our childs
-            let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, &parent_struct.some_id);
+            let parent_path =
+                db.parent_path(TEST_PARENT_COLLECTION_NAME, &parent_struct.some_id)?;
 
             // Remove child doc if exists
             db.fluent()

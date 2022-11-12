@@ -2,7 +2,6 @@ use crate::common::setup;
 use serde::{Deserialize, Serialize};
 
 mod common;
-use firestore::*;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct MyParentStructure {
@@ -52,12 +51,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     // The doc path where we store our childs
-    let parent_path = format!(
-        "{}/{}/{}",
-        db.get_documents_path(),
-        TEST_PARENT_COLLECTION_NAME,
-        parent_struct.some_id
-    );
+    let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, &parent_struct.some_id)?;
 
     // Remove child doc if exists
     db.fluent()
@@ -78,21 +72,26 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    let find_parent: MyParentStructure = db
-        .get_obj(TEST_PARENT_COLLECTION_NAME, &parent_struct.some_id)
+    let find_parent: Option<MyParentStructure> = db
+        .fluent()
+        .select()
+        .by_id_in(TEST_PARENT_COLLECTION_NAME)
+        .obj()
+        .one(&parent_struct.some_id)
         .await?;
 
-    assert_eq!(find_parent, parent_struct);
+    assert_eq!(find_parent, Some(parent_struct));
 
-    let find_child: MyChildStructure = db
-        .get_obj_at(
-            parent_path.as_str(),
-            TEST_CHILD_COLLECTION_NAME,
-            &child_struct.some_id,
-        )
+    let find_child: Option<MyChildStructure> = db
+        .fluent()
+        .select()
+        .by_id_in(TEST_CHILD_COLLECTION_NAME)
+        .parent(&parent_path)
+        .obj()
+        .one(&child_struct.some_id)
         .await?;
 
-    assert_eq!(find_child, child_struct);
+    assert_eq!(find_child, Some(child_struct));
 
     Ok(())
 }

@@ -1,3 +1,5 @@
+use crate::db::safe_document_path;
+use crate::FirestoreResult;
 use std::fmt::{Display, Formatter};
 
 pub struct ParentPathBuilder {
@@ -11,16 +13,15 @@ impl ParentPathBuilder {
     }
 
     #[inline]
-    pub fn at<S>(self, parent_collection_name: &str, parent_document_id: S) -> Self
+    pub fn at<S>(self, parent_collection_name: &str, parent_document_id: S) -> FirestoreResult<Self>
     where
         S: AsRef<str>,
     {
-        Self::new(format!(
-            "{}/{}/{}",
-            self.value,
+        Ok(Self::new(safe_document_path(
+            self.value.as_str(),
             parent_collection_name,
-            parent_document_id.as_ref()
-        ))
+            parent_document_id.as_ref(),
+        )?))
     }
 }
 
