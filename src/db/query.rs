@@ -45,10 +45,15 @@ pub trait FirestoreQuerySupport {
         for<'de> T: Deserialize<'de>,
         T: Send + 'b;
 
-    fn stream_partition_query_with_errors(
+    fn stream_partition_cursors_with_errors(
         &self,
         params: FirestorePartitionQueryParams,
-    ) -> BoxFuture<FirestoreResult<BoxStream<FirestoreResult<Vec<FirestoreQueryCursor>>>>>;
+    ) -> BoxFuture<FirestoreResult<BoxStream<FirestoreResult<FirestoreQueryCursor>>>>;
+
+    fn stream_partition_docs_with_errors(
+        &self,
+        params: FirestorePartitionQueryParams,
+    ) -> BoxFuture<FirestoreResult<BoxStream<Vec<FirestoreResult<FirestoreQueryCursor>>>>>;
 }
 
 impl FirestoreDb {
@@ -311,10 +316,10 @@ impl FirestoreQuerySupport for FirestoreDb {
         })))
     }
 
-    fn stream_partition_query_with_errors(
+    fn stream_partition_cursors_with_errors(
         &self,
         params: FirestorePartitionQueryParams,
-    ) -> BoxFuture<FirestoreResult<BoxStream<FirestoreResult<Vec<FirestoreQueryCursor>>>>> {
+    ) -> BoxFuture<FirestoreResult<BoxStream<FirestoreResult<FirestoreQueryCursor>>>> {
         Box::pin(async move {
             let consistency_selector: Option<
                 gcloud_sdk::google::firestore::v1::partition_query_request::ConsistencySelector,
@@ -325,63 +330,76 @@ impl FirestoreQuerySupport for FirestoreDb {
                 .map(|selector| selector.try_into())
                 .transpose()?;
 
-            let stream: BoxStream<FirestoreResult<Vec<FirestoreQueryCursor>>> =
-                futures::stream::unfold(
-                    Some((params, consistency_selector)),
-                    move |maybe_params| async move {
-                        if let Some((params, maybe_consistency_selector)) = maybe_params {
-                            let request = tonic::Request::new(PartitionQueryRequest {
-                                page_size: params.page_size as i32,
-                                partition_count: params.partition_count as i64,
-                                parent: params
-                                    .query_params
-                                    .parent
-                                    .as_ref()
-                                    .unwrap_or_else(|| self.get_documents_path())
-                                    .clone(),
-                                consistency_selector: maybe_consistency_selector.clone(),
-                                query_type: Some(
-                                    partition_query_request::QueryType::StructuredQuery(
-                                        params.query_params.to_structured_query(),
-                                    ),
-                                ),
-                                page_token: params.page_token.clone().unwrap_or_default(),
-                            });
+            let stream: BoxStream<FirestoreResult<FirestoreQueryCursor>> = futures::stream::unfold(
+                Some((params, consistency_selector)),
+                move |maybe_params| async move {
+                    if let Some((params, maybe_consistency_selector)) = maybe_params {
+                        let request = tonic::Request::new(PartitionQueryRequest {
+                            page_size: params.page_size as i32,
+                            partition_count: params.partition_count as i64,
+                            parent: params
+                                .query_params
+                                .parent
+                                .as_ref()
+                                .unwrap_or_else(|| self.get_documents_path())
+                                .clone(),
+                            consistency_selector: maybe_consistency_selector.clone(),
+                            query_type: Some(partition_query_request::QueryType::StructuredQuery(
+                                params.query_params.to_structured_query(),
+                            )),
+                            page_token: params.page_token.clone().unwrap_or_default(),
+                        });
 
-                            match self.client().get().partition_query(request).await {
-                                Ok(response) => {
-                                    let partition_response = response.into_inner();
-                                    let firestore_cursors: Vec<FirestoreQueryCursor> =
-                                        partition_response
-                                            .partitions
-                                            .into_iter()
-                                            .map(|e| e.into())
-                                            .collect();
+                        match self.client().get().partition_query(request).await {
+                            Ok(response) => {
+                                let partition_response = response.into_inner();
+                                let firestore_cursors: Vec<FirestoreQueryCursor> =
+                                    partition_response
+                                        .partitions
+                                        .into_iter()
+                                        .map(|e| e.into())
+                                        .collect();
 
-                                    if !partition_response.next_page_token.is_empty() {
+                                if !partition_response.next_page_token.is_empty() {
+                                    Some((
+                                        Ok(firestore_cursors),
                                         Some((
-                                            Ok(firestore_cursors),
-                                            Some((
-                                                params.with_page_token(
-                                                    partition_response.next_page_token.clone(),
-                                                ),
-                                                maybe_consistency_selector,
-                                            )),
-                                        ))
-                                    } else {
-                                        Some((Ok(firestore_cursors), None))
-                                    }
+                                            params.with_page_token(
+                                                partition_response.next_page_token.clone(),
+                                            ),
+                                            maybe_consistency_selector,
+                                        )),
+                                    ))
+                                } else {
+                                    Some((Ok(firestore_cursors), None))
                                 }
-                                Err(err) => Some((Err(err.into()), None)),
                             }
-                        } else {
-                            None
+                            Err(err) => Some((Err(FirestoreError::from(err)), None)),
                         }
-                    },
-                )
-                .boxed();
+                    } else {
+                        None
+                    }
+                },
+            )
+            .flat_map(|s| {
+                futures::stream::iter(match s {
+                    Ok(results) => results
+                        .into_iter()
+                        .map(|r| Ok::<FirestoreQueryCursor, FirestoreError>(r))
+                        .collect(),
+                    Err(err) => vec![Err(err)],
+                })
+            })
+            .boxed();
 
             Ok(stream)
         })
+    }
+
+    fn stream_partition_docs_with_errors(
+        &self,
+        params: FirestorePartitionQueryParams,
+    ) -> BoxFuture<FirestoreResult<BoxStream<Vec<FirestoreResult<FirestoreQueryCursor>>>>> {
+        todo!()
     }
 }
