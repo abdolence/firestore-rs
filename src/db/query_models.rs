@@ -367,3 +367,31 @@ impl From<&FirestoreQueryCursor> for gcloud_sdk::google::firestore::v1::Cursor {
         }
     }
 }
+
+impl From<gcloud_sdk::google::firestore::v1::Cursor> for FirestoreQueryCursor {
+    fn from(cursor: gcloud_sdk::google::firestore::v1::Cursor) -> Self {
+        let firestore_values = cursor
+            .values
+            .into_iter()
+            .map(FirestoreValue::from)
+            .collect();
+        if cursor.before {
+            FirestoreQueryCursor::BeforeValue(firestore_values)
+        } else {
+            FirestoreQueryCursor::AfterValue(firestore_values)
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestorePartitionQueryParams {
+    pub query_params: FirestoreQueryParams,
+    pub partition_count: u32,
+    pub page_size: u32,
+    pub page_token: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestorePartition {
+    pub cursor: Option<FirestoreQueryCursor>,
+}
