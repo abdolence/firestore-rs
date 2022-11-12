@@ -72,7 +72,7 @@ impl FirestoreListingSupport for FirestoreDb {
         params: FirestoreListDocParams,
     ) -> FirestoreResult<BoxStream<Document>> {
         let stream: BoxStream<Document> = Box::pin(
-            futures_util::stream::unfold(Some(params), move |maybe_params| async move {
+            futures::stream::unfold(Some(params), move |maybe_params| async move {
                 if let Some(params) = maybe_params {
                     let collection_str = params.collection_id.to_string();
 
