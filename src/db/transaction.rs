@@ -152,7 +152,7 @@ impl<'a> FirestoreTransaction<'a> {
         if let Some(commit_time) = response.commit_time {
             self.transaction_span.record(
                 "/firestore/commit_time",
-                from_timestamp(commit_time).to_rfc3339().as_str(),
+                from_timestamp(commit_time)?.to_rfc3339().as_str(),
             );
         }
 

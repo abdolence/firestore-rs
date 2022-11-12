@@ -362,7 +362,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
                 FirestoreSerializationError::from_message("LatLng not supported yet"),
             )),
             Some(value::ValueType::TimestampValue(ts)) => {
-                visitor.visit_string(from_timestamp(ts).to_rfc3339())
+                visitor.visit_string(from_timestamp(ts)?.to_rfc3339())
             }
             None => visitor.visit_unit(),
         }
