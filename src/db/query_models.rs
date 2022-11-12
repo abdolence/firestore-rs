@@ -390,3 +390,8 @@ pub struct FirestorePartitionQueryParams {
     pub page_size: u32,
     pub page_token: Option<String>,
 }
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestorePartition {
+    pub cursor: Option<FirestoreQueryCursor>,
+}

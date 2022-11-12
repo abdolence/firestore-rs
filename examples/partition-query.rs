@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use firestore::*;
 use futures::stream::BoxStream;
-use futures::StreamExt;
+use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
@@ -31,51 +31,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     const TEST_COLLECTION_NAME: &'static str = "test-partitions";
 
-    println!("Populating a test collection");
-    for i in 0..10 {
-        let my_struct = MyTestStructure {
-            some_id: format!("test-{}", i),
-            some_string: "Test".to_string(),
-            one_more_string: "Test2".to_string(),
-            some_num: 42 - i,
-            created_at: Utc::now(),
-        };
+    //println!("Populating a test collection");
+    // for i in 0..40000 {
+    //     let my_struct = MyTestStructure {
+    //         some_id: format!("test-{}", i),
+    //         some_string: "Test".to_string(),
+    //         one_more_string: "Test2".to_string(),
+    //         some_num: i,
+    //         created_at: Utc::now(),
+    //     };
+    //
+    //     if db
+    //         .fluent()
+    //         .select()
+    //         .by_id_in(TEST_COLLECTION_NAME)
+    //         .one(&my_struct.some_id)
+    //         .await?
+    //         .is_none()
+    //     {
+    //         // Let's insert some data
+    //         db.fluent()
+    //             .insert()
+    //             .into(TEST_COLLECTION_NAME)
+    //             .document_id(&my_struct.some_id)
+    //             .object(&my_struct)
+    //             .execute()
+    //             .await?;
+    //     }
+    // }
 
-        // Remove if it already exist
-        db.fluent()
-            .delete()
-            .from(TEST_COLLECTION_NAME)
-            .document_id(&my_struct.some_id)
-            .execute()
-            .await?;
-
-        // Let's insert some data
-        db.fluent()
-            .insert()
-            .into(TEST_COLLECTION_NAME)
-            .document_id(&my_struct.some_id)
-            .object(&my_struct)
-            .execute()
-            .await?;
-    }
-
-    println!("Querying a test collection as a stream using Fluent API");
-
-    // Query as a stream our data
-    let object_stream: BoxStream<MyTestStructure> = db
+    let partition_stream: BoxStream<FirestoreResult<(FirestorePartition, MyTestStructure)>> = db
         .fluent()
         .select()
-        .fields(
-            paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at}),
-        )
         .from(TEST_COLLECTION_NAME)
-        .filter(|q| q.for_all([q.field(path!(MyTestStructure::some_string)).eq("Test")]))
         .obj()
-        .stream_query()
+        .partition_query()
+        .parallelism(2)
+        .page_size(10)
+        .stream_partitions_with_errors()
         .await?;
 
-    let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
-    println!("{:?}", as_vec);
+    let as_vec: Vec<(FirestorePartition, MyTestStructure)> = partition_stream.try_collect().await?;
+    println!("{}", as_vec.len());
 
     Ok(())
 }

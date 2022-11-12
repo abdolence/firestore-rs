@@ -1,15 +1,18 @@
 use crate::{
     FirestoreCreateSupport, FirestoreDeleteSupport, FirestoreGetByIdSupport,
-    FirestoreListDocParams, FirestoreListDocResult, FirestoreListingSupport, FirestoreQueryParams,
-    FirestoreQuerySupport, FirestoreResult, FirestoreUpdateSupport,
+    FirestoreListDocParams, FirestoreListDocResult, FirestoreListingSupport, FirestorePartition,
+    FirestorePartitionQueryParams, FirestoreQueryCursor, FirestoreQueryParams,
+    FirestoreQuerySupport, FirestoreResult, FirestoreUpdateSupport, PeekableBoxStream,
 };
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use futures_util::future::BoxFuture;
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
 
 pub struct MockDatabase;
 
+#[allow(unused)]
 #[async_trait]
 impl FirestoreQuerySupport for MockDatabase {
     async fn query_doc(&self, _params: FirestoreQueryParams) -> FirestoreResult<Vec<Document>> {
@@ -54,6 +57,33 @@ impl FirestoreQuerySupport for MockDatabase {
     where
         for<'de> T: Deserialize<'de>,
         T: Send + 'b,
+    {
+        unreachable!()
+    }
+
+    fn stream_partition_cursors_with_errors(
+        &self,
+        params: FirestorePartitionQueryParams,
+    ) -> BoxFuture<FirestoreResult<PeekableBoxStream<FirestoreResult<FirestoreQueryCursor>>>> {
+        unreachable!()
+    }
+
+    async fn stream_partition_query_doc_with_errors(
+        &self,
+        parallelism: usize,
+        partition_params: FirestorePartitionQueryParams,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<(FirestorePartition, Document)>>> {
+        unreachable!()
+    }
+
+    async fn stream_partition_query_obj_with_errors<'a, T>(
+        &'a self,
+        parallelism: usize,
+        partition_params: FirestorePartitionQueryParams,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(FirestorePartition, T)>>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'a,
     {
         unreachable!()
     }

@@ -1,8 +1,9 @@
 use crate::errors::FirestoreError;
 use crate::query_filter_builder::FirestoreQueryFilterBuilder;
 use crate::{
-    FirestoreGetByIdSupport, FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter,
-    FirestoreQueryOrder, FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult,
+    FirestoreGetByIdSupport, FirestorePartition, FirestorePartitionQueryParams,
+    FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
+    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult,
 };
 use futures_util::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -181,6 +182,10 @@ where
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         self.db.stream_query_doc_with_errors(self.params).await
     }
+
+    pub fn partition_query(self) -> FirestorePartitionQueryDocBuilder<'a, D> {
+        FirestorePartitionQueryDocBuilder::new(self.db, self.params.with_all_descendants(true))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -227,6 +232,13 @@ where
         T: 'b,
     {
         self.db.stream_query_obj_with_errors(self.params).await
+    }
+
+    pub fn partition_query(self) -> FirestorePartitionQueryObjBuilder<'a, D, T>
+    where
+        T: 'a,
+    {
+        FirestorePartitionQueryObjBuilder::new(self.db, self.params.with_all_descendants(true))
     }
 }
 
@@ -511,6 +523,146 @@ where
                 )
                 .await
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FirestorePartitionQueryDocBuilder<'a, D>
+where
+    D: FirestoreQuerySupport,
+{
+    db: &'a D,
+    params: FirestoreQueryParams,
+    parallelism: usize,
+    partition_count: u32,
+    page_size: u32,
+}
+
+impl<'a, D> FirestorePartitionQueryDocBuilder<'a, D>
+where
+    D: FirestoreQuerySupport,
+{
+    #[inline]
+    pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
+        Self {
+            db,
+            params,
+            parallelism: 2,
+            partition_count: 10,
+            page_size: 1000,
+        }
+    }
+
+    #[inline]
+    pub fn parallelism(self, max_threads: usize) -> Self {
+        Self {
+            parallelism: max_threads,
+            ..self
+        }
+    }
+
+    #[inline]
+    pub fn partition_count(self, count: u32) -> Self {
+        Self {
+            partition_count: count,
+            ..self
+        }
+    }
+
+    #[inline]
+    pub fn page_size(self, len: u32) -> Self {
+        Self {
+            page_size: len,
+            ..self
+        }
+    }
+
+    pub async fn stream_partitions_with_errors(
+        self,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(FirestorePartition, Document)>>> {
+        self.db
+            .stream_partition_query_doc_with_errors(
+                self.parallelism,
+                FirestorePartitionQueryParams::new(
+                    self.params,
+                    self.partition_count,
+                    self.page_size,
+                ),
+            )
+            .await
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FirestorePartitionQueryObjBuilder<'a, D, T>
+where
+    D: FirestoreQuerySupport,
+    T: Send,
+    for<'de> T: Deserialize<'de>,
+{
+    db: &'a D,
+    params: FirestoreQueryParams,
+    parallelism: usize,
+    partition_count: u32,
+    page_size: u32,
+    _ph: PhantomData<T>,
+}
+
+impl<'a, D, T> FirestorePartitionQueryObjBuilder<'a, D, T>
+where
+    D: FirestoreQuerySupport,
+    T: Send + 'a,
+    for<'de> T: Deserialize<'de>,
+{
+    #[inline]
+    pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
+        Self {
+            db,
+            params,
+            parallelism: 2,
+            partition_count: 10,
+            page_size: 1000,
+            _ph: PhantomData::default(),
+        }
+    }
+
+    #[inline]
+    pub fn parallelism(self, max_threads: usize) -> Self {
+        Self {
+            parallelism: max_threads,
+            ..self
+        }
+    }
+
+    #[inline]
+    pub fn partition_count(self, count: u32) -> Self {
+        Self {
+            partition_count: count,
+            ..self
+        }
+    }
+
+    #[inline]
+    pub fn page_size(self, len: u32) -> Self {
+        Self {
+            page_size: len,
+            ..self
+        }
+    }
+
+    pub async fn stream_partitions_with_errors(
+        self,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(FirestorePartition, T)>>> {
+        self.db
+            .stream_partition_query_obj_with_errors(
+                self.parallelism,
+                FirestorePartitionQueryParams::new(
+                    self.params,
+                    self.partition_count,
+                    self.page_size,
+                ),
+            )
+            .await
     }
 }
 
