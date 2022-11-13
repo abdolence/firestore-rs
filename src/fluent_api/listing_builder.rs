@@ -120,6 +120,12 @@ where
     pub async fn stream_all(self) -> FirestoreResult<BoxStream<'a, Document>> {
         self.db.stream_list_doc(self.params).await
     }
+
+    pub async fn stream_all_with_errors(
+        self,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<Document>>> {
+        self.db.stream_list_doc_with_errors(self.params).await
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -153,5 +159,11 @@ where
 
     pub async fn stream_all(self) -> FirestoreResult<BoxStream<'a, T>> {
         self.db.stream_list_obj(self.params).await
+    }
+
+    pub async fn stream_all_with_errors(
+        self,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<T>>> {
+        self.db.stream_list_obj_with_errors(self.params).await
     }
 }

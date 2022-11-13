@@ -248,10 +248,27 @@ impl FirestoreListingSupport for MockDatabase {
         unreachable!()
     }
 
+    async fn stream_list_doc_with_errors(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<Document>>> {
+        unreachable!()
+    }
+
     async fn stream_list_obj<T>(
         &self,
         params: FirestoreListDocParams,
     ) -> FirestoreResult<BoxStream<T>>
+    where
+        for<'de> T: Deserialize<'de>,
+    {
+        unreachable!()
+    }
+
+    async fn stream_list_obj_with_errors<T>(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<T>>>
     where
         for<'de> T: Deserialize<'de>,
     {

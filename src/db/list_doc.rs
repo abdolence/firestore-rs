@@ -6,9 +6,11 @@ use futures::StreamExt;
 use futures::TryFutureExt;
 use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
+use futures_util::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
 use serde::Deserialize;
+use std::future;
 use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
@@ -43,10 +45,22 @@ pub trait FirestoreListingSupport {
         params: FirestoreListDocParams,
     ) -> FirestoreResult<BoxStream<Document>>;
 
+    async fn stream_list_doc_with_errors(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<Document>>>;
+
     async fn stream_list_obj<T>(
         &self,
         params: FirestoreListDocParams,
     ) -> FirestoreResult<BoxStream<T>>
+    where
+        for<'de> T: Deserialize<'de>;
+
+    async fn stream_list_obj_with_errors<T>(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<T>>>
     where
         for<'de> T: Deserialize<'de>;
 }
@@ -67,11 +81,11 @@ impl FirestoreListingSupport for FirestoreDb {
         self.list_doc_with_retries(params, 0, &span).await
     }
 
-    async fn stream_list_doc(
+    async fn stream_list_doc_with_errors(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<Document>> {
-        let stream: BoxStream<Document> = Box::pin(
+    ) -> FirestoreResult<BoxStream<FirestoreResult<Document>>> {
+        let stream: BoxStream<FirestoreResult<Document>> = Box::pin(
             futures::stream::unfold(Some(params), move |maybe_params| async move {
                 if let Some(params) = maybe_params {
                     let collection_str = params.collection_id.to_string();
@@ -86,24 +100,49 @@ impl FirestoreListingSupport for FirestoreDb {
                     match self.list_doc_with_retries(params.clone(), 0, &span).await {
                         Ok(results) => {
                             if let Some(next_page_token) = results.page_token.clone() {
-                                Some((results, Some(params.with_page_token(next_page_token))))
+                                Some((Ok(results), Some(params.with_page_token(next_page_token))))
                             } else {
-                                Some((results, None))
+                                Some((Ok(results), None))
                             }
                         }
                         Err(err) => {
                             error!("[DB] Error occurred while consuming documents: {}", err);
-                            None
+                            Some((Err(err), None))
                         }
                     }
                 } else {
                     None
                 }
             })
-            .flat_map(|doc_result| futures::stream::iter(doc_result.documents)),
+            .flat_map(|doc_res| {
+                futures::stream::iter(match doc_res {
+                    Ok(results) => results
+                        .documents
+                        .into_iter()
+                        .map(Ok::<Document, FirestoreError>)
+                        .collect(),
+                    Err(err) => vec![Err(err)],
+                })
+            }),
         );
 
         Ok(stream)
+    }
+
+    async fn stream_list_doc(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<Document>> {
+        let doc_stream = self.stream_list_doc_with_errors(params).await?;
+        Ok(Box::pin(doc_stream.filter_map(|doc_res| {
+            future::ready(match doc_res {
+                Ok(doc) => Some(doc),
+                Err(err) => {
+                    error!("[DB] Error occurred while consuming documents: {}", err);
+                    None
+                }
+            })
+        })))
     }
 
     async fn stream_list_obj<T>(
@@ -126,6 +165,20 @@ impl FirestoreListingSupport for FirestoreDb {
                     None
                 }
             }
+        })))
+    }
+
+    async fn stream_list_obj_with_errors<T>(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<T>>>
+    where
+        for<'de> T: Deserialize<'de>,
+    {
+        let doc_stream = self.stream_list_doc_with_errors(params).await?;
+
+        Ok(Box::pin(doc_stream.and_then(|doc| async move {
+            Self::deserialize_doc_to::<T>(&doc)
         })))
     }
 }
