@@ -6,17 +6,17 @@ use gcloud_sdk::google::firestore::v1::Write;
 use serde::Serialize;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-struct UpdateObjectOperation<'a, T, S>
+pub(crate) struct UpdateObjectOperation<'a, T, S>
 where
     T: Serialize + Sync + Send,
     S: AsRef<str>,
 {
-    parent: String,
-    collection_id: String,
-    document_id: S,
-    obj: &'a T,
-    update_only: Option<Vec<String>>,
-    precondition: Option<FirestoreWritePrecondition>,
+    pub parent: String,
+    pub collection_id: String,
+    pub document_id: S,
+    pub obj: &'a T,
+    pub update_only: Option<Vec<String>>,
+    pub precondition: Option<FirestoreWritePrecondition>,
 }
 
 impl<'a, T, S> TryInto<Write> for UpdateObjectOperation<'a, T, S>
@@ -50,13 +50,14 @@ where
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-struct DeleteOperation<S>
+pub(crate) struct DeleteOperation<S>
 where
     S: AsRef<str>,
 {
-    parent: String,
-    collection_id: String,
-    document_id: S,
+    pub parent: String,
+    pub collection_id: String,
+    pub document_id: S,
+    pub precondition: Option<FirestoreWritePrecondition>,
 }
 
 impl<S> TryInto<Write> for DeleteOperation<S>
@@ -69,7 +70,7 @@ where
         Ok(Write {
             update_mask: None,
             update_transforms: vec![],
-            current_document: None,
+            current_document: self.precondition.map(|cond| cond.try_into()).transpose()?,
             operation: Some(gcloud_sdk::google::firestore::v1::write::Operation::Delete(
                 safe_document_path(
                     &self.parent,
@@ -131,11 +132,17 @@ impl<'a> FirestoreTransaction<'a> {
         &mut self,
         collection_id: &str,
         document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<&mut Self>
     where
         S: AsRef<str>,
     {
-        self.delete_by_id_at(self.db.get_documents_path(), collection_id, document_id)
+        self.delete_by_id_at(
+            self.db.get_documents_path(),
+            collection_id,
+            document_id,
+            precondition,
+        )
     }
 
     pub fn delete_by_id_at<S>(
@@ -143,6 +150,7 @@ impl<'a> FirestoreTransaction<'a> {
         parent: &str,
         collection_id: &str,
         document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<&mut Self>
     where
         S: AsRef<str>,
@@ -151,6 +159,7 @@ impl<'a> FirestoreTransaction<'a> {
             parent: parent.to_string(),
             collection_id: collection_id.to_string(),
             document_id,
+            precondition,
         })
     }
 }

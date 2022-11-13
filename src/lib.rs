@@ -9,6 +9,8 @@
 //! - Implements own Serde serializer to Firestore gRPC values;
 //! - Supports for Firestore timestamp with `#[serde(with)]`;
 //! - Transactions support;
+//! - Streaming batch writes with automatic throttling to avoid time limits from Firestore;
+//! - Aggregated Queries;
 //! - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
 //!   that automatically detects GKE environment or application default accounts for local development;
 //!

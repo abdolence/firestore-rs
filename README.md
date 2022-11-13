@@ -12,6 +12,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
   - Listening changes from Firestore;
   - Transactions;
   - Aggregated Queries;
+  - Streaming batch writes with automatic throttling to avoid time limits from Firestore;
 - Fluent high-level and strongly typed API;
 - Full async based on Tokio runtime;
 - Macro that helps you use JSON paths as references to your structure fields;
@@ -25,7 +26,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 Cargo.toml:
 ```toml
 [dependencies]
-firestore = "0.17"
+firestore = "0.18"
 ```
 
 ## Examples

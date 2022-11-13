@@ -1,5 +1,6 @@
 use crate::{
-    FirestoreResult, FirestoreTransaction, FirestoreUpdateSupport, FirestoreWritePrecondition,
+    FirestoreBatch, FirestoreResult, FirestoreTransaction, FirestoreUpdateSupport,
+    FirestoreWritePrecondition,
 };
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
@@ -347,6 +348,31 @@ where
             )
         } else {
             transaction.update_object(
+                self.collection_id.as_str(),
+                self.document_id,
+                self.object,
+                self.update_only_fields,
+                self.precondition,
+            )
+        }
+    }
+
+    #[inline]
+    pub fn add_to_batch<'t>(
+        self,
+        batch: &'a mut FirestoreBatch<'t>,
+    ) -> FirestoreResult<&'a mut FirestoreBatch<'t>> {
+        if let Some(parent) = self.parent {
+            batch.update_object_at(
+                parent.as_str(),
+                self.collection_id.as_str(),
+                self.document_id,
+                self.object,
+                self.update_only_fields,
+                self.precondition,
+            )
+        } else {
+            batch.update_object(
                 self.collection_id.as_str(),
                 self.document_id,
                 self.object,

@@ -1,3 +1,4 @@
+use gcloud_sdk::google::firestore::v1::WriteRequest;
 use rsb_derive::Builder;
 use serde::*;
 use std::error::Error;
@@ -270,5 +271,16 @@ impl From<chrono::ParseError> for FirestoreError {
             "Parse error: {}",
             parse_err
         )))
+    }
+}
+
+impl From<tokio::sync::mpsc::error::SendError<gcloud_sdk::google::firestore::v1::WriteRequest>>
+    for FirestoreError
+{
+    fn from(send_error: tokio::sync::mpsc::error::SendError<WriteRequest>) -> Self {
+        FirestoreError::NetworkError(FirestoreNetworkError::new(
+            FirestoreErrorPublicGenericDetails::new("SEND_STREAM_ERROR".into()),
+            format!("Send stream error: {}", send_error),
+        ))
     }
 }

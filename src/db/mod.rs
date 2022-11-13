@@ -43,7 +43,7 @@ mod transaction;
 pub use transaction::*;
 
 mod transaction_ops;
-pub use transaction_ops::*;
+use transaction_ops::*;
 
 mod session_params;
 pub use session_params::*;
@@ -53,6 +53,9 @@ pub use consistency_selector::*;
 
 mod parent_path_builder;
 pub use parent_path_builder::*;
+
+mod batch_write;
+pub use batch_write::*;
 
 use crate::errors::{
     FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,

@@ -1,5 +1,6 @@
 use crate::{
-    FirestoreDeleteSupport, FirestoreResult, FirestoreTransaction, FirestoreWritePrecondition,
+    FirestoreBatch, FirestoreDeleteSupport, FirestoreResult, FirestoreTransaction,
+    FirestoreWritePrecondition,
 };
 
 #[derive(Clone, Debug)]
@@ -167,9 +168,35 @@ where
                 parent.as_str(),
                 self.collection_id.as_str(),
                 self.document_id,
+                self.precondition,
             )
         } else {
-            transaction.delete_by_id(self.collection_id.as_str(), self.document_id)
+            transaction.delete_by_id(
+                self.collection_id.as_str(),
+                self.document_id,
+                self.precondition,
+            )
+        }
+    }
+
+    #[inline]
+    pub fn add_to_batch<'t>(
+        self,
+        batch: &'a mut FirestoreBatch<'t>,
+    ) -> FirestoreResult<&'a mut FirestoreBatch<'t>> {
+        if let Some(parent) = self.parent {
+            batch.delete_by_id_at(
+                parent.as_str(),
+                self.collection_id.as_str(),
+                self.document_id,
+                self.precondition,
+            )
+        } else {
+            batch.delete_by_id(
+                self.collection_id.as_str(),
+                self.document_id,
+                self.precondition,
+            )
         }
     }
 }
