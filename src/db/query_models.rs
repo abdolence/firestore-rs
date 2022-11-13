@@ -393,5 +393,6 @@ pub struct FirestorePartitionQueryParams {
 
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestorePartition {
-    pub cursor: Option<FirestoreQueryCursor>,
+    pub start_at: Option<FirestoreQueryCursor>,
+    pub end_at: Option<FirestoreQueryCursor>,
 }

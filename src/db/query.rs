@@ -434,15 +434,15 @@ impl FirestoreQuerySupport for FirestoreDb {
             )
         });
 
-        let mut cursors_stream = self
+        let mut cursors: Vec<FirestoreQueryCursor> = self
             .stream_partition_cursors_with_errors(partition_params.clone())
+            .await?
+            .try_collect()
             .await?;
 
-        let peek_cursor = std::pin::Pin::new(&mut cursors_stream).peek().await;
-
-        if peek_cursor.is_none() {
+        if cursors.is_empty() {
             span.in_scope(|| {
-                info!(
+                debug!(
                     "The server detected the query has too few results to be partitioned. Falling back to normal query"
                 )
             });
@@ -454,62 +454,65 @@ impl FirestoreQuerySupport for FirestoreDb {
                 .and_then(|doc| future::ready(Ok((FirestorePartition::new(), doc))))
                 .boxed())
         } else {
+            let mut cursors_pairs: Vec<Option<FirestoreQueryCursor>> =
+                Vec::with_capacity(cursors.len() + 2);
+            cursors_pairs.push(None);
+            cursors_pairs.extend(cursors.drain(..).into_iter().map(Some));
+            cursors_pairs.push(None);
+
             let (tx, rx) =
                 mpsc::unbounded_channel::<FirestoreResult<(FirestorePartition, Document)>>();
 
-            cursors_stream
-                .map(|cursor_result| (cursor_result, tx.clone(), partition_params.clone(), span.clone()))
+            futures::stream::iter(cursors_pairs.windows(2))
+                .map(|cursor_pair| (cursor_pair, tx.clone(), partition_params.clone(), span.clone()))
                 .for_each_concurrent(
                     Some(parallelism),
-                    |(cursor_result, tx, partition_params, span)| async move {
-                        match cursor_result {
-                            Ok(cursor) => {
-                                span.in_scope(|| {
-                                    debug!(
-                                            "Streaming partition cursor {:?}",
-                                            cursor
-                                        )
-                                });
-                                match self.stream_query_doc_with_errors(partition_params.query_params).await {
-                                    Ok(result_stream) => {
-                                        result_stream
-                                            .map(|doc_res| (doc_res, tx.clone(), cursor.clone(), span.clone()))
-                                            .for_each(|(doc_res, tx, cursor, span)| async move {
-                                                let partition = FirestorePartition::new().with_cursor(cursor.clone());
-                                                let message = doc_res.map(|doc| (partition, doc));
-                                                if let Err(err) = tx.send(message) {
-                                                    span.in_scope(|| {
-                                                        warn!(
-                                                            "Unable to send result for partition cursor {:?}:{:?}",
-                                                            cursor,
-                                                            err
-                                                        )
-                                                    })
-                                                };
-                                            }).await;
-                                    },
-                                    Err(err) => {
-                                        if let Err(err) = tx.send(Err(err)) {
+                    |(cursor_pair, tx, partition_params, span)| async move {
+                        span.in_scope(|| {
+                            debug!(
+                                    "Streaming partition cursor {:?}",
+                                    cursor_pair
+                                )
+                        });
+
+                        let mut params_with_cursors = partition_params.query_params;
+                        if let Some(first_cursor) = cursor_pair.first() {
+                            params_with_cursors.mopt_start_at(first_cursor.clone());
+                        }
+                        if let Some(last_cursor) = cursor_pair.last() {
+                            params_with_cursors.mopt_end_at(last_cursor.clone());
+                        }
+
+                        let partition = FirestorePartition::new().opt_start_at(params_with_cursors.start_at.clone()).opt_end_at(params_with_cursors.end_at.clone());
+
+                        match self.stream_query_doc_with_errors(params_with_cursors).await {
+                            Ok(result_stream) => {
+                                result_stream
+                                    .map(|doc_res| (doc_res, tx.clone(), span.clone(), partition.clone()))
+                                    .for_each(|(doc_res, tx, span, partition)| async move {
+
+                                        let message = doc_res.map(|doc| (partition.clone(), doc));
+                                        if let Err(err) = tx.send(message) {
                                             span.in_scope(|| {
                                                 warn!(
-                                                        "Unable to send result for partition cursor {:?} error {:?}",
-                                                        cursor,
-                                                        err
-                                                    )
+                                                    "Unable to send result for partition {:?}:{:?}",
+                                                    partition,
+                                                    err
+                                                )
                                             })
                                         };
-                                    }
-                                }
-                            }
+                                    }).await;
+                            },
                             Err(err) => {
                                 if let Err(err) = tx.send(Err(err)) {
                                     span.in_scope(|| {
                                         warn!(
-                                                "Unable to send result for partition cursor error {:?}",
+                                                "Unable to send result for partition cursor {:?} error {:?}",
+                                                cursor_pair,
                                                 err
-                                        )
+                                            )
                                     })
-                                }
+                                };
                             }
                         }
                     },
