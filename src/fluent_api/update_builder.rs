@@ -1,6 +1,6 @@
 use crate::{
-    FirestoreBatch, FirestoreResult, FirestoreTransaction, FirestoreUpdateSupport,
-    FirestoreWritePrecondition,
+    FirestoreBatch, FirestoreBatchWriter, FirestoreResult, FirestoreTransaction,
+    FirestoreUpdateSupport, FirestoreWritePrecondition,
 };
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
@@ -358,10 +358,13 @@ where
     }
 
     #[inline]
-    pub fn add_to_batch<'t>(
+    pub fn add_to_batch<'t, W>(
         self,
-        batch: &'a mut FirestoreBatch<'t>,
-    ) -> FirestoreResult<&'a mut FirestoreBatch<'t>> {
+        batch: &'a mut FirestoreBatch<'t, W>,
+    ) -> FirestoreResult<&'a mut FirestoreBatch<'t, W>>
+    where
+        W: FirestoreBatchWriter,
+    {
         if let Some(parent) = self.parent {
             batch.update_object_at(
                 parent.as_str(),

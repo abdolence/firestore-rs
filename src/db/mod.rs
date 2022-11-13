@@ -54,8 +54,13 @@ pub use consistency_selector::*;
 mod parent_path_builder;
 pub use parent_path_builder::*;
 
-mod batch_write;
-pub use batch_write::*;
+mod batch_writer;
+pub use batch_writer::*;
+
+mod batch_streaming_writer;
+pub use batch_streaming_writer::*;
+mod batch_simple_writer;
+pub use batch_simple_writer::*;
 
 use crate::errors::{
     FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,

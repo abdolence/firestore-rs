@@ -1,6 +1,6 @@
 use crate::{
-    FirestoreBatch, FirestoreDeleteSupport, FirestoreResult, FirestoreTransaction,
-    FirestoreWritePrecondition,
+    FirestoreBatch, FirestoreBatchWriter, FirestoreDeleteSupport, FirestoreResult,
+    FirestoreTransaction, FirestoreWritePrecondition,
 };
 
 #[derive(Clone, Debug)]
@@ -180,10 +180,13 @@ where
     }
 
     #[inline]
-    pub fn add_to_batch<'t>(
+    pub fn add_to_batch<'t, W>(
         self,
-        batch: &'a mut FirestoreBatch<'t>,
-    ) -> FirestoreResult<&'a mut FirestoreBatch<'t>> {
+        batch: &'a mut FirestoreBatch<'t, W>,
+    ) -> FirestoreResult<&'a mut FirestoreBatch<'t, W>>
+    where
+        W: FirestoreBatchWriter,
+    {
         if let Some(parent) = self.parent {
             batch.delete_by_id_at(
                 parent.as_str(),

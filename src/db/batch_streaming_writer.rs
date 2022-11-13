@@ -1,12 +1,11 @@
-use crate::db::transaction_ops::UpdateObjectOperation;
-use crate::db::DeleteOperation;
-use crate::errors::FirestoreError;
-use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
+use crate::{
+    FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb, FirestoreResult,
+};
+use async_trait::async_trait;
 use futures::stream::BoxStream;
-use futures::{StreamExt, TryStreamExt};
+use futures_util::{StreamExt, TryStreamExt};
 use gcloud_sdk::google::firestore::v1::{Write, WriteRequest};
 use rsb_derive::*;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -14,19 +13,19 @@ use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
-
 use tonic::Code;
+
 use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
-pub struct FirestoreBatchWriteOptions {
+pub struct FirestoreStreamingBatchWriteOptions {
     #[default = "Duration::from_millis(500)"]
-    throttle_batch_duration: Duration,
+    pub throttle_batch_duration: Duration,
 }
 
-pub struct FirestoreBatchWriter {
+pub struct FirestoreStreamingBatchWriter {
     pub db: FirestoreDb,
-    pub options: FirestoreBatchWriteOptions,
+    pub options: FirestoreStreamingBatchWriteOptions,
     pub batch_span: Span,
     finished: Arc<AtomicBool>,
     writer: UnboundedSender<WriteRequest>,
@@ -37,7 +36,7 @@ pub struct FirestoreBatchWriter {
     init_wait_reader: UnboundedReceiver<()>,
 }
 
-impl Drop for FirestoreBatchWriter {
+impl Drop for FirestoreStreamingBatchWriter {
     fn drop(&mut self) {
         if !self.finished.load(Ordering::Relaxed) {
             self.batch_span.in_scope(|| warn!("Batch was not finished"));
@@ -45,18 +44,12 @@ impl Drop for FirestoreBatchWriter {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Builder)]
-pub struct FirestoreBatchWriteResponse {
-    pub position: u64,
-    pub write_results: Vec<gcloud_sdk::google::firestore::v1::WriteResult>,
-}
-
-impl FirestoreBatchWriter {
+impl FirestoreStreamingBatchWriter {
     pub async fn new<'b>(
         db: FirestoreDb,
-        options: FirestoreBatchWriteOptions,
+        options: FirestoreStreamingBatchWriteOptions,
     ) -> FirestoreResult<(
-        FirestoreBatchWriter,
+        FirestoreStreamingBatchWriter,
         BoxStream<'b, FirestoreResult<FirestoreBatchWriteResponse>>,
     )> {
         let batch_span = span!(Level::DEBUG, "Firestore Batch Write");
@@ -108,6 +101,7 @@ impl FirestoreBatchWriter {
                                         .send(Ok(FirestoreBatchWriteResponse::new(
                                             received_counter - 1,
                                             response.write_results,
+                                            vec![],
                                         )))
                                         .ok();
                                 }
@@ -116,6 +110,7 @@ impl FirestoreBatchWriter {
                                 responses_writer
                                     .send(Ok(FirestoreBatchWriteResponse::new(
                                         received_counter - 1,
+                                        vec![],
                                         vec![],
                                     )))
                                     .ok();
@@ -126,6 +121,7 @@ impl FirestoreBatchWriter {
                                 responses_writer
                                     .send(Ok(FirestoreBatchWriteResponse::new(
                                         received_counter - 1,
+                                        vec![],
                                         vec![],
                                     )))
                                     .ok();
@@ -197,25 +193,6 @@ impl FirestoreBatchWriter {
         ))
     }
 
-    pub async fn write<I>(&self, writes: I) -> FirestoreResult<()>
-    where
-        I: IntoIterator,
-        I::Item: Into<Write>,
-    {
-        self.sent_counter.fetch_add(1, Ordering::Relaxed);
-
-        Ok(self.writer.send(WriteRequest {
-            database: self.db.get_database_path().to_string(),
-            stream_id: "".to_string(),
-            writes: writes.into_iter().map(|write| write.into()).collect(),
-            stream_token: {
-                let locked = self.last_token.read().await;
-                locked.clone()
-            },
-            labels: HashMap::new(),
-        })?)
-    }
-
     pub async fn finish(mut self) {
         let locked = self.last_token.write().await;
 
@@ -253,136 +230,57 @@ impl FirestoreBatchWriter {
         }
     }
 
-    pub fn new_batch(&self) -> FirestoreBatch {
-        FirestoreBatch::new(self)
+    async fn write_iterator<I>(&self, writes: I) -> FirestoreResult<()>
+    where
+        I: IntoIterator,
+        I::Item: Into<Write>,
+    {
+        self.sent_counter.fetch_add(1, Ordering::Relaxed);
+
+        Ok(self.writer.send(WriteRequest {
+            database: self.db.get_database_path().to_string(),
+            stream_id: "".to_string(),
+            writes: writes.into_iter().map(|write| write.into()).collect(),
+            stream_token: {
+                let locked = self.last_token.read().await;
+                locked.clone()
+            },
+            labels: HashMap::new(),
+        })?)
+    }
+
+    pub fn new_batch(&self) -> FirestoreBatch<FirestoreStreamingBatchWriter> {
+        FirestoreBatch::new(&self.db, self)
+    }
+}
+
+#[async_trait]
+impl FirestoreBatchWriter for FirestoreStreamingBatchWriter {
+    type WriteResult = ();
+
+    async fn write(&self, writes: Vec<Write>) -> FirestoreResult<()> {
+        self.write_iterator(writes).await
     }
 }
 
 impl FirestoreDb {
-    pub async fn create_batch_writer<'a, 'b>(
+    pub async fn create_streaming_batch_writer<'a, 'b>(
         &'a self,
     ) -> FirestoreResult<(
-        FirestoreBatchWriter,
+        FirestoreStreamingBatchWriter,
         BoxStream<'b, FirestoreResult<FirestoreBatchWriteResponse>>,
     )> {
-        Self::create_batch_writer_with_options(self, FirestoreBatchWriteOptions::new()).await
+        self.create_streaming_batch_writer_with_options(FirestoreStreamingBatchWriteOptions::new())
+            .await
     }
 
-    pub async fn create_batch_writer_with_options<'a, 'b>(
+    pub async fn create_streaming_batch_writer_with_options<'a, 'b>(
         &'a self,
-        options: FirestoreBatchWriteOptions,
+        options: FirestoreStreamingBatchWriteOptions,
     ) -> FirestoreResult<(
-        FirestoreBatchWriter,
+        FirestoreStreamingBatchWriter,
         BoxStream<'b, FirestoreResult<FirestoreBatchWriteResponse>>,
     )> {
-        FirestoreBatchWriter::new(self.clone(), options).await
-    }
-}
-
-pub struct FirestoreBatch<'a> {
-    pub writer: &'a FirestoreBatchWriter,
-    pub writes: Vec<Write>,
-}
-
-impl<'a> FirestoreBatch<'a> {
-    pub(crate) fn new(writer: &'a FirestoreBatchWriter) -> Self {
-        Self {
-            writer,
-            writes: Vec::new(),
-        }
-    }
-
-    #[inline]
-    pub fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
-    where
-        I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
-    {
-        self.writes.push(write.try_into()?);
-        Ok(self)
-    }
-
-    #[inline]
-    pub async fn write(self) -> FirestoreResult<()> {
-        self.writer.write(self.writes).await
-    }
-
-    pub fn update_object<T, S>(
-        &mut self,
-        collection_id: &str,
-        document_id: S,
-        obj: &T,
-        update_only: Option<Vec<String>>,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<&mut Self>
-    where
-        T: Serialize + Sync + Send,
-        S: AsRef<str>,
-    {
-        self.update_object_at(
-            self.writer.db.get_documents_path(),
-            collection_id,
-            document_id,
-            obj,
-            update_only,
-            precondition,
-        )
-    }
-
-    pub fn update_object_at<T, S>(
-        &mut self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        obj: &T,
-        update_only: Option<Vec<String>>,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<&mut Self>
-    where
-        T: Serialize + Sync + Send,
-        S: AsRef<str>,
-    {
-        self.add(UpdateObjectOperation {
-            parent: parent.to_string(),
-            collection_id: collection_id.to_string(),
-            document_id,
-            obj,
-            update_only,
-            precondition,
-        })
-    }
-
-    pub fn delete_by_id<S>(
-        &mut self,
-        collection_id: &str,
-        document_id: S,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<&mut Self>
-    where
-        S: AsRef<str>,
-    {
-        self.delete_by_id_at(
-            self.writer.db.get_documents_path(),
-            collection_id,
-            document_id,
-            precondition,
-        )
-    }
-
-    pub fn delete_by_id_at<S>(
-        &mut self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<&mut Self>
-    where
-        S: AsRef<str>,
-    {
-        self.add(DeleteOperation {
-            parent: parent.to_string(),
-            collection_id: collection_id.to_string(),
-            document_id,
-            precondition,
-        })
+        FirestoreStreamingBatchWriter::new(self.clone(), options).await
     }
 }

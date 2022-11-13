@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use firestore::*;
-use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
@@ -28,16 +27,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const TEST_COLLECTION_NAME: &'static str = "test-batch-write";
 
     println!("Populating a test collection");
-    let (batch_writer, mut batch_results_reader) = db.create_batch_writer().await?;
-
-    let response_thread = tokio::spawn(async move {
-        while let Ok(Some(response)) = batch_results_reader.try_next().await {
-            println!("{:?}", response);
-        }
-    });
+    let batch_writer = db.create_simple_batch_writer().await?;
 
     let mut current_batch = batch_writer.new_batch();
-    for idx in 0..10000 {
+
+    for idx in 0..500 {
         let my_struct = MyTestStructure {
             some_id: format!("test-{}", idx),
             some_string: "Test".to_string(),
@@ -52,14 +46,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .add_to_batch(&mut current_batch)?;
 
         if idx % 100 == 0 {
-            current_batch.write().await?;
+            let response = current_batch.write().await?;
             current_batch = batch_writer.new_batch();
+            println!("{:?}", response);
         }
     }
-
-    println!("Finishing...");
-    batch_writer.finish().await;
-    let _ = tokio::join!(response_thread);
 
     Ok(())
 }
