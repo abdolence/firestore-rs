@@ -1,4 +1,6 @@
-use crate::{FirestoreResult, FirestoreTransaction, FirestoreUpdateSupport};
+use crate::{
+    FirestoreResult, FirestoreTransaction, FirestoreUpdateSupport, FirestoreWritePrecondition,
+};
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +62,7 @@ where
     update_only_fields: Option<Vec<String>>,
     parent: Option<String>,
     return_only_fields: Option<Vec<String>>,
+    precondition: Option<FirestoreWritePrecondition>,
 }
 
 impl<'a, D> FirestoreUpdateDocObjBuilder<'a, D>
@@ -78,6 +81,7 @@ where
             update_only_fields,
             parent: None,
             return_only_fields: None,
+            precondition: None,
         }
     }
 
@@ -99,6 +103,18 @@ where
     }
 
     #[inline]
+    pub fn precondition<I>(self, precondition: FirestoreWritePrecondition) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        Self {
+            precondition: Some(precondition),
+            ..self
+        }
+    }
+
+    #[inline]
     pub fn document(self, document: Document) -> FirestoreUpdateDocExecuteBuilder<'a, D> {
         FirestoreUpdateDocExecuteBuilder::new(
             self.db,
@@ -106,6 +122,7 @@ where
             self.update_only_fields,
             document,
             self.return_only_fields,
+            self.precondition,
         )
     }
 
@@ -121,6 +138,7 @@ where
             self.parent,
             document_id.as_ref().to_string(),
             self.return_only_fields,
+            self.precondition,
         )
     }
 }
@@ -135,6 +153,7 @@ where
     update_only_fields: Option<Vec<String>>,
     document: Document,
     return_only_fields: Option<Vec<String>>,
+    precondition: Option<FirestoreWritePrecondition>,
 }
 
 impl<'a, D> FirestoreUpdateDocExecuteBuilder<'a, D>
@@ -148,6 +167,7 @@ where
         update_only_fields: Option<Vec<String>>,
         document: Document,
         return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> Self {
         Self {
             db,
@@ -155,6 +175,7 @@ where
             update_only_fields,
             document,
             return_only_fields,
+            precondition,
         }
     }
 
@@ -165,6 +186,7 @@ where
                 self.document,
                 self.update_only_fields,
                 self.return_only_fields,
+                self.precondition,
             )
             .await
     }
@@ -181,6 +203,7 @@ where
     parent: Option<String>,
     document_id: String,
     return_only_fields: Option<Vec<String>>,
+    precondition: Option<FirestoreWritePrecondition>,
 }
 
 impl<'a, D> FirestoreUpdateObjInitExecuteBuilder<'a, D>
@@ -195,6 +218,7 @@ where
         parent: Option<String>,
         document_id: String,
         return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> Self {
         Self {
             db,
@@ -203,6 +227,7 @@ where
             parent,
             document_id,
             return_only_fields,
+            precondition,
         }
     }
 
@@ -231,6 +256,7 @@ where
             self.document_id,
             object,
             self.return_only_fields,
+            self.precondition,
         )
     }
 }
@@ -248,6 +274,7 @@ where
     document_id: String,
     object: &'a T,
     return_only_fields: Option<Vec<String>>,
+    precondition: Option<FirestoreWritePrecondition>,
 }
 
 impl<'a, D, T> FirestoreUpdateObjExecuteBuilder<'a, D, T>
@@ -264,6 +291,7 @@ where
         document_id: String,
         object: &'a T,
         return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> Self {
         Self {
             db,
@@ -273,6 +301,7 @@ where
             document_id,
             object,
             return_only_fields,
+            precondition,
         }
     }
 
@@ -289,6 +318,7 @@ where
                     self.object,
                     self.update_only_fields,
                     self.return_only_fields,
+                    self.precondition,
                 )
                 .await
         } else {
@@ -299,6 +329,7 @@ where
                     self.object,
                     self.update_only_fields,
                     self.return_only_fields,
+                    self.precondition,
                 )
                 .await
         }
@@ -316,6 +347,7 @@ where
                 self.document_id,
                 self.object,
                 self.update_only_fields,
+                self.precondition,
             )
         } else {
             transaction.update_object(
@@ -323,6 +355,7 @@ where
                 self.document_id,
                 self.object,
                 self.update_only_fields,
+                self.precondition,
             )
         }
     }

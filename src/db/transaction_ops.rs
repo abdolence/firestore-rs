@@ -1,5 +1,7 @@
 use crate::db::safe_document_path;
-use crate::{FirestoreDb, FirestoreError, FirestoreResult, FirestoreTransaction};
+use crate::{
+    FirestoreDb, FirestoreError, FirestoreResult, FirestoreTransaction, FirestoreWritePrecondition,
+};
 use gcloud_sdk::google::firestore::v1::Write;
 use serde::Serialize;
 
@@ -14,6 +16,7 @@ where
     document_id: S,
     obj: &'a T,
     update_only: Option<Vec<String>>,
+    precondition: Option<FirestoreWritePrecondition>,
 }
 
 impl<'a, T, S> TryInto<Write> for UpdateObjectOperation<'a, T, S>
@@ -31,7 +34,7 @@ where
                 }
             }),
             update_transforms: vec![],
-            current_document: None,
+            current_document: self.precondition.map(|cond| cond.try_into()).transpose()?,
             operation: Some(gcloud_sdk::google::firestore::v1::write::Operation::Update(
                 FirestoreDb::serialize_to_doc(
                     &safe_document_path(
@@ -85,6 +88,7 @@ impl<'a> FirestoreTransaction<'a> {
         document_id: S,
         obj: &T,
         update_only: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -96,6 +100,7 @@ impl<'a> FirestoreTransaction<'a> {
             document_id,
             obj,
             update_only,
+            precondition,
         )
     }
 
@@ -106,6 +111,7 @@ impl<'a> FirestoreTransaction<'a> {
         document_id: S,
         obj: &T,
         update_only: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -117,6 +123,7 @@ impl<'a> FirestoreTransaction<'a> {
             document_id,
             obj,
             update_only,
+            precondition,
         })
     }
 
