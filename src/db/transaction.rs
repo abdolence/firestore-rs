@@ -130,6 +130,7 @@ impl<'a> FirestoreTransaction<'a> {
         &self.transaction_id
     }
 
+    #[inline]
     pub fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
     where
         I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
