@@ -62,11 +62,7 @@ where
     }
 
     #[inline]
-    pub fn precondition<I>(self, precondition: FirestoreWritePrecondition) -> Self
-    where
-        I: IntoIterator,
-        I::Item: AsRef<str>,
-    {
+    pub fn precondition(self, precondition: FirestoreWritePrecondition) -> Self {
         Self {
             precondition: Some(precondition),
             ..self
@@ -133,11 +129,7 @@ where
     }
 
     #[inline]
-    pub fn precondition<I>(self, precondition: FirestoreWritePrecondition) -> Self
-    where
-        I: IntoIterator,
-        I::Item: AsRef<str>,
-    {
+    pub fn precondition(self, precondition: FirestoreWritePrecondition) -> Self {
         Self {
             precondition: Some(precondition),
             ..self
