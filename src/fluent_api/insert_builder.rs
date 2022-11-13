@@ -249,7 +249,7 @@ where
     {
         if let Some(parent) = self.parent {
             self.db
-                .create_obj_at_return_fields(
+                .create_obj_at(
                     parent.as_str(),
                     self.collection_id.as_str(),
                     self.document_id,
@@ -259,7 +259,7 @@ where
                 .await
         } else {
             self.db
-                .create_obj_return_fields(
+                .create_obj(
                     self.collection_id.as_str(),
                     self.document_id,
                     self.object,

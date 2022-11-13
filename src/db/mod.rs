@@ -12,6 +12,8 @@ pub use delete::*;
 
 mod query_models;
 pub use query_models::*;
+mod update_models;
+pub use update_models::*;
 
 mod query;
 pub use query::*;
