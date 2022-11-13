@@ -1,5 +1,5 @@
 use crate::db::safe_document_path;
-use crate::{FirestoreDb, FirestoreResult};
+use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::*;
@@ -14,19 +14,8 @@ pub trait FirestoreUpdateSupport {
         document_id: S,
         obj: &I,
         update_only: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-
-    async fn update_obj_return_fields<I, O, S>(
-        &self,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<O>
     where
         I: Serialize + Sync + Send,
@@ -40,20 +29,8 @@ pub trait FirestoreUpdateSupport {
         document_id: S,
         obj: &I,
         update_only: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-
-    async fn update_obj_at_return_fields<I, O, S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<O>
     where
         I: Serialize + Sync + Send,
@@ -66,6 +43,7 @@ pub trait FirestoreUpdateSupport {
         firestore_doc: Document,
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<Document>;
 }
 
@@ -77,6 +55,8 @@ impl FirestoreUpdateSupport for FirestoreDb {
         document_id: S,
         obj: &I,
         update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<O>
     where
         I: Serialize + Sync + Send,
@@ -89,30 +69,8 @@ impl FirestoreUpdateSupport for FirestoreDb {
             document_id,
             obj,
             update_only,
-        )
-        .await
-    }
-
-    async fn update_obj_return_fields<I, O, S>(
-        &self,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        update_only: Option<Vec<String>>,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send,
-    {
-        self.update_obj_at_return_fields(
-            self.get_documents_path().as_str(),
-            collection_id,
-            document_id,
-            obj,
-            update_only,
             return_only_fields,
+            precondition,
         )
         .await
     }
@@ -124,24 +82,8 @@ impl FirestoreUpdateSupport for FirestoreDb {
         document_id: S,
         obj: &I,
         update_only: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send,
-    {
-        self.update_obj_at_return_fields(parent, collection_id, document_id, obj, update_only, None)
-            .await
-    }
-
-    async fn update_obj_at_return_fields<I, O, S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<O>
     where
         I: Serialize + Sync + Send,
@@ -159,6 +101,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
                 firestore_doc,
                 update_only,
                 return_only_fields,
+                precondition,
             )
             .await?;
 
@@ -171,6 +114,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
         firestore_doc: Document,
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<Document> {
         let span = span!(
             Level::DEBUG,
@@ -191,7 +135,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
             mask: return_only_fields.as_ref().map(|masks| DocumentMask {
                 field_paths: masks.clone(),
             }),
-            current_document: None,
+            current_document: precondition.map(|cond| cond.try_into()).transpose()?,
         });
 
         let begin_query_utc: DateTime<Utc> = Utc::now();

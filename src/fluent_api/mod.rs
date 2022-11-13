@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 pub mod delete_builder;
 pub mod insert_builder;
 pub mod listing_builder;

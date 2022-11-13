@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 mod get;
 pub use get::*;
 
@@ -12,6 +14,8 @@ pub use delete::*;
 
 mod query_models;
 pub use query_models::*;
+mod precondition_models;
+pub use precondition_models::*;
 
 mod query;
 pub use query::*;

@@ -33,17 +33,6 @@ pub trait FirestoreCreateSupport {
         collection_id: &str,
         document_id: Option<S>,
         obj: &I,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-
-    async fn create_obj_return_fields<I, O, S>(
-        &self,
-        collection_id: &str,
-        document_id: Option<S>,
-        obj: &I,
         return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<O>
     where
@@ -52,18 +41,6 @@ pub trait FirestoreCreateSupport {
         S: AsRef<str> + Send;
 
     async fn create_obj_at<I, O, S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: Option<S>,
-        obj: &I,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-
-    async fn create_obj_at_return_fields<I, O, S>(
         &self,
         parent: &str,
         collection_id: &str,
@@ -162,6 +139,7 @@ impl FirestoreCreateSupport for FirestoreDb {
         collection_id: &str,
         document_id: Option<S>,
         obj: &I,
+        return_only_fields: Option<Vec<String>>,
     ) -> FirestoreResult<O>
     where
         I: Serialize + Sync + Send,
@@ -173,49 +151,12 @@ impl FirestoreCreateSupport for FirestoreDb {
             collection_id,
             document_id,
             obj,
-        )
-        .await
-    }
-
-    async fn create_obj_at<I, O, S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: Option<S>,
-        obj: &I,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send,
-    {
-        self.create_obj_at_return_fields(parent, collection_id, document_id, obj, None)
-            .await
-    }
-
-    async fn create_obj_return_fields<I, O, S>(
-        &self,
-        collection_id: &str,
-        document_id: Option<S>,
-        obj: &I,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send,
-    {
-        self.create_obj_at_return_fields(
-            self.get_documents_path().as_str(),
-            collection_id,
-            document_id,
-            obj,
             return_only_fields,
         )
         .await
     }
 
-    async fn create_obj_at_return_fields<I, O, S>(
+    async fn create_obj_at<I, O, S>(
         &self,
         parent: &str,
         collection_id: &str,

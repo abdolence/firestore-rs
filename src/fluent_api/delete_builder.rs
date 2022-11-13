@@ -1,4 +1,6 @@
-use crate::{FirestoreDeleteSupport, FirestoreResult, FirestoreTransaction};
+use crate::{
+    FirestoreDeleteSupport, FirestoreResult, FirestoreTransaction, FirestoreWritePrecondition,
+};
 
 #[derive(Clone, Debug)]
 pub struct FirestoreDeleteInitialBuilder<'a, D>
@@ -31,6 +33,7 @@ where
     db: &'a D,
     collection_id: String,
     parent: Option<String>,
+    precondition: Option<FirestoreWritePrecondition>,
 }
 
 impl<'a, D> FirestoreDeleteDocIdBuilder<'a, D>
@@ -43,6 +46,7 @@ where
             db,
             collection_id,
             parent: None,
+            precondition: None,
         }
     }
 
@@ -53,6 +57,14 @@ where
     {
         Self {
             parent: Some(parent.as_ref().to_string()),
+            ..self
+        }
+    }
+
+    #[inline]
+    pub fn precondition(self, precondition: FirestoreWritePrecondition) -> Self {
+        Self {
+            precondition: Some(precondition),
             ..self
         }
     }
@@ -67,6 +79,7 @@ where
             self.collection_id.to_string(),
             document_id.as_ref().to_string(),
             self.parent,
+            self.precondition,
         )
     }
 }
@@ -80,6 +93,7 @@ where
     collection_id: String,
     document_id: String,
     parent: Option<String>,
+    precondition: Option<FirestoreWritePrecondition>,
 }
 
 impl<'a, D> FirestoreDeleteExecuteBuilder<'a, D>
@@ -92,12 +106,14 @@ where
         collection_id: String,
         document_id: String,
         parent: Option<String>,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> Self {
         Self {
             db,
             collection_id,
             document_id,
             parent,
+            precondition,
         }
     }
 
@@ -112,6 +128,14 @@ where
         }
     }
 
+    #[inline]
+    pub fn precondition(self, precondition: FirestoreWritePrecondition) -> Self {
+        Self {
+            precondition: Some(precondition),
+            ..self
+        }
+    }
+
     pub async fn execute(self) -> FirestoreResult<()> {
         if let Some(parent) = self.parent {
             self.db
@@ -119,11 +143,16 @@ where
                     parent.as_str(),
                     self.collection_id.as_str(),
                     self.document_id,
+                    self.precondition,
                 )
                 .await
         } else {
             self.db
-                .delete_by_id(self.collection_id.as_str(), self.document_id)
+                .delete_by_id(
+                    self.collection_id.as_str(),
+                    self.document_id,
+                    self.precondition,
+                )
                 .await
         }
     }

@@ -1,5 +1,5 @@
 use crate::db::safe_document_path;
-use crate::{FirestoreDb, FirestoreResult};
+use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::*;
@@ -7,7 +7,12 @@ use tracing::*;
 
 #[async_trait]
 pub trait FirestoreDeleteSupport {
-    async fn delete_by_id<S>(&self, collection_id: &str, document_id: S) -> FirestoreResult<()>
+    async fn delete_by_id<S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
+    ) -> FirestoreResult<()>
     where
         S: AsRef<str> + Send;
 
@@ -16,6 +21,7 @@ pub trait FirestoreDeleteSupport {
         parent: &str,
         collection_id: &str,
         document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<()>
     where
         S: AsRef<str> + Send;
@@ -23,7 +29,12 @@ pub trait FirestoreDeleteSupport {
 
 #[async_trait]
 impl FirestoreDeleteSupport for FirestoreDb {
-    async fn delete_by_id<S>(&self, collection_id: &str, document_id: S) -> FirestoreResult<()>
+    async fn delete_by_id<S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
+    ) -> FirestoreResult<()>
     where
         S: AsRef<str> + Send,
     {
@@ -31,6 +42,7 @@ impl FirestoreDeleteSupport for FirestoreDb {
             self.get_documents_path().as_str(),
             collection_id,
             document_id,
+            precondition,
         )
         .await
     }
@@ -40,6 +52,7 @@ impl FirestoreDeleteSupport for FirestoreDb {
         parent: &str,
         collection_id: &str,
         document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<()>
     where
         S: AsRef<str> + Send,
@@ -55,7 +68,7 @@ impl FirestoreDeleteSupport for FirestoreDb {
 
         let request = tonic::Request::new(DeleteDocumentRequest {
             name: document_path,
-            current_document: None,
+            current_document: precondition.map(|cond| cond.try_into()).transpose()?,
         });
 
         let begin_query_utc: DateTime<Utc> = Utc::now();

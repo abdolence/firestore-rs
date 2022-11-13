@@ -82,12 +82,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     // Remove if it already exist
-    db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id)
+    db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id, None)
         .await?;
 
     // Let's insert some data
-    db.create_obj(TEST_COLLECTION_NAME, Some(&my_struct.some_id), &my_struct)
-        .await?;
+    db.create_obj(
+        TEST_COLLECTION_NAME,
+        Some(&my_struct.some_id),
+        &my_struct,
+        None,
+    )
+    .await?;
 
     let to_update = MyTestStructure {
         some_num: my_struct.some_num + 1,
@@ -105,6 +110,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 some_num,
                 some_string
             })),
+            None,
+            None,
         )
         .await?;
 
