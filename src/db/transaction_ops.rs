@@ -1,3 +1,4 @@
+use crate::db::safe_document_path;
 use crate::{FirestoreDb, FirestoreError, FirestoreResult, FirestoreTransaction};
 use gcloud_sdk::google::firestore::v1::Write;
 use serde::Serialize;
@@ -33,13 +34,11 @@ where
             current_document: None,
             operation: Some(gcloud_sdk::google::firestore::v1::write::Operation::Update(
                 FirestoreDb::serialize_to_doc(
-                    format!(
-                        "{}/{}/{}",
-                        self.parent,
-                        self.collection_id,
-                        self.document_id.as_ref()
-                    )
-                    .as_str(),
+                    &safe_document_path(
+                        &self.parent,
+                        self.collection_id.as_str(),
+                        self.document_id.as_ref(),
+                    )?,
                     &self.obj,
                 )?,
             )),
