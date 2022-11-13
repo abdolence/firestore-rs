@@ -68,12 +68,11 @@ where
             update_transforms: vec![],
             current_document: None,
             operation: Some(gcloud_sdk::google::firestore::v1::write::Operation::Delete(
-                format!(
-                    "{}/{}/{}",
-                    self.parent,
-                    self.collection_id,
-                    self.document_id.as_ref()
-                ),
+                safe_document_path(
+                    &self.parent,
+                    self.collection_id.as_str(),
+                    self.document_id.as_ref(),
+                )?,
             )),
         })
     }
