@@ -254,6 +254,12 @@ export FIRESTORE_EMULATOR_HOST="localhost:8080"
 ```
 or specify it as an option using `FirestoreDb::with_options()`
 
+## How this library is tested
+
+There are integration tests in tests directory that runs for every commit against the real
+Firestore instance allocated for testing purposes. Be aware not to introduce huge document reads/updates
+and collection isolation from other tests.
+
 ## Licence
 Apache Software License (ASL)
 
