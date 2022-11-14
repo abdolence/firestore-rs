@@ -164,6 +164,14 @@ In queries you need to use a special wrapping class `firestore::FirestoreTimesta
      .eq(firestore::FirestoreTimestamp(Utc::now()))
 ```
 
+You can use `FirestoreTimestamp` as a type in your struct too for more complex cases:
+```rust
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {    
+    created_at: firestore::FirestoreTimestamp(DateTime<Utc>),
+}
+```
+
 ## Nested collections
 You can work with nested collection specifying path/location to a parent for documents:
 
