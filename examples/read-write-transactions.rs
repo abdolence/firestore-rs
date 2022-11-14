@@ -1,10 +1,4 @@
-use std::pin::Pin;
-
-use backoff::{future::retry, ExponentialBackoff};
-use firestore::{
-    errors::{FirestoreDatabaseError, FirestoreError},
-    *,
-};
+use firestore::{errors::FirestoreError, paths, FirestoreDb};
 use futures::stream::FuturesOrdered;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
@@ -84,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 async fn increment_counter(db: &FirestoreDb) -> Result<(), FirestoreError> {
-    run_transaction(&db, |db, transaction| {
+    db.run_transaction(|db, transaction| {
         Box::pin(async move {
             let mut test_structure: MyTestStructure = db
                 .fluent()
@@ -114,86 +108,4 @@ async fn increment_counter(db: &FirestoreDb) -> Result<(), FirestoreError> {
     .await?;
 
     Ok(())
-}
-
-async fn run_transaction<T, F>(db: &FirestoreDb, func: F) -> Result<T, FirestoreError>
-where
-    F: for<'a> Fn(
-        FirestoreDb,
-        &'a mut FirestoreTransaction,
-    ) -> Pin<Box<dyn futures::Future<Output = Result<T, FirestoreError>> + 'a>>,
-{
-    // Perform our initial attempt. If this fails and the backend tells us we can retry,
-    // we'll try again with exponential backoff using the first attempt's transaction ID.
-    let transaction_id = {
-        let mut transaction = db.begin_transaction().await?;
-
-        let cdb = db.clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
-            transaction.transaction_id.clone(),
-        ));
-
-        let ret_val = func(cdb, &mut transaction).await?;
-
-        let transaction_id = transaction.transaction_id.clone();
-
-        match transaction.commit().await {
-            Ok(_) => return Ok(ret_val),
-            Err(e) => match e {
-                FirestoreError::DatabaseError(FirestoreDatabaseError {
-                    retry_possible: true,
-                    ..
-                }) => {
-                    // Ignore; we'll try again
-                }
-                FirestoreError::DatabaseError(FirestoreDatabaseError {
-                    retry_possible: false,
-                    ..
-                }) => {
-                    return Err(e);
-                }
-                e => return Err(e),
-            },
-        }
-
-        transaction_id
-    };
-
-    // We failed the first time. Now we must change the transaction mode to signal that we're retrying with the original transaction ID.
-    let result = retry(ExponentialBackoff::default(), || async {
-        let options = FirestoreTransactionOptions {
-            mode: FirestoreTransactionMode::ReadWriteRetry(transaction_id.clone()),
-        };
-        let mut transaction = db.begin_transaction_with_options(options).await?;
-
-        let cdb = db.clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
-            transaction.transaction_id.clone(),
-        ));
-
-        let ret_val = func(cdb, &mut transaction).await?;
-
-        match transaction.commit().await {
-            Ok(_) => return Ok(ret_val),
-            Err(e) => match e {
-                FirestoreError::DatabaseError(FirestoreDatabaseError {
-                    retry_possible: true,
-                    ..
-                }) => {
-                    eprintln!("Got back retryable error: {e}");
-                    return Err(backoff::Error::transient(e));
-                }
-                FirestoreError::DatabaseError(FirestoreDatabaseError {
-                    retry_possible: false,
-                    ..
-                }) => {
-                    return Err(backoff::Error::permanent(e));
-                }
-                e => return Err(backoff::Error::permanent(e)),
-            },
-        }
-    })
-    .await;
-
-    // TODO If the final result was Err, do we still need to call `rollback`?
-
-    result
 }
