@@ -214,6 +214,40 @@ let objs_stream: BoxStream<MyChildStructure> = db.fluent()
 ```
 Complete example available [here](examples/nested_collections.rs).
 
+## Transactions
+
+To manage transactions manually you can use `db.begin_transaction()`, and
+then the Fluent API to add the operations needed in the transaction.
+
+Please note that Firestore doesn't support creating documents in the transactions (generating
+document IDs automatically), so you need to use `update()` to implicitly create documents and specifying your own IDs. 
+
+```rust
+let mut transaction = db.begin_transaction().await?;
+
+db.fluent()
+  .update()
+  .fields(paths!(MyTestStructure::{
+              some_string
+          }))
+  .in_col(TEST_COLLECTION_NAME)
+  .document_id("test-0")
+  .object(&MyTestStructure {
+  some_id: format!("test-0"),
+  some_string: "UpdatedTest".to_string(),
+  })
+  .add_to_transaction(&mut transaction)?;
+
+db.fluent()
+  .delete()
+  .from(TEST_COLLECTION_NAME)
+  .document_id("test-5")
+  .add_to_transaction(&mut transaction)?;
+
+  transaction.commit().await?;
+```
+
+
 ## Reading Firestore document metadata as struct fields
 
 Firestore provides additional generated fields for each of document you create:
