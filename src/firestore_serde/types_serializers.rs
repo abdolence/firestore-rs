@@ -1,7 +1,7 @@
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd)]
 pub struct FirestoreTimestamp(pub DateTime<Utc>);
 
 pub mod serialize_as_timestamp {
