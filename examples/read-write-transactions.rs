@@ -16,6 +16,8 @@ struct MyTestStructure {
 const TEST_COLLECTION_NAME: &'static str = "test";
 const TEST_DOCUMENT_ID: &str = "test_doc_id";
 
+/// Creates a document with a counter set to 0 and then concurrently executes futures for `COUNT_ITERATIONS` iterations.
+/// Finally, it reads the document again and verifies that the counter matches the expected number of iterations.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Logging with debug enabled
@@ -85,7 +87,6 @@ async fn increment_counter(db: &FirestoreDb) -> Result<(), FirestoreError> {
                 .select()
                 .by_id_in(TEST_COLLECTION_NAME)
                 .obj()
-                // .one_with_transaction(TEST_DOCUMENT_ID, &mut transaction)
                 .one(TEST_DOCUMENT_ID)
                 .await?
                 .expect("Missing document");
