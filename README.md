@@ -219,9 +219,6 @@ Complete example available [here](examples/nested_collections.rs).
 To manage transactions manually you can use `db.begin_transaction()`, and
 then the Fluent API to add the operations needed in the transaction.
 
-Please note that Firestore doesn't support creating documents in the transactions (generating
-document IDs automatically), so you need to use `update()` to implicitly create documents and specifying your own IDs. 
-
 ```rust
 let mut transaction = db.begin_transaction().await?;
 
@@ -244,9 +241,11 @@ db.fluent()
   .document_id("test-5")
   .add_to_transaction(&mut transaction)?;
 
-  transaction.commit().await?;
+transaction.commit().await?;
 ```
 
+Please note that Firestore doesn't support creating documents in the transactions (generating
+document IDs automatically), so you need to use `update()` to implicitly create documents and specifying your own IDs. 
 
 ## Reading Firestore document metadata as struct fields
 
