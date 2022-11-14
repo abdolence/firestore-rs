@@ -168,7 +168,8 @@ You can use `FirestoreTimestamp` as a type in your struct too for more complex c
 ```rust
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {    
-    created_at: firestore::FirestoreTimestamp(DateTime<Utc>),
+    created_at: firestore::FirestoreTimestamp,
+    updated_at: Option<firestore::FirestoreTimestamp>
 }
 ```
 
