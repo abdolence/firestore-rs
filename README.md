@@ -297,8 +297,8 @@ test_null: Option<String>,
 * For Firestore timestamps attribute:
 ```rust
 #[serde(default)]
-#[serde(with = "firestore::serialize_as_null")]
-test_null: Option<String>,
+#[serde(with = "firestore::serialize_as_null_timestamp")]
+test_null: Option<DateTime<Utc>>,
 ```
 
 ## Google authentication
