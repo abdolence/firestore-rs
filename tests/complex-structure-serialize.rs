@@ -68,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_num: 41,
         created_at: Utc::now(),
         updated_at: None,
+        updated_at_as_null: None,
         test1: Test1(1),
         test1i: Test1i(Test1(1)),
         test11: Some(Test1(1)),
