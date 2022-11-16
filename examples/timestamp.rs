@@ -17,10 +17,10 @@ struct MyTestStructure {
 
     // Or you can use a wrapping type
     updated_at: Option<FirestoreTimestamp>,
-
     updated_at_always_none: Option<FirestoreTimestamp>,
 
     // Or one more attribute for optionals
+    #[serde(default)]
     #[serde(with = "firestore::serialize_as_optional_timestamp")]
     updated_at_attr: Option<DateTime<Utc>>,
 
