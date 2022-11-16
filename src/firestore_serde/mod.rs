@@ -1,10 +1,14 @@
 mod deserializer;
 mod serializer;
 
-mod types_serializers;
+mod timestamp_serializers;
+pub use timestamp_serializers::*;
+
+mod null_serializers;
+pub use null_serializers::*;
+
 use crate::FirestoreValue;
 use gcloud_sdk::google::firestore::v1::Value;
-pub use types_serializers::*;
 
 pub use deserializer::firestore_document_to_serializable;
 pub use serializer::firestore_document_from_serializable;
@@ -14,7 +18,7 @@ where
     T: serde::Serialize,
 {
     fn from(value: T) -> Self {
-        let serializer = crate::firestore_serde::serializer::FirestoreValueSerializer {};
+        let serializer = crate::firestore_serde::serializer::FirestoreValueSerializer::new();
         value
             .serialize(serializer)
             .unwrap_or_else(|_| FirestoreValue::from(Value { value_type: None }))

@@ -33,6 +33,12 @@ struct MyTestStructure {
     some_num: u64,
     #[serde(with = "firestore::serialize_as_timestamp")]
     created_at: DateTime<Utc>,
+    #[serde(default)]
+    #[serde(with = "firestore::serialize_as_optional_timestamp")]
+    updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    #[serde(with = "firestore::serialize_as_null_timestamp")]
+    updated_at_as_null: Option<DateTime<Utc>>,
     test1: Test1,
     test1i: Test1i,
     test11: Option<Test1>,
@@ -42,6 +48,12 @@ struct MyTestStructure {
     test5: (TestEnum, TestEnum),
     test6: TestEnum,
     test7: TestEnum,
+    #[serde(default)]
+    #[serde(with = "firestore::serialize_as_null")]
+    test_null1: Option<String>,
+    #[serde(default)]
+    #[serde(with = "firestore::serialize_as_null")]
+    test_null2: Option<String>,
 }
 
 #[tokio::test]
@@ -55,6 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_string: "Test".to_string(),
         some_num: 41,
         created_at: Utc::now(),
+        updated_at: None,
         test1: Test1(1),
         test1i: Test1i(Test1(1)),
         test11: Some(Test1(1)),
@@ -79,6 +92,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             some_id: "test-2".to_string(),
             some_bool: Some(true),
         }),
+        test_null1: None,
+        test_null2: Some("Test".to_string()),
     };
 
     // Remove if it already exist

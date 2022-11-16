@@ -18,6 +18,8 @@ impl From<DateTime<Utc>> for FirestoreTimestamp {
 
 pub(crate) const FIRESTORE_TS_TYPE_TAG_TYPE: &str = "FirestoreTimestamp";
 
+pub(crate) const FIRESTORE_TS_NULL_TYPE_TAG_TYPE: &str = "FirestoreTimestampAsNull";
+
 pub mod serialize_as_timestamp {
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer, Serializer};
@@ -61,10 +63,38 @@ pub mod serialize_as_optional_timestamp {
     }
 }
 
+pub mod serialize_as_null_timestamp {
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(date: &Option<DateTime<Utc>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match date {
+            Some(v) => serializer.serialize_newtype_struct(
+                crate::firestore_serde::FIRESTORE_TS_NULL_TYPE_TAG_TYPE,
+                v,
+            ),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<DateTime<Utc>>::deserialize(deserializer)
+    }
+}
+
 pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
     value: &T,
+    none_as_null: bool,
 ) -> Result<FirestoreValue, FirestoreError> {
-    struct TimestampSerializer;
+    struct TimestampSerializer {
+        none_as_null: bool,
+    }
 
     impl Serializer for TimestampSerializer {
         type Ok = FirestoreValue;
@@ -191,9 +221,17 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         }
 
         fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-            Ok(FirestoreValue::from(
-                gcloud_sdk::google::firestore::v1::Value { value_type: None },
-            ))
+            if self.none_as_null {
+                Ok(FirestoreValue::from(
+                    gcloud_sdk::google::firestore::v1::Value {
+                        value_type: Some(value::ValueType::NullValue(0)),
+                    },
+                ))
+            } else {
+                Ok(FirestoreValue::from(
+                    gcloud_sdk::google::firestore::v1::Value { value_type: None },
+                ))
+            }
         }
 
         fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
@@ -327,5 +365,5 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         }
     }
 
-    value.serialize(TimestampSerializer {})
+    value.serialize(TimestampSerializer { none_as_null })
 }
