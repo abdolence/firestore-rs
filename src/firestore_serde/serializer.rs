@@ -189,7 +189,7 @@ impl serde::Serializer for FirestoreValueSerializer {
         T: Serialize,
     {
         match name {
-            crate::firestore_serde::types_serializers::serialize_as_timestamp::NEWTYPE_TAG_TYPE => {
+            crate::firestore_serde::types_serializers::FIRESTORE_TS_TYPE_TAG_TYPE => {
                 crate::firestore_serde::types_serializers::serialize_timestamp_for_firestore(value)
             }
             _ => value.serialize(self),

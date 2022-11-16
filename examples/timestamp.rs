@@ -14,6 +14,19 @@ struct MyTestStructure {
     // (for serde_json it will be still the same, usually String serialization, so you can reuse the models)
     #[serde(with = "firestore::serialize_as_timestamp")]
     created_at: DateTime<Utc>,
+
+    // Or you can use a wrapping type
+    updated_at: Option<FirestoreTimestamp>,
+
+    updated_at_always_none: Option<FirestoreTimestamp>,
+
+    // Or one more attribute for optionals
+    #[serde(with = "firestore::serialize_as_optional_timestamp")]
+    updated_at_attr: Option<DateTime<Utc>>,
+
+    #[serde(default)]
+    #[serde(with = "firestore::serialize_as_optional_timestamp")]
+    updated_at_attr_always_none: Option<DateTime<Utc>>,
 }
 
 #[tokio::main]
@@ -32,6 +45,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),
         created_at: Utc::now(),
+        updated_at: Some(Utc::now().into()),
+        updated_at_always_none: None,
+        updated_at_attr: Some(Utc::now().into()),
+        updated_at_attr_always_none: None,
     };
 
     db.fluent()
@@ -54,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Created: {:?}", object_returned);
 
     // Query our data
-    let objects: Vec<MyTestStructure> = db
+    let objects1: Vec<MyTestStructure> = db
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
@@ -69,7 +86,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .query()
         .await?;
 
-    println!("Now in the list: {:?}", objects);
+    println!("Now in the list: {:?}", objects1);
+
+    let objects2: Vec<MyTestStructure> = db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .filter(|q| q.for_all([q.field(path!(MyTestStructure::updated_at)).is_not_null()]))
+        .obj()
+        .query()
+        .await?;
+
+    println!("Now in the list: {:?}", objects2);
 
     Ok(())
 }
