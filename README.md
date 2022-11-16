@@ -146,31 +146,37 @@ let object_stream: BoxStream<(String, Option<MyTestStructure>)> = db.fluent()
 ## Timestamps support
 By default, the types such as DateTime<Utc> serializes as a string
 to Firestore (while deserialization works from Timestamps and Strings).
-To change it to support Timestamp natively use `#[serde(with)]`:
+
+To change this behaviour and support Firestore timestamps on database level there are two options:
+- `#[serde(with)]` and attributes:
 
 ```rust
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
     #[serde(with = "firestore::serialize_as_timestamp")]
     created_at: DateTime<Utc>,
+
+    #[serde(default)]
+    #[serde(with = "firestore::serialize_as_optional_timestamp")]
+    updated_at: Option<DateTime<Utc>>,
 }
 ```
-This will change it only for firestore serialization and it still serializes as string
-to JSON (so you can reuse the same model for JSON and Firestore).
-
-In queries you need to use a special wrapping class `firestore::FirestoreTimestamp`, for example:
-```rust
-   q.field(path!(MyTestStructure::created_at))
-     .eq(firestore::FirestoreTimestamp(Utc::now()))
-```
-
-You can use `FirestoreTimestamp` as a type in your struct too for more complex cases:
+- using a type `FirestoreTimestamp`:
 ```rust
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {    
     created_at: firestore::FirestoreTimestamp,
     updated_at: Option<firestore::FirestoreTimestamp>
 }
+```
+
+This will change it only for firestore serialization, but it still serializes as string
+to JSON (so you can reuse the same model for JSON and Firestore).
+
+In your queries you need to use the wrapping class `firestore::FirestoreTimestamp`, for example:
+```rust
+   q.field(path!(MyTestStructure::created_at))
+     .eq(firestore::FirestoreTimestamp(Utc::now()))
 ```
 
 ## Nested collections
