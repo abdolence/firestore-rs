@@ -4,7 +4,8 @@ use crate::errors::FirestoreDatabaseError;
 use crate::timestamp_utils::from_timestamp;
 use crate::{FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreResult};
 use backoff::future::retry;
-use backoff::ExponentialBackoff;
+use backoff::ExponentialBackoffBuilder;
+use chrono::Duration;
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
 use rsb_derive::Builder;
 use tracing::*;
@@ -13,12 +14,14 @@ use tracing::*;
 pub struct FirestoreTransactionOptions {
     #[default = "FirestoreTransactionMode::ReadWrite"]
     pub mode: FirestoreTransactionMode,
+    pub max_elapsed_time: Option<Duration>,
 }
 
 impl Default for FirestoreTransactionOptions {
     fn default() -> Self {
         Self {
             mode: FirestoreTransactionMode::ReadWrite,
+            max_elapsed_time: None,
         }
     }
 }
@@ -243,7 +246,7 @@ impl FirestoreDb {
         // Perform our initial attempt. If this fails and the backend tells us we can retry,
         // we'll try again with exponential backoff using the first attempt's transaction ID.
         let transaction_id = {
-            let mut transaction = self.begin_transaction_with_options(options).await?;
+            let mut transaction = self.begin_transaction_with_options(options.clone()).await?;
 
             let cdb = self.clone_with_consistency_selector(
                 FirestoreConsistencySelector::Transaction(transaction.transaction_id.clone()),
@@ -276,9 +279,19 @@ impl FirestoreDb {
         };
 
         // We failed the first time. Now we must change the transaction mode to signal that we're retrying with the original transaction ID.
-        retry(ExponentialBackoff::default(), || async {
+        let backoff = ExponentialBackoffBuilder::new()
+            .with_max_elapsed_time(
+                options
+                    .max_elapsed_time
+                    // Convert to a std `Duration` and clamp any negative durations
+                    .map(|v| v.to_std().unwrap_or(Duration::zero().to_std().unwrap())),
+            )
+            .build();
+
+        retry(backoff, || async {
             let options = FirestoreTransactionOptions {
                 mode: FirestoreTransactionMode::ReadWriteRetry(transaction_id.clone()),
+                ..options
             };
             let mut transaction = self.begin_transaction_with_options(options).await?;
 
