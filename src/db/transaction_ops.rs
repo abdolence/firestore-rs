@@ -137,8 +137,12 @@ impl<'a> FirestoreTransaction<'a> {
     where
         S: AsRef<str>,
     {
-        let parent = self.db.get_documents_path().clone();
-        self.delete_by_id_at(parent.as_str(), collection_id, document_id, precondition)
+        self.delete_by_id_at(
+            self.db.get_documents_path(),
+            collection_id,
+            document_id,
+            precondition,
+        )
     }
 
     pub fn delete_by_id_at<S>(
