@@ -5,7 +5,7 @@
 # Firestore for Rust
 
 Library provides a simple API for Google Firestore based on the official gRPC API:
-- Create or update documents using Rust structures and Serde; 
+- Create or update documents using Rust structures and Serde;
 - Support for:
   - Querying/streaming docs/objects;
   - Listing documents/objects (and auto pages scrolling support);
@@ -18,7 +18,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 - Macro that helps you use JSON paths as references to your structure fields;
 - Implements own Serde serializer to Firestore protobuf values;
 - Supports for Firestore timestamp with `#[serde(with)]` and a specialized structure
-- Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs) 
+- Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
   that automatically detects GKE environment or application default accounts for local development;
 
 ## Quick start
@@ -164,7 +164,7 @@ struct MyTestStructure {
 - using a type `FirestoreTimestamp`:
 ```rust
 #[derive(Debug, Clone, Deserialize, Serialize)]
-struct MyTestStructure {    
+struct MyTestStructure {
     created_at: firestore::FirestoreTimestamp,
     updated_at: Option<firestore::FirestoreTimestamp>
 }
@@ -250,8 +250,41 @@ db.fluent()
 transaction.commit().await?;
 ```
 
+You may also execute transactions that automatically retry with exponential backoff using `run_transaction`.
+```rust
+    db.run_transaction(|db, transaction| {
+        Box::pin(async move {
+            let mut test_structure: MyTestStructure = db
+                .fluent()
+                .select()
+                .by_id_in(TEST_COLLECTION_NAME)
+                .obj()
+                .one(TEST_DOCUMENT_ID)
+                .await?
+                .expect("Missing document");
+
+            // Perform some kind of operation that depends on the state of the document
+            test_structure.test_string += "a";
+
+            db.fluent()
+                .update()
+                .fields(paths!(MyTestStructure::{
+                    test_string
+                }))
+                .in_col(TEST_COLLECTION_NAME)
+                .document_id(TEST_DOCUMENT_ID)
+                .object(&test_structure)
+                .add_to_transaction(transaction)?;
+
+            Ok(())
+        })
+    })
+    .await?;
+```
+See the complete example available [here](examples/read-write-transactions.rs).
+
 Please note that Firestore doesn't support creating documents in the transactions (generating
-document IDs automatically), so you need to use `update()` to implicitly create documents and specifying your own IDs. 
+document IDs automatically), so you need to use `update()` to implicitly create documents and specifying your own IDs.
 
 ## Reading Firestore document metadata as struct fields
 
