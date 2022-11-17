@@ -274,6 +274,17 @@ impl From<chrono::ParseError> for FirestoreError {
     }
 }
 
+impl From<chrono::OutOfRangeError> for FirestoreError {
+    fn from(out_of_range: chrono::OutOfRangeError) -> Self {
+        FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+            FirestoreInvalidParametersPublicDetails::new(
+                format!("Out of range: {}", out_of_range),
+                "duration".to_string(),
+            ),
+        ))
+    }
+}
+
 impl From<tokio::sync::mpsc::error::SendError<gcloud_sdk::google::firestore::v1::WriteRequest>>
     for FirestoreError
 {

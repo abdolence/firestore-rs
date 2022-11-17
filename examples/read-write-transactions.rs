@@ -1,5 +1,6 @@
 use firestore::{errors::FirestoreError, paths, FirestoreDb};
 use futures::stream::FuturesOrdered;
+use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
@@ -13,7 +14,7 @@ struct MyTestStructure {
     test_string: String,
 }
 
-const TEST_COLLECTION_NAME: &'static str = "test";
+const TEST_COLLECTION_NAME: &'static str = "test-rw-trans";
 const TEST_DOCUMENT_ID: &str = "test_doc_id";
 
 /// Creates a document with a counter set to 0 and then concurrently executes futures for `COUNT_ITERATIONS` iterations.
@@ -82,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 async fn update_value(db: &FirestoreDb) -> Result<(), FirestoreError> {
     db.run_transaction(|db, transaction| {
-        Box::pin(async move {
+        async move {
             let mut test_structure: MyTestStructure = db
                 .fluent()
                 .select()
@@ -106,7 +107,8 @@ async fn update_value(db: &FirestoreDb) -> Result<(), FirestoreError> {
                 .add_to_transaction(transaction)?;
 
             Ok(())
-        })
+        }
+        .boxed()
     })
     .await?;
 
