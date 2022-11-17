@@ -10,7 +10,7 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 // Example structure to play with
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
-    counter: i64,
+    test_string: String,
 }
 
 const TEST_COLLECTION_NAME: &'static str = "test";
@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const COUNT_ITERATIONS: i64 = 50;
+    const COUNT_ITERATIONS: usize = 50;
 
     println!("Creating initial document...");
 
@@ -42,7 +42,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     // Let's insert some data
-    let my_struct = MyTestStructure { counter: 0 };
+    let my_struct = MyTestStructure {
+        test_string: String::new(),
+    };
 
     db.fluent()
         .insert()
@@ -57,11 +59,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut futures = FuturesOrdered::new();
 
     for _ in 0..COUNT_ITERATIONS {
-        futures.push_back(increment_counter(&db));
+        futures.push_back(update_value(&db));
     }
 
-    let results = futures.collect::<Vec<_>>().await;
-    dbg!(results);
+    futures.collect::<Vec<_>>().await;
 
     println!("Testing results...");
 
@@ -74,12 +75,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?
         .expect("Missing document");
 
-    assert_eq!(test_structure.counter, COUNT_ITERATIONS);
+    assert_eq!(test_structure.test_string.len(), COUNT_ITERATIONS);
 
     Ok(())
 }
 
-async fn increment_counter(db: &FirestoreDb) -> Result<(), FirestoreError> {
+async fn update_value(db: &FirestoreDb) -> Result<(), FirestoreError> {
     db.run_transaction(|db, transaction| {
         Box::pin(async move {
             let mut test_structure: MyTestStructure = db
@@ -91,12 +92,13 @@ async fn increment_counter(db: &FirestoreDb) -> Result<(), FirestoreError> {
                 .await?
                 .expect("Missing document");
 
-            test_structure.counter += 1;
+            // Perform some kind of operation that depends on the state of the document
+            test_structure.test_string += "a";
 
             db.fluent()
                 .update()
                 .fields(paths!(MyTestStructure::{
-                    counter
+                    test_string
                 }))
                 .in_col(TEST_COLLECTION_NAME)
                 .document_id(TEST_DOCUMENT_ID)
