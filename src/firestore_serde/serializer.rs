@@ -4,23 +4,37 @@ use gcloud_sdk::google::firestore::v1::value;
 use serde::Serialize;
 use std::collections::HashMap;
 
-pub struct FirestoreValueSerializer;
+pub struct FirestoreValueSerializer {
+    none_as_null: bool,
+}
+
+impl FirestoreValueSerializer {
+    pub fn new() -> Self {
+        Self {
+            none_as_null: false,
+        }
+    }
+}
 
 pub struct SerializeVec {
+    none_as_null: bool,
     vec: Vec<gcloud_sdk::google::firestore::v1::Value>,
 }
 
 pub struct SerializeTupleVariant {
+    none_as_null: bool,
     name: String,
     vec: Vec<gcloud_sdk::google::firestore::v1::Value>,
 }
 
 pub struct SerializeMap {
+    none_as_null: bool,
     fields: HashMap<String, gcloud_sdk::google::firestore::v1::Value>,
     next_key: Option<String>,
 }
 
 pub struct SerializeStructVariant {
+    none_as_null: bool,
     name: String,
     fields: HashMap<String, gcloud_sdk::google::firestore::v1::Value>,
 }
@@ -149,9 +163,17 @@ impl serde::Serializer for FirestoreValueSerializer {
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        Ok(FirestoreValue::from(
-            gcloud_sdk::google::firestore::v1::Value { value_type: None },
-        ))
+        if self.none_as_null {
+            Ok(FirestoreValue::from(
+                gcloud_sdk::google::firestore::v1::Value {
+                    value_type: Some(value::ValueType::NullValue(0)),
+                },
+            ))
+        } else {
+            Ok(FirestoreValue::from(
+                gcloud_sdk::google::firestore::v1::Value { value_type: None },
+            ))
+        }
     }
 
     fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
@@ -189,8 +211,18 @@ impl serde::Serializer for FirestoreValueSerializer {
         T: Serialize,
     {
         match name {
-            crate::firestore_serde::types_serializers::FIRESTORE_TS_TYPE_TAG_TYPE => {
-                crate::firestore_serde::types_serializers::serialize_timestamp_for_firestore(value)
+            crate::firestore_serde::timestamp_serializers::FIRESTORE_TS_TYPE_TAG_TYPE => {
+                crate::firestore_serde::timestamp_serializers::serialize_timestamp_for_firestore(
+                    value, false,
+                )
+            }
+            crate::firestore_serde::timestamp_serializers::FIRESTORE_TS_NULL_TYPE_TAG_TYPE => {
+                crate::firestore_serde::timestamp_serializers::serialize_timestamp_for_firestore(
+                    value, true,
+                )
+            }
+            crate::firestore_serde::null_serializers::FIRESTORE_NULL_TYPE_TAG_TYPE => {
+                value.serialize(Self { none_as_null: true })
             }
             _ => value.serialize(self),
         }
@@ -219,6 +251,7 @@ impl serde::Serializer for FirestoreValueSerializer {
 
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
         Ok(SerializeVec {
+            none_as_null: self.none_as_null,
             vec: Vec::with_capacity(len.unwrap_or(0)),
         })
     }
@@ -243,6 +276,7 @@ impl serde::Serializer for FirestoreValueSerializer {
         len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
         Ok(SerializeTupleVariant {
+            none_as_null: self.none_as_null,
             name: String::from(variant),
             vec: Vec::with_capacity(len),
         })
@@ -250,6 +284,7 @@ impl serde::Serializer for FirestoreValueSerializer {
 
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
         Ok(SerializeMap {
+            none_as_null: self.none_as_null,
             fields: HashMap::with_capacity(len.unwrap_or(0)),
             next_key: None,
         })
@@ -271,6 +306,7 @@ impl serde::Serializer for FirestoreValueSerializer {
         len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         Ok(SerializeStructVariant {
+            none_as_null: self.none_as_null,
             name: String::from(variant),
             fields: HashMap::with_capacity(len),
         })
@@ -285,7 +321,11 @@ impl serde::ser::SerializeSeq for SerializeVec {
     where
         T: Serialize,
     {
-        let serialized_value = value.serialize(FirestoreValueSerializer {})?.value;
+        let serialized_value = value
+            .serialize(FirestoreValueSerializer {
+                none_as_null: self.none_as_null,
+            })?
+            .value;
         if serialized_value.value_type.is_some() {
             self.vec.push(serialized_value);
         }
@@ -343,7 +383,11 @@ impl serde::ser::SerializeTupleVariant for SerializeTupleVariant {
     where
         T: Serialize,
     {
-        let serialized_value = value.serialize(FirestoreValueSerializer {})?.value;
+        let serialized_value = value
+            .serialize(FirestoreValueSerializer {
+                none_as_null: self.none_as_null,
+            })?
+            .value;
         if serialized_value.value_type.is_some() {
             self.vec.push(serialized_value)
         };
@@ -379,7 +423,9 @@ impl serde::ser::SerializeMap for SerializeMap {
     where
         T: Serialize,
     {
-        let serializer = FirestoreValueSerializer {};
+        let serializer = FirestoreValueSerializer {
+            none_as_null: self.none_as_null,
+        };
         match key.serialize(serializer)?.value.value_type {
             Some(value::ValueType::StringValue(str)) => {
                 self.next_key = Some(str);
@@ -401,7 +447,9 @@ impl serde::ser::SerializeMap for SerializeMap {
     {
         match self.next_key.take() {
             Some(key) => {
-                let serializer = FirestoreValueSerializer {};
+                let serializer = FirestoreValueSerializer {
+                    none_as_null: self.none_as_null,
+                };
                 let serialized_value = value.serialize(serializer)?.value;
                 if serialized_value.value_type.is_some() {
                     self.fields.insert(key, serialized_value);
@@ -439,7 +487,9 @@ impl serde::ser::SerializeStruct for SerializeMap {
     where
         T: Serialize,
     {
-        let serializer = FirestoreValueSerializer {};
+        let serializer = FirestoreValueSerializer {
+            none_as_null: self.none_as_null,
+        };
         let serialized_value = value.serialize(serializer)?.value;
         if serialized_value.value_type.is_some() {
             self.fields.insert(key.to_string(), serialized_value);
@@ -472,7 +522,9 @@ impl serde::ser::SerializeStructVariant for SerializeStructVariant {
     where
         T: Serialize,
     {
-        let serializer = FirestoreValueSerializer {};
+        let serializer = FirestoreValueSerializer {
+            none_as_null: self.none_as_null,
+        };
         let serialized_value = value.serialize(serializer)?.value;
         if serialized_value.value_type.is_some() {
             self.fields.insert(key.to_string(), serialized_value);
@@ -510,7 +562,9 @@ pub fn firestore_document_from_serializable<T>(
 where
     T: Serialize,
 {
-    let serializer = crate::firestore_serde::serializer::FirestoreValueSerializer {};
+    let serializer = crate::firestore_serde::serializer::FirestoreValueSerializer {
+        none_as_null: false,
+    };
     let document_value = object.serialize(serializer)?;
 
     match document_value.value.value_type {
