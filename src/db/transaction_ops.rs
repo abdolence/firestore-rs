@@ -96,7 +96,7 @@ impl<'a> FirestoreTransaction<'a> {
         S: AsRef<str>,
     {
         self.update_object_at(
-            self.db.get_documents_path().as_str(),
+            self.db.get_documents_path(),
             collection_id,
             document_id,
             obj,
