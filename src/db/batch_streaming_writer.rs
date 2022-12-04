@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tonic::Code;
 
+use crate::timestamp_utils::from_timestamp;
 use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
@@ -112,6 +113,11 @@ impl FirestoreStreamingBatchWriter {
                                                     received_counter - 1,
                                                     write_results,
                                                     vec![],
+                                                )
+                                                .opt_commit_time(
+                                                    response
+                                                        .commit_time
+                                                        .and_then(|ts| from_timestamp(ts).ok()),
                                                 )))
                                                 .ok();
                                         }

@@ -6,6 +6,7 @@ use crate::{
     FirestoreWriteResult,
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::Write;
 use gcloud_sdk::google::rpc::Status;
 use rsb_derive::*;
@@ -23,6 +24,7 @@ pub struct FirestoreBatchWriteResponse {
     pub position: u64,
     pub write_results: Vec<FirestoreWriteResult>,
     pub statuses: Vec<Status>,
+    pub commit_time: Option<DateTime<Utc>>,
 }
 
 pub struct FirestoreBatch<'a, W>

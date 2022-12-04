@@ -42,6 +42,9 @@ pub use options::*;
 mod transaction;
 pub use transaction::*;
 
+mod transaction_models;
+pub use transaction_models::*;
+
 mod transaction_ops;
 use transaction_ops::*;
 
