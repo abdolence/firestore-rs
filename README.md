@@ -41,7 +41,7 @@ PROJECT_ID=<your-google-project-id> cargo run --example crud
 
 The library provides two APIs:
 - Fluent API: To simplify development and developer experience the library provides more high level API starting with v0.12.x. This is the recommended API for all applications to use.
-- Classic API: the API existing before 0.12 is still available and not deprecated, so it is fine to continue to use when needed. Furthermore the Fluent API is based on the same classic API and generally speaking are something like smart and convenient constructors.
+- Classic and low level API: the API existing before 0.12 is still available and not deprecated, so it is fine to continue to use when needed. Furthermore the Fluent API is based on the same classic API and generally speaking are something like smart and convenient constructors. The API can be changed with introducing incompatible changes so it is not recommended to use in long term. 
 
 ```rust
 use firestore::*;
