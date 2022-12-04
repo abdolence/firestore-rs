@@ -231,13 +231,13 @@ let mut transaction = db.begin_transaction().await?;
 db.fluent()
   .update()
   .fields(paths!(MyTestStructure::{
-              some_string
-          }))
+     some_string
+   }))
   .in_col(TEST_COLLECTION_NAME)
   .document_id("test-0")
   .object(&MyTestStructure {
-  some_id: format!("test-0"),
-  some_string: "UpdatedTest".to_string(),
+     some_id: format!("test-0"),
+     some_string: "UpdatedTest".to_string(),
   })
   .add_to_transaction(&mut transaction)?;
 
