@@ -88,16 +88,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Now in the list: {:?}", objects1);
 
-    let objects2: Vec<MyTestStructure> = db
-        .fluent()
-        .select()
-        .from(TEST_COLLECTION_NAME)
-        .filter(|q| q.for_all([q.field(path!(MyTestStructure::updated_at)).is_not_null()]))
-        .obj()
-        .query()
-        .await?;
-
-    println!("Now in the list: {:?}", objects2);
-
     Ok(())
 }
