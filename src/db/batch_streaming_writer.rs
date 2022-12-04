@@ -4,7 +4,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use futures_util::{StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
 use gcloud_sdk::google::firestore::v1::{Write, WriteRequest};
 use rsb_derive::*;
 use std::collections::HashMap;

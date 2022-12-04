@@ -6,7 +6,7 @@ use crate::{
 };
 use backoff::future::retry;
 use backoff::ExponentialBackoffBuilder;
-use futures_util::future::BoxFuture;
+use futures::future::BoxFuture;
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
 use tracing::*;
 

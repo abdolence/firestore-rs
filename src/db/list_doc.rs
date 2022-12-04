@@ -1,12 +1,12 @@
 use crate::{FirestoreDb, FirestoreError, FirestoreQueryOrder, FirestoreResult};
 use async_trait::async_trait;
 use chrono::prelude::*;
+use futures::future::BoxFuture;
+use futures::stream::BoxStream;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::TryFutureExt;
-use futures_util::future::BoxFuture;
-use futures_util::stream::BoxStream;
-use futures_util::TryStreamExt;
+use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
 use serde::Deserialize;

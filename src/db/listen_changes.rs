@@ -1,7 +1,7 @@
 use crate::{FirestoreDb, FirestoreQueryParams, FirestoreResult};
+use futures::stream::BoxStream;
 use futures::StreamExt;
 use futures::TryStreamExt;
-use futures_util::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::*;
 use std::collections::HashMap;
 

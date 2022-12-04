@@ -5,7 +5,7 @@ use crate::{
     FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
     FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult,
 };
-use futures_util::stream::BoxStream;
+use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::Deserialize;
 use std::marker::PhantomData;

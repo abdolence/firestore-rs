@@ -6,8 +6,8 @@ use crate::{
     PeekableBoxStream,
 };
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use futures::stream::BoxStream;
-use futures_util::future::BoxFuture;
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
 

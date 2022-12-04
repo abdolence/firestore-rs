@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use firestore::*;
-use futures_util::stream::BoxStream;
+use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 

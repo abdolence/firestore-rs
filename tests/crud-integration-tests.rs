@@ -1,8 +1,8 @@
 use crate::common::setup;
 use chrono::{DateTime, Utc};
 use firestore::{path, paths, FirestoreQueryDirection};
+use futures::stream::BoxStream;
 use futures::StreamExt;
-use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
 mod common;

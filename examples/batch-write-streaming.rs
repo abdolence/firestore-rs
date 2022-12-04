@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use firestore::*;
-use futures_util::TryStreamExt;
+use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
