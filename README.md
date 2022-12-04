@@ -315,7 +315,7 @@ struct MyTestStructure {
 Complete example available [here](examples/generated-document-id.rs).
 
 ## Document transformations
-The library supports server document transformations in transactions and batch writes:
+The library supports server side document transformations in transactions and batch writes:
 
 ```rust
 
