@@ -1,6 +1,6 @@
 use crate::{
-    FirestoreBatch, FirestoreBatchWriter, FirestoreResult, FirestoreTransaction,
-    FirestoreUpdateSupport, FirestoreWritePrecondition,
+    FirestoreBatch, FirestoreBatchWriter, FirestoreFieldTransform, FirestoreResult,
+    FirestoreTransaction, FirestoreUpdateSupport, FirestoreWritePrecondition,
 };
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,7 @@ where
     parent: Option<String>,
     return_only_fields: Option<Vec<String>>,
     precondition: Option<FirestoreWritePrecondition>,
+    update_transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, D> FirestoreUpdateDocObjBuilder<'a, D>
@@ -83,6 +84,7 @@ where
             parent: None,
             return_only_fields: None,
             precondition: None,
+            update_transforms: vec![],
         }
     }
 
@@ -136,6 +138,7 @@ where
             document_id.as_ref().to_string(),
             self.return_only_fields,
             self.precondition,
+            self.update_transforms,
         )
     }
 }
@@ -201,6 +204,7 @@ where
     document_id: String,
     return_only_fields: Option<Vec<String>>,
     precondition: Option<FirestoreWritePrecondition>,
+    update_transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, D> FirestoreUpdateObjInitExecuteBuilder<'a, D>
@@ -216,6 +220,7 @@ where
         document_id: String,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> Self {
         Self {
             db,
@@ -225,6 +230,7 @@ where
             document_id,
             return_only_fields,
             precondition,
+            update_transforms,
         }
     }
 
@@ -254,6 +260,7 @@ where
             object,
             self.return_only_fields,
             self.precondition,
+            self.update_transforms,
         )
     }
 }
@@ -272,6 +279,7 @@ where
     object: &'a T,
     return_only_fields: Option<Vec<String>>,
     precondition: Option<FirestoreWritePrecondition>,
+    update_transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, D, T> FirestoreUpdateObjExecuteBuilder<'a, D, T>
@@ -289,6 +297,7 @@ where
         object: &'a T,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> Self {
         Self {
             db,
@@ -299,6 +308,7 @@ where
             object,
             return_only_fields,
             precondition,
+            update_transforms,
         }
     }
 
@@ -345,6 +355,7 @@ where
                 self.object,
                 self.update_only_fields,
                 self.precondition,
+                self.update_transforms,
             )
         } else {
             transaction.update_object(
@@ -353,6 +364,7 @@ where
                 self.object,
                 self.update_only_fields,
                 self.precondition,
+                self.update_transforms,
             )
         }
     }
@@ -373,6 +385,7 @@ where
                 self.object,
                 self.update_only_fields,
                 self.precondition,
+                self.update_transforms,
             )
         } else {
             batch.update_object(
@@ -381,6 +394,7 @@ where
                 self.object,
                 self.update_only_fields,
                 self.precondition,
+                self.update_transforms,
             )
         }
     }

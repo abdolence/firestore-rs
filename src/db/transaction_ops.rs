@@ -1,11 +1,12 @@
 use crate::db::safe_document_path;
 use crate::{
-    FirestoreDb, FirestoreError, FirestoreResult, FirestoreTransaction, FirestoreWritePrecondition,
+    FirestoreDb, FirestoreError, FirestoreFieldTransform, FirestoreResult, FirestoreTransaction,
+    FirestoreWritePrecondition,
 };
 use gcloud_sdk::google::firestore::v1::Write;
 use serde::Serialize;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct UpdateObjectOperation<'a, T, S>
 where
     T: Serialize + Sync + Send,
@@ -17,6 +18,7 @@ where
     pub obj: &'a T,
     pub update_only: Option<Vec<String>>,
     pub precondition: Option<FirestoreWritePrecondition>,
+    pub update_transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, T, S> TryInto<Write> for UpdateObjectOperation<'a, T, S>
@@ -33,7 +35,13 @@ where
                     field_paths: vf.iter().map(|f| f.to_string()).collect(),
                 }
             }),
-            update_transforms: vec![],
+            update_transforms: self
+                .update_transforms
+                .into_iter()
+                .map(|s| s.try_into())
+                .collect::<FirestoreResult<
+                Vec<gcloud_sdk::google::firestore::v1::document_transform::FieldTransform>,
+            >>()?,
             current_document: self.precondition.map(|cond| cond.try_into()).transpose()?,
             operation: Some(gcloud_sdk::google::firestore::v1::write::Operation::Update(
                 FirestoreDb::serialize_to_doc(
@@ -90,6 +98,7 @@ impl<'a> FirestoreTransaction<'a> {
         obj: &T,
         update_only: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -102,6 +111,7 @@ impl<'a> FirestoreTransaction<'a> {
             obj,
             update_only,
             precondition,
+            update_transforms,
         )
     }
 
@@ -113,6 +123,7 @@ impl<'a> FirestoreTransaction<'a> {
         obj: &T,
         update_only: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -125,6 +136,7 @@ impl<'a> FirestoreTransaction<'a> {
             obj,
             update_only,
             precondition,
+            update_transforms,
         })
     }
 

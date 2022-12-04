@@ -1,7 +1,10 @@
 use crate::db::transaction_ops::UpdateObjectOperation;
 use crate::db::DeleteOperation;
 use crate::errors::FirestoreError;
-use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition, FirestoreWriteResult};
+use crate::{
+    FirestoreDb, FirestoreFieldTransform, FirestoreResult, FirestoreWritePrecondition,
+    FirestoreWriteResult,
+};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::Write;
 use gcloud_sdk::google::rpc::Status;
@@ -64,6 +67,7 @@ where
         obj: &T,
         update_only: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -76,6 +80,7 @@ where
             obj,
             update_only,
             precondition,
+            update_transforms,
         )
     }
 
@@ -87,6 +92,7 @@ where
         obj: &T,
         update_only: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -99,6 +105,7 @@ where
             obj,
             update_only,
             precondition,
+            update_transforms,
         })
     }
 
