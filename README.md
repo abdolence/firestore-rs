@@ -26,7 +26,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 Cargo.toml:
 ```toml
 [dependencies]
-firestore = "0.18"
+firestore = "0.19"
 ```
 
 ## Examples
@@ -313,6 +313,40 @@ struct MyTestStructure {
 ```
 
 Complete example available [here](examples/generated-document-id.rs).
+
+## Document transformations
+The library supports server document transformations in transactions and batch writes:
+
+```rust
+
+// Only transformation
+db.fluent()
+  .update()
+  .in_col(TEST_COLLECTION_NAME)
+  .document_id("test-4")
+  .transforms(|t| { // Transformations
+    t.fields([
+      t.field(path!(MyTestStructure::some_num)).increment(10),
+      t.field(path!(MyTestStructure::some_array)).append_missing_elements([4, 5]),
+      t.field(path!(MyTestStructure::some_array)).remove_all_from_array([3]),
+    ])
+  })
+  .only_transform()
+  .add_to_transaction(&mut transaction)?; // or add_to_batch
+
+// Update and transform (in this order and atomically):
+db.fluent()
+  .update()
+  .in_col(TEST_COLLECTION_NAME)
+  .document_id("test-5")
+  .object(&my_obj) // Updating the objects with the fields here
+  .transforms(|t| { // Transformations after the update
+    t.fields([
+      t.field(path!(MyTestStructure::some_num)).increment(10),
+    ])
+  })
+  .add_to_transaction(&mut transaction)?; // or add_to_batch
+```
 
 ## Explicit null value serialization
 

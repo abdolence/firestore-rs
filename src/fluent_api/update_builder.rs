@@ -1,6 +1,7 @@
+use crate::document_transform_builder::FirestoreTransformBuilder;
 use crate::{
-    FirestoreBatch, FirestoreBatchWriter, FirestoreResult, FirestoreTransaction,
-    FirestoreUpdateSupport, FirestoreWritePrecondition,
+    FirestoreBatch, FirestoreBatchWriter, FirestoreFieldTransform, FirestoreResult,
+    FirestoreTransaction, FirestoreUpdateSupport, FirestoreWritePrecondition,
 };
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,7 @@ where
     parent: Option<String>,
     return_only_fields: Option<Vec<String>>,
     precondition: Option<FirestoreWritePrecondition>,
+    transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, D> FirestoreUpdateDocObjBuilder<'a, D>
@@ -83,6 +85,7 @@ where
             parent: None,
             return_only_fields: None,
             precondition: None,
+            transforms: vec![],
         }
     }
 
@@ -112,6 +115,17 @@ where
     }
 
     #[inline]
+    pub fn transforms<FN>(self, doc_transform: FN) -> Self
+    where
+        FN: Fn(FirestoreTransformBuilder) -> Vec<FirestoreFieldTransform>,
+    {
+        Self {
+            transforms: doc_transform(FirestoreTransformBuilder::new()),
+            ..self
+        }
+    }
+
+    #[inline]
     pub fn document(self, document: Document) -> FirestoreUpdateDocExecuteBuilder<'a, D> {
         FirestoreUpdateDocExecuteBuilder::new(
             self.db,
@@ -136,6 +150,7 @@ where
             document_id.as_ref().to_string(),
             self.return_only_fields,
             self.precondition,
+            self.transforms,
         )
     }
 }
@@ -201,6 +216,7 @@ where
     document_id: String,
     return_only_fields: Option<Vec<String>>,
     precondition: Option<FirestoreWritePrecondition>,
+    transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, D> FirestoreUpdateObjInitExecuteBuilder<'a, D>
@@ -216,6 +232,7 @@ where
         document_id: String,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> Self {
         Self {
             db,
@@ -225,6 +242,7 @@ where
             document_id,
             return_only_fields,
             precondition,
+            transforms,
         }
     }
 
@@ -254,6 +272,30 @@ where
             object,
             self.return_only_fields,
             self.precondition,
+            self.transforms,
+        )
+    }
+
+    #[inline]
+    pub fn transforms<FN>(self, doc_transform: FN) -> Self
+    where
+        FN: Fn(FirestoreTransformBuilder) -> Vec<FirestoreFieldTransform>,
+    {
+        Self {
+            transforms: doc_transform(FirestoreTransformBuilder::new()),
+            ..self
+        }
+    }
+
+    #[inline]
+    pub fn only_transform(self) -> FirestoreUpdateOnlyTransformBuilder<'a, D> {
+        FirestoreUpdateOnlyTransformBuilder::new(
+            self.db,
+            self.collection_id.to_string(),
+            self.parent,
+            self.document_id,
+            self.precondition,
+            self.transforms,
         )
     }
 }
@@ -272,6 +314,7 @@ where
     object: &'a T,
     return_only_fields: Option<Vec<String>>,
     precondition: Option<FirestoreWritePrecondition>,
+    transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, D, T> FirestoreUpdateObjExecuteBuilder<'a, D, T>
@@ -289,6 +332,7 @@ where
         object: &'a T,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> Self {
         Self {
             db,
@@ -299,6 +343,7 @@ where
             object,
             return_only_fields,
             precondition,
+            transforms,
         }
     }
 
@@ -333,6 +378,17 @@ where
     }
 
     #[inline]
+    pub fn transforms<FN>(self, transforms_builder: FN) -> Self
+    where
+        FN: Fn(FirestoreTransformBuilder) -> Vec<FirestoreFieldTransform>,
+    {
+        Self {
+            transforms: transforms_builder(FirestoreTransformBuilder::new()),
+            ..self
+        }
+    }
+
+    #[inline]
     pub fn add_to_transaction<'t>(
         self,
         transaction: &'a mut FirestoreTransaction<'t>,
@@ -345,6 +401,7 @@ where
                 self.object,
                 self.update_only_fields,
                 self.precondition,
+                self.transforms,
             )
         } else {
             transaction.update_object(
@@ -353,6 +410,7 @@ where
                 self.object,
                 self.update_only_fields,
                 self.precondition,
+                self.transforms,
             )
         }
     }
@@ -373,6 +431,7 @@ where
                 self.object,
                 self.update_only_fields,
                 self.precondition,
+                self.transforms,
             )
         } else {
             batch.update_object(
@@ -381,6 +440,93 @@ where
                 self.object,
                 self.update_only_fields,
                 self.precondition,
+                self.transforms,
+            )
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FirestoreUpdateOnlyTransformBuilder<'a, D>
+where
+    D: FirestoreUpdateSupport,
+{
+    _db: &'a D,
+    collection_id: String,
+    parent: Option<String>,
+    document_id: String,
+    precondition: Option<FirestoreWritePrecondition>,
+    transforms: Vec<FirestoreFieldTransform>,
+}
+
+impl<'a, D> FirestoreUpdateOnlyTransformBuilder<'a, D>
+where
+    D: FirestoreUpdateSupport,
+{
+    #[inline]
+    pub(crate) fn new(
+        db: &'a D,
+        collection_id: String,
+        parent: Option<String>,
+        document_id: String,
+        precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
+    ) -> Self {
+        Self {
+            _db: db,
+            collection_id,
+            parent,
+            document_id,
+            precondition,
+            transforms,
+        }
+    }
+
+    #[inline]
+    pub fn add_to_transaction<'t>(
+        self,
+        transaction: &'a mut FirestoreTransaction<'t>,
+    ) -> FirestoreResult<&'a mut FirestoreTransaction<'t>> {
+        if let Some(parent) = self.parent {
+            transaction.transform_at(
+                parent.as_str(),
+                self.collection_id.as_str(),
+                self.document_id,
+                self.precondition,
+                self.transforms,
+            )
+        } else {
+            transaction.transform(
+                self.collection_id.as_str(),
+                self.document_id,
+                self.precondition,
+                self.transforms,
+            )
+        }
+    }
+
+    #[inline]
+    pub fn add_to_batch<'t, W>(
+        self,
+        batch: &'a mut FirestoreBatch<'t, W>,
+    ) -> FirestoreResult<&'a mut FirestoreBatch<'t, W>>
+    where
+        W: FirestoreBatchWriter,
+    {
+        if let Some(parent) = self.parent {
+            batch.transform_at(
+                parent.as_str(),
+                self.collection_id.as_str(),
+                self.document_id,
+                self.precondition,
+                self.transforms,
+            )
+        } else {
+            batch.transform(
+                self.collection_id.as_str(),
+                self.document_id,
+                self.precondition,
+                self.transforms,
             )
         }
     }

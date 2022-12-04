@@ -42,6 +42,9 @@ pub use options::*;
 mod transaction;
 pub use transaction::*;
 
+mod transaction_models;
+pub use transaction_models::*;
+
 mod transaction_ops;
 use transaction_ops::*;
 
@@ -66,6 +69,9 @@ use crate::errors::{
     FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
 };
 use std::fmt::Formatter;
+
+mod transform_models;
+pub use transform_models::*;
 
 #[derive(Clone)]
 pub struct FirestoreDb {

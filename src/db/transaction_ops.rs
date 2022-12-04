@@ -1,11 +1,12 @@
 use crate::db::safe_document_path;
 use crate::{
-    FirestoreDb, FirestoreError, FirestoreResult, FirestoreTransaction, FirestoreWritePrecondition,
+    FirestoreDb, FirestoreError, FirestoreFieldTransform, FirestoreResult, FirestoreTransaction,
+    FirestoreWritePrecondition,
 };
 use gcloud_sdk::google::firestore::v1::Write;
 use serde::Serialize;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct UpdateObjectOperation<'a, T, S>
 where
     T: Serialize + Sync + Send,
@@ -17,6 +18,7 @@ where
     pub obj: &'a T,
     pub update_only: Option<Vec<String>>,
     pub precondition: Option<FirestoreWritePrecondition>,
+    pub update_transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, T, S> TryInto<Write> for UpdateObjectOperation<'a, T, S>
@@ -33,7 +35,13 @@ where
                     field_paths: vf.iter().map(|f| f.to_string()).collect(),
                 }
             }),
-            update_transforms: vec![],
+            update_transforms: self
+                .update_transforms
+                .into_iter()
+                .map(|s| s.try_into())
+                .collect::<FirestoreResult<
+                Vec<gcloud_sdk::google::firestore::v1::document_transform::FieldTransform>,
+            >>()?,
             current_document: self.precondition.map(|cond| cond.try_into()).transpose()?,
             operation: Some(gcloud_sdk::google::firestore::v1::write::Operation::Update(
                 FirestoreDb::serialize_to_doc(
@@ -82,6 +90,46 @@ where
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) struct TransformObjectOperation<S>
+where
+    S: AsRef<str>,
+{
+    pub parent: String,
+    pub collection_id: String,
+    pub document_id: S,
+    pub precondition: Option<FirestoreWritePrecondition>,
+    pub transforms: Vec<FirestoreFieldTransform>,
+}
+
+impl<S> TryInto<Write> for TransformObjectOperation<S>
+where
+    S: AsRef<str>,
+{
+    type Error = FirestoreError;
+
+    fn try_into(self) -> Result<Write, Self::Error> {
+        Ok(Write {
+            update_mask: None,
+            update_transforms: vec![],
+            current_document: self.precondition.map(|cond| cond.try_into()).transpose()?,
+            operation: Some(gcloud_sdk::google::firestore::v1::write::Operation::Transform(
+                gcloud_sdk::google::firestore::v1::DocumentTransform {
+                    document: safe_document_path(
+                        &self.parent,
+                        self.collection_id.as_str(),
+                        self.document_id.as_ref(),
+                    )?,
+                    field_transforms: self.transforms
+                        .into_iter()
+                        .map(|s| s.try_into())
+                        .collect::<FirestoreResult<Vec<gcloud_sdk::google::firestore::v1::document_transform::FieldTransform>>>()?
+                }
+            )),
+        })
+    }
+}
+
 impl<'a> FirestoreTransaction<'a> {
     pub fn update_object<T, S>(
         &mut self,
@@ -90,6 +138,7 @@ impl<'a> FirestoreTransaction<'a> {
         obj: &T,
         update_only: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -102,6 +151,7 @@ impl<'a> FirestoreTransaction<'a> {
             obj,
             update_only,
             precondition,
+            update_transforms,
         )
     }
 
@@ -113,6 +163,7 @@ impl<'a> FirestoreTransaction<'a> {
         obj: &T,
         update_only: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -125,6 +176,7 @@ impl<'a> FirestoreTransaction<'a> {
             obj,
             update_only,
             precondition,
+            update_transforms,
         })
     }
 
@@ -160,6 +212,45 @@ impl<'a> FirestoreTransaction<'a> {
             collection_id: collection_id.to_string(),
             document_id,
             precondition,
+        })
+    }
+
+    pub fn transform<S>(
+        &mut self,
+        collection_id: &str,
+        document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
+    ) -> FirestoreResult<&mut Self>
+    where
+        S: AsRef<str>,
+    {
+        self.transform_at(
+            self.db.get_documents_path(),
+            collection_id,
+            document_id,
+            precondition,
+            transforms,
+        )
+    }
+
+    pub fn transform_at<S>(
+        &mut self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
+    ) -> FirestoreResult<&mut Self>
+    where
+        S: AsRef<str>,
+    {
+        self.add(TransformObjectOperation {
+            parent: parent.to_string(),
+            collection_id: collection_id.to_string(),
+            document_id,
+            precondition,
+            transforms,
         })
     }
 }

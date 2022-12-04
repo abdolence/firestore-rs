@@ -2,6 +2,7 @@ use crate::db::safe_document_path;
 use crate::FirestoreResult;
 use std::fmt::{Display, Formatter};
 
+#[derive(Debug, Clone)]
 pub struct ParentPathBuilder {
     value: String,
 }

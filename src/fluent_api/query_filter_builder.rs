@@ -11,6 +11,7 @@ impl FirestoreQueryFilterBuilder {
         Self {}
     }
 
+    #[inline]
     pub fn for_all<I>(&self, filter_expressions: I) -> Option<FirestoreQueryFilter>
     where
         I: IntoIterator,
@@ -32,6 +33,7 @@ impl FirestoreQueryFilterBuilder {
         }
     }
 
+    #[inline]
     pub fn field<S>(&self, field_name: S) -> FirestoreQueryFilterFieldExpr
     where
         S: AsRef<str>,
@@ -199,6 +201,7 @@ impl FirestoreQueryFilterFieldExpr {
 }
 
 impl FirestoreQueryFilterExpr for FirestoreQueryFilter {
+    #[inline]
     fn build_filter(self) -> Option<FirestoreQueryFilter> {
         Some(self)
     }
@@ -208,6 +211,7 @@ impl<F> FirestoreQueryFilterExpr for Option<F>
 where
     F: FirestoreQueryFilterExpr,
 {
+    #[inline]
     fn build_filter(self) -> Option<FirestoreQueryFilter> {
         self.and_then(|expr| expr.build_filter())
     }

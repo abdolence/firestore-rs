@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod delete_builder;
+pub mod document_transform_builder;
 pub mod insert_builder;
 pub mod listing_builder;
 pub mod query_filter_builder;

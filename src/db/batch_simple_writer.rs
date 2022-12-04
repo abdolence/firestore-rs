@@ -1,5 +1,6 @@
 use crate::{
-    FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb, FirestoreResult,
+    FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb,
+    FirestoreResult, FirestoreWriteResult,
 };
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::{BatchWriteRequest, Write};
@@ -53,9 +54,15 @@ impl FirestoreBatchWriter for FirestoreSimpleBatchWriter {
 
         let batch_response = response.into_inner();
 
+        let write_results: FirestoreResult<Vec<FirestoreWriteResult>> = batch_response
+            .write_results
+            .into_iter()
+            .map(|s| s.try_into())
+            .collect();
+
         Ok(FirestoreBatchWriteResponse::new(
             0,
-            batch_response.write_results,
+            write_results?,
             batch_response.status,
         ))
     }

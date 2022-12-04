@@ -1,8 +1,12 @@
-use crate::db::transaction_ops::UpdateObjectOperation;
+use crate::db::transaction_ops::{TransformObjectOperation, UpdateObjectOperation};
 use crate::db::DeleteOperation;
 use crate::errors::FirestoreError;
-use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
+use crate::{
+    FirestoreDb, FirestoreFieldTransform, FirestoreResult, FirestoreWritePrecondition,
+    FirestoreWriteResult,
+};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::Write;
 use gcloud_sdk::google::rpc::Status;
 use rsb_derive::*;
@@ -18,8 +22,9 @@ pub trait FirestoreBatchWriter {
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreBatchWriteResponse {
     pub position: u64,
-    pub write_results: Vec<gcloud_sdk::google::firestore::v1::WriteResult>,
+    pub write_results: Vec<FirestoreWriteResult>,
     pub statuses: Vec<Status>,
+    pub commit_time: Option<DateTime<Utc>>,
 }
 
 pub struct FirestoreBatch<'a, W>
@@ -64,6 +69,7 @@ where
         obj: &T,
         update_only: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -76,6 +82,7 @@ where
             obj,
             update_only,
             precondition,
+            update_transforms,
         )
     }
 
@@ -87,6 +94,7 @@ where
         obj: &T,
         update_only: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        update_transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<&mut Self>
     where
         T: Serialize + Sync + Send,
@@ -99,6 +107,7 @@ where
             obj,
             update_only,
             precondition,
+            update_transforms,
         })
     }
 
@@ -134,6 +143,45 @@ where
             collection_id: collection_id.to_string(),
             document_id,
             precondition,
+        })
+    }
+
+    pub fn transform<S>(
+        &mut self,
+        collection_id: &str,
+        document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
+    ) -> FirestoreResult<&mut Self>
+    where
+        S: AsRef<str>,
+    {
+        self.transform_at(
+            self.db.get_documents_path(),
+            collection_id,
+            document_id,
+            precondition,
+            transforms,
+        )
+    }
+
+    pub fn transform_at<S>(
+        &mut self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
+    ) -> FirestoreResult<&mut Self>
+    where
+        S: AsRef<str>,
+    {
+        self.add(TransformObjectOperation {
+            parent: parent.to_string(),
+            collection_id: collection_id.to_string(),
+            document_id,
+            precondition,
+            transforms,
         })
     }
 }
