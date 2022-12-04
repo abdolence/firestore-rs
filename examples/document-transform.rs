@@ -11,7 +11,9 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
     some_id: String,
+    some_num: i32,
     some_string: String,
+    some_array: Vec<i32>,
 }
 
 #[tokio::main]
@@ -25,13 +27,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "test";
+    const TEST_COLLECTION_NAME: &'static str = "test-transforms";
 
     println!("Populating a test collection");
     for i in 0..10 {
         let my_struct = MyTestStructure {
             some_id: format!("test-{}", i),
+            some_num: i,
             some_string: "Test".to_string(),
+            some_array: vec![1, 2, 3],
         };
 
         // Remove if it already exist
@@ -62,10 +66,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             some_string
         }))
         .in_col(TEST_COLLECTION_NAME)
-        .document_id("test-0")
+        .document_id("test-5")
         .object(&MyTestStructure {
-            some_id: format!("test-0"),
+            some_id: format!("test-5"),
+            some_num: 0,
             some_string: "UpdatedTest".to_string(),
+            some_array: vec![1, 2, 3],
+        })
+        .transform(|t| {
+            t.fields([
+                t.field(path!(MyTestStructure::some_num)).increment(10),
+                t.field(path!(MyTestStructure::some_array))
+                    .append_missing_elements([4, 5]),
+                t.field(path!(MyTestStructure::some_array))
+                    .remove_all_from_array([3]),
+            ])
         })
         .add_to_transaction(&mut transaction)?;
 

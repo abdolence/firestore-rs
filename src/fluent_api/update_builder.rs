@@ -1,3 +1,4 @@
+use crate::document_transform_builder::FirestoreTransformBuilder;
 use crate::{
     FirestoreBatch, FirestoreBatchWriter, FirestoreFieldTransform, FirestoreResult,
     FirestoreTransaction, FirestoreUpdateSupport, FirestoreWritePrecondition,
@@ -109,6 +110,17 @@ where
     pub fn precondition(self, precondition: FirestoreWritePrecondition) -> Self {
         Self {
             precondition: Some(precondition),
+            ..self
+        }
+    }
+
+    #[inline]
+    pub fn transform<FN>(self, doc_transform: FN) -> Self
+    where
+        FN: Fn(FirestoreTransformBuilder) -> Vec<FirestoreFieldTransform>,
+    {
+        Self {
+            update_transforms: doc_transform(FirestoreTransformBuilder::new()),
             ..self
         }
     }
@@ -339,6 +351,17 @@ where
                     self.precondition,
                 )
                 .await
+        }
+    }
+
+    #[inline]
+    pub fn transform<FN>(self, doc_transform: FN) -> Self
+    where
+        FN: Fn(FirestoreTransformBuilder) -> Vec<FirestoreFieldTransform>,
+    {
+        Self {
+            update_transforms: doc_transform(FirestoreTransformBuilder::new()),
+            ..self
         }
     }
 

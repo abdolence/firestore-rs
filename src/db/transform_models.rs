@@ -18,7 +18,7 @@ impl TryInto<FirestoreWriteResult> for gcloud_sdk::google::firestore::v1::WriteR
         Ok(FirestoreWriteResult::new(
             self.transform_results
                 .into_iter()
-                .map(|r| FirestoreValue::from(r))
+                .map(FirestoreValue::from)
                 .collect(),
         )
         .opt_update_time(self.update_time.map(from_timestamp).transpose()?))
@@ -114,7 +114,7 @@ impl TryInto<gcloud_sdk::google::firestore::v1::document_transform::field_transf
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreTransformServerValue {
     Unspecified,
     RequestTime,
