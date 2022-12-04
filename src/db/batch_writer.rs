@@ -1,7 +1,7 @@
 use crate::db::transaction_ops::UpdateObjectOperation;
 use crate::db::DeleteOperation;
 use crate::errors::FirestoreError;
-use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
+use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition, FirestoreWriteResult};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::Write;
 use gcloud_sdk::google::rpc::Status;
@@ -18,7 +18,7 @@ pub trait FirestoreBatchWriter {
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreBatchWriteResponse {
     pub position: u64,
-    pub write_results: Vec<gcloud_sdk::google::firestore::v1::WriteResult>,
+    pub write_results: Vec<FirestoreWriteResult>,
     pub statuses: Vec<Status>,
 }
 

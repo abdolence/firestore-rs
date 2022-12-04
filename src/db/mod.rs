@@ -67,6 +67,9 @@ use crate::errors::{
 };
 use std::fmt::Formatter;
 
+mod write_models;
+pub use write_models::*;
+
 #[derive(Clone)]
 pub struct FirestoreDb {
     database_path: String,

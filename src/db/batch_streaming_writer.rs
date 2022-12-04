@@ -1,5 +1,6 @@
 use crate::{
-    FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb, FirestoreResult,
+    FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb,
+    FirestoreResult, FirestoreWriteResult,
 };
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -97,13 +98,32 @@ impl FirestoreStreamingBatchWriter {
                                 if received_counter == 0 {
                                     init_wait_sender.send(()).ok();
                                 } else {
-                                    responses_writer
-                                        .send(Ok(FirestoreBatchWriteResponse::new(
-                                            received_counter - 1,
-                                            response.write_results,
-                                            vec![],
-                                        )))
-                                        .ok();
+                                    let write_results: FirestoreResult<Vec<FirestoreWriteResult>> =
+                                        response
+                                            .write_results
+                                            .into_iter()
+                                            .map(|s| s.try_into())
+                                            .collect();
+
+                                    match write_results {
+                                        Ok(write_results) => {
+                                            responses_writer
+                                                .send(Ok(FirestoreBatchWriteResponse::new(
+                                                    received_counter - 1,
+                                                    write_results,
+                                                    vec![],
+                                                )))
+                                                .ok();
+                                        }
+                                        Err(err) => {
+                                            error!(
+                                                "Batch write operation {} failed: {}",
+                                                received_counter, err
+                                            );
+                                            responses_writer.send(Err(err)).ok();
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                             Ok(None) => {
