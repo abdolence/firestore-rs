@@ -60,6 +60,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let mut transaction = db.begin_transaction().await?;
 
+    // Only transforms
+    db.fluent()
+        .update()
+        .in_col(TEST_COLLECTION_NAME)
+        .document_id("test-4")
+        .transforms(|t| {
+            t.fields([
+                t.field(path!(MyTestStructure::some_num)).increment(10),
+                t.field(path!(MyTestStructure::some_array))
+                    .append_missing_elements([4, 5]),
+                t.field(path!(MyTestStructure::some_array))
+                    .remove_all_from_array([3]),
+            ])
+        })
+        .only_transform()
+        .add_to_transaction(&mut transaction)?;
+
+    // Transforms with update
     db.fluent()
         .update()
         .fields(paths!(MyTestStructure::{
@@ -73,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             some_string: "UpdatedTest".to_string(),
             some_array: vec![1, 2, 3],
         })
-        .transform(|t| {
+        .transforms(|t| {
             t.fields([
                 t.field(path!(MyTestStructure::some_num)).increment(10),
                 t.field(path!(MyTestStructure::some_array))
