@@ -41,7 +41,7 @@ PROJECT_ID=<your-google-project-id> cargo run --example crud
 
 The library provides two APIs:
 - Fluent API: To simplify development and developer experience the library provides more high level API starting with v0.12.x. This is the recommended API for all applications to use.
-- Classic API: the API existing before 0.12 is still available and not deprecated, so it is fine to continue to use when needed. Furthermore the Fluent API is based on the same classic API and generally speaking are something like smart and convenient constructors.
+- Classic and low level API: the API existing before 0.12 is still available and not deprecated, so it is fine to continue to use when needed. Furthermore the Fluent API is based on the same classic API and generally speaking are something like smart and convenient constructors. The API can be changed with introducing incompatible changes so it is not recommended to use in long term. 
 
 ```rust
 use firestore::*;
@@ -231,13 +231,13 @@ let mut transaction = db.begin_transaction().await?;
 db.fluent()
   .update()
   .fields(paths!(MyTestStructure::{
-              some_string
-          }))
+     some_string
+   }))
   .in_col(TEST_COLLECTION_NAME)
   .document_id("test-0")
   .object(&MyTestStructure {
-  some_id: format!("test-0"),
-  some_string: "UpdatedTest".to_string(),
+     some_id: format!("test-0"),
+     some_string: "UpdatedTest".to_string(),
   })
   .add_to_transaction(&mut transaction)?;
 
@@ -315,7 +315,7 @@ struct MyTestStructure {
 Complete example available [here](examples/generated-document-id.rs).
 
 ## Document transformations
-The library supports server document transformations in transactions and batch writes:
+The library supports server side document transformations in transactions and batch writes:
 
 ```rust
 
