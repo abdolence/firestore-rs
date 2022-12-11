@@ -1,6 +1,6 @@
 [package]
 name = "firestore"
-version = "0.19.1-alpha.0"
+version = "0.20.0-alpha.0"
 authors = ["Abdulla Abdurakhmanov <me@abdolence.dev>"]
 edition = "2021"
 rust-version = "1.63"
@@ -29,7 +29,7 @@ gcloud-sdk = { version = "0.19.11", features = ["google-firestore-v1"] }
 tonic = { version = "0.8", features = ["tls"] }
 hyper = { version ="0.14" }
 struct-path = "0.2"
-rvstruct = "0.3"
+rvstruct = "0.3.2"
 rsb_derive = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 prost-types = "0.11"

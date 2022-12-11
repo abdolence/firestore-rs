@@ -1,19 +1,21 @@
 use crate::errors::FirestoreError;
 use crate::query_filter_builder::FirestoreQueryFilterBuilder;
 use crate::{
-    FirestoreGetByIdSupport, FirestorePartition, FirestorePartitionQueryParams,
+    FirestoreGetByIdSupport, FirestoreListenSupport, FirestoreListener, FirestoreListenerParams,
+    FirestoreListenerTarget, FirestorePartition, FirestorePartitionQueryParams,
     FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
-    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult,
+    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult, FirestoreTokenStorage,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
 pub struct FirestoreSelectInitialBuilder<'a, D>
 where
-    D: FirestoreQuerySupport + FirestoreGetByIdSupport,
+    D: FirestoreQuerySupport + FirestoreGetByIdSupport + FirestoreListenSupport + Clone + 'static,
 {
     db: &'a D,
     return_only_fields: Option<Vec<String>>,
@@ -21,7 +23,13 @@ where
 
 impl<'a, D> FirestoreSelectInitialBuilder<'a, D>
 where
-    D: FirestoreQuerySupport + FirestoreGetByIdSupport,
+    D: FirestoreQuerySupport
+        + FirestoreGetByIdSupport
+        + FirestoreListenSupport
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     #[inline]
     pub(crate) fn new(db: &'a D) -> Self {
@@ -67,7 +75,7 @@ where
 #[derive(Clone, Debug)]
 pub struct FirestoreSelectDocBuilder<'a, D>
 where
-    D: FirestoreQuerySupport,
+    D: FirestoreQuerySupport + FirestoreListenSupport + Clone + Send + Sync,
 {
     db: &'a D,
     params: FirestoreQueryParams,
@@ -75,7 +83,7 @@ where
 
 impl<'a, D> FirestoreSelectDocBuilder<'a, D>
 where
-    D: FirestoreQuerySupport,
+    D: FirestoreQuerySupport + FirestoreListenSupport + Clone + Send + Sync + 'static,
 {
     #[inline]
     pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
@@ -185,6 +193,10 @@ where
 
     pub fn partition_query(self) -> FirestorePartitionQueryDocBuilder<'a, D> {
         FirestorePartitionQueryDocBuilder::new(self.db, self.params.with_all_descendants(true))
+    }
+
+    pub fn listen(self) -> FirestoreDocChangesListenerInitBuilder<'a, D> {
+        FirestoreDocChangesListenerInitBuilder::new(self.db, self.params.with_all_descendants(true))
     }
 }
 
@@ -663,6 +675,64 @@ where
                 ),
             )
             .await
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FirestoreDocChangesListenerInitBuilder<'a, D>
+where
+    D: FirestoreListenSupport + Clone,
+{
+    db: &'a D,
+    listener_params: FirestoreListenerParams,
+    query_params: FirestoreQueryParams,
+    labels: HashMap<String, String>,
+}
+
+impl<'a, D> FirestoreDocChangesListenerInitBuilder<'a, D>
+where
+    D: FirestoreListenSupport + Clone + Send + Sync + 'static,
+{
+    #[inline]
+    pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
+        Self {
+            db,
+            listener_params: FirestoreListenerParams::new(),
+            query_params: params,
+            labels: HashMap::new(),
+        }
+    }
+
+    #[inline]
+    pub fn labels(self, labels: HashMap<String, String>) -> Self {
+        Self { labels, ..self }
+    }
+
+    #[inline]
+    pub fn retry_delay(self, delay: std::time::Duration) -> Self {
+        Self {
+            listener_params: self.listener_params.with_retry_delay(delay),
+            ..self
+        }
+    }
+
+    pub async fn target<S>(
+        self,
+        target: FirestoreListenerTarget,
+        token_storage: S,
+    ) -> FirestoreResult<FirestoreListener<D, S>>
+    where
+        S: FirestoreTokenStorage + Send + Sync + Clone + 'static,
+    {
+        FirestoreListener::new(
+            self.db.clone(),
+            target,
+            token_storage,
+            self.listener_params,
+            self.query_params,
+            self.labels,
+        )
+        .await
     }
 }
 
