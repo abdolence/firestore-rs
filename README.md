@@ -348,6 +348,44 @@ db.fluent()
   .add_to_transaction(&mut transaction)?; // or add_to_batch
 ```
 
+## Listening the document changes on Firestore
+To help to work with asynchronous event listener the library supports high level API for
+listening the events from Firestore on a separate thread:
+
+```rust
+let mut listener = db
+    .fluent()
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .listen()
+    .target(TEST_TARGET_ID, TempFileTokenStorage)
+    .await?;
+
+listener
+    .start(|event| async move {
+        match event {
+            FirestoreListenEvent::DocumentChange(ref doc_change) => {
+                println!("Doc changed: {:?}", doc_change);
+
+                if let Some(doc) = &doc_change.document {
+                    let obj: MyTestStructure =
+                        FirestoreDb::deserialize_doc_to::<MyTestStructure>(doc)
+                            .expect("Deserialized object");
+                    println!("As object: {:?}", obj);
+                }
+            }
+            _ => {
+                println!("Received a listen response event to handle: {:?}", event);
+            }
+        }
+
+        Ok(())
+    })
+    .await?;
+```
+
+See complete example in examples directory.
+
 ## Explicit null value serialization
 
 By default, all Option<> serialized as absent fields, which is convenient for many cases. 

@@ -30,7 +30,7 @@ const TEST_COLLECTION_NAME: &str = "test-listen";
 const RESUME_TOKEN_FILENAME: &str = "last-read-token.tmp";
 
 // The ID of listener - must be different for different listeners in case you have many instances
-const TEST_TARGET_ID: i32 = 42;
+const TEST_TARGET_ID: FirestoreListenerTarget = FirestoreListenerTarget::new(42_i32);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -97,9 +97,13 @@ async fn listener(
                 ),
             ]);
 
-        let initial_token_value: Option<Vec<u8>> =
+        let initial_token_value: Option<FirestoreListenerToken> =
             std::fs::read_to_string(RESUME_TOKEN_FILENAME.clone())
-                .map(|s| hex::decode(&s).expect("Unexpected resume token file format"))
+                .map(|s| {
+                    hex::decode(&s)
+                        .expect("Unexpected resume token file format")
+                        .into()
+                })
                 .ok();
 
         println!(

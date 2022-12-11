@@ -15,7 +15,7 @@ use crate::listing_builder::FirestoreListingInitialBuilder;
 use crate::update_builder::FirestoreUpdateInitialBuilder;
 use crate::{
     FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport, FirestoreGetByIdSupport,
-    FirestoreListingSupport, FirestoreQuerySupport, FirestoreUpdateSupport,
+    FirestoreListenSupport, FirestoreListingSupport, FirestoreQuerySupport, FirestoreUpdateSupport,
 };
 
 #[derive(Clone, Debug)]
@@ -30,7 +30,12 @@ where
         + FirestoreDeleteSupport
         + FirestoreUpdateSupport
         + FirestoreListingSupport
-        + FirestoreGetByIdSupport,
+        + FirestoreGetByIdSupport
+        + FirestoreListenSupport
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     pub(crate) fn new(db: &'a D) -> Self {
         Self { db }
