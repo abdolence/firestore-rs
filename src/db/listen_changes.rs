@@ -8,21 +8,21 @@ use std::collections::HashMap;
 impl FirestoreDb {
     pub async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        database_path: &'a str,
         params: &'a FirestoreQueryParams,
         labels: HashMap<String, String>,
         since_token_value: Option<Vec<u8>>,
         target_id: i32,
+        add_target_once: Option<bool>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
         use futures::stream;
 
         let query_request = params.to_structured_query();
         let listen_request = ListenRequest {
-            database: database_path.into(),
+            database: self.get_database_path().to_string(),
             labels,
             target_change: Some(listen_request::TargetChange::AddTarget(Target {
                 target_id,
-                once: false,
+                once: add_target_once.unwrap_or(false),
                 target_type: Some(target::TargetType::Query(target::QueryTarget {
                     parent: params
                         .parent

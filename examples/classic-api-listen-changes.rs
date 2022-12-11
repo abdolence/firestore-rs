@@ -108,11 +108,11 @@ async fn listener(
         );
         let mut listen_stream = db
             .listen_doc_changes(
-                db.get_database_path().as_str(),
                 &query_params,
                 HashMap::new(),
                 initial_token_value,
                 TEST_TARGET_ID,
+                None,
             )
             .await
             .unwrap();
