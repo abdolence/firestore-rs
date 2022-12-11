@@ -1,3 +1,4 @@
+use crate::db::safe_document_path;
 use crate::errors::*;
 use crate::{FirestoreDb, FirestoreQueryParams, FirestoreResult};
 use async_trait::async_trait;
@@ -16,15 +17,33 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tracing::*;
 
+#[derive(Debug, Clone, Builder)]
+pub struct FirestoreListenerTargetParams {
+    pub target: FirestoreListenerTarget,
+    pub target_type: FirestoreTargetType,
+    pub add_target_once: Option<bool>,
+    pub since_token_value: Option<FirestoreListenerToken>,
+}
+
+#[derive(Debug, Clone, Builder)]
+pub struct FirestoreCollectionDocuments {
+    pub parent: Option<String>,
+    pub collection: String,
+    pub documents: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FirestoreTargetType {
+    Query(FirestoreQueryParams),
+    Documents(FirestoreCollectionDocuments),
+}
+
 #[async_trait]
 pub trait FirestoreListenSupport {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        params: &'a FirestoreQueryParams,
+        target_params: FirestoreListenerTargetParams,
         labels: HashMap<String, String>,
-        since_token_value: Option<FirestoreListenerToken>,
-        target_id: FirestoreListenerTarget,
-        add_target_once: Option<bool>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>>;
 }
 
@@ -32,38 +51,55 @@ pub trait FirestoreListenSupport {
 impl FirestoreListenSupport for FirestoreDb {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        params: &'a FirestoreQueryParams,
+        target_params: FirestoreListenerTargetParams,
         labels: HashMap<String, String>,
-        since_token_value: Option<FirestoreListenerToken>,
-        target_id: FirestoreListenerTarget,
-        add_target_once: Option<bool>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
-        use futures::stream;
-
-        let query_request = params.to_structured_query();
         let listen_request = ListenRequest {
             database: self.get_database_path().to_string(),
             labels,
             target_change: Some(listen_request::TargetChange::AddTarget(Target {
-                target_id: *target_id.value(),
-                once: add_target_once.unwrap_or(false),
-                target_type: Some(target::TargetType::Query(target::QueryTarget {
-                    parent: params
-                        .parent
-                        .as_ref()
-                        .unwrap_or_else(|| self.get_documents_path())
-                        .clone(),
-                    query_type: Some(target::query_target::QueryType::StructuredQuery(
-                        query_request,
-                    )),
-                })),
-                resume_type: since_token_value
+                target_id: *target_params.target.value(),
+                once: target_params.add_target_once.unwrap_or(false),
+                target_type: Some(match target_params.target_type {
+                    FirestoreTargetType::Query(query_params) => {
+                        target::TargetType::Query(target::QueryTarget {
+                            parent: query_params
+                                .parent
+                                .as_ref()
+                                .unwrap_or_else(|| self.get_documents_path())
+                                .clone(),
+                            query_type: Some(target::query_target::QueryType::StructuredQuery(
+                                query_params.to_structured_query(),
+                            )),
+                        })
+                    }
+                    FirestoreTargetType::Documents(collection_documents) => {
+                        target::TargetType::Documents(target::DocumentsTarget {
+                            documents: collection_documents
+                                .documents
+                                .into_iter()
+                                .map(|doc_id| {
+                                    safe_document_path(
+                                        collection_documents
+                                            .parent
+                                            .as_deref()
+                                            .unwrap_or_else(|| self.get_documents_path()),
+                                        collection_documents.collection.as_str(),
+                                        doc_id,
+                                    )
+                                })
+                                .collect::<FirestoreResult<Vec<String>>>()?,
+                        })
+                    }
+                }),
+                resume_type: target_params
+                    .since_token_value
                     .map(|token| target::ResumeType::ResumeToken(token.into_value())),
             })),
         };
 
         let request = tonic::Request::new(
-            futures::stream::iter(vec![listen_request]).chain(stream::pending()),
+            futures::stream::iter(vec![listen_request]).chain(futures::stream::pending()),
         );
 
         let response = self.client.get().listen(request).await?;
@@ -107,10 +143,9 @@ where
     S: FirestoreTokenStorage,
 {
     db: D,
-    target: FirestoreListenerTarget,
     storage: S,
     listener_params: FirestoreListenerParams,
-    query_params: FirestoreQueryParams,
+    target_params: FirestoreListenerTargetParams,
     labels: HashMap<String, String>,
     shutdown_flag: Arc<AtomicBool>,
     shutdown_handle: Option<JoinHandle<()>>,
@@ -124,18 +159,16 @@ where
 {
     pub async fn new(
         db: D,
-        target: FirestoreListenerTarget,
         storage: S,
         listener_params: FirestoreListenerParams,
-        query_params: FirestoreQueryParams,
+        target_params: FirestoreListenerTargetParams,
         labels: HashMap<String, String>,
     ) -> FirestoreResult<FirestoreListener<D, S>> {
         Ok(FirestoreListener {
             db,
-            target,
             storage,
             listener_params,
-            query_params,
+            target_params,
             labels,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_handle: None,
@@ -150,12 +183,12 @@ where
     {
         info!(
             "Starting a Firestore listener for target: {:?}...",
-            &self.target
+            &self.target_params.target
         );
 
         let initial_token_value = self
             .storage
-            .read_last_token(&self.target)
+            .read_last_token(&self.target_params.target)
             .map_err(|err| {
                 FirestoreError::SystemError(FirestoreSystemError::new(
                     FirestoreErrorPublicGenericDetails::new("SystemError".into()),
@@ -172,10 +205,10 @@ where
             self.db.clone(),
             self.storage.clone(),
             self.shutdown_flag.clone(),
-            self.target.clone(),
-            initial_token_value,
+            self.target_params
+                .clone()
+                .opt_since_token_value(initial_token_value),
             self.listener_params.clone(),
-            self.query_params.clone(),
             self.labels.clone(),
             rx,
             cb,
@@ -202,10 +235,8 @@ where
         db: D,
         storage: S,
         shutdown_flag: Arc<AtomicBool>,
-        target: FirestoreListenerTarget,
-        initial_token: Option<FirestoreListenerToken>,
+        target_params: FirestoreListenerTargetParams,
         listener_params: FirestoreListenerParams,
-        query_params: FirestoreQueryParams,
         labels: HashMap<String, String>,
         mut shutdown_receiver: UnboundedReceiver<i8>,
         cb: FN,
@@ -214,20 +245,19 @@ where
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync,
         F: Future<Output = BoxedErrResult<()>> + Send + Sync,
     {
-        let mut current_token = initial_token;
+        let mut current_token = target_params.since_token_value.clone();
 
         while !shutdown_flag.load(Ordering::Relaxed) {
             debug!(
-                "Start listening on {:?}/{:?}... Token: {:?}",
-                query_params.parent, query_params.collection_id, current_token
+                "Start listening on {:?}... Token: {:?}",
+                target_params.target, current_token
             );
             let mut listen_stream = db
                 .listen_doc_changes(
-                    &query_params,
+                    target_params
+                        .clone()
+                        .opt_since_token_value(current_token.clone()),
                     labels.clone(),
-                    current_token.clone(),
-                    target.clone(),
-                    None,
                 )
                 .await
                 .unwrap();
@@ -253,7 +283,7 @@ where
                                             {
                                                 let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
 
-                                                if let Err(err) = storage.update_token(&target, new_token.clone()).await {
+                                                if let Err(err) = storage.update_token(&target_params.target, new_token.clone()).await {
                                                     error!("Listener token storage error occurred {:?}.", err);
                                                     break;
                                                 }

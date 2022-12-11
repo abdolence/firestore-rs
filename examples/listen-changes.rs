@@ -12,6 +12,8 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 // Example structure to play with
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
+    #[serde(alias = "_firestore_id")]
+    doc_id: Option<String>,
     some_id: String,
     some_string: String,
     some_num: u64,
@@ -74,13 +76,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .unwrap();
 
     let my_struct = MyTestStructure {
+        doc_id: None,
         some_id: "test-1".to_string(),
         some_string: "test-str".to_string(),
         some_num: 42,
         created_at: Utc::now(),
     };
 
-    db.fluent()
+    let new_doc: MyTestStructure = db
+        .fluent()
         .insert()
         .into(TEST_COLLECTION_NAME)
         .generate_document_id()
@@ -88,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    let mut listener = db
+    let mut query_listener = db
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
@@ -96,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .target(TEST_TARGET_ID, TempFileTokenStorage)
         .await?;
 
-    listener
+    query_listener
         .start(|event| async move {
             match event {
                 FirestoreListenEvent::DocumentChange(ref doc_change) => {
@@ -124,7 +128,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     std::io::stdin().read(&mut [1])?;
 
-    listener.shutdown().await?;
+    query_listener.shutdown().await?;
+
+    // Listener for documents
+    println!(
+        "Waiting any other changes for specified doc {:?}. Try firebase console to change in {} now yourself",
+        new_doc.doc_id,
+        TEST_COLLECTION_NAME
+    );
+    let mut docs_listener = db
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .batch_listen([new_doc.doc_id.expect("Doc must be created before")])
+        .target(TEST_TARGET_ID, TempFileTokenStorage)
+        .await?;
+
+    docs_listener
+        .start(|event| async move {
+            match event {
+                FirestoreListenEvent::DocumentChange(ref doc_change) => {
+                    println!("Doc changed: {:?}", doc_change);
+
+                    if let Some(doc) = &doc_change.document {
+                        let obj: MyTestStructure =
+                            FirestoreDb::deserialize_doc_to::<MyTestStructure>(doc)
+                                .expect("Deserialized object");
+                        println!("As object: {:?}", obj);
+                    }
+                }
+                _ => {
+                    println!("Received a listen response event to handle: {:?}", event);
+                }
+            }
+
+            Ok(())
+        })
+        .await?;
+
+    // Wait any input until we shutdown
+    println!(
+        "Waiting any other changes. Try firebase console to change in {} now yourself",
+        TEST_COLLECTION_NAME
+    );
+    std::io::stdin().read(&mut [1])?;
+
+    docs_listener.shutdown().await?;
 
     Ok(())
 }

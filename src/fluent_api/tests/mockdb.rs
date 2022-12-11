@@ -1,11 +1,4 @@
-use crate::{
-    FirestoreCreateSupport, FirestoreDeleteSupport, FirestoreGetByIdSupport,
-    FirestoreListDocParams, FirestoreListDocResult, FirestoreListenSupport,
-    FirestoreListenerTarget, FirestoreListenerToken, FirestoreListingSupport, FirestorePartition,
-    FirestorePartitionQueryParams, FirestoreQueryCursor, FirestoreQueryParams,
-    FirestoreQuerySupport, FirestoreResult, FirestoreUpdateSupport, FirestoreWritePrecondition,
-    PeekableBoxStream,
-};
+use crate::*;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
@@ -500,11 +493,8 @@ impl FirestoreGetByIdSupport for MockDatabase {
 impl FirestoreListenSupport for MockDatabase {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        params: &'a FirestoreQueryParams,
+        target_params: FirestoreListenerTargetParams,
         labels: HashMap<String, String>,
-        since_token_value: Option<FirestoreListenerToken>,
-        target_id: FirestoreListenerTarget,
-        add_target_once: Option<bool>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
         unreachable!()
     }
