@@ -1,10 +1,12 @@
 use crate::errors::FirestoreError;
 use crate::query_filter_builder::FirestoreQueryFilterBuilder;
 use crate::{
-    FirestoreGetByIdSupport, FirestoreListenSupport, FirestoreListener, FirestoreListenerParams,
-    FirestoreListenerTarget, FirestorePartition, FirestorePartitionQueryParams,
+    FirestoreCollectionDocuments, FirestoreGetByIdSupport, FirestoreListenSupport,
+    FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
+    FirestoreListenerTargetParams, FirestorePartition, FirestorePartitionQueryParams,
     FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
-    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult, FirestoreTokenStorage,
+    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult, FirestoreTargetType,
+    FirestoreTokenStorage,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -196,7 +198,10 @@ where
     }
 
     pub fn listen(self) -> FirestoreDocChangesListenerInitBuilder<'a, D> {
-        FirestoreDocChangesListenerInitBuilder::new(self.db, self.params.with_all_descendants(true))
+        FirestoreDocChangesListenerInitBuilder::new(
+            self.db,
+            FirestoreTargetType::Query(self.params),
+        )
     }
 }
 
@@ -267,7 +272,7 @@ where
 
 impl<'a, D> FirestoreSelectByIdBuilder<'a, D>
 where
-    D: FirestoreGetByIdSupport,
+    D: FirestoreGetByIdSupport + FirestoreListenSupport + Send + Sync + Clone + 'static,
 {
     pub(crate) fn new(
         db: &'a D,
@@ -401,6 +406,29 @@ where
                 )
                 .await
         }
+    }
+
+    pub fn batch_listen<S, I>(
+        self,
+        document_ids: I,
+    ) -> FirestoreDocChangesListenerInitBuilder<'a, D>
+    where
+        S: AsRef<str> + Send,
+        I: IntoIterator<Item = S> + Send,
+    {
+        FirestoreDocChangesListenerInitBuilder::new(
+            self.db,
+            FirestoreTargetType::Documents(
+                FirestoreCollectionDocuments::new(
+                    self.collection,
+                    document_ids
+                        .into_iter()
+                        .map(|s| s.as_ref().to_string())
+                        .collect(),
+                )
+                .opt_parent(self.parent),
+            ),
+        )
     }
 }
 
@@ -685,7 +713,7 @@ where
 {
     db: &'a D,
     listener_params: FirestoreListenerParams,
-    query_params: FirestoreQueryParams,
+    target_type: FirestoreTargetType,
     labels: HashMap<String, String>,
 }
 
@@ -694,11 +722,11 @@ where
     D: FirestoreListenSupport + Clone + Send + Sync + 'static,
 {
     #[inline]
-    pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
+    pub(crate) fn new(db: &'a D, target_type: FirestoreTargetType) -> Self {
         Self {
             db,
             listener_params: FirestoreListenerParams::new(),
-            query_params: params,
+            target_type,
             labels: HashMap::new(),
         }
     }
@@ -726,10 +754,9 @@ where
     {
         FirestoreListener::new(
             self.db.clone(),
-            target,
             token_storage,
             self.listener_params,
-            self.query_params,
+            FirestoreListenerTargetParams::new(target, self.target_type),
             self.labels,
         )
         .await
