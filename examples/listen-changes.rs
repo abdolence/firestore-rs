@@ -34,16 +34,18 @@ const TEST_TARGET_ID: FirestoreListenerTarget = FirestoreListenerTarget::new(42_
 pub struct TempFileTokenStorage;
 
 #[async_trait]
-impl FirestoreTokenStorage for TempFileTokenStorage {
-    async fn read_last_token(
+impl FirestoreResumeStateStorage for TempFileTokenStorage {
+    async fn read_resume_state(
         &self,
         _target: &FirestoreListenerTarget,
-    ) -> Result<Option<FirestoreListenerToken>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<FirestoreListenerTargetResumeType>, Box<dyn std::error::Error + Send + Sync>>
+    {
         let token = std::fs::read_to_string(RESUME_TOKEN_FILENAME.clone())
             .ok()
             .map(|str| {
                 hex::decode(&str)
                     .map(FirestoreListenerToken::new)
+                    .map(FirestoreListenerTargetResumeType::Token)
                     .map_err(|e| Box::new(e))
             })
             .transpose()?;
@@ -51,7 +53,7 @@ impl FirestoreTokenStorage for TempFileTokenStorage {
         Ok(token)
     }
 
-    async fn update_token(
+    async fn update_resume_token(
         &self,
         _target: &FirestoreListenerTarget,
         token: FirestoreListenerToken,

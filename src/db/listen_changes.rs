@@ -1,7 +1,9 @@
 use crate::db::safe_document_path;
 use crate::errors::*;
+use crate::timestamp_utils::to_timestamp;
 use crate::{FirestoreDb, FirestoreQueryParams, FirestoreResult};
 use async_trait::async_trait;
+use chrono::prelude::*;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use futures::TryFutureExt;
@@ -21,8 +23,8 @@ use tracing::*;
 pub struct FirestoreListenerTargetParams {
     pub target: FirestoreListenerTarget,
     pub target_type: FirestoreTargetType,
+    pub resume_type: Option<FirestoreListenerTargetResumeType>,
     pub add_target_once: Option<bool>,
-    pub since_token_value: Option<FirestoreListenerToken>,
 }
 
 #[derive(Debug, Clone, Builder)]
@@ -36,6 +38,12 @@ pub struct FirestoreCollectionDocuments {
 pub enum FirestoreTargetType {
     Query(FirestoreQueryParams),
     Documents(FirestoreCollectionDocuments),
+}
+
+#[derive(Debug, Clone)]
+pub enum FirestoreListenerTargetResumeType {
+    Token(FirestoreListenerToken),
+    ReadTime(DateTime<Utc>),
 }
 
 #[async_trait]
@@ -93,8 +101,15 @@ impl FirestoreListenSupport for FirestoreDb {
                     }
                 }),
                 resume_type: target_params
-                    .since_token_value
-                    .map(|token| target::ResumeType::ResumeToken(token.into_value())),
+                    .resume_type
+                    .map(|resume_type| match resume_type {
+                        FirestoreListenerTargetResumeType::Token(token) => {
+                            target::ResumeType::ResumeToken(token.into_value())
+                        }
+                        FirestoreListenerTargetResumeType::ReadTime(dt) => {
+                            target::ResumeType::ReadTime(to_timestamp(dt))
+                        }
+                    }),
             })),
         };
 
@@ -117,13 +132,13 @@ pub struct FirestoreListenerToken(Vec<u8>);
 type BoxedErrResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[async_trait]
-pub trait FirestoreTokenStorage {
-    async fn read_last_token(
+pub trait FirestoreResumeStateStorage {
+    async fn read_resume_state(
         &self,
         target: &FirestoreListenerTarget,
-    ) -> BoxedErrResult<Option<FirestoreListenerToken>>;
+    ) -> BoxedErrResult<Option<FirestoreListenerTargetResumeType>>;
 
-    async fn update_token(
+    async fn update_resume_token(
         &self,
         target: &FirestoreListenerTarget,
         token: FirestoreListenerToken,
@@ -140,7 +155,7 @@ pub struct FirestoreListenerParams {
 pub struct FirestoreListener<D, S>
 where
     D: FirestoreListenSupport,
-    S: FirestoreTokenStorage,
+    S: FirestoreResumeStateStorage,
 {
     db: D,
     storage: S,
@@ -155,7 +170,7 @@ where
 impl<D, S> FirestoreListener<D, S>
 where
     D: FirestoreListenSupport + Clone + Send + Sync + 'static,
-    S: FirestoreTokenStorage + Clone + Send + Sync + 'static,
+    S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
 {
     pub async fn new(
         db: D,
@@ -183,12 +198,12 @@ where
     {
         info!(
             "Starting a Firestore listener for target: {:?}...",
-            &self.target_params.target
+            &self.target_params
         );
 
-        let initial_token_value = self
+        let initial_state = self
             .storage
-            .read_last_token(&self.target_params.target)
+            .read_resume_state(&self.target_params.target)
             .map_err(|err| {
                 FirestoreError::SystemError(FirestoreSystemError::new(
                     FirestoreErrorPublicGenericDetails::new("SystemError".into()),
@@ -205,9 +220,7 @@ where
             self.db.clone(),
             self.storage.clone(),
             self.shutdown_flag.clone(),
-            self.target_params
-                .clone()
-                .opt_since_token_value(initial_token_value),
+            self.target_params.clone().opt_resume_type(initial_state),
             self.listener_params.clone(),
             self.labels.clone(),
             rx,
@@ -245,18 +258,22 @@ where
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync,
         F: Future<Output = BoxedErrResult<()>> + Send + Sync,
     {
-        let mut current_token = target_params.since_token_value.clone();
+        let mut current_token: Option<FirestoreListenerToken> = None;
 
         while !shutdown_flag.load(Ordering::Relaxed) {
+            let resume_type: Option<FirestoreListenerTargetResumeType> = current_token
+                .as_ref()
+                .map(|token| FirestoreListenerTargetResumeType::Token(token.clone()))
+                .or(target_params.resume_type.clone());
+
             debug!(
                 "Start listening on {:?}... Token: {:?}",
                 target_params.target, current_token
             );
+
             let mut listen_stream = db
                 .listen_doc_changes(
-                    target_params
-                        .clone()
-                        .opt_since_token_value(current_token.clone()),
+                    target_params.clone().opt_resume_type(resume_type),
                     labels.clone(),
                 )
                 .await
@@ -283,7 +300,7 @@ where
                                             {
                                                 let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
 
-                                                if let Err(err) = storage.update_token(&target_params.target, new_token.clone()).await {
+                                                if let Err(err) = storage.update_resume_token(&target_params.target, new_token.clone()).await {
                                                     error!("Listener token storage error occurred {:?}.", err);
                                                     break;
                                                 }

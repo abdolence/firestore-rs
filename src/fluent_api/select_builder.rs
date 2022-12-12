@@ -5,8 +5,8 @@ use crate::{
     FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
     FirestoreListenerTargetParams, FirestorePartition, FirestorePartitionQueryParams,
     FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
-    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult, FirestoreTargetType,
-    FirestoreTokenStorage,
+    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult, FirestoreResumeStateStorage,
+    FirestoreTargetType,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -750,7 +750,7 @@ where
         token_storage: S,
     ) -> FirestoreResult<FirestoreListener<D, S>>
     where
-        S: FirestoreTokenStorage + Send + Sync + Clone + 'static,
+        S: FirestoreResumeStateStorage + Send + Sync + Clone + 'static,
     {
         FirestoreListener::new(
             self.db.clone(),
