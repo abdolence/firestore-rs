@@ -51,7 +51,7 @@ pub enum FirestoreListenerTargetResumeType {
 pub trait FirestoreListenSupport {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        target_params: FirestoreListenerTargetParams,
+        targets: Vec<FirestoreListenerTargetParams>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>>;
 }
 
@@ -59,12 +59,15 @@ pub trait FirestoreListenSupport {
 impl FirestoreListenSupport for FirestoreDb {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        target_params: FirestoreListenerTargetParams,
+        targets: Vec<FirestoreListenerTargetParams>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
-        let listen_request = self.create_listen_request(target_params)?;
+        let listen_requests = targets
+            .into_iter()
+            .map(|target_params| self.create_listen_request(target_params))
+            .collect::<FirestoreResult<Vec<ListenRequest>>>()?;
 
         let request = tonic::Request::new(
-            futures::stream::iter(vec![listen_request]).chain(futures::stream::pending()),
+            futures::stream::iter(listen_requests).chain(futures::stream::pending()),
         );
 
         let response = self.client.get().listen(request).await?;
@@ -275,7 +278,7 @@ where
             );
 
             let mut listen_stream = db
-                .listen_doc_changes(target_params.clone().opt_resume_type(resume_type))
+                .listen_doc_changes(vec![target_params.clone().opt_resume_type(resume_type)])
                 .await
                 .unwrap();
 
