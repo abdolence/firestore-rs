@@ -4,7 +4,6 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::{Document, ListenResponse};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct MockDatabase;
@@ -493,8 +492,7 @@ impl FirestoreGetByIdSupport for MockDatabase {
 impl FirestoreListenSupport for MockDatabase {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        target_params: FirestoreListenerTargetParams,
-        labels: HashMap<String, String>,
+        targets: Vec<FirestoreListenerTargetParams>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
         unreachable!()
     }
