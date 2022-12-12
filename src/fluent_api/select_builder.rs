@@ -711,7 +711,7 @@ pub struct FirestoreDocChangesListenerInitBuilder<'a, D>
 where
     D: FirestoreListenSupport + Clone,
 {
-    db: &'a D,
+    _db: &'a D,
     listener_params: FirestoreListenerParams,
     target_type: FirestoreTargetType,
     labels: HashMap<String, String>,
@@ -724,7 +724,7 @@ where
     #[inline]
     pub(crate) fn new(db: &'a D, target_type: FirestoreTargetType) -> Self {
         Self {
-            db,
+            _db: db,
             listener_params: FirestoreListenerParams::new(),
             target_type,
             labels: HashMap::new(),
@@ -744,21 +744,22 @@ where
         }
     }
 
-    pub async fn target<S>(
+    #[inline]
+    pub fn add_target<S>(
         self,
         target: FirestoreListenerTarget,
-        token_storage: S,
-    ) -> FirestoreResult<FirestoreListener<D, S>>
+        listener: &mut FirestoreListener<D, S>,
+    ) -> FirestoreResult<()>
     where
         S: FirestoreResumeStateStorage + Send + Sync + Clone + 'static,
     {
-        FirestoreListener::new(
-            self.db.clone(),
-            token_storage,
-            self.listener_params,
-            FirestoreListenerTargetParams::new(target, self.target_type, self.labels),
-        )
-        .await
+        listener.add_target(FirestoreListenerTargetParams::new(
+            target,
+            self.target_type,
+            self.labels,
+        ))?;
+
+        Ok(())
     }
 }
 

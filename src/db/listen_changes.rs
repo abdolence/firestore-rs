@@ -85,6 +85,28 @@ pub struct FirestoreListenerToken(Vec<u8>);
 type BoxedErrResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 impl FirestoreDb {
+    pub async fn create_listener<S>(
+        &self,
+        storage: S,
+    ) -> FirestoreResult<FirestoreListener<FirestoreDb, S>>
+    where
+        S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    {
+        self.create_listener_with_params(storage, FirestoreListenerParams::new())
+            .await
+    }
+
+    pub async fn create_listener_with_params<S>(
+        &self,
+        storage: S,
+        params: FirestoreListenerParams,
+    ) -> FirestoreResult<FirestoreListener<FirestoreDb, S>>
+    where
+        S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    {
+        FirestoreListener::new(self.clone(), storage, params).await
+    }
+
     fn create_listen_request(
         &self,
         target_params: FirestoreListenerTargetParams,
@@ -171,7 +193,7 @@ where
     db: D,
     storage: S,
     listener_params: FirestoreListenerParams,
-    target_params: FirestoreListenerTargetParams,
+    targets: Vec<FirestoreListenerTargetParams>,
     shutdown_flag: Arc<AtomicBool>,
     shutdown_handle: Option<JoinHandle<()>>,
     shutdown_writer: Option<Arc<UnboundedSender<i8>>>,
@@ -186,17 +208,21 @@ where
         db: D,
         storage: S,
         listener_params: FirestoreListenerParams,
-        target_params: FirestoreListenerTargetParams,
     ) -> FirestoreResult<FirestoreListener<D, S>> {
         Ok(FirestoreListener {
             db,
             storage,
             listener_params,
-            target_params,
+            targets: vec![],
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_handle: None,
             shutdown_writer: None,
         })
+    }
+
+    pub fn add_target(&mut self, target: FirestoreListenerTargetParams) -> FirestoreResult<()> {
+        self.targets.push(target);
+        Ok(())
     }
 
     pub async fn start<FN, F>(&mut self, cb: FN) -> FirestoreResult<()>
@@ -205,20 +231,29 @@ where
         F: Future<Output = BoxedErrResult<()>> + Send + Sync + 'static,
     {
         info!(
-            "Starting a Firestore listener for target: {:?}...",
-            &self.target_params
+            "Starting a Firestore listener for targets: {:?}...",
+            &self.targets.len()
         );
 
-        let initial_state = self
-            .storage
-            .read_resume_state(&self.target_params.target)
-            .map_err(|err| {
-                FirestoreError::SystemError(FirestoreSystemError::new(
-                    FirestoreErrorPublicGenericDetails::new("SystemError".into()),
-                    format!("Listener init error: {}", err),
-                ))
-            })
-            .await?;
+        let mut initial_states: HashMap<FirestoreListenerTarget, FirestoreListenerTargetParams> =
+            HashMap::new();
+        for target_params in &self.targets {
+            let initial_state = self
+                .storage
+                .read_resume_state(&target_params.target)
+                .map_err(|err| {
+                    FirestoreError::SystemError(FirestoreSystemError::new(
+                        FirestoreErrorPublicGenericDetails::new("SystemError".into()),
+                        format!("Listener init error: {}", err),
+                    ))
+                })
+                .await?;
+
+            initial_states.insert(
+                target_params.target.clone(),
+                target_params.clone().opt_resume_type(initial_state),
+            );
+        }
 
         let (tx, rx): (UnboundedSender<i8>, UnboundedReceiver<i8>) =
             tokio::sync::mpsc::unbounded_channel();
@@ -228,7 +263,7 @@ where
             self.db.clone(),
             self.storage.clone(),
             self.shutdown_flag.clone(),
-            self.target_params.clone().opt_resume_type(initial_state),
+            initial_states,
             self.listener_params.clone(),
             rx,
             cb,
@@ -255,7 +290,7 @@ where
         db: D,
         storage: S,
         shutdown_flag: Arc<AtomicBool>,
-        target_params: FirestoreListenerTargetParams,
+        mut targets_state: HashMap<FirestoreListenerTarget, FirestoreListenerTargetParams>,
         listener_params: FirestoreListenerParams,
         mut shutdown_receiver: UnboundedReceiver<i8>,
         cb: FN,
@@ -264,21 +299,22 @@ where
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync,
         F: Future<Output = BoxedErrResult<()>> + Send + Sync,
     {
-        let mut current_token: Option<FirestoreListenerToken> = None;
-
         while !shutdown_flag.load(Ordering::Relaxed) {
-            let resume_type: Option<FirestoreListenerTargetResumeType> = current_token
-                .as_ref()
-                .map(|token| FirestoreListenerTargetResumeType::Token(token.clone()))
-                .or(target_params.resume_type.clone());
+            // let resume_type: Option<FirestoreListenerTargetResumeType> = current_token
+            //     .as_ref()
+            //     .map(|token| FirestoreListenerTargetResumeType::Token(token.clone()))
+            //     .or(target_params.resume_type.clone());
 
-            debug!(
-                "Start listening on {:?}... Token: {:?}",
-                target_params.target, current_token
-            );
+            debug!("Start listening on targets {:?}... ", targets_state.len());
 
             let mut listen_stream = db
-                .listen_doc_changes(vec![target_params.clone().opt_resume_type(resume_type)])
+                .listen_doc_changes(
+                    targets_state
+                        .values()
+                        .into_iter()
+                        .map(|s| s.clone())
+                        .collect(),
+                )
                 .await
                 .unwrap();
 
@@ -301,15 +337,20 @@ where
                                             Some(listen_response::ResponseType::TargetChange(ref target_change))
                                                 if !target_change.resume_token.is_empty() =>
                                             {
-                                                let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
+                                                for target_id_num in &target_change.target_ids {
+                                                    if let Some(mut target) = targets_state.get_mut(&FirestoreListenerTarget::new(*target_id_num)) {
+                                                        let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
 
-                                                if let Err(err) = storage.update_resume_token(&target_params.target, new_token.clone()).await {
-                                                    error!("Listener token storage error occurred {:?}.", err);
-                                                    break;
+                                                        if let Err(err) = storage.update_resume_token(&target.target, new_token.clone()).await {
+                                                            error!("Listener token storage error occurred {:?}.", err);
+                                                            break;
+                                                        }
+                                                        else {
+                                                            target.resume_type = Some(FirestoreListenerTargetResumeType::Token(new_token))
+                                                        }
+                                                    }
                                                 }
-                                                else {
-                                                    current_token = Some(new_token)
-                                                }
+
                                             }
                                             Some(response_type) => {
                                                 if let Err(err) = cb(response_type).await {

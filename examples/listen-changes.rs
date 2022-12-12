@@ -27,8 +27,9 @@ const TEST_COLLECTION_NAME: &str = "test-listen";
 // The file where we store the cursor/token for the event when we read the last time
 const RESUME_TOKEN_FILENAME: &str = "last-read-token";
 
-// The ID of listener - must be different for different listeners in case you have many instances
-const TEST_TARGET_ID: FirestoreListenerTarget = FirestoreListenerTarget::new(42_i32);
+// The IDs of targets - must be different for different listener targets/listeners in case you have many instances
+const TEST_TARGET_ID_BY_QUERY: FirestoreListenerTarget = FirestoreListenerTarget::new(42_i32);
+const TEST_TARGET_ID_BY_DOC_IDS: FirestoreListenerTarget = FirestoreListenerTarget::new(17_i32);
 
 #[derive(Clone)]
 pub struct TempFileTokenStorage;
@@ -80,6 +81,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await
         .unwrap();
 
+    let mut listener = db.create_listener(TempFileTokenStorage).await?;
+
     let my_struct = MyTestStructure {
         doc_id: None,
         some_id: "test-1".to_string(),
@@ -97,59 +100,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    let mut query_listener = db
-        .fluent()
+    db.fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
         .listen()
-        .target(TEST_TARGET_ID, TempFileTokenStorage)
-        .await?;
+        .add_target(TEST_TARGET_ID_BY_QUERY, &mut listener)?;
 
-    query_listener
-        .start(|event| async move {
-            match event {
-                FirestoreListenEvent::DocumentChange(ref doc_change) => {
-                    println!("Doc changed: {:?}", doc_change);
-
-                    if let Some(doc) = &doc_change.document {
-                        let obj: MyTestStructure =
-                            FirestoreDb::deserialize_doc_to::<MyTestStructure>(doc)
-                                .expect("Deserialized object");
-                        println!("As object: {:?}", obj);
-                    }
-                }
-                _ => {
-                    println!("Received a listen response event to handle: {:?}", event);
-                }
-            }
-
-            Ok(())
-        })
-        .await?;
-    // Wait any input until we shutdown
-    println!(
-        "Waiting any other changes. Try firebase console to change in {} now yourself",
-        TEST_COLLECTION_NAME
-    );
-    std::io::stdin().read(&mut [1])?;
-
-    query_listener.shutdown().await?;
-
-    // Listener for documents
-    println!(
-        "Waiting any other changes for specified doc {:?}. Try firebase console to change in {} now yourself",
-        new_doc.doc_id,
-        TEST_COLLECTION_NAME
-    );
-    let mut docs_listener = db
-        .fluent()
+    db.fluent()
         .select()
         .by_id_in(TEST_COLLECTION_NAME)
-        .batch_listen([new_doc.doc_id.expect("Doc must be created before")])
-        .target(TEST_TARGET_ID, TempFileTokenStorage)
-        .await?;
+        .batch_listen([new_doc.doc_id.clone().expect("Doc must be created before")])
+        .add_target(TEST_TARGET_ID_BY_DOC_IDS, &mut listener)?;
 
-    docs_listener
+    listener
         .start(|event| async move {
             match event {
                 FirestoreListenEvent::DocumentChange(ref doc_change) => {
@@ -170,15 +133,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Ok(())
         })
         .await?;
-
     // Wait any input until we shutdown
     println!(
-        "Waiting any other changes. Try firebase console to change in {} now yourself",
-        TEST_COLLECTION_NAME
+        "Waiting any other changes. Try firebase console to change in {} now yourself. New doc created id: {:?}",
+        TEST_COLLECTION_NAME,new_doc.doc_id
     );
     std::io::stdin().read(&mut [1])?;
 
-    docs_listener.shutdown().await?;
+    listener.shutdown().await?;
 
     Ok(())
 }
