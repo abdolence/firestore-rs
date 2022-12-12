@@ -25,6 +25,7 @@ pub struct FirestoreListenerTargetParams {
     pub target_type: FirestoreTargetType,
     pub resume_type: Option<FirestoreListenerTargetResumeType>,
     pub add_target_once: Option<bool>,
+    pub labels: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Builder)]
@@ -51,7 +52,6 @@ pub trait FirestoreListenSupport {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
         target_params: FirestoreListenerTargetParams,
-        labels: HashMap<String, String>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>>;
 }
 
@@ -60,11 +60,10 @@ impl FirestoreListenSupport for FirestoreDb {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
         target_params: FirestoreListenerTargetParams,
-        labels: HashMap<String, String>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
         let listen_request = ListenRequest {
             database: self.get_database_path().to_string(),
-            labels,
+            labels: target_params.labels,
             target_change: Some(listen_request::TargetChange::AddTarget(Target {
                 target_id: *target_params.target.value(),
                 once: target_params.add_target_once.unwrap_or(false),
@@ -161,7 +160,6 @@ where
     storage: S,
     listener_params: FirestoreListenerParams,
     target_params: FirestoreListenerTargetParams,
-    labels: HashMap<String, String>,
     shutdown_flag: Arc<AtomicBool>,
     shutdown_handle: Option<JoinHandle<()>>,
     shutdown_writer: Option<Arc<UnboundedSender<i8>>>,
@@ -177,14 +175,12 @@ where
         storage: S,
         listener_params: FirestoreListenerParams,
         target_params: FirestoreListenerTargetParams,
-        labels: HashMap<String, String>,
     ) -> FirestoreResult<FirestoreListener<D, S>> {
         Ok(FirestoreListener {
             db,
             storage,
             listener_params,
             target_params,
-            labels,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_handle: None,
             shutdown_writer: None,
@@ -222,7 +218,6 @@ where
             self.shutdown_flag.clone(),
             self.target_params.clone().opt_resume_type(initial_state),
             self.listener_params.clone(),
-            self.labels.clone(),
             rx,
             cb,
         )));
@@ -250,7 +245,6 @@ where
         shutdown_flag: Arc<AtomicBool>,
         target_params: FirestoreListenerTargetParams,
         listener_params: FirestoreListenerParams,
-        labels: HashMap<String, String>,
         mut shutdown_receiver: UnboundedReceiver<i8>,
         cb: FN,
     ) where
@@ -272,10 +266,7 @@ where
             );
 
             let mut listen_stream = db
-                .listen_doc_changes(
-                    target_params.clone().opt_resume_type(resume_type),
-                    labels.clone(),
-                )
+                .listen_doc_changes(target_params.clone().opt_resume_type(resume_type))
                 .await
                 .unwrap();
 

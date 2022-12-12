@@ -756,8 +756,7 @@ where
             self.db.clone(),
             token_storage,
             self.listener_params,
-            FirestoreListenerTargetParams::new(target, self.target_type),
-            self.labels,
+            FirestoreListenerTargetParams::new(target, self.target_type, self.labels),
         )
         .await
     }
