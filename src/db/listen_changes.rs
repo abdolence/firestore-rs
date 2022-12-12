@@ -308,13 +308,7 @@ where
             debug!("Start listening on targets {:?}... ", targets_state.len());
 
             let mut listen_stream = db
-                .listen_doc_changes(
-                    targets_state
-                        .values()
-                        .into_iter()
-                        .map(|s| s.clone())
-                        .collect(),
-                )
+                .listen_doc_changes(targets_state.values().into_iter().cloned().collect())
                 .await
                 .unwrap();
 
