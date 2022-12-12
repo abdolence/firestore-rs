@@ -300,11 +300,6 @@ where
         F: Future<Output = BoxedErrResult<()>> + Send + Sync,
     {
         while !shutdown_flag.load(Ordering::Relaxed) {
-            // let resume_type: Option<FirestoreListenerTargetResumeType> = current_token
-            //     .as_ref()
-            //     .map(|token| FirestoreListenerTargetResumeType::Token(token.clone()))
-            //     .or(target_params.resume_type.clone());
-
             debug!("Start listening on targets {:?}... ", targets_state.len());
 
             let mut listen_stream = db
