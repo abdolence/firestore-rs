@@ -61,7 +61,32 @@ impl FirestoreListenSupport for FirestoreDb {
         &'a self,
         target_params: FirestoreListenerTargetParams,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
-        let listen_request = ListenRequest {
+        let listen_request = self.create_listen_request(target_params)?;
+
+        let request = tonic::Request::new(
+            futures::stream::iter(vec![listen_request]).chain(futures::stream::pending()),
+        );
+
+        let response = self.client.get().listen(request).await?;
+
+        Ok(response.into_inner().map_err(|e| e.into()).boxed())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, ValueStruct)]
+pub struct FirestoreListenerTarget(i32);
+
+#[derive(Clone, Debug, ValueStruct)]
+pub struct FirestoreListenerToken(Vec<u8>);
+
+type BoxedErrResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+impl FirestoreDb {
+    fn create_listen_request(
+        &self,
+        target_params: FirestoreListenerTargetParams,
+    ) -> FirestoreResult<ListenRequest> {
+        Ok(ListenRequest {
             database: self.get_database_path().to_string(),
             labels: target_params.labels,
             target_change: Some(listen_request::TargetChange::AddTarget(Target {
@@ -110,25 +135,9 @@ impl FirestoreListenSupport for FirestoreDb {
                         }
                     }),
             })),
-        };
-
-        let request = tonic::Request::new(
-            futures::stream::iter(vec![listen_request]).chain(futures::stream::pending()),
-        );
-
-        let response = self.client.get().listen(request).await?;
-
-        Ok(response.into_inner().map_err(|e| e.into()).boxed())
+        })
     }
 }
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash, ValueStruct)]
-pub struct FirestoreListenerTarget(i32);
-
-#[derive(Clone, Debug, ValueStruct)]
-pub struct FirestoreListenerToken(Vec<u8>);
-
-type BoxedErrResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[async_trait]
 pub trait FirestoreResumeStateStorage {
