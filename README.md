@@ -353,20 +353,22 @@ To help to work with asynchronous event listener the library supports high level
 listening the events from Firestore on a separate thread:
 
 ```rust
-let mut listener = db.fluent()
-    .select()
-    .from(TEST_COLLECTION_NAME)
-    .listen()
-    .target(TEST_TARGET_ID, TempFileTokenStorage)
-    .await?;
 
-// or by id
-let mut listener = db.fluent()
+let mut listener = db.create_listener(TempFileTokenStorage).await?;
+
+// Adding query listener
+db.fluent()
+  .select()
+  .from(TEST_COLLECTION_NAME)
+  .listen()
+  .add_target(TEST_TARGET_ID_BY_QUERY, &mut listener)?;
+
+// Adding docs listener by IDs
+db.fluent()
   .select()
   .by_id_in(TEST_COLLECTION_NAME)
-  .batch_listen([doc_id])
-  .target(TEST_TARGET_ID, TempFileTokenStorage)
-  .await?;
+  .batch_listen([doc_id1, doc_id2])
+  .add_target(TEST_TARGET_ID_BY_DOC_IDS, &mut listener)?;
 
 listener
     .start(|event| async move {
@@ -389,6 +391,10 @@ listener
         Ok(())
     })
     .await?;
+
+// Wait some events like Ctrl-C, signals and then shutdown
+listener.shutdown().await?;
+
 ```
 
 See complete example in examples directory.
