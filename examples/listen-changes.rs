@@ -25,7 +25,7 @@ struct MyTestStructure {
 const TEST_COLLECTION_NAME: &str = "test-listen";
 
 // The file where we store the cursor/token for the event when we read the last time
-const RESUME_TOKEN_FILENAME: &str = "last-read-token.tmp";
+const RESUME_TOKEN_FILENAME: &str = "last-read-token";
 
 // The ID of listener - must be different for different listeners in case you have many instances
 const TEST_TARGET_ID: FirestoreListenerTarget = FirestoreListenerTarget::new(42_i32);
@@ -37,10 +37,11 @@ pub struct TempFileTokenStorage;
 impl FirestoreResumeStateStorage for TempFileTokenStorage {
     async fn read_resume_state(
         &self,
-        _target: &FirestoreListenerTarget,
+        target: &FirestoreListenerTarget,
     ) -> Result<Option<FirestoreListenerTargetResumeType>, Box<dyn std::error::Error + Send + Sync>>
     {
-        let token = std::fs::read_to_string(RESUME_TOKEN_FILENAME.clone())
+        let target_state_file_name = format!("{}.{}.tmp", RESUME_TOKEN_FILENAME, target.value());
+        let token = std::fs::read_to_string(target_state_file_name)
             .ok()
             .map(|str| {
                 hex::decode(&str)
@@ -55,11 +56,13 @@ impl FirestoreResumeStateStorage for TempFileTokenStorage {
 
     async fn update_resume_token(
         &self,
-        _target: &FirestoreListenerTarget,
+        target: &FirestoreListenerTarget,
         token: FirestoreListenerToken,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let target_state_file_name = format!("{}.{}.tmp", RESUME_TOKEN_FILENAME, target.value());
+
         Ok(std::fs::write(
-            RESUME_TOKEN_FILENAME,
+            target_state_file_name,
             hex::encode(token.value()),
         )?)
     }
