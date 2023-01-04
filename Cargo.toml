@@ -25,7 +25,7 @@ path = "src/lib.rs"
 
 [dependencies]
 tracing = "0.1"
-gcloud-sdk = { version = "0.19.12", features = ["google-firestore-v1"] }
+gcloud-sdk = { version = "0.19.13", features = ["google-firestore-v1"] }
 tonic = { version = "0.8", features = ["tls"] }
 hyper = { version ="0.14" }
 struct-path = "0.2"
