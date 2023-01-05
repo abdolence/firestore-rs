@@ -33,7 +33,7 @@ rvstruct = "0.3.2"
 rsb_derive = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 prost-types = "0.11"
-tokio = { version = "1.23", features = ["full"] }
+tokio = { version = "1.24", features = ["full"] }
 tokio-stream = "0.1"
 futures = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
