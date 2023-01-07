@@ -176,7 +176,7 @@ to JSON (so you can reuse the same model for JSON and Firestore).
 In your queries you need to use the wrapping class `firestore::FirestoreTimestamp`, for example:
 ```rust
    q.field(path!(MyTestStructure::created_at))
-     .eq(firestore::FirestoreTimestamp(Utc::now()))
+     .e(firestore::FirestoreTimestamp(Utc::now()))
 ```
 
 ## Nested collections
