@@ -358,9 +358,21 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
             Some(value::ValueType::DoubleValue(v)) => visitor.visit_f64(v),
             Some(value::ValueType::BytesValue(ref v)) => visitor.visit_bytes(v),
             Some(value::ValueType::ReferenceValue(v)) => visitor.visit_string(v),
-            Some(value::ValueType::GeoPointValue(_)) => Err(FirestoreError::DeserializeError(
-                FirestoreSerializationError::from_message("LatLng not supported yet"),
-            )),
+            Some(value::ValueType::GeoPointValue(v)) => {
+                let lat_lng_fields: HashMap<String, gcloud_sdk::google::firestore::v1::Value> =
+                    vec![
+                        ("latitude".to_string(), gcloud_sdk::google::firestore::v1::Value {
+                            value_type: Some(gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(v.latitude))
+                        }),
+                        ("longitude".to_string(),
+                         gcloud_sdk::google::firestore::v1::Value {
+                             value_type: Some(gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(v.longitude))
+                         }),
+                    ]
+                    .into_iter()
+                    .collect();
+                visitor.visit_map(FirestoreValueMapAccess::new(lat_lng_fields))
+            }
             Some(value::ValueType::TimestampValue(ts)) => {
                 visitor.visit_string(from_timestamp(ts)?.to_rfc3339())
             }
