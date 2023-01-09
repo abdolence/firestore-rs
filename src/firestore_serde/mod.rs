@@ -7,6 +7,9 @@ pub use timestamp_serializers::*;
 mod null_serializers;
 pub use null_serializers::*;
 
+mod latlng_serializers;
+pub use latlng_serializers::*;
+
 use crate::FirestoreValue;
 use gcloud_sdk::google::firestore::v1::Value;
 

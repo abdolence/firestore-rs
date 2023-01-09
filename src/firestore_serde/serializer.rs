@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 pub struct FirestoreValueSerializer {
-    none_as_null: bool,
+    pub none_as_null: bool,
 }
 
 impl FirestoreValueSerializer {
@@ -223,6 +223,9 @@ impl serde::Serializer for FirestoreValueSerializer {
             }
             crate::firestore_serde::null_serializers::FIRESTORE_NULL_TYPE_TAG_TYPE => {
                 value.serialize(Self { none_as_null: true })
+            }
+            crate::firestore_serde::latlng_serializers::FIRESTORE_LATLNG_TYPE_TAG_TYPE => {
+                crate::firestore_serde::latlng_serializers::serialize_latlng_for_firestore(value)
             }
             _ => value.serialize(self),
         }
