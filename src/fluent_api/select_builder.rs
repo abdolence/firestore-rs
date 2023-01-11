@@ -58,6 +58,7 @@ where
         }
     }
 
+    /// Select multiple documents from collection
     #[inline]
     pub fn from<C>(self, collection: C) -> FirestoreSelectDocBuilder<'a, D>
     where
@@ -68,6 +69,7 @@ where
         FirestoreSelectDocBuilder::new(self.db, params)
     }
 
+    /// Select document by Id
     #[inline]
     pub fn by_id_in(self, collection: &str) -> FirestoreSelectByIdBuilder<'a, D> {
         FirestoreSelectByIdBuilder::new(self.db, collection.to_string(), self.return_only_fields)
