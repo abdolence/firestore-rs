@@ -69,7 +69,7 @@ where
         FirestoreSelectDocBuilder::new(self.db, params)
     }
 
-    /// Select document by Id
+    /// Select one or more documents by Id
     #[inline]
     pub fn by_id_in(self, collection: &str) -> FirestoreSelectByIdBuilder<'a, D> {
         FirestoreSelectByIdBuilder::new(self.db, collection.to_string(), self.return_only_fields)
@@ -354,6 +354,7 @@ where
         }
     }
 
+    /// Get multiple documents by their ids.
     pub async fn batch<S, I>(
         self,
         document_ids: I,
@@ -410,6 +411,7 @@ where
         }
     }
 
+    /// Select documents to listen for changes with the given ids.
     pub fn batch_listen<S, I>(
         self,
         document_ids: I,
@@ -746,6 +748,8 @@ where
         }
     }
 
+    // Specify the listener
+    // TODO: what does the `FirestoreListenerTarget` do?
     #[inline]
     pub fn add_target<S>(
         self,
