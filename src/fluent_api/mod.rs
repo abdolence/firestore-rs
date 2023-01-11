@@ -41,7 +41,9 @@ where
         Self { db }
     }
 
-    /// Select a document from the database
+    /// Select one or more documents from the database
+    ///
+    /// Single documents can be selected by thier IDs, multiple documents can be selected with a query filter.
     #[inline]
     pub fn select(self) -> FirestoreSelectInitialBuilder<'a, D> {
         FirestoreSelectInitialBuilder::new(self.db)
@@ -54,6 +56,8 @@ where
     }
 
     /// Update a document in the database
+    ///
+    /// Documents can be implicitly created using update when using your own document IDs. Useful to use in batches and transactions.
     #[inline]
     pub fn update(self) -> FirestoreUpdateInitialBuilder<'a, D> {
         FirestoreUpdateInitialBuilder::new(self.db)
@@ -65,7 +69,9 @@ where
         FirestoreDeleteInitialBuilder::new(self.db)
     }
 
-    /// List documents in the database
+    /// List documents in a collection (or subcollection)
+    ///
+    /// This is a convenience method to list all documents in a collection. For more complex queries, use the select method.
     #[inline]
     pub fn list(self) -> FirestoreListingInitialBuilder<'a, D> {
         FirestoreListingInitialBuilder::new(self.db)

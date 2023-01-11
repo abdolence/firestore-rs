@@ -27,9 +27,12 @@ pub struct FirestoreListDocParams {
     pub return_only_fields: Option<Vec<String>>,
 }
 
+/// The result of a list documents call
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreListDocResult {
+    /// the list of documents
     pub documents: Vec<Document>,
+    /// the next page token
     pub page_token: Option<String>,
 }
 

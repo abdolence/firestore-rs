@@ -262,9 +262,12 @@ impl From<&FirestoreQueryParams> for StructuredQuery {
     }
 }
 
+/// Used for sorting
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreQueryOrder {
+    /// The field name to order by.
     field_name: String,
+    /// The direction to order by.
     direction: FirestoreQueryDirection,
 }
 
@@ -303,6 +306,7 @@ impl From<&FirestoreQueryOrder> for structured_query::Order {
     }
 }
 
+/// Specifies the order to sort by.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreQueryDirection {
     Ascending,

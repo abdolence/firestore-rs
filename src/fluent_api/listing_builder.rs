@@ -45,6 +45,7 @@ where
         }
     }
 
+    /// Select a collection to list documents from
     #[inline]
     pub fn from(self, collection: &str) -> FirestoreListingDocBuilder<'a, D> {
         let params: FirestoreListDocParams = FirestoreListDocParams::new(collection.to_string())
@@ -91,6 +92,7 @@ where
         }
     }
 
+    /// Sets the page size for the query
     #[inline]
     pub fn page_size(self, value: usize) -> Self {
         Self {
@@ -99,6 +101,15 @@ where
         }
     }
 
+    /// Order the querry by the given field
+    ///
+    /// Usage:
+    /// ```
+    /// .order_by([(
+    ///        path!(MyTestStructure::some_id),
+    ///       FirestoreQueryDirection::Ascending,
+    ///   )])
+    /// ```
     #[inline]
     pub fn order_by<I>(self, fields: I) -> Self
     where
@@ -113,6 +124,9 @@ where
         }
     }
 
+    /// Gets the first page of results
+    ///
+    /// Page size can be set with the `page_size`
     pub async fn get_page(self) -> FirestoreResult<FirestoreListDocResult> {
         self.db.list_doc(self.params).await
     }
