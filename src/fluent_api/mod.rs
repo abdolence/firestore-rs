@@ -41,26 +41,31 @@ where
         Self { db }
     }
 
+    /// Select a document from the database
     #[inline]
     pub fn select(self) -> FirestoreSelectInitialBuilder<'a, D> {
         FirestoreSelectInitialBuilder::new(self.db)
     }
 
+    /// Insert a new document into the database
     #[inline]
     pub fn insert(self) -> FirestoreInsertInitialBuilder<'a, D> {
         FirestoreInsertInitialBuilder::new(self.db)
     }
 
+    /// Update a document in the database
     #[inline]
     pub fn update(self) -> FirestoreUpdateInitialBuilder<'a, D> {
         FirestoreUpdateInitialBuilder::new(self.db)
     }
 
+    /// Delete a document in the database
     #[inline]
     pub fn delete(self) -> FirestoreDeleteInitialBuilder<'a, D> {
         FirestoreDeleteInitialBuilder::new(self.db)
     }
 
+    /// List documents in the database
     #[inline]
     pub fn list(self) -> FirestoreListingInitialBuilder<'a, D> {
         FirestoreListingInitialBuilder::new(self.db)
@@ -68,6 +73,9 @@ where
 }
 
 impl FirestoreDb {
+    /// Fluent API
+    ///
+    /// The Fluent API simplifies development and the developer experience. The library provides a more high level API starting with v0.12.x. This is the recommended API for all applications to use.
     #[inline]
     pub fn fluent(&self) -> FirestoreExprBuilder<FirestoreDb> {
         FirestoreExprBuilder::new(self)

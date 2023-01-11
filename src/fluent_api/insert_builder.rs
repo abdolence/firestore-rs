@@ -19,6 +19,7 @@ where
         Self { db }
     }
 
+    /// Specifies the collection to insert into
     #[inline]
     pub fn into(self, collection_id: &str) -> FirestoreInsertDocIdBuilder<'a, D> {
         FirestoreInsertDocIdBuilder::new(self.db, collection_id.to_string())
@@ -43,6 +44,7 @@ where
         Self { db, collection_id }
     }
 
+    /// Set the document id
     #[inline]
     pub fn document_id<S>(self, document_id: S) -> FirestoreInsertDocObjBuilder<'a, D>
     where
@@ -55,6 +57,7 @@ where
         )
     }
 
+    /// Automatically generate a document id
     #[inline]
     pub fn generate_document_id(self) -> FirestoreInsertDocObjBuilder<'a, D> {
         FirestoreInsertDocObjBuilder::new(self.db, self.collection_id, None)
@@ -116,6 +119,7 @@ where
         }
     }
 
+    /// Set the document content
     #[inline]
     pub fn document(self, document: Document) -> FirestoreInsertDocExecuteBuilder<'a, D> {
         FirestoreInsertDocExecuteBuilder::new(
@@ -181,6 +185,7 @@ where
         }
     }
 
+    /// Execute the insert operation
     pub async fn execute(self) -> FirestoreResult<Document> {
         if let Some(parent) = self.parent {
             self.db
