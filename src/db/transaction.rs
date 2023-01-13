@@ -1,3 +1,4 @@
+use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;
 use crate::{
     FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreResult,
@@ -146,8 +147,13 @@ impl FirestoreDb {
 
     pub async fn run_transaction<T, FN>(&self, func: FN) -> FirestoreResult<T>
     where
-        for<'b> FN:
-            Fn(FirestoreDb, &'b mut FirestoreTransaction) -> BoxFuture<'b, FirestoreResult<T>>,
+        for<'b> FN: Fn(
+            FirestoreDb,
+            &'b mut FirestoreTransaction,
+        ) -> BoxFuture<
+            'b,
+            std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>,
+        >,
     {
         self.run_transaction_with_options(func, FirestoreTransactionOptions::new())
             .await
@@ -159,8 +165,13 @@ impl FirestoreDb {
         options: FirestoreTransactionOptions,
     ) -> FirestoreResult<T>
     where
-        for<'b> FN:
-            Fn(FirestoreDb, &'b mut FirestoreTransaction) -> BoxFuture<'b, FirestoreResult<T>>,
+        for<'b> FN: Fn(
+            FirestoreDb,
+            &'b mut FirestoreTransaction,
+        ) -> BoxFuture<
+            'b,
+            std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>,
+        >,
     {
         // Perform our initial attempt. If this fails and the backend tells us we can retry,
         // we'll try again with exponential backoff using the first attempt's transaction ID.
@@ -173,7 +184,12 @@ impl FirestoreDb {
                 FirestoreConsistencySelector::Transaction(transaction_id.clone()),
             );
 
-            let ret_val = func(cdb, &mut transaction).await?;
+            let ret_val = func(cdb, &mut transaction).await.map_err(|err| {
+                FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction::new(
+                    transaction_id.clone(),
+                    err,
+                ))
+            })?;
 
             match transaction.commit().await {
                 Ok(_) => return Ok(ret_val),
@@ -213,7 +229,12 @@ impl FirestoreDb {
                 FirestoreConsistencySelector::Transaction(transaction_id.clone()),
             );
 
-            let ret_val = func(cdb, &mut transaction).await?;
+            let ret_val = func(cdb, &mut transaction).await.map_err(|err| {
+                FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction::new(
+                    transaction_id,
+                    err,
+                ))
+            })?;
 
             match transaction.commit().await {
                 Ok(_) => Ok(ret_val),
