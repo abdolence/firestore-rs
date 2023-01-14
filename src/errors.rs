@@ -1,3 +1,4 @@
+use crate::{FirestoreTransaction, FirestoreTransactionId};
 use gcloud_sdk::google::firestore::v1::WriteRequest;
 use rsb_derive::Builder;
 use serde::*;
@@ -15,6 +16,7 @@ pub enum FirestoreError {
     SerializeError(FirestoreSerializationError),
     DeserializeError(FirestoreSerializationError),
     NetworkError(FirestoreNetworkError),
+    ErrorInTransaction(FirestoreErrorInTransaction),
 }
 
 impl Display for FirestoreError {
@@ -28,6 +30,7 @@ impl Display for FirestoreError {
             FirestoreError::SerializeError(ref err) => err.fmt(f),
             FirestoreError::DeserializeError(ref err) => err.fmt(f),
             FirestoreError::NetworkError(ref err) => err.fmt(f),
+            FirestoreError::ErrorInTransaction(ref err) => err.fmt(f),
         }
     }
 }
@@ -43,6 +46,7 @@ impl Error for FirestoreError {
             FirestoreError::SerializeError(ref err) => Some(err),
             FirestoreError::DeserializeError(ref err) => Some(err),
             FirestoreError::NetworkError(ref err) => Some(err),
+            FirestoreError::ErrorInTransaction(ref err) => Some(err),
         }
     }
 }
@@ -293,5 +297,79 @@ impl From<tokio::sync::mpsc::error::SendError<gcloud_sdk::google::firestore::v1:
             FirestoreErrorPublicGenericDetails::new("SEND_STREAM_ERROR".into()),
             format!("Send stream error: {}", send_error),
         ))
+    }
+}
+
+#[derive(Debug, Builder)]
+pub struct FirestoreErrorInTransaction {
+    pub transaction_id: FirestoreTransactionId,
+    pub source: Box<dyn std::error::Error + Send + Sync>,
+}
+
+impl FirestoreErrorInTransaction {
+    pub fn permanent<E: std::error::Error + Send + Sync + 'static>(
+        transaction: &FirestoreTransaction,
+        source: E,
+    ) -> BackoffError<FirestoreError> {
+        BackoffError::permanent(FirestoreError::ErrorInTransaction(
+            FirestoreErrorInTransaction {
+                transaction_id: transaction.transaction_id.clone(),
+                source: Box::new(source),
+            },
+        ))
+    }
+
+    pub fn transient<E: std::error::Error + Send + Sync + 'static>(
+        transaction: &FirestoreTransaction,
+        source: E,
+    ) -> BackoffError<FirestoreError> {
+        BackoffError::transient(FirestoreError::ErrorInTransaction(
+            FirestoreErrorInTransaction {
+                transaction_id: transaction.transaction_id.clone(),
+                source: Box::new(source),
+            },
+        ))
+    }
+
+    pub fn retry_after<E: std::error::Error + Send + Sync + 'static>(
+        transaction: &FirestoreTransaction,
+        source: E,
+        retry_after: chrono::Duration,
+    ) -> BackoffError<FirestoreError> {
+        BackoffError::retry_after(
+            FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction {
+                transaction_id: transaction.transaction_id.clone(),
+                source: Box::new(source),
+            }),
+            std::time::Duration::from_millis(retry_after.num_milliseconds() as u64),
+        )
+    }
+}
+
+impl Display for FirestoreErrorInTransaction {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "Error occurred inside run transaction scope {}: {}",
+            hex::encode(&self.transaction_id),
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for FirestoreErrorInTransaction {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+pub type BackoffError<E> = backoff::Error<E>;
+
+pub(crate) fn firestore_err_to_backoff(err: FirestoreError) -> BackoffError<FirestoreError> {
+    match err {
+        FirestoreError::DatabaseError(ref db_err) if db_err.retry_possible => {
+            backoff::Error::transient(err)
+        }
+        other => backoff::Error::permanent(other),
     }
 }

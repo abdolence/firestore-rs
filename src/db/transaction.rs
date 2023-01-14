@@ -1,3 +1,4 @@
+use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;
 use crate::{
     FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreResult,
@@ -8,6 +9,7 @@ use backoff::future::retry;
 use backoff::ExponentialBackoffBuilder;
 use futures::future::BoxFuture;
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
+use std::time::Duration;
 use tracing::*;
 
 pub struct FirestoreTransaction<'a> {
@@ -144,50 +146,76 @@ impl FirestoreDb {
         FirestoreTransaction::new(self, options).await
     }
 
-    pub async fn run_transaction<T, FN>(&self, func: FN) -> FirestoreResult<T>
+    pub async fn run_transaction<T, FN, E>(&self, func: FN) -> FirestoreResult<T>
     where
-        for<'b> FN:
-            Fn(FirestoreDb, &'b mut FirestoreTransaction) -> BoxFuture<'b, FirestoreResult<T>>,
+        for<'b> FN: Fn(
+            FirestoreDb,
+            &'b mut FirestoreTransaction,
+        ) -> BoxFuture<'b, std::result::Result<T, BackoffError<E>>>,
+        E: std::error::Error + Send + Sync + 'static,
     {
         self.run_transaction_with_options(func, FirestoreTransactionOptions::new())
             .await
     }
 
-    pub async fn run_transaction_with_options<T, FN>(
+    pub async fn run_transaction_with_options<T, FN, E>(
         &self,
         func: FN,
         options: FirestoreTransactionOptions,
     ) -> FirestoreResult<T>
     where
-        for<'b> FN:
-            Fn(FirestoreDb, &'b mut FirestoreTransaction) -> BoxFuture<'b, FirestoreResult<T>>,
+        for<'b> FN: Fn(
+            FirestoreDb,
+            &'b mut FirestoreTransaction,
+        ) -> BoxFuture<'b, std::result::Result<T, BackoffError<E>>>,
+        E: std::error::Error + Send + Sync + 'static,
     {
         // Perform our initial attempt. If this fails and the backend tells us we can retry,
         // we'll try again with exponential backoff using the first attempt's transaction ID.
-        let (transaction_id, transaction_span) = {
+        let (transaction_id, transaction_span, initial_backoff_duration) = {
             let mut transaction = self.begin_transaction_with_options(options.clone()).await?;
             let transaction_id = transaction.transaction_id().clone();
             let transaction_span = transaction.transaction_span.clone();
+            let mut initial_backoff_duration: Option<Duration> = None;
 
             let cdb = self.clone_with_consistency_selector(
                 FirestoreConsistencySelector::Transaction(transaction_id.clone()),
             );
 
-            let ret_val = func(cdb, &mut transaction).await?;
-
-            match transaction.commit().await {
-                Ok(_) => return Ok(ret_val),
-                Err(err) => match err {
-                    FirestoreError::DatabaseError(ref db_err) if db_err.retry_possible => {
-                        transaction_span.in_scope(|| {
-                            warn!("Retryable error occurred in transaction: {}", &err)
-                        });
-                        // Ignore; we'll try again below
+            match func(cdb, &mut transaction).await {
+                Ok(ret_val) => {
+                    match transaction.commit().await {
+                        Ok(_) => return Ok(ret_val),
+                        Err(err) => match err {
+                            FirestoreError::DatabaseError(ref db_err) if db_err.retry_possible => {
+                                transaction_span.in_scope(|| {
+                                    warn!(
+                                        "Transient error occurred in committing transaction: {}",
+                                        &err
+                                    )
+                                });
+                                // Ignore; we'll try again below
+                            }
+                            other => return Err(other),
+                        },
                     }
-                    other => return Err(other),
+                }
+                Err(err) => match err {
+                    BackoffError::Transient { err, retry_after } => {
+                        transaction_span.in_scope(|| {
+                            warn!("Transient error occurred in transaction function: {}. Retrying after: {:?}", &err, retry_after)
+                        });
+                        initial_backoff_duration = retry_after;
+                    }
+                    BackoffError::Permanent(err) => {
+                        return Err(FirestoreError::ErrorInTransaction(
+                            FirestoreErrorInTransaction::new(transaction_id.clone(), Box::new(err)),
+                        ))
+                    }
                 },
             }
-            (transaction_id, transaction_span)
+
+            (transaction_id, transaction_span, initial_backoff_duration)
         };
 
         // We failed the first time. Now we must change the transaction mode to signal that we're retrying with the original transaction ID.
@@ -199,6 +227,9 @@ impl FirestoreDb {
                     .map(|v| v.to_std())
                     .transpose()?,
             )
+            .with_initial_interval(initial_backoff_duration.unwrap_or(Duration::from_millis(
+                backoff::default::INITIAL_INTERVAL_MILLIS,
+            )))
             .build();
 
         let retry_result = retry(backoff, || async {
@@ -206,25 +237,58 @@ impl FirestoreDb {
                 mode: FirestoreTransactionMode::ReadWriteRetry(transaction_id.clone()),
                 ..options
             };
-            let mut transaction = self.begin_transaction_with_options(options).await?;
+            let mut transaction = self
+                .begin_transaction_with_options(options)
+                .await
+                .map_err(firestore_err_to_backoff)?;
             let transaction_id = transaction.transaction_id().clone();
 
             let cdb = self.clone_with_consistency_selector(
                 FirestoreConsistencySelector::Transaction(transaction_id.clone()),
             );
 
-            let ret_val = func(cdb, &mut transaction).await?;
+            let ret_val = func(cdb, &mut transaction).await.map_err(|backoff_err| {
+                match backoff_err {
+                    BackoffError::Transient { err, retry_after } => {
+                        transaction_span.in_scope(|| {
+                            warn!("Transient error occurred in transaction function: {}. Retrying after: {:?}", &err, &retry_after)
+                        });
 
-            match transaction.commit().await {
-                Ok(_) => Ok(ret_val),
-                Err(err) => match err {
-                    FirestoreError::DatabaseError(ref db_err) if db_err.retry_possible => {
-                        transaction_span.in_scope(|| debug!("Retrying after error: {}", &err));
-                        Err(backoff::Error::transient(err))
+                        let firestore_err = FirestoreError::ErrorInTransaction(
+                            FirestoreErrorInTransaction::new(
+                                transaction_id.clone(),
+                                Box::new(err)
+                            ),
+                        );
+
+                        if let Some(retry_after_duration) = retry_after {
+                            backoff::Error::retry_after(
+                                firestore_err,
+                                retry_after_duration
+                            )
+                        } else {
+                            backoff::Error::transient(firestore_err)
+                        }
                     }
-                    e => Err(backoff::Error::permanent(e)),
-                },
-            }
+                    BackoffError::Permanent(err) => {
+                        backoff::Error::permanent(
+                            FirestoreError::ErrorInTransaction(
+                                FirestoreErrorInTransaction::new(
+                                    transaction_id.clone(),
+                                    Box::new(err)
+                                ),
+                            )
+                        )
+                    }
+                }
+            })?;
+
+            transaction
+                .commit()
+                .await
+                .map_err(firestore_err_to_backoff)?;
+
+            Ok(ret_val)
         })
         .await;
 
