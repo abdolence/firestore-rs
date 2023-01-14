@@ -117,7 +117,7 @@ impl FirestoreDb {
         let effective_firebase_api_url = options
             .firebase_api_url
             .clone()
-            .or_else(|| std::env::var(GOOGLE_FIRESTORE_EMULATOR_HOST_ENV).ok())
+            .or_else(|| ensure_url_scheme(std::env::var(GOOGLE_FIRESTORE_EMULATOR_HOST_ENV).ok()))
             .unwrap_or_else(|| GOOGLE_FIREBASE_API_URL.to_string());
 
         info!(
@@ -237,6 +237,14 @@ impl FirestoreDb {
     }
 }
 
+fn ensure_url_scheme(url: Option<String>) -> Option<String> {
+    match url {
+        Some(url) if !url.contains("://") => Some(format!("http://{}", url)),
+        Some(url) => Some(url),
+        None => None,
+    }
+}
+
 impl std::fmt::Debug for FirestoreDb {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FirestoreDb")
@@ -268,5 +276,27 @@ where
                 format!("Invalid document ID provided: {}", document_id_ref),
             )),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ensure_url_scheme() {
+        assert_eq!(
+            ensure_url_scheme(Some("localhost:8080".into())).unwrap(),
+            "http://localhost:8080"
+        );
+        assert_eq!(
+            ensure_url_scheme(Some("any://localhost:8080".into())).unwrap(),
+            "any://localhost:8080"
+        );
+        assert_eq!(
+            ensure_url_scheme(Some("invalid:localhost:8080".into())).unwrap(),
+            "http://invalid:localhost:8080"
+        );
+        assert_eq!(ensure_url_scheme(None), None)
     }
 }
