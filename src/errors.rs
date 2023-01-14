@@ -334,3 +334,14 @@ impl std::error::Error for FirestoreErrorInTransaction {
         Some(self.source.as_ref())
     }
 }
+
+pub type BackoffError<E> = backoff::Error<E>;
+
+pub fn firestore_err_to_backoff(err: FirestoreError) -> BackoffError<FirestoreError> {
+    match err {
+        FirestoreError::DatabaseError(ref db_err) if db_err.retry_possible => {
+            backoff::Error::transient(err)
+        }
+        other => backoff::Error::permanent(other),
+    }
+}
