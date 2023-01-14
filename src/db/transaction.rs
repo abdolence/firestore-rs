@@ -170,13 +170,13 @@ impl FirestoreDb {
         ) -> BoxFuture<'b, std::result::Result<T, BackoffError<E>>>,
         E: std::error::Error + Send + Sync + 'static,
     {
-        let mut initial_duration: Option<Duration> = None;
         // Perform our initial attempt. If this fails and the backend tells us we can retry,
         // we'll try again with exponential backoff using the first attempt's transaction ID.
-        let (transaction_id, transaction_span) = {
+        let (transaction_id, transaction_span, initial_backoff_duration) = {
             let mut transaction = self.begin_transaction_with_options(options.clone()).await?;
             let transaction_id = transaction.transaction_id().clone();
             let transaction_span = transaction.transaction_span.clone();
+            let mut initial_backoff_duration: Option<Duration> = None;
 
             let cdb = self.clone_with_consistency_selector(
                 FirestoreConsistencySelector::Transaction(transaction_id.clone()),
@@ -205,7 +205,7 @@ impl FirestoreDb {
                         transaction_span.in_scope(|| {
                             warn!("Transient error occurred in transaction function: {}. Retrying after: {:?}", &err, retry_after)
                         });
-                        initial_duration = retry_after;
+                        initial_backoff_duration = retry_after;
                     }
                     BackoffError::Permanent(err) => {
                         return Err(FirestoreError::ErrorInTransaction(
@@ -215,7 +215,7 @@ impl FirestoreDb {
                 },
             }
 
-            (transaction_id, transaction_span)
+            (transaction_id, transaction_span, initial_backoff_duration)
         };
 
         // We failed the first time. Now we must change the transaction mode to signal that we're retrying with the original transaction ID.
@@ -227,7 +227,7 @@ impl FirestoreDb {
                     .map(|v| v.to_std())
                     .transpose()?,
             )
-            .with_initial_interval(initial_duration.unwrap_or(Duration::from_millis(
+            .with_initial_interval(initial_backoff_duration.unwrap_or(Duration::from_millis(
                 backoff::default::INITIAL_INTERVAL_MILLIS,
             )))
             .build();
