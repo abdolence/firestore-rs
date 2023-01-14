@@ -1,4 +1,4 @@
-use firestore::{errors::FirestoreError, paths, FirestoreDb};
+use firestore::*;
 use futures::stream::FuturesOrdered;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
-async fn update_value(db: &FirestoreDb) -> Result<(), FirestoreError> {
+async fn update_value(db: &FirestoreDb) -> FirestoreResult<()> {
     db.run_transaction(|db, transaction| {
         async move {
             let mut test_structure: MyTestStructure = db

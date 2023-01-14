@@ -1,4 +1,4 @@
-use crate::FirestoreTransactionId;
+use crate::{FirestoreTransaction, FirestoreTransactionId};
 use gcloud_sdk::google::firestore::v1::WriteRequest;
 use rsb_derive::Builder;
 use serde::*;
@@ -300,21 +300,49 @@ impl From<tokio::sync::mpsc::error::SendError<gcloud_sdk::google::firestore::v1:
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Builder)]
 pub struct FirestoreErrorInTransaction {
     pub transaction_id: FirestoreTransactionId,
     pub source: Box<dyn std::error::Error + Send + Sync>,
 }
 
 impl FirestoreErrorInTransaction {
-    pub fn new(
-        transaction_id: FirestoreTransactionId,
-        source: Box<dyn std::error::Error + Send + Sync>,
-    ) -> FirestoreErrorInTransaction {
-        FirestoreErrorInTransaction {
-            transaction_id,
-            source,
-        }
+    pub fn permanent<E: std::error::Error + Send + Sync + 'static>(
+        transaction: &FirestoreTransaction,
+        source: E,
+    ) -> BackoffError<FirestoreError> {
+        BackoffError::permanent(FirestoreError::ErrorInTransaction(
+            FirestoreErrorInTransaction {
+                transaction_id: transaction.transaction_id.clone(),
+                source: Box::new(source),
+            },
+        ))
+    }
+
+    pub fn transient<E: std::error::Error + Send + Sync + 'static>(
+        transaction: &FirestoreTransaction,
+        source: E,
+    ) -> BackoffError<FirestoreError> {
+        BackoffError::transient(FirestoreError::ErrorInTransaction(
+            FirestoreErrorInTransaction {
+                transaction_id: transaction.transaction_id.clone(),
+                source: Box::new(source),
+            },
+        ))
+    }
+
+    pub fn retry_after<E: std::error::Error + Send + Sync + 'static>(
+        transaction: &FirestoreTransaction,
+        source: E,
+        retry_after: chrono::Duration,
+    ) -> BackoffError<FirestoreError> {
+        BackoffError::retry_after(
+            FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction {
+                transaction_id: transaction.transaction_id.clone(),
+                source: Box::new(source),
+            }),
+            std::time::Duration::from_millis(retry_after.num_milliseconds() as u64),
+        )
     }
 }
 
