@@ -1,6 +1,8 @@
 use crate::errors::FirestoreError;
-use crate::query_filter_builder::FirestoreQueryFilterBuilder;
+use crate::select_aggregation_builder::FirestoreAggregationBuilder;
+use crate::select_filter_builder::FirestoreQueryFilterBuilder;
 use crate::{
+    FirestoreAggregatedQueryParams, FirestoreAggregatedQuerySupport, FirestoreAggregation,
     FirestoreCollectionDocuments, FirestoreGetByIdSupport, FirestoreListenSupport,
     FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
     FirestoreListenerTargetParams, FirestorePartition, FirestorePartitionQueryParams,
@@ -17,7 +19,12 @@ use std::marker::PhantomData;
 #[derive(Clone, Debug)]
 pub struct FirestoreSelectInitialBuilder<'a, D>
 where
-    D: FirestoreQuerySupport + FirestoreGetByIdSupport + FirestoreListenSupport + Clone + 'static,
+    D: FirestoreQuerySupport
+        + FirestoreGetByIdSupport
+        + FirestoreListenSupport
+        + FirestoreAggregatedQuerySupport
+        + Clone
+        + 'static,
 {
     db: &'a D,
     return_only_fields: Option<Vec<String>>,
@@ -28,6 +35,7 @@ where
     D: FirestoreQuerySupport
         + FirestoreGetByIdSupport
         + FirestoreListenSupport
+        + FirestoreAggregatedQuerySupport
         + Clone
         + Send
         + Sync
@@ -77,7 +85,12 @@ where
 #[derive(Clone, Debug)]
 pub struct FirestoreSelectDocBuilder<'a, D>
 where
-    D: FirestoreQuerySupport + FirestoreListenSupport + Clone + Send + Sync,
+    D: FirestoreQuerySupport
+        + FirestoreListenSupport
+        + FirestoreAggregatedQuerySupport
+        + Clone
+        + Send
+        + Sync,
 {
     db: &'a D,
     params: FirestoreQueryParams,
@@ -85,20 +98,17 @@ where
 
 impl<'a, D> FirestoreSelectDocBuilder<'a, D>
 where
-    D: FirestoreQuerySupport + FirestoreListenSupport + Clone + Send + Sync + 'static,
+    D: FirestoreQuerySupport
+        + FirestoreListenSupport
+        + FirestoreAggregatedQuerySupport
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     #[inline]
     pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
         Self { db, params }
-    }
-
-    #[inline]
-    pub fn obj<T>(self) -> FirestoreSelectObjBuilder<'a, D, T>
-    where
-        T: Send,
-        for<'de> T: Deserialize<'de>,
-    {
-        FirestoreSelectObjBuilder::new(self.db, self.params)
     }
 
     #[inline]
@@ -179,6 +189,42 @@ where
         }
     }
 
+    #[inline]
+    pub fn obj<T>(self) -> FirestoreSelectObjBuilder<'a, D, T>
+    where
+        T: Send,
+        for<'de> T: Deserialize<'de>,
+    {
+        FirestoreSelectObjBuilder::new(self.db, self.params)
+    }
+
+    #[inline]
+    pub fn partition_query(self) -> FirestorePartitionQueryDocBuilder<'a, D> {
+        FirestorePartitionQueryDocBuilder::new(self.db, self.params.with_all_descendants(true))
+    }
+
+    #[inline]
+    pub fn listen(self) -> FirestoreDocChangesListenerInitBuilder<'a, D> {
+        FirestoreDocChangesListenerInitBuilder::new(
+            self.db,
+            FirestoreTargetType::Query(self.params),
+        )
+    }
+
+    #[inline]
+    pub fn aggregate<FN>(self, aggregation: FN) -> FirestoreAggregatedQueryDocBuilder<'a, D>
+    where
+        FN: Fn(FirestoreAggregationBuilder) -> Vec<FirestoreAggregation>,
+    {
+        FirestoreAggregatedQueryDocBuilder::new(
+            self.db,
+            FirestoreAggregatedQueryParams::new(
+                self.params,
+                aggregation(FirestoreAggregationBuilder::new()),
+            ),
+        )
+    }
+
     pub async fn query(self) -> FirestoreResult<Vec<Document>> {
         self.db.query_doc(self.params).await
     }
@@ -191,17 +237,6 @@ where
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         self.db.stream_query_doc_with_errors(self.params).await
-    }
-
-    pub fn partition_query(self) -> FirestorePartitionQueryDocBuilder<'a, D> {
-        FirestorePartitionQueryDocBuilder::new(self.db, self.params.with_all_descendants(true))
-    }
-
-    pub fn listen(self) -> FirestoreDocChangesListenerInitBuilder<'a, D> {
-        FirestoreDocChangesListenerInitBuilder::new(
-            self.db,
-            FirestoreTargetType::Query(self.params),
-        )
     }
 }
 
@@ -760,6 +795,97 @@ where
         ))?;
 
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FirestoreAggregatedQueryDocBuilder<'a, D>
+where
+    D: FirestoreAggregatedQuerySupport,
+{
+    db: &'a D,
+    params: FirestoreAggregatedQueryParams,
+}
+
+impl<'a, D> FirestoreAggregatedQueryDocBuilder<'a, D>
+where
+    D: FirestoreAggregatedQuerySupport,
+{
+    #[inline]
+    pub(crate) fn new(db: &'a D, params: FirestoreAggregatedQueryParams) -> Self {
+        Self { db, params }
+    }
+
+    #[inline]
+    pub fn obj<T>(self) -> FirestoreAggregatedQueryObjBuilder<'a, D, T>
+    where
+        T: Send,
+        for<'de> T: Deserialize<'de>,
+    {
+        FirestoreAggregatedQueryObjBuilder::new(self.db, self.params)
+    }
+
+    pub async fn query(self) -> FirestoreResult<Vec<Document>> {
+        self.db.aggregated_query_doc(self.params).await
+    }
+
+    pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, Document>> {
+        self.db.stream_aggregated_query_doc(self.params).await
+    }
+
+    pub async fn stream_query_with_errors<'b>(
+        self,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
+        self.db
+            .stream_aggregated_query_doc_with_errors(self.params)
+            .await
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FirestoreAggregatedQueryObjBuilder<'a, D, T>
+where
+    D: FirestoreAggregatedQuerySupport,
+    T: Send,
+    for<'de> T: Deserialize<'de>,
+{
+    db: &'a D,
+    params: FirestoreAggregatedQueryParams,
+    _ph: PhantomData<T>,
+}
+
+impl<'a, D, T> FirestoreAggregatedQueryObjBuilder<'a, D, T>
+where
+    D: FirestoreAggregatedQuerySupport,
+    T: Send,
+    for<'de> T: Deserialize<'de>,
+{
+    #[inline]
+    pub(crate) fn new(db: &'a D, params: FirestoreAggregatedQueryParams) -> Self {
+        Self {
+            db,
+            params,
+            _ph: PhantomData::default(),
+        }
+    }
+
+    pub async fn query(self) -> FirestoreResult<Vec<T>> {
+        self.db.aggregated_query_obj(self.params).await
+    }
+
+    pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, T>> {
+        self.db.stream_aggregated_query_obj(self.params).await
+    }
+
+    pub async fn stream_query_with_errors<'b>(
+        self,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    where
+        T: 'b,
+    {
+        self.db
+            .stream_aggregated_query_obj_with_errors(self.params)
+            .await
     }
 }
 

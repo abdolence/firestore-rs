@@ -1,7 +1,5 @@
 use firestore::*;
-use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
-use tokio_stream::StreamExt;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|e| format!("{}: {}", name, e))
@@ -27,21 +25,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const TEST_COLLECTION_NAME: &'static str = "test";
 
     println!("Aggregated query a test collection as a stream");
-    // Query as a stream our data
-    let mut object_stream: BoxStream<MyAggTestStructure> = db
-        .stream_aggregated_query_obj(FirestoreAggregatedQueryParams::new(
-            FirestoreQueryParams::new(TEST_COLLECTION_NAME.into()),
-            vec![
-                FirestoreAggregation::new(path!(MyAggTestStructure::counter)).with_operator(
-                    FirestoreAggregationOperator::Count(FirestoreAggregationOperatorCount::new()),
-                ),
-            ],
-        ))
+
+    let objs: Vec<MyAggTestStructure> = db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .aggregate(|a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
+        .obj()
+        .query()
         .await?;
 
-    while let Some(object) = object_stream.next().await {
-        println!("Object in stream: {:?}", object);
-    }
+    println!("{:?}", objs);
 
     Ok(())
 }

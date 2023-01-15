@@ -1,6 +1,7 @@
 #![allow(clippy::derive_partial_eq_without_eq)] // Since we may not be able to implement Eq for the changes coming from Firestore protos
 
 use crate::{FirestoreDb, FirestoreError, FirestoreQueryParams, FirestoreResult};
+use async_trait::async_trait;
 use chrono::prelude::*;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
@@ -62,8 +63,49 @@ impl From<&FirestoreAggregationOperatorCount> for structured_aggregation_query::
     }
 }
 
-impl FirestoreDb {
-    pub async fn aggregated_query_doc(
+#[async_trait]
+pub trait FirestoreAggregatedQuerySupport {
+    async fn aggregated_query_doc(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<Vec<Document>>;
+
+    async fn stream_aggregated_query_doc<'b>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, Document>>;
+
+    async fn stream_aggregated_query_doc_with_errors<'b>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>>;
+
+    async fn aggregated_query_obj<T>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<Vec<T>>
+    where
+        for<'de> T: Deserialize<'de>;
+
+    async fn stream_aggregated_query_obj<'b, T>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, T>>
+    where
+        for<'de> T: Deserialize<'de>;
+
+    async fn stream_aggregated_query_obj_with_errors<'b, T>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b;
+}
+
+#[async_trait]
+impl FirestoreAggregatedQuerySupport for FirestoreDb {
+    async fn aggregated_query_doc(
         &self,
         params: FirestoreAggregatedQueryParams,
     ) -> FirestoreResult<Vec<Document>> {
@@ -79,7 +121,7 @@ impl FirestoreDb {
             .await
     }
 
-    pub async fn stream_aggregated_query_doc<'b>(
+    async fn stream_aggregated_query_doc<'b>(
         &self,
         params: FirestoreAggregatedQueryParams,
     ) -> FirestoreResult<BoxStream<'b, Document>> {
@@ -108,7 +150,7 @@ impl FirestoreDb {
         })))
     }
 
-    pub async fn stream_aggregated_query_doc_with_errors<'b>(
+    async fn stream_aggregated_query_doc_with_errors<'b>(
         &self,
         params: FirestoreAggregatedQueryParams,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
@@ -137,7 +179,7 @@ impl FirestoreDb {
         })))
     }
 
-    pub async fn aggregated_query_obj<T>(
+    async fn aggregated_query_obj<T>(
         &self,
         params: FirestoreAggregatedQueryParams,
     ) -> FirestoreResult<Vec<T>>
@@ -151,7 +193,7 @@ impl FirestoreDb {
             .collect()
     }
 
-    pub async fn stream_aggregated_query_obj<'b, T>(
+    async fn stream_aggregated_query_obj<'b, T>(
         &self,
         params: FirestoreAggregatedQueryParams,
     ) -> FirestoreResult<BoxStream<'b, T>>
@@ -173,7 +215,7 @@ impl FirestoreDb {
         })))
     }
 
-    pub async fn stream_aggregated_query_obj_with_errors<'b, T>(
+    async fn stream_aggregated_query_obj_with_errors<'b, T>(
         &self,
         params: FirestoreAggregatedQueryParams,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
@@ -186,7 +228,9 @@ impl FirestoreDb {
             future::ready(Self::deserialize_doc_to::<T>(&doc))
         })))
     }
+}
 
+impl FirestoreDb {
     fn create_aggregated_query_request(
         &self,
         params: &FirestoreAggregatedQueryParams,
