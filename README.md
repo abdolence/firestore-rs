@@ -422,6 +422,20 @@ test_null: Option<String>,
 test_null: Option<DateTime<Utc>>,
 ```
 
+## Select aggregate functions
+
+The library supports the aggregation functions for the queries:
+
+```rust
+db.fluent()
+  .select()
+  .from(TEST_COLLECTION_NAME)
+  .aggregate(|a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
+  .obj()
+  .query()
+  .await?;
+```
+
 ## Google authentication
 
 Looks for credentials in the following places, preferring the first location found:
