@@ -73,21 +73,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .one("test-0")
         .await?;
 
-    println!("Should be the original one: {:?}", consistency_read_test);
+    println!("The original one: {:?}", consistency_read_test);
 
     transaction.commit().await?;
 
     println!("Listing objects as a stream with updated test-0 and removed test-5");
     // Query as a stream our data
     let mut objs_stream: BoxStream<MyTestStructure> = db
-        .stream_list_obj(
-            FirestoreListDocParams::new(TEST_COLLECTION_NAME.into()).with_order_by(vec![
-                FirestoreQueryOrder::new(
-                    path!(MyTestStructure::some_id),
-                    FirestoreQueryDirection::Descending,
-                ),
-            ]),
-        )
+        .fluent()
+        .list()
+        .from(TEST_COLLECTION_NAME)
+        .order_by([(
+            path!(MyTestStructure::some_id),
+            FirestoreQueryDirection::Descending,
+        )])
+        .obj()
+        .stream_all()
         .await?;
 
     while let Some(object) = objs_stream.next().await {
