@@ -4,8 +4,9 @@ pub mod delete_builder;
 pub mod document_transform_builder;
 pub mod insert_builder;
 pub mod listing_builder;
-pub mod query_filter_builder;
+pub mod select_aggregation_builder;
 pub mod select_builder;
+pub mod select_filter_builder;
 pub mod update_builder;
 
 use crate::delete_builder::FirestoreDeleteInitialBuilder;
@@ -14,8 +15,9 @@ use crate::insert_builder::FirestoreInsertInitialBuilder;
 use crate::listing_builder::FirestoreListingInitialBuilder;
 use crate::update_builder::FirestoreUpdateInitialBuilder;
 use crate::{
-    FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport, FirestoreGetByIdSupport,
-    FirestoreListenSupport, FirestoreListingSupport, FirestoreQuerySupport, FirestoreUpdateSupport,
+    FirestoreAggregatedQuerySupport, FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport,
+    FirestoreGetByIdSupport, FirestoreListenSupport, FirestoreListingSupport,
+    FirestoreQuerySupport, FirestoreUpdateSupport,
 };
 
 #[derive(Clone, Debug)]
@@ -32,6 +34,7 @@ where
         + FirestoreListingSupport
         + FirestoreGetByIdSupport
         + FirestoreListenSupport
+        + FirestoreAggregatedQuerySupport
         + Clone
         + Send
         + Sync

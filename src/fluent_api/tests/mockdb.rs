@@ -497,3 +497,59 @@ impl FirestoreListenSupport for MockDatabase {
         unreachable!()
     }
 }
+
+#[allow(unused)]
+#[async_trait]
+impl FirestoreAggregatedQuerySupport for MockDatabase {
+    async fn aggregated_query_doc(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<Vec<Document>> {
+        unreachable!()
+    }
+
+    async fn stream_aggregated_query_doc<'b>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, Document>> {
+        unreachable!()
+    }
+
+    async fn stream_aggregated_query_doc_with_errors<'b>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
+        unreachable!()
+    }
+
+    async fn aggregated_query_obj<T>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<Vec<T>>
+    where
+        for<'de> T: Deserialize<'de>,
+    {
+        unreachable!()
+    }
+
+    async fn stream_aggregated_query_obj<'b, T>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, T>>
+    where
+        for<'de> T: Deserialize<'de>,
+    {
+        unreachable!()
+    }
+
+    async fn stream_aggregated_query_obj_with_errors<'b, T>(
+        &self,
+        params: FirestoreAggregatedQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b,
+    {
+        unreachable!()
+    }
+}

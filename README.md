@@ -392,8 +392,8 @@ listener
     })
     .await?;
 
-// Wait some events like Ctrl-C, signals 
-// <your-implementation-for-wait>
+// Wait some events like Ctrl-C, signals, etc
+// <put-your-implementation-for-wait-here>
 
 // and then shutdown
 listener.shutdown().await?;
@@ -420,6 +420,20 @@ test_null: Option<String>,
 #[serde(default)]
 #[serde(with = "firestore::serialize_as_null_timestamp")]
 test_null: Option<DateTime<Utc>>,
+```
+
+## Select aggregate functions
+
+The library supports the aggregation functions for the queries:
+
+```rust
+db.fluent()
+  .select()
+  .from(TEST_COLLECTION_NAME)
+  .aggregate(|a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
+  .obj()
+  .query()
+  .await?;
 ```
 
 ## Google authentication
