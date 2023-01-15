@@ -436,6 +436,14 @@ db.fluent()
   .await?;
 ```
 
+## Update preconditions
+
+The library supports the preconditions for the updates using:
+
+```rust
+  .precondition(FirestoreWritePrecondition::Exists(true))
+```
+
 ## Google authentication
 
 Looks for credentials in the following places, preferring the first location found:
