@@ -117,8 +117,11 @@ impl FirestoreDb {
         let effective_firebase_api_url = options
             .firebase_api_url
             .clone()
-            .or_else(|| std::env::var(GOOGLE_FIRESTORE_EMULATOR_HOST_ENV).ok())
-            .map(ensure_url_scheme)
+            .or_else(|| {
+                std::env::var(GOOGLE_FIRESTORE_EMULATOR_HOST_ENV)
+                    .ok()
+                    .map(ensure_url_scheme)
+            })
             .unwrap_or_else(|| GOOGLE_FIREBASE_API_URL.to_string());
 
         info!(
