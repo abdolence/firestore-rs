@@ -288,6 +288,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_safe_document_path() {
+        assert_eq!(
+            safe_document_path(
+                "projects/test-project/databases/(default)/documents",
+                "test",
+                "test1"
+            )
+            .ok(),
+            Some("projects/test-project/databases/(default)/documents/test/test1".to_string())
+        );
+
+        assert_eq!(
+            safe_document_path(
+                "projects/test-project/databases/(default)/documents",
+                "test",
+                "test1#test2"
+            )
+            .ok(),
+            Some(
+                "projects/test-project/databases/(default)/documents/test/test1#test2".to_string()
+            )
+        );
+
+        assert_eq!(
+            safe_document_path(
+                "projects/test-project/databases/(default)/documents",
+                "test",
+                "test1/test2"
+            )
+            .ok(),
+            None
+        );
+    }
+
+    #[test]
     fn test_ensure_url_scheme() {
         assert_eq!(
             ensure_url_scheme("localhost:8080".into()),
