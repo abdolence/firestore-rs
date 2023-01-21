@@ -12,7 +12,7 @@ use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreSimpleBatchWriteOptions {
-    max_elapsed_time: Option<chrono::Duration>,
+    retry_max_elapsed_time: Option<chrono::Duration>,
 }
 
 pub struct FirestoreSimpleBatchWriter {
@@ -48,7 +48,7 @@ impl FirestoreBatchWriter for FirestoreSimpleBatchWriter {
         let backoff = backoff::ExponentialBackoffBuilder::new()
             .with_max_elapsed_time(
                 self.options
-                    .max_elapsed_time
+                    .retry_max_elapsed_time
                     .map(|v| v.to_std())
                     .transpose()?,
             )
