@@ -1,15 +1,19 @@
+use crate::errors::*;
 use crate::{
     FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb,
     FirestoreResult, FirestoreWriteResult,
 };
 use async_trait::async_trait;
+use futures::TryFutureExt;
 use gcloud_sdk::google::firestore::v1::{BatchWriteRequest, Write};
 use rsb_derive::*;
 use std::collections::HashMap;
 use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
-pub struct FirestoreSimpleBatchWriteOptions {}
+pub struct FirestoreSimpleBatchWriteOptions {
+    retry_max_elapsed_time: Option<chrono::Duration>,
+}
 
 pub struct FirestoreSimpleBatchWriter {
     pub db: FirestoreDb,
@@ -41,30 +45,48 @@ impl FirestoreBatchWriter for FirestoreSimpleBatchWriter {
     type WriteResult = FirestoreBatchWriteResponse;
 
     async fn write(&self, writes: Vec<Write>) -> FirestoreResult<FirestoreBatchWriteResponse> {
-        let response = self
-            .db
-            .client()
-            .get()
-            .batch_write(BatchWriteRequest {
-                database: self.db.get_database_path().to_string(),
-                writes,
-                labels: HashMap::new(),
-            })
-            .await?;
+        let backoff = backoff::ExponentialBackoffBuilder::new()
+            .with_max_elapsed_time(
+                self.options
+                    .retry_max_elapsed_time
+                    .map(|v| v.to_std())
+                    .transpose()?,
+            )
+            .build();
 
-        let batch_response = response.into_inner();
+        let request = BatchWriteRequest {
+            database: self.db.get_database_path().to_string(),
+            writes,
+            labels: HashMap::new(),
+        };
 
-        let write_results: FirestoreResult<Vec<FirestoreWriteResult>> = batch_response
-            .write_results
-            .into_iter()
-            .map(|s| s.try_into())
-            .collect();
+        backoff::future::retry(backoff, || {
+            async {
+                let response = self
+                    .db
+                    .client()
+                    .get()
+                    .batch_write(request.clone())
+                    .await
+                    .map_err(FirestoreError::from)?;
 
-        Ok(FirestoreBatchWriteResponse::new(
-            0,
-            write_results?,
-            batch_response.status,
-        ))
+                let batch_response = response.into_inner();
+
+                let write_results: FirestoreResult<Vec<FirestoreWriteResult>> = batch_response
+                    .write_results
+                    .into_iter()
+                    .map(|s| s.try_into())
+                    .collect();
+
+                Ok(FirestoreBatchWriteResponse::new(
+                    0,
+                    write_results?,
+                    batch_response.status,
+                ))
+            }
+            .map_err(firestore_err_to_backoff)
+        })
+        .await
     }
 }
 
