@@ -264,8 +264,8 @@ impl From<&FirestoreQueryParams> for StructuredQuery {
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreQueryOrder {
-    field_name: String,
-    direction: FirestoreQueryDirection,
+    pub field_name: String,
+    pub direction: FirestoreQueryDirection,
 }
 
 impl FirestoreQueryOrder {
