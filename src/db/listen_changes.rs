@@ -10,7 +10,7 @@ use futures::TryFutureExt;
 use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
-use rvstruct::ValueStruct;
+pub use rvstruct::ValueStruct;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};

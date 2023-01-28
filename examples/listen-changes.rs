@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use chrono::prelude::*;
 use firestore::*;
-use rvstruct::ValueStruct;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 
