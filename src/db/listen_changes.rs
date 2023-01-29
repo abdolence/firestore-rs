@@ -244,7 +244,7 @@ where
                 .map_err(|err| {
                     FirestoreError::SystemError(FirestoreSystemError::new(
                         FirestoreErrorPublicGenericDetails::new("SystemError".into()),
-                        format!("Listener init error: {}", err),
+                        format!("Listener init error: {err}"),
                     ))
                 })
                 .await?;

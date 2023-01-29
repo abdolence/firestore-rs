@@ -8,8 +8,7 @@ pub fn from_timestamp(ts: prost_types::Timestamp) -> FirestoreResult<DateTime<Ut
     } else {
         Err(FirestoreError::DeserializeError(
             FirestoreSerializationError::from_message(format!(
-                "Invalid or out-of-range datetime: {}",
-                ts
+                "Invalid or out-of-range datetime: {ts}"
             )),
         ))
     }

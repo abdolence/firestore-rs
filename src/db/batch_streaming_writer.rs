@@ -290,8 +290,8 @@ impl FirestoreBatchWriter for FirestoreStreamingBatchWriter {
 }
 
 impl FirestoreDb {
-    pub async fn create_streaming_batch_writer<'a, 'b>(
-        &'a self,
+    pub async fn create_streaming_batch_writer<'b>(
+        &self,
     ) -> FirestoreResult<(
         FirestoreStreamingBatchWriter,
         BoxStream<'b, FirestoreResult<FirestoreBatchWriteResponse>>,
@@ -300,8 +300,8 @@ impl FirestoreDb {
             .await
     }
 
-    pub async fn create_streaming_batch_writer_with_options<'a, 'b>(
-        &'a self,
+    pub async fn create_streaming_batch_writer_with_options<'b>(
+        &self,
         options: FirestoreStreamingBatchWriteOptions,
     ) -> FirestoreResult<(
         FirestoreStreamingBatchWriter,

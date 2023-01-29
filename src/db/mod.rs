@@ -112,7 +112,7 @@ impl FirestoreDb {
     ) -> FirestoreResult<Self> {
         let firestore_database_path =
             format!("projects/{}/databases/(default)", options.google_project_id);
-        let firestore_database_doc_path = format!("{}/documents", firestore_database_path);
+        let firestore_database_doc_path = format!("{firestore_database_path}/documents");
 
         let effective_firebase_api_url = options
             .firebase_api_url
@@ -243,7 +243,7 @@ impl FirestoreDb {
 
 fn ensure_url_scheme(url: String) -> String {
     if !url.contains("://") {
-        format!("http://{}", url)
+        format!("http://{url}")
     } else {
         url
     }
@@ -272,12 +272,12 @@ where
     // Here we check only the most dangerous one for `/` to avoid document_id injections, leaving other validation to the server side.
     let document_id_ref = document_id.as_ref();
     if document_id_ref.chars().all(|c| c != '/') && document_id_ref.len() <= 1500 {
-        Ok(format!("{}/{}/{}", parent, collection_id, document_id_ref))
+        Ok(format!("{parent}/{collection_id}/{document_id_ref}"))
     } else {
         Err(FirestoreError::InvalidParametersError(
             FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
                 "document_id".to_string(),
-                format!("Invalid document ID provided: {}", document_id_ref),
+                format!("Invalid document ID provided: {document_id_ref}"),
             )),
         ))
     }

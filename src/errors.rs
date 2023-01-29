@@ -155,7 +155,7 @@ impl From<gcloud_sdk::error::Error> for FirestoreError {
     fn from(e: gcloud_sdk::error::Error) -> Self {
         FirestoreError::SystemError(FirestoreSystemError::new(
             FirestoreErrorPublicGenericDetails::new(format!("{:?}", e.kind())),
-            format!("GCloud system error: {}", e),
+            format!("GCloud system error: {e}"),
         ))
     }
 }
@@ -166,13 +166,13 @@ impl From<tonic::Status> for FirestoreError {
             tonic::Code::AlreadyExists => {
                 FirestoreError::DataConflictError(FirestoreDataConflictError::new(
                     FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-                    format!("{}", status),
+                    format!("{status}"),
                 ))
             }
             tonic::Code::NotFound => {
                 FirestoreError::DataNotFoundError(FirestoreDataNotFoundError::new(
                     FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-                    format!("{}", status),
+                    format!("{status}"),
                 ))
             }
             tonic::Code::Aborted
@@ -181,14 +181,14 @@ impl From<tonic::Status> for FirestoreError {
             | tonic::Code::ResourceExhausted => {
                 FirestoreError::DatabaseError(FirestoreDatabaseError::new(
                     FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-                    format!("{}", status),
+                    format!("{status}"),
                     true,
                 ))
             }
             tonic::Code::Unknown => check_hyper_errors(status),
             _ => FirestoreError::DatabaseError(FirestoreDatabaseError::new(
                 FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-                format!("{}", status),
+                format!("{status}"),
                 false,
             )),
         }
@@ -201,31 +201,31 @@ fn check_hyper_errors(status: tonic::Status) -> FirestoreError {
             Some(err) if err.is_closed() => {
                 FirestoreError::DatabaseError(FirestoreDatabaseError::new(
                     FirestoreErrorPublicGenericDetails::new("CONNECTION_CLOSED".into()),
-                    format!("Hyper error: {}", err),
+                    format!("Hyper error: {err}"),
                     true,
                 ))
             }
             Some(err) if err.is_timeout() => {
                 FirestoreError::DatabaseError(FirestoreDatabaseError::new(
                     FirestoreErrorPublicGenericDetails::new("CONNECTION_TIMEOUT".into()),
-                    format!("Hyper error: {}", err),
+                    format!("Hyper error: {err}"),
                     true,
                 ))
             }
             Some(err) => FirestoreError::DatabaseError(FirestoreDatabaseError::new(
                 FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-                format!("Hyper error: {}", err),
+                format!("Hyper error: {err}"),
                 false,
             )),
             _ => FirestoreError::DatabaseError(FirestoreDatabaseError::new(
                 FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-                format!("{}", status),
+                format!("{status}"),
                 false,
             )),
         },
         _ => FirestoreError::DatabaseError(FirestoreDatabaseError::new(
             FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-            format!("{}", status),
+            format!("{status}"),
             false,
         )),
     }
@@ -272,8 +272,7 @@ impl std::error::Error for FirestoreSerializationError {}
 impl From<chrono::ParseError> for FirestoreError {
     fn from(parse_err: chrono::ParseError) -> Self {
         FirestoreError::DeserializeError(FirestoreSerializationError::from_message(format!(
-            "Parse error: {}",
-            parse_err
+            "Parse error: {parse_err}"
         )))
     }
 }
@@ -282,7 +281,7 @@ impl From<chrono::OutOfRangeError> for FirestoreError {
     fn from(out_of_range: chrono::OutOfRangeError) -> Self {
         FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
             FirestoreInvalidParametersPublicDetails::new(
-                format!("Out of range: {}", out_of_range),
+                format!("Out of range: {out_of_range}"),
                 "duration".to_string(),
             ),
         ))
@@ -295,7 +294,7 @@ impl From<tokio::sync::mpsc::error::SendError<gcloud_sdk::google::firestore::v1:
     fn from(send_error: tokio::sync::mpsc::error::SendError<WriteRequest>) -> Self {
         FirestoreError::NetworkError(FirestoreNetworkError::new(
             FirestoreErrorPublicGenericDetails::new("SEND_STREAM_ERROR".into()),
-            format!("Send stream error: {}", send_error),
+            format!("Send stream error: {send_error}"),
         ))
     }
 }
