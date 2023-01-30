@@ -2,7 +2,7 @@ use crate::db::safe_document_path;
 use crate::errors::*;
 use crate::timestamp_utils::to_timestamp;
 use crate::{FirestoreDb, FirestoreQueryParams, FirestoreResult};
-use async_trait::async_trait;
+pub use async_trait::async_trait;
 use chrono::prelude::*;
 use futures::stream::BoxStream;
 use futures::StreamExt;
