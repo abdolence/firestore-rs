@@ -43,10 +43,10 @@ impl FirestoreResumeStateStorage for TempFileTokenStorage {
         let token = std::fs::read_to_string(target_state_file_name)
             .ok()
             .map(|str| {
-                hex::decode(&str)
+                hex::decode(str)
                     .map(FirestoreListenerToken::new)
                     .map(FirestoreListenerTargetResumeType::Token)
-                    .map_err(|e| Box::new(e))
+                    .map_err(Box::new)
             })
             .transpose()?;
 
@@ -114,8 +114,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .start(|event| async move {
             match event {
                 FirestoreListenEvent::DocumentChange(ref doc_change) => {
-                    println!("Doc changed: {:?}", doc_change);
-
                     if let Some(doc) = &doc_change.document {
                         let obj: MyTestStructure =
                             FirestoreDb::deserialize_doc_to::<MyTestStructure>(doc)
@@ -124,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                 }
                 _ => {
-                    println!("Received a listen response event to handle: {:?}", event);
+                    println!("Received a listen response event to handle");
                 }
             }
 
