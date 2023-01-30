@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use chrono::prelude::*;
 use firestore::*;
 use serde::{Deserialize, Serialize};
