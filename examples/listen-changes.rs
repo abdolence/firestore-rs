@@ -115,14 +115,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             match event {
                 FirestoreListenEvent::DocumentChange(ref doc_change) => {
                     if let Some(doc) = &doc_change.document {
+                        println!("{doc_change:?}");
                         let obj: MyTestStructure =
                             FirestoreDb::deserialize_doc_to::<MyTestStructure>(doc)
                                 .expect("Deserialized object");
-                        println!("As object: {:?}", obj);
+                        println!("As object: {obj:?}");
                     }
                 }
                 _ => {
-                    println!("Received a listen response event to handle");
+                    println!("Received a listen response event to handle: {event:?}");
                 }
             }
 
