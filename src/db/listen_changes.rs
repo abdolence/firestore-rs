@@ -227,7 +227,7 @@ where
 
     pub async fn start<FN, F>(&mut self, cb: FN) -> FirestoreResult<()>
     where
-        FN: Fn(FirestoreListenEvent, &D) -> F + Send + Sync + 'static,
+        FN: Fn(FirestoreListenEvent, D) -> F + Send + Sync + 'static,
         F: Future<Output = BoxedErrResult<()>> + Send + 'static,
     {
         info!(
@@ -296,7 +296,7 @@ where
         cb: FN,
     ) where
         D: FirestoreListenSupport + Clone + Send + Sync,
-        FN: Fn(FirestoreListenEvent, &D) -> F + Send + Sync,
+        FN: Fn(FirestoreListenEvent, D) -> F + Send + Sync,
         F: Future<Output = BoxedErrResult<()>> + Send,
     {
         while !shutdown_flag.load(Ordering::Relaxed) {
@@ -342,7 +342,7 @@ where
 
                                             }
                                             Some(response_type) => {
-                                                if let Err(err) = cb(response_type, &db).await {
+                                                if let Err(err) = cb(response_type, db.clone()).await {
                                                     error!("Listener callback function error occurred {:?}.", err);
                                                     break;
                                                 }
