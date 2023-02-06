@@ -227,7 +227,7 @@ where
 
     pub async fn start<FN, F>(&mut self, cb: FN) -> FirestoreResult<()>
     where
-        FN: Fn(FirestoreListenEvent) -> F + Send + Sync + 'static,
+        FN: Fn(FirestoreListenEvent, D) -> F + Send + Sync + 'static,
         F: Future<Output = BoxedErrResult<()>> + Send + 'static,
     {
         info!(
@@ -296,7 +296,7 @@ where
         cb: FN,
     ) where
         D: FirestoreListenSupport + Clone + Send + Sync,
-        FN: Fn(FirestoreListenEvent) -> F + Send + Sync,
+        FN: Fn(FirestoreListenEvent, D) -> F + Send + Sync,
         F: Future<Output = BoxedErrResult<()>> + Send,
     {
         while !shutdown_flag.load(Ordering::Relaxed) {

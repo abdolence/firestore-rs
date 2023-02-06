@@ -111,7 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .add_target(TEST_TARGET_ID_BY_DOC_IDS, &mut listener)?;
 
     listener
-        .start(|event| async move {
+        .start(|event, _edb| async move {
             match event {
                 FirestoreListenEvent::DocumentChange(ref doc_change) => {
                     println!("Doc changed: {doc_change:?}");
