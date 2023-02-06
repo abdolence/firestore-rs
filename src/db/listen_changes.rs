@@ -228,7 +228,7 @@ where
     pub async fn start<FN, F>(&mut self, cb: FN) -> FirestoreResult<()>
     where
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync + 'static,
-        F: Future<Output = BoxedErrResult<()>> + Send + 'static,
+        F: Future<Output = BoxedErrResult<()>> + Send + Sync + 'static,
     {
         info!(
             "Starting a Firestore listener for targets: {:?}...",
@@ -297,7 +297,7 @@ where
     ) where
         D: FirestoreListenSupport + Clone + Send + Sync,
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync,
-        F: Future<Output = BoxedErrResult<()>> + Send,
+        F: Future<Output = BoxedErrResult<()>> + Send + Sync,
     {
         while !shutdown_flag.load(Ordering::Relaxed) {
             debug!("Start listening on targets {:?}... ", targets_state.len());
