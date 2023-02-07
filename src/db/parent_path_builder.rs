@@ -38,8 +38,8 @@ impl AsRef<str> for ParentPathBuilder {
     }
 }
 
-impl Into<String> for ParentPathBuilder {
-    fn into(self) -> String {
-        self.value
+impl From<ParentPathBuilder> for String {
+    fn from(pb: ParentPathBuilder) -> Self {
+        pb.value
     }
 }
