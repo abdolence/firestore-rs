@@ -37,3 +37,9 @@ impl AsRef<str> for ParentPathBuilder {
         self.value.as_str()
     }
 }
+
+impl From<ParentPathBuilder> for String {
+    fn from(pb: ParentPathBuilder) -> Self {
+        pb.value
+    }
+}
