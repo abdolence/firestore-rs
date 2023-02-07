@@ -227,6 +227,11 @@ impl serde::Serializer for FirestoreValueSerializer {
             crate::firestore_serde::latlng_serializers::FIRESTORE_LATLNG_TYPE_TAG_TYPE => {
                 crate::firestore_serde::latlng_serializers::serialize_latlng_for_firestore(value)
             }
+            crate::firestore_serde::reference_serializers::FIRESTORE_REFERENCE_TYPE_TAG_TYPE => {
+                crate::firestore_serde::reference_serializers::serialize_reference_for_firestore(
+                    value, false,
+                )
+            }
             _ => value.serialize(self),
         }
     }
