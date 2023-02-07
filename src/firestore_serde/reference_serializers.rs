@@ -6,7 +6,7 @@ use crate::FirestoreValue;
 
 pub(crate) const FIRESTORE_REFERENCE_TYPE_TAG_TYPE: &str = "FirestoreReference";
 
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct FirestoreReference(pub String);
 
 pub mod serialize_as_reference {

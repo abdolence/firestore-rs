@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),
-        some_ref: FirestoreReference(db.parent_path("test-latlng", "test-1")?.into()),
+        some_ref: db.parent_path("test-latlng", "test-1")?.into(),
     };
 
     db.fluent()
