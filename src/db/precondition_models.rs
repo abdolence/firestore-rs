@@ -3,9 +3,14 @@ use crate::timestamp_utils::to_timestamp;
 use chrono::prelude::*;
 use gcloud_sdk::google::firestore::v1::Precondition;
 
+/// A precondition on a document, used for conditional operations.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreWritePrecondition {
+    /// When set to `true`, the target document must exist.
+    /// When set to `false`, the target document must not exist.    
     Exists(bool),
+    /// When set, the target document must exist and have been last updated at
+    /// that time. Timestamp must be microsecond aligned.    
     UpdateTime(DateTime<Utc>),
 }
 
