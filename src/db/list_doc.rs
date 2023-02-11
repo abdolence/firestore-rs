@@ -235,7 +235,7 @@ impl FirestoreDb {
             let begin_utc: DateTime<Utc> = Utc::now();
 
             match self
-                .client
+                .client()
                 .get()
                 .list_documents(list_request)
                 .map_err(|e| e.into())
@@ -269,13 +269,13 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.options.max_retries =>
+                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
                             "[DB]: Listing failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
-                            self.options.max_retries
+                            self.inner.options.max_retries
                         );
                         self.list_doc_with_retries(params, retries + 1, span).await
                     }

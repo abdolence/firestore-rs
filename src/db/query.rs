@@ -102,7 +102,7 @@ impl FirestoreDb {
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
-                .client
+                .client()
                 .get()
                 .run_query(query_request)
                 .map_err(|e| e.into())
@@ -134,13 +134,13 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.options.max_retries =>
+                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
                             "[DB]: Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
-                            self.options.max_retries
+                            self.inner.options.max_retries
                         );
 
                         self.stream_query_doc_with_retries(params, retries + 1, span)
@@ -164,7 +164,7 @@ impl FirestoreDb {
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
-                .client
+                .client()
                 .get()
                 .run_query(query_request)
                 .map_err(|e| e.into())
@@ -198,13 +198,13 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.options.max_retries =>
+                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
                             "[DB]: Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
-                            self.options.max_retries
+                            self.inner.options.max_retries
                         );
                         self.query_doc_with_retries(params, retries + 1, span).await
                     }

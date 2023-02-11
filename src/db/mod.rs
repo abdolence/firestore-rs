@@ -69,16 +69,21 @@ use crate::errors::{
     FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
 };
 use std::fmt::Formatter;
+use std::sync::Arc;
 
 mod transform_models;
 pub use transform_models::*;
 
-#[derive(Clone)]
-pub struct FirestoreDb {
+struct FirestoreDbInner {
     database_path: String,
     doc_path: String,
     options: FirestoreDbOptions,
     client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
+}
+
+#[derive(Clone)]
+pub struct FirestoreDb {
+    inner: Arc<FirestoreDbInner>,
     session_params: FirestoreDbSessionParams,
 }
 
@@ -140,11 +145,15 @@ impl FirestoreDb {
         )
         .await?;
 
-        Ok(Self {
+        let inner = FirestoreDbInner {
             database_path: firestore_database_path,
             doc_path: firestore_database_doc_path,
             client,
             options,
+        };
+
+        Ok(Self {
+            inner: Arc::new(inner),
             session_params: FirestoreDbSessionParams::new(),
         })
     }
@@ -172,13 +181,13 @@ impl FirestoreDb {
     }
 
     #[inline]
-    pub const fn get_database_path(&self) -> &String {
-        &self.database_path
+    pub fn get_database_path(&self) -> &String {
+        &self.inner.database_path
     }
 
     #[inline]
-    pub const fn get_documents_path(&self) -> &String {
-        &self.doc_path
+    pub fn get_documents_path(&self) -> &String {
+        &self.inner.doc_path
     }
 
     #[inline]
@@ -191,25 +200,25 @@ impl FirestoreDb {
         S: AsRef<str>,
     {
         Ok(ParentPathBuilder::new(safe_document_path(
-            self.doc_path.as_str(),
+            self.inner.doc_path.as_str(),
             parent_collection_name,
             parent_document_id.as_ref(),
         )?))
     }
 
     #[inline]
-    pub const fn get_options(&self) -> &FirestoreDbOptions {
-        &self.options
+    pub fn get_options(&self) -> &FirestoreDbOptions {
+        &self.inner.options
     }
 
     #[inline]
-    pub const fn get_session_params(&self) -> &FirestoreDbSessionParams {
+    pub fn get_session_params(&self) -> &FirestoreDbSessionParams {
         &self.session_params
     }
 
     #[inline]
-    pub const fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
-        &self.client
+    pub fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
+        &self.inner.client
     }
 
     #[inline]
@@ -252,9 +261,9 @@ fn ensure_url_scheme(url: String) -> String {
 impl std::fmt::Debug for FirestoreDb {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FirestoreDb")
-            .field("options", &self.options)
-            .field("database_path", &self.database_path)
-            .field("doc_path", &self.doc_path)
+            .field("options", &self.inner.options)
+            .field("database_path", &self.inner.database_path)
+            .field("doc_path", &self.inner.doc_path)
             .field("session_params", &self.session_params)
             .finish()
     }

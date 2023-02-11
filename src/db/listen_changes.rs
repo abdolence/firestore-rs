@@ -70,7 +70,7 @@ impl FirestoreListenSupport for FirestoreDb {
             futures::stream::iter(listen_requests).chain(futures::stream::pending()),
         );
 
-        let response = self.client.get().listen(request).await?;
+        let response = self.client().get().listen(request).await?;
 
         Ok(response.into_inner().map_err(|e| e.into()).boxed())
     }
