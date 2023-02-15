@@ -37,6 +37,32 @@ To run example use it with environment variables:
 PROJECT_ID=<your-google-project-id> cargo run --example crud
 ```
 
+## Firestore database client instance lifecycle
+
+To create a new instance of Firestore client you need to provide at least a GCP project ID.
+The client is created using the `Firestore::new` method:
+```rust
+use firestore::*;
+
+// Create an instance
+let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+```
+
+It is not recommended creating a new client for each request, so it is recommended to create a client once and reuse it whenever possible. 
+Cloning instances is much cheaper than creating a new one.
+
+In case if it is needed you can also create a new client instance using preconfigured token source.
+
+For example:
+```rust
+FirestoreDb::with_options_token_source(
+        FirestoreDbOptions::new(config_env_var("PROJECT_ID")?.to_string()),
+        gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
+        gcloud_sdk::TokenSourceType::File("/tmp/key.json".into())
+    )
+    .await?;
+```
+
 ## Fluent API
 
 The library provides two APIs:
@@ -45,9 +71,6 @@ The library provides two APIs:
 
 ```rust
 use firestore::*;
-
-// Create an instance
-let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
 const TEST_COLLECTION_NAME: &'static str = "test";
 
@@ -58,7 +81,7 @@ let my_struct = MyTestStructure {
   some_num: 42,
 };
 
-// Create data
+// Create
 let object_returned: MyTestStructure = db.fluent()
   .insert()
   .into(TEST_COLLECTION_NAME)
@@ -67,7 +90,8 @@ let object_returned: MyTestStructure = db.fluent()
   .execute()
   .await?;
 
-// Update data
+// Update or Create 
+// (Firestore supports creating documents with update if you provide the document ID).
 let object_updated: MyTestStructure = db.fluent()
   .update()
   .fields(paths!(MyTestStructure::{some_num, one_more_string}))
