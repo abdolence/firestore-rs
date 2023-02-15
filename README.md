@@ -459,9 +459,9 @@ db.fluent()
   .await?;
 ```
 
-## Update preconditions
+## Update/delete preconditions
 
-The library supports the preconditions for the updates using:
+The library supports the preconditions:
 
 ```rust
   .precondition(FirestoreWritePrecondition::Exists(true))
