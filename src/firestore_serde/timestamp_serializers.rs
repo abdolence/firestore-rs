@@ -7,7 +7,7 @@ use crate::{
     FirestoreValue,
 };
 
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Default)]
 pub struct FirestoreTimestamp(pub DateTime<Utc>);
 
 impl From<DateTime<Utc>> for FirestoreTimestamp {
