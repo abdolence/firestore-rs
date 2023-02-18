@@ -8,13 +8,13 @@ use crate::FirestoreValue;
 
 pub(crate) const FIRESTORE_LATLNG_TYPE_TAG_TYPE: &str = "FirestoreLatLng";
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, PartialOrd, Default)]
 pub struct FirestoreGeoPoint {
     pub latitude: f64,
     pub longitude: f64,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, PartialOrd, Default)]
 pub struct FirestoreLatLng(pub FirestoreGeoPoint);
 
 pub fn serialize_latlng_for_firestore<T: ?Sized + Serialize>(
