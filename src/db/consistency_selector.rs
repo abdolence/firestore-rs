@@ -103,3 +103,18 @@ impl TryFrom<&FirestoreConsistencySelector>
         }
     }
 }
+
+impl TryFrom<&FirestoreConsistencySelector>
+    for gcloud_sdk::google::firestore::v1::list_collection_ids_request::ConsistencySelector
+{
+    type Error = FirestoreError;
+
+    fn try_from(selector: &FirestoreConsistencySelector) -> Result<Self, Self::Error> {
+        match selector {
+            FirestoreConsistencySelector::Transaction(_) => Err(FirestoreError::DatabaseError(
+                FirestoreDatabaseError::new(FirestoreErrorPublicGenericDetails::new("Unsupported consistency selector".into()),"Unsupported consistency selector".into(), false)
+            )),
+            FirestoreConsistencySelector::ReadTime(ts) => Ok(gcloud_sdk::google::firestore::v1::list_collection_ids_request::ConsistencySelector::ReadTime(to_timestamp(*ts)))
+        }
+    }
+}

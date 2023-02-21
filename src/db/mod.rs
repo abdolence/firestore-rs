@@ -23,8 +23,8 @@ pub use query::*;
 mod aggregated_query;
 pub use aggregated_query::*;
 
-mod list_doc;
-pub use list_doc::*;
+mod list;
+pub use list::*;
 
 mod listen_changes;
 pub use listen_changes::*;
