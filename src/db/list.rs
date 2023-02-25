@@ -297,7 +297,7 @@ impl FirestoreListingSupport for FirestoreDb {
 impl FirestoreDb {
     fn create_list_doc_request(
         &self,
-        params: &FirestoreListDocParams,
+        params: FirestoreListDocParams,
     ) -> FirestoreResult<tonic::Request<ListDocumentsRequest>> {
         Ok(tonic::Request::new(ListDocumentsRequest {
             parent: params
@@ -305,15 +305,14 @@ impl FirestoreDb {
                 .as_ref()
                 .unwrap_or_else(|| self.get_documents_path())
                 .clone(),
-            collection_id: params.collection_id.clone(),
+            collection_id: params.collection_id,
             page_size: params.page_size as i32,
-            page_token: params.page_token.clone().unwrap_or_default(),
+            page_token: params.page_token.unwrap_or_default(),
             order_by: params
                 .order_by
-                .as_ref()
                 .map(|fields| {
                     fields
-                        .iter()
+                        .into_iter()
                         .map(|field| field.to_string_format())
                         .collect::<Vec<String>>()
                         .join(", ")
@@ -321,10 +320,7 @@ impl FirestoreDb {
                 .unwrap_or_else(|| "".to_string()),
             mask: params
                 .return_only_fields
-                .as_ref()
-                .map(|masks| DocumentMask {
-                    field_paths: masks.clone(),
-                }),
+                .map(|masks| DocumentMask { field_paths: masks }),
             consistency_selector: self
                 .session_params
                 .consistency_selector
@@ -342,7 +338,7 @@ impl FirestoreDb {
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<FirestoreListDocResult>> {
         async move {
-            let list_request = self.create_list_doc_request(&params)?;
+            let list_request = self.create_list_doc_request(params.clone())?;
             let begin_utc: DateTime<Utc> = Utc::now();
 
             match self
