@@ -60,8 +60,7 @@ impl FirestoreQueryParams {
             offset: self.offset.map(|x| x as i32).unwrap_or(0),
             order_by: self
                 .order_by
-                .as_ref()
-                .map(|po| po.iter().map(|fo| fo.to_structured_query_order()).collect())
+                .map(|po| po.into_iter().map(|fo| fo.into()).collect())
                 .unwrap_or_else(Vec::new),
             from: match self.collection_id {
                 FirestoreQueryCollection::Single(ref collection_id) => {
@@ -269,20 +268,6 @@ pub struct FirestoreQueryOrder {
 }
 
 impl FirestoreQueryOrder {
-    pub fn to_structured_query_order(&self) -> structured_query::Order {
-        structured_query::Order {
-            field: Some(structured_query::FieldReference {
-                field_path: self.field_name.clone(),
-            }),
-            direction: (match self.direction {
-                FirestoreQueryDirection::Ascending => structured_query::Direction::Ascending.into(),
-                FirestoreQueryDirection::Descending => {
-                    structured_query::Direction::Descending.into()
-                }
-            }),
-        }
-    }
-
     pub fn to_string_format(&self) -> String {
         format!("{} {}", self.field_name, self.direction.to_string())
     }
@@ -297,9 +282,19 @@ where
     }
 }
 
-impl From<&FirestoreQueryOrder> for structured_query::Order {
-    fn from(order: &FirestoreQueryOrder) -> Self {
-        order.to_structured_query_order()
+impl From<FirestoreQueryOrder> for structured_query::Order {
+    fn from(order: FirestoreQueryOrder) -> Self {
+        structured_query::Order {
+            field: Some(structured_query::FieldReference {
+                field_path: order.field_name,
+            }),
+            direction: (match order.direction {
+                FirestoreQueryDirection::Ascending => structured_query::Direction::Ascending.into(),
+                FirestoreQueryDirection::Descending => {
+                    structured_query::Direction::Descending.into()
+                }
+            }),
+        }
     }
 }
 
