@@ -275,7 +275,7 @@ pub(crate) fn safe_document_path<S>(
     document_id: S,
 ) -> FirestoreResult<String>
 where
-    S: AsRef<str> + Send,
+    S: AsRef<str>,
 {
     // All restrictions described here: https://firebase.google.com/docs/firestore/quotas#collections_documents_and_fields
     // Here we check only the most dangerous one for `/` to avoid document_id injections, leaving other validation to the server side.
