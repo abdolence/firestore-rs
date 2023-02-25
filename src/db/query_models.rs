@@ -39,41 +39,41 @@ pub struct FirestoreQueryParams {
     pub end_at: Option<FirestoreQueryCursor>,
 }
 
-impl FirestoreQueryParams {
-    pub fn to_structured_query(self) -> StructuredQuery {
-        let query_filter = self.filter.map(|f| f.into());
+impl From<FirestoreQueryParams> for StructuredQuery {
+    fn from(params: FirestoreQueryParams) -> Self {
+        let query_filter = params.filter.map(|f| f.into());
 
         StructuredQuery {
-            select: self.return_only_fields.as_ref().map(|select_only_fields| {
+            select: params.return_only_fields.map(|select_only_fields| {
                 structured_query::Projection {
                     fields: select_only_fields
-                        .iter()
+                        .into_iter()
                         .map(|field_name| structured_query::FieldReference {
-                            field_path: field_name.clone(),
+                            field_path: field_name,
                         })
                         .collect(),
                 }
             }),
-            start_at: self.start_at.as_ref().map(|start_at| start_at.into()),
-            end_at: self.end_at.as_ref().map(|end_at| end_at.into()),
-            limit: self.limit.map(|x| x as i32),
-            offset: self.offset.map(|x| x as i32).unwrap_or(0),
-            order_by: self
+            start_at: params.start_at.map(|start_at| start_at.into()),
+            end_at: params.end_at.map(|end_at| end_at.into()),
+            limit: params.limit.map(|x| x as i32),
+            offset: params.offset.map(|x| x as i32).unwrap_or(0),
+            order_by: params
                 .order_by
                 .map(|po| po.into_iter().map(|fo| fo.into()).collect())
                 .unwrap_or_else(Vec::new),
-            from: match self.collection_id {
-                FirestoreQueryCollection::Single(ref collection_id) => {
+            from: match params.collection_id {
+                FirestoreQueryCollection::Single(collection_id) => {
                     vec![structured_query::CollectionSelector {
-                        collection_id: collection_id.clone(),
-                        all_descendants: self.all_descendants.unwrap_or(false),
+                        collection_id,
+                        all_descendants: params.all_descendants.unwrap_or(false),
                     }]
                 }
-                FirestoreQueryCollection::Group(ref collection_ids) => collection_ids
-                    .iter()
+                FirestoreQueryCollection::Group(collection_ids) => collection_ids
+                    .into_iter()
                     .map(|collection_id| structured_query::CollectionSelector {
-                        collection_id: collection_id.clone(),
-                        all_descendants: self.all_descendants.unwrap_or(false),
+                        collection_id,
+                        all_descendants: params.all_descendants.unwrap_or(false),
                     })
                     .collect(),
             },
@@ -255,12 +255,6 @@ impl From<FirestoreQueryFilter> for structured_query::Filter {
     }
 }
 
-impl From<FirestoreQueryParams> for StructuredQuery {
-    fn from(params: FirestoreQueryParams) -> Self {
-        params.to_structured_query()
-    }
-}
-
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreQueryOrder {
     pub field_name: String,
@@ -346,17 +340,17 @@ pub enum FirestoreQueryCursor {
     AfterValue(Vec<FirestoreValue>),
 }
 
-impl From<&FirestoreQueryCursor> for gcloud_sdk::google::firestore::v1::Cursor {
-    fn from(cursor: &FirestoreQueryCursor) -> Self {
+impl From<FirestoreQueryCursor> for gcloud_sdk::google::firestore::v1::Cursor {
+    fn from(cursor: FirestoreQueryCursor) -> Self {
         match cursor {
             FirestoreQueryCursor::BeforeValue(values) => {
                 gcloud_sdk::google::firestore::v1::Cursor {
-                    values: values.iter().map(|value| value.value.clone()).collect(),
+                    values: values.into_iter().map(|value| value.value).collect(),
                     before: true,
                 }
             }
             FirestoreQueryCursor::AfterValue(values) => gcloud_sdk::google::firestore::v1::Cursor {
-                values: values.iter().map(|value| value.value.clone()).collect(),
+                values: values.into_iter().map(|value| value.value).collect(),
                 before: false,
             },
         }

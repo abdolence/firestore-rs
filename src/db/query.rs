@@ -362,7 +362,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                                 consistency_selector: maybe_consistency_selector.clone(),
                                 query_type: Some(
                                     partition_query_request::QueryType::StructuredQuery(
-                                        params.query_params.clone().to_structured_query(),
+                                        params.query_params.clone().into(),
                                     ),
                                 ),
                                 page_token: params.page_token.clone().unwrap_or_default(),
