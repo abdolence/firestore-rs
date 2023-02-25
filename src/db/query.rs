@@ -73,7 +73,7 @@ pub trait FirestoreQuerySupport {
 impl FirestoreDb {
     fn create_query_request(
         &self,
-        params: &FirestoreQueryParams,
+        params: FirestoreQueryParams,
     ) -> FirestoreResult<tonic::Request<RunQueryRequest>> {
         Ok(tonic::Request::new(RunQueryRequest {
             parent: params
@@ -98,7 +98,7 @@ impl FirestoreDb {
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
         async move {
-            let query_request = self.create_query_request(&params)?;
+            let query_request = self.create_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
@@ -160,7 +160,8 @@ impl FirestoreDb {
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<Vec<Document>>> {
         async move {
-            let query_request = self.create_query_request(&params)?;
+            let collection_id = params.collection_id.to_string();
+            let query_request = self.create_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
@@ -189,7 +190,7 @@ impl FirestoreDb {
                     span.in_scope(|| {
                         debug!(
                             "[DB]: Querying documents in {:?} took {}ms",
-                            params.collection_id,
+                            collection_id,
                             query_duration.num_milliseconds()
                         );
                     });
@@ -361,7 +362,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                                 consistency_selector: maybe_consistency_selector.clone(),
                                 query_type: Some(
                                     partition_query_request::QueryType::StructuredQuery(
-                                        params.query_params.to_structured_query(),
+                                        params.query_params.clone().to_structured_query(),
                                     ),
                                 ),
                                 page_token: params.page_token.clone().unwrap_or_default(),

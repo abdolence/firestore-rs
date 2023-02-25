@@ -233,7 +233,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
 impl FirestoreDb {
     fn create_aggregated_query_request(
         &self,
-        params: &FirestoreAggregatedQueryParams,
+        params: FirestoreAggregatedQueryParams,
     ) -> FirestoreResult<tonic::Request<RunAggregationQueryRequest>> {
         Ok(tonic::Request::new(RunAggregationQueryRequest {
             parent: params
@@ -264,7 +264,7 @@ impl FirestoreDb {
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
         async move {
-            let query_request = self.create_aggregated_query_request(&params)?;
+            let query_request = self.create_aggregated_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
@@ -326,7 +326,7 @@ impl FirestoreDb {
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<Vec<Document>>> {
         async move {
-            let query_request = self.create_aggregated_query_request(&params)?;
+            let query_request = self.create_aggregated_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self

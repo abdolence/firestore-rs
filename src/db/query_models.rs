@@ -40,8 +40,8 @@ pub struct FirestoreQueryParams {
 }
 
 impl FirestoreQueryParams {
-    pub fn to_structured_query(&self) -> StructuredQuery {
-        let query_filter = self.filter.as_ref().map(|f| f.to_structured_query_filter());
+    pub fn to_structured_query(self) -> StructuredQuery {
+        let query_filter = self.filter.map(|f| f.into());
 
         StructuredQuery {
             select: self.return_only_fields.as_ref().map(|select_only_fields| {
@@ -90,99 +90,99 @@ pub enum FirestoreQueryFilter {
     Compare(Option<FirestoreQueryFilterCompare>),
 }
 
-impl FirestoreQueryFilter {
-    fn to_structured_query_filter(&self) -> structured_query::Filter {
-        let filter_type = match self {
-            FirestoreQueryFilter::Compare(comp) => comp.as_ref().map(|cmp| {
+impl From<FirestoreQueryFilter> for structured_query::Filter {
+    fn from(filter: FirestoreQueryFilter) -> Self {
+        let filter_type = match filter {
+            FirestoreQueryFilter::Compare(comp) => comp.map(|cmp| {
                 structured_query::filter::FilterType::FieldFilter(match cmp {
                     FirestoreQueryFilterCompare::Equal(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::Equal.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                     FirestoreQueryFilterCompare::NotEqual(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::NotEqual.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                     FirestoreQueryFilterCompare::In(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::In.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                     FirestoreQueryFilterCompare::NotIn(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::NotIn.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                     FirestoreQueryFilterCompare::ArrayContains(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::ArrayContains.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                     FirestoreQueryFilterCompare::ArrayContainsAny(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::ArrayContainsAny.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                     FirestoreQueryFilterCompare::LessThan(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::LessThan.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                     FirestoreQueryFilterCompare::LessThanOrEqual(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::LessThanOrEqual.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                     FirestoreQueryFilterCompare::GreaterThan(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::GreaterThan.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                     FirestoreQueryFilterCompare::GreaterThanOrEqual(field_name, fvalue) => {
                         structured_query::FieldFilter {
                             field: Some(structured_query::FieldReference {
-                                field_path: field_name.clone(),
+                                field_path: field_name,
                             }),
                             op: structured_query::field_filter::Operator::GreaterThanOrEqual.into(),
-                            value: Some(fvalue.value.clone()),
+                            value: Some(fvalue.value),
                         }
                     }
                 })
@@ -193,8 +193,8 @@ impl FirestoreQueryFilter {
                         op: structured_query::composite_filter::Operator::And.into(),
                         filters: composite
                             .for_all_filters
-                            .iter()
-                            .map(|filter| filter.to_structured_query_filter())
+                            .into_iter()
+                            .map(structured_query::Filter::from)
                             .filter(|filter| filter.filter_type.is_some())
                             .collect(),
                     },
@@ -207,7 +207,7 @@ impl FirestoreQueryFilter {
                             op: structured_query::unary_filter::Operator::IsNan.into(),
                             operand_type: Some(structured_query::unary_filter::OperandType::Field(
                                 structured_query::FieldReference {
-                                    field_path: field_name.clone(),
+                                    field_path: field_name,
                                 },
                             )),
                         },
@@ -219,7 +219,7 @@ impl FirestoreQueryFilter {
                             op: structured_query::unary_filter::Operator::IsNull.into(),
                             operand_type: Some(structured_query::unary_filter::OperandType::Field(
                                 structured_query::FieldReference {
-                                    field_path: field_name.clone(),
+                                    field_path: field_name,
                                 },
                             )),
                         },
@@ -231,7 +231,7 @@ impl FirestoreQueryFilter {
                             op: structured_query::unary_filter::Operator::IsNotNan.into(),
                             operand_type: Some(structured_query::unary_filter::OperandType::Field(
                                 structured_query::FieldReference {
-                                    field_path: field_name.clone(),
+                                    field_path: field_name,
                                 },
                             )),
                         },
@@ -243,7 +243,7 @@ impl FirestoreQueryFilter {
                             op: structured_query::unary_filter::Operator::IsNotNull.into(),
                             operand_type: Some(structured_query::unary_filter::OperandType::Field(
                                 structured_query::FieldReference {
-                                    field_path: field_name.clone(),
+                                    field_path: field_name,
                                 },
                             )),
                         },
@@ -256,8 +256,8 @@ impl FirestoreQueryFilter {
     }
 }
 
-impl From<&FirestoreQueryParams> for StructuredQuery {
-    fn from(params: &FirestoreQueryParams) -> Self {
+impl From<FirestoreQueryParams> for StructuredQuery {
+    fn from(params: FirestoreQueryParams) -> Self {
         params.to_structured_query()
     }
 }
