@@ -310,7 +310,7 @@ where
             loop {
                 tokio::select! {
                         _ = shutdown_receiver.recv() => {
-                            println!("Exiting from listener...");
+                            debug!("Exiting from listener...");
                             shutdown_receiver.close();
                             break;
                         }
