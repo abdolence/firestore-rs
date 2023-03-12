@@ -1,7 +1,7 @@
 use crate::db::safe_document_path;
 use crate::errors::*;
 use crate::timestamp_utils::to_timestamp;
-use crate::{FirestoreDb, FirestoreQueryParams, FirestoreResult};
+use crate::{FirestoreDb, FirestoreQueryParams, FirestoreResult, FirestoreResumeStateStorage};
 pub use async_trait::async_trait;
 use chrono::prelude::*;
 use futures::stream::BoxStream;
@@ -131,8 +131,6 @@ impl TryFrom<i32> for FirestoreListenerTarget {
 #[derive(Clone, Debug, ValueStruct)]
 pub struct FirestoreListenerToken(Vec<u8>);
 
-type BoxedErrResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
 impl FirestoreDb {
     pub async fn create_listener<S>(
         &self,
@@ -213,20 +211,6 @@ impl FirestoreDb {
     }
 }
 
-#[async_trait]
-pub trait FirestoreResumeStateStorage {
-    async fn read_resume_state(
-        &self,
-        target: &FirestoreListenerTarget,
-    ) -> BoxedErrResult<Option<FirestoreListenerTargetResumeType>>;
-
-    async fn update_resume_token(
-        &self,
-        target: &FirestoreListenerTarget,
-        token: FirestoreListenerToken,
-    ) -> BoxedErrResult<()>;
-}
-
 pub type FirestoreListenEvent = listen_response::ResponseType;
 
 #[derive(Debug, Clone, Builder)]
@@ -277,7 +261,7 @@ where
     pub async fn start<FN, F>(&mut self, cb: FN) -> FirestoreResult<()>
     where
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync + 'static,
-        F: Future<Output = BoxedErrResult<()>> + Send + 'static,
+        F: Future<Output = AnyBoxedErrResult<()>> + Send + 'static,
     {
         info!(
             "Starting a Firestore listener for targets: {:?}...",
@@ -346,7 +330,7 @@ where
     ) where
         D: FirestoreListenSupport + Clone + Send + Sync,
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync,
-        F: Future<Output = BoxedErrResult<()>> + Send,
+        F: Future<Output = AnyBoxedErrResult<()>> + Send,
     {
         let effective_delay = listener_params
             .retry_delay

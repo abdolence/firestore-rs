@@ -377,7 +377,9 @@ listening the events from Firestore on a separate thread:
 
 ```rust
 
-let mut listener = db.create_listener(TempFileTokenStorage).await?;
+let mut listener = db.create_listener(
+    FirestoreTempFilesListenStateStorage::new() // or FirestoreMemListenStateStorage or your own implementation 
+).await?;
 
 // Adding query listener
 db.fluent()
