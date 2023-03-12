@@ -77,7 +77,56 @@ impl FirestoreListenSupport for FirestoreDb {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, ValueStruct)]
-pub struct FirestoreListenerTarget(i32);
+pub struct FirestoreListenerTarget(u32);
+
+impl TryInto<i32> for FirestoreListenerTarget {
+    type Error = FirestoreError;
+
+    fn try_into(self) -> FirestoreResult<i32> {
+        (*self.value())
+            .try_into()
+            .map_err(|e| {
+                FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+                    FirestoreInvalidParametersPublicDetails::new(
+                        format!("Invalid target ID: {} {}", self.value(), e),
+                        "target_id".to_string(),
+                    ),
+                ))
+            })
+            .and_then(|v| {
+                if v == 0 {
+                    Err(FirestoreError::InvalidParametersError(
+                        FirestoreInvalidParametersError::new(
+                            FirestoreInvalidParametersPublicDetails::new(
+                                format!("Target ID cannout be zero: {}", self.value()),
+                                "target_id".to_string(),
+                            ),
+                        ),
+                    ))
+                } else {
+                    Ok(v)
+                }
+            })
+    }
+}
+
+impl TryFrom<i32> for FirestoreListenerTarget {
+    type Error = FirestoreError;
+
+    fn try_from(value: i32) -> FirestoreResult<Self> {
+        value
+            .try_into()
+            .map_err(|e| {
+                FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+                    FirestoreInvalidParametersPublicDetails::new(
+                        format!("Invalid target ID: {} {}", value, e),
+                        "target_id".to_string(),
+                    ),
+                ))
+            })
+            .map(FirestoreListenerTarget)
+    }
+}
 
 #[derive(Clone, Debug, ValueStruct)]
 pub struct FirestoreListenerToken(Vec<u8>);
@@ -115,7 +164,7 @@ impl FirestoreDb {
             database: self.get_database_path().to_string(),
             labels: target_params.labels,
             target_change: Some(listen_request::TargetChange::AddTarget(Target {
-                target_id: *target_params.target.value(),
+                target_id: target_params.target.try_into()?,
                 once: target_params.add_target_once.unwrap_or(false),
                 target_type: Some(match target_params.target_type {
                     FirestoreTargetType::Query(query_params) => {
@@ -299,18 +348,26 @@ where
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync,
         F: Future<Output = BoxedErrResult<()>> + Send,
     {
+        let effective_delay = listener_params
+            .retry_delay
+            .unwrap_or_else(|| std::time::Duration::from_secs(5));
+
         while !shutdown_flag.load(Ordering::Relaxed) {
-            debug!("Start listening on targets {:?}... ", targets_state.len());
+            debug!("Start listening on {} targets ... ", targets_state.len());
 
-            let mut listen_stream = db
-                .listen_doc_changes(targets_state.values().into_iter().cloned().collect())
+            match db
+                .listen_doc_changes(targets_state.values().cloned().collect())
                 .await
-                .unwrap();
-
-            loop {
-                tokio::select! {
+            {
+                Err(err) => {
+                    if Self::check_listener_if_permanent_error(err, effective_delay).await {
+                        shutdown_flag.store(true, Ordering::Relaxed);
+                    }
+                }
+                Ok(mut listen_stream) => loop {
+                    tokio::select! {
                         _ = shutdown_receiver.recv() => {
-                            debug!("Exiting from listener...");
+                            debug!("Exiting from listener on {} targets...", targets_state.len());
                             shutdown_receiver.close();
                             break;
                         }
@@ -327,15 +384,23 @@ where
                                                 if !target_change.resume_token.is_empty() =>
                                             {
                                                 for target_id_num in &target_change.target_ids {
-                                                    if let Some(mut target) = targets_state.get_mut(&FirestoreListenerTarget::new(*target_id_num)) {
-                                                        let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
+                                                    match FirestoreListenerTarget::try_from(*target_id_num) {
+                                                        Ok(target_id) => {
+                                                            if let Some(mut target) = targets_state.get_mut(&target_id) {
+                                                                let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
 
-                                                        if let Err(err) = storage.update_resume_token(&target.target, new_token.clone()).await {
-                                                            error!("Listener token storage error occurred {:?}.", err);
+                                                                if let Err(err) = storage.update_resume_token(&target.target, new_token.clone()).await {
+                                                                    error!("Listener token storage error occurred {:?}.", err);
+                                                                    break;
+                                                                }
+                                                                else {
+                                                                    target.resume_type = Some(FirestoreListenerTargetResumeType::Token(new_token))
+                                                                }
+                                                            }
+                                                        },
+                                                        Err(err) => {
+                                                            error!("Listener system error - unexpected target ID: {} {:?}.", target_id_num, err);
                                                             break;
-                                                        }
-                                                        else {
-                                                            target.resume_type = Some(FirestoreListenerTargetResumeType::Token(new_token))
                                                         }
                                                     }
                                                 }
@@ -352,15 +417,46 @@ where
                                     }
                                     Ok(None) => break,
                                     Err(err) => {
-                                        let effective_delay = listener_params.retry_delay.unwrap_or_else(|| std::time::Duration::from_secs(5));
-                                        debug!("Listen error occurred {:?}. Restarting in {:?}...", err, effective_delay);
-                                        tokio::time::sleep(effective_delay).await;
+                                        if Self::check_listener_if_permanent_error(err, effective_delay).await {
+                                            shutdown_flag.store(true, Ordering::Relaxed);
+                                        }
                                         break;
                                     }
                                 }
                             }
+                        }
                     }
-                }
+                },
+            }
+        }
+    }
+
+    async fn check_listener_if_permanent_error(
+        err: FirestoreError,
+        delay: std::time::Duration,
+    ) -> bool {
+        match err {
+            FirestoreError::DatabaseError(ref db_err)
+                if db_err.details.contains("unexpected end of file") =>
+            {
+                debug!("Listen EOF ({:?}). Restarting in {:?}...", err, delay);
+                tokio::time::sleep(delay).await;
+                false
+            }
+            FirestoreError::DatabaseError(ref db_err)
+                if db_err.public.code.contains("InvalidArgument") =>
+            {
+                error!("Listen error {:?}. Exiting...", err);
+                true
+            }
+            FirestoreError::InvalidParametersError(_) => {
+                error!("Listen error {:?}. Exiting...", err);
+                true
+            }
+            _ => {
+                error!("Listen error {:?}. Restarting in {:?}...", err, delay);
+                tokio::time::sleep(delay).await;
+                false
             }
         }
     }
