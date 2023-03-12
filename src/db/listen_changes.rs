@@ -28,6 +28,13 @@ pub struct FirestoreListenerTargetParams {
     pub labels: HashMap<String, String>,
 }
 
+impl FirestoreListenerTargetParams {
+    pub fn validate(&self) -> FirestoreResult<()> {
+        self.target.validate()?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Builder)]
 pub struct FirestoreCollectionDocuments {
     pub parent: Option<String>,
@@ -79,34 +86,45 @@ impl FirestoreListenSupport for FirestoreDb {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, ValueStruct)]
 pub struct FirestoreListenerTarget(u32);
 
+impl FirestoreListenerTarget {
+    pub fn validate(&self) -> FirestoreResult<()> {
+        if *self.value() == 0 {
+            Err(FirestoreError::InvalidParametersError(
+                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
+                    "target_id".to_string(),
+                    "Listener target ID cannot be zero".to_string(),
+                )),
+            ))
+        } else if *self.value() > i32::MAX as u32 {
+            Err(FirestoreError::InvalidParametersError(
+                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
+                    "target_id".to_string(),
+                    format!(
+                        "Listener target ID cannot be more than: {}. {} is specified",
+                        i32::MAX,
+                        self.value()
+                    ),
+                )),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl TryInto<i32> for FirestoreListenerTarget {
     type Error = FirestoreError;
 
     fn try_into(self) -> FirestoreResult<i32> {
-        (*self.value())
-            .try_into()
-            .map_err(|e| {
-                FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
-                    FirestoreInvalidParametersPublicDetails::new(
-                        "target_id".to_string(),
-                        format!("Invalid target ID: {} {}", self.value(), e),
-                    ),
-                ))
-            })
-            .and_then(|v| {
-                if v == 0 {
-                    Err(FirestoreError::InvalidParametersError(
-                        FirestoreInvalidParametersError::new(
-                            FirestoreInvalidParametersPublicDetails::new(
-                                "target_id".to_string(),
-                                format!("Target ID cannot be zero: {}", self.value()),
-                            ),
-                        ),
-                    ))
-                } else {
-                    Ok(v)
-                }
-            })
+        self.validate()?;
+        (*self.value()).try_into().map_err(|e| {
+            FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+                FirestoreInvalidParametersPublicDetails::new(
+                    "target_id".to_string(),
+                    format!("Invalid target ID: {} {}", self.value(), e),
+                ),
+            ))
+        })
     }
 }
 
@@ -253,8 +271,12 @@ where
         })
     }
 
-    pub fn add_target(&mut self, target: FirestoreListenerTargetParams) -> FirestoreResult<()> {
-        self.targets.push(target);
+    pub fn add_target(
+        &mut self,
+        target_params: FirestoreListenerTargetParams,
+    ) -> FirestoreResult<()> {
+        target_params.validate()?;
+        self.targets.push(target_params);
         Ok(())
     }
 
