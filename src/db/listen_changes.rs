@@ -88,8 +88,8 @@ impl TryInto<i32> for FirestoreListenerTarget {
             .map_err(|e| {
                 FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
                     FirestoreInvalidParametersPublicDetails::new(
-                        format!("Invalid target ID: {} {}", self.value(), e),
                         "target_id".to_string(),
+                        format!("Invalid target ID: {} {}", self.value(), e),
                     ),
                 ))
             })
@@ -98,8 +98,8 @@ impl TryInto<i32> for FirestoreListenerTarget {
                     Err(FirestoreError::InvalidParametersError(
                         FirestoreInvalidParametersError::new(
                             FirestoreInvalidParametersPublicDetails::new(
-                                format!("Target ID cannout be zero: {}", self.value()),
                                 "target_id".to_string(),
+                                format!("Target ID cannot be zero: {}", self.value()),
                             ),
                         ),
                     ))
@@ -119,8 +119,8 @@ impl TryFrom<i32> for FirestoreListenerTarget {
             .map_err(|e| {
                 FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
                     FirestoreInvalidParametersPublicDetails::new(
-                        format!("Invalid target ID: {} {}", value, e),
                         "target_id".to_string(),
+                        format!("Invalid target ID: {} {}", value, e),
                     ),
                 ))
             })
