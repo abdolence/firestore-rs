@@ -458,7 +458,7 @@ impl FirestoreQuerySupport for FirestoreDb {
             let mut cursors_pairs: Vec<Option<FirestoreQueryCursor>> =
                 Vec::with_capacity(cursors.len() + 2);
             cursors_pairs.push(None);
-            cursors_pairs.extend(cursors.drain(..).into_iter().map(Some));
+            cursors_pairs.extend(cursors.drain(..).map(Some));
             cursors_pairs.push(None);
 
             let (tx, rx) =

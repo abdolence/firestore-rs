@@ -26,8 +26,8 @@ const TEST_COLLECTION_NAME: &str = "test-listen";
 const RESUME_TOKEN_FILENAME: &str = "last-read-token";
 
 // The IDs of targets - must be different for different listener targets/listeners in case you have many instances
-const TEST_TARGET_ID_BY_QUERY: FirestoreListenerTarget = FirestoreListenerTarget::new(-42_i32);
-const TEST_TARGET_ID_BY_DOC_IDS: FirestoreListenerTarget = FirestoreListenerTarget::new(17_i32);
+const TEST_TARGET_ID_BY_QUERY: FirestoreListenerTarget = FirestoreListenerTarget::new(42_u32);
+const TEST_TARGET_ID_BY_DOC_IDS: FirestoreListenerTarget = FirestoreListenerTarget::new(17_u32);
 
 #[derive(Clone)]
 pub struct TempFileTokenStorage;
