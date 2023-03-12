@@ -29,8 +29,8 @@ pub use list::*;
 mod listen_changes;
 pub use listen_changes::*;
 
-mod listen_changes_state_management;
-pub use listen_changes_state_management::*;
+mod listen_changes_state_storage;
+pub use listen_changes_state_storage::*;
 
 use crate::FirestoreResult;
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
