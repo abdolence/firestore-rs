@@ -300,7 +300,7 @@ where
         F: Future<Output = BoxedErrResult<()>> + Send,
     {
         while !shutdown_flag.load(Ordering::Relaxed) {
-            debug!("Start listening on targets {:?}... ", targets_state.len());
+            debug!("Start listening on {} targets ... ", targets_state.len());
 
             let mut listen_stream = db
                 .listen_doc_changes(targets_state.values().into_iter().cloned().collect())
@@ -310,7 +310,7 @@ where
             loop {
                 tokio::select! {
                         _ = shutdown_receiver.recv() => {
-                            debug!("Exiting from listener...");
+                            debug!("Exiting from listener on {} targets...", targets_state.len());
                             shutdown_receiver.close();
                             break;
                         }
@@ -353,7 +353,19 @@ where
                                     Ok(None) => break,
                                     Err(err) => {
                                         let effective_delay = listener_params.retry_delay.unwrap_or_else(|| std::time::Duration::from_secs(5));
-                                        debug!("Listen error occurred {:?}. Restarting in {:?}...", err, effective_delay);
+                                        match err {
+                                            FirestoreError::DatabaseError(ref db_err)  if db_err.details.contains("unexpected end of file") => {
+                                                debug!("Listen EOF ({:?}). Restarting in {:?}...", err, effective_delay);
+                                            }
+                                            FirestoreError::DatabaseError(ref db_err) if db_err.public.code.contains("InvalidArgument") => {
+                                                error!("Listen error {:?}. Exiting...", err);
+                                                shutdown_flag.store(true, Ordering::Relaxed);
+                                                break;
+                                            }
+                                            _ => {
+                                                error!("Listen error {:?}. Restarting in {:?}...", err, effective_delay);
+                                            }
+                                        }
                                         tokio::time::sleep(effective_delay).await;
                                         break;
                                     }
