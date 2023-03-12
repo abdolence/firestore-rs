@@ -375,6 +375,12 @@ db.fluent()
 To help to work with asynchronous event listener the library supports high level API for
 listening the events from Firestore on a separate thread:
 
+The listener implementation needs to be provided with a storage for the last received token for specified targets to be able to resume listening the changes from the last handled token and to avoid receiving all previous changes.
+
+The library provides basic implementations for storing the tokens but you can implement your own more sophisticated storage if needed:
+- `FirestoreTempFilesListenStateStorage` - as temporary files on local FS;
+- `FirestoreMemListenStateStorage` - in memory storage backed by HashMap;
+
 ```rust
 
 let mut listener = db.create_listener(
