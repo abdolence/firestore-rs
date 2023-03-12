@@ -378,8 +378,8 @@ listening the events from Firestore on a separate thread:
 The listener implementation needs to be provided with a storage for the last received token for specified targets to be able to resume listening the changes from the last handled token and to avoid receiving all previous changes.
 
 The library provides basic implementations for storing the tokens but you can implement your own more sophisticated storage if needed:
-- `FirestoreTempFilesListenStateStorage` - as temporary files on local FS;
-- `FirestoreMemListenStateStorage` - in memory storage backed by HashMap;
+- `FirestoreTempFilesListenStateStorage` - resume tokens stored as temporary files on local FS;
+- `FirestoreMemListenStateStorage` - in memory storage backed by HashMap (with this implementation if you restart your app, you will receive all notifications again);
 
 ```rust
 
