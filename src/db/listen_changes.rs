@@ -443,7 +443,8 @@ where
     ) -> bool {
         match err {
             FirestoreError::DatabaseError(ref db_err)
-                if db_err.details.contains("unexpected end of file") =>
+                if db_err.details.contains("unexpected end of file")
+                    || db_err.details.contains("stream error received") =>
             {
                 debug!("Listen EOF ({:?}). Restarting in {:?}...", err, delay);
                 tokio::time::sleep(delay).await;
