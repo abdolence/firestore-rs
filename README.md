@@ -30,9 +30,9 @@ firestore = "0.30"
 ```
 
 ## Examples
-All examples available at [examples](examples) directory.
+All examples available in the [examples](examples) directory.
 
-To run example use it with environment variables:
+To run an example with environment variables:
 ```
 PROJECT_ID=<your-google-project-id> cargo run --example crud
 ```
