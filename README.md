@@ -156,6 +156,8 @@ Use:
 - `q.for_all` for AND conditions
 - `q.for_any` for OR conditions (Firestore has just recently added support for OR conditions)
 
+You can nest `q.for_all`/`q.for_any`.
+
 ## Get and batch get support
 
 ```rust
