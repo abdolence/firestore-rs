@@ -112,6 +112,21 @@ let find_it_again: Option<MyTestStructure> = db.fluent()
   .one(&my_struct.some_id)
   .await?;
 
+// Delete data
+db.fluent()
+  .delete()
+  .from(TEST_COLLECTION_NAME)
+  .document_id(&my_struct.some_id)
+  .execute()
+  .await?;
+
+```
+
+## Querying
+
+The library supports rich querying API with filters, ordering, pagination, etc.
+
+```rust
 // Query as a stream our data
 let object_stream: BoxStream<MyTestStructure> = db.fluent()
     .select()
@@ -136,16 +151,10 @@ let object_stream: BoxStream<MyTestStructure> = db.fluent()
 
 let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
 println!("{:?}", as_vec);
-
-// Delete data
-db.fluent()
-  .delete()
-  .from(TEST_COLLECTION_NAME)
-  .document_id(&my_struct.some_id)
-  .execute()
-  .await?;
-
 ```
+Use:
+- `q.for_all` for AND conditions
+- `q.for_any` for OR conditions (Firestore has just recently added support for OR conditions)
 
 ## Get and batch get support
 

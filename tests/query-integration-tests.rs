@@ -1,11 +1,11 @@
 use crate::common::setup;
-use chrono::{DateTime, Utc};
-use firestore::*;
+use chrono::prelude::*;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 mod common;
+use firestore::*;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct MyTestStructure {
@@ -18,7 +18,7 @@ struct MyTestStructure {
 
 #[tokio::test]
 async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    const TEST_COLLECTION_NAME: &'static str = "integration-test-crud";
+    const TEST_COLLECTION_NAME: &'static str = "integration-test-query";
 
     let db = setup().await?;
 
@@ -52,8 +52,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    let object_returned: MyTestStructure = db
-        .fluent()
+    db.fluent()
         .insert()
         .into(TEST_COLLECTION_NAME)
         .document_id(&my_struct1.some_id)
@@ -69,55 +68,50 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    assert_eq!(object_returned, my_struct1);
-
-    let object_updated: MyTestStructure = db
-        .fluent()
-        .update()
-        .fields(paths!(MyTestStructure::{some_num, one_more_string}))
-        .in_col(TEST_COLLECTION_NAME)
-        .document_id(&my_struct1.some_id)
-        .object(&MyTestStructure {
-            some_num: my_struct1.some_num + 1,
-            some_string: "should-not-change".to_string(),
-            one_more_string: "updated-value".to_string(),
-            ..my_struct1.clone()
-        })
-        .execute()
-        .await?;
-
-    assert_eq!(
-        object_updated,
-        MyTestStructure {
-            some_num: my_struct1.some_num + 1,
-            one_more_string: "updated-value".to_string(),
-            ..my_struct1.clone()
-        }
-    );
-
-    let find_it_again: Option<MyTestStructure> = db
+    let object_stream: BoxStream<MyTestStructure> = db
         .fluent()
         .select()
-        .by_id_in(TEST_COLLECTION_NAME)
+        .from(TEST_COLLECTION_NAME)
+        .filter(|q| {
+            q.for_all([
+                q.field(path!(MyTestStructure::some_num)).is_not_null(),
+                q.field(path!(MyTestStructure::some_string))
+                    .eq("some_string"),
+            ])
+        })
+        .order_by([(
+            path!(MyTestStructure::some_num),
+            FirestoreQueryDirection::Descending,
+        )])
         .obj()
-        .one(&my_struct1.some_id)
+        .stream_query()
         .await?;
 
-    assert_eq!(Some(object_updated.clone()), find_it_again);
+    let objects_as_vec1: Vec<MyTestStructure> = object_stream.collect().await;
+    assert_eq!(objects_as_vec1, vec![my_struct1.clone()]);
 
-    let get_both_stream: BoxStream<Option<MyTestStructure>> = Box::pin(
-        db.batch_stream_get_objects(
-            TEST_COLLECTION_NAME,
-            [&my_struct1.some_id, &my_struct2.some_id],
-            None,
-        )
-        .await?
-        .map(|(_, obj)| obj),
-    );
+    let object_stream: BoxStream<MyTestStructure> = db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .filter(|q| {
+            q.for_any([
+                q.field(path!(MyTestStructure::some_string))
+                    .eq("some_string"),
+                q.field(path!(MyTestStructure::some_string))
+                    .eq("some_string-1"),
+            ])
+        })
+        .order_by([(
+            path!(MyTestStructure::some_num),
+            FirestoreQueryDirection::Descending,
+        )])
+        .obj()
+        .stream_query()
+        .await?;
 
-    let get_both_stream_vec: Vec<Option<MyTestStructure>> = get_both_stream.collect().await;
-
-    assert_eq!(vec![find_it_again, Some(my_struct2)], get_both_stream_vec);
+    let objects_as_vec2: Vec<MyTestStructure> = object_stream.collect().await;
+    assert_eq!(objects_as_vec2, vec![my_struct1, my_struct2]);
 
     Ok(())
 }
