@@ -189,7 +189,10 @@ impl From<FirestoreQueryFilter> for structured_query::Filter {
             FirestoreQueryFilter::Composite(composite) => {
                 Some(structured_query::filter::FilterType::CompositeFilter(
                     structured_query::CompositeFilter {
-                        op: structured_query::composite_filter::Operator::And.into(),
+                        op: (Into::<structured_query::composite_filter::Operator>::into(
+                            composite.operator,
+                        ))
+                        .into(),
                         filters: composite
                             .for_all_filters
                             .into_iter()
@@ -310,6 +313,26 @@ impl ToString for FirestoreQueryDirection {
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreQueryFilterComposite {
     pub for_all_filters: Vec<FirestoreQueryFilter>,
+    pub operator: FirestoreQueryFilterCompositeOperator,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum FirestoreQueryFilterCompositeOperator {
+    And,
+    Or,
+}
+
+impl From<FirestoreQueryFilterCompositeOperator> for structured_query::composite_filter::Operator {
+    fn from(operator: FirestoreQueryFilterCompositeOperator) -> Self {
+        match operator {
+            FirestoreQueryFilterCompositeOperator::And => {
+                structured_query::composite_filter::Operator::And
+            }
+            FirestoreQueryFilterCompositeOperator::Or => {
+                structured_query::composite_filter::Operator::Or
+            }
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]

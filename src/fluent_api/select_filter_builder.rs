@@ -1,6 +1,6 @@
 use crate::{
     FirestoreQueryFilter, FirestoreQueryFilterCompare, FirestoreQueryFilterComposite,
-    FirestoreQueryFilterUnary, FirestoreValue,
+    FirestoreQueryFilterCompositeOperator, FirestoreQueryFilterUnary, FirestoreValue,
 };
 
 #[derive(Clone, Debug)]
@@ -12,7 +12,11 @@ impl FirestoreQueryFilterBuilder {
     }
 
     #[inline]
-    pub fn for_all<I>(&self, filter_expressions: I) -> Option<FirestoreQueryFilter>
+    fn build_filter_with_op<I>(
+        &self,
+        filter_expressions: I,
+        op: FirestoreQueryFilterCompositeOperator,
+    ) -> Option<FirestoreQueryFilter>
     where
         I: IntoIterator,
         I::Item: FirestoreQueryFilterExpr,
@@ -28,9 +32,33 @@ impl FirestoreQueryFilterBuilder {
             filters.pop()
         } else {
             Some(FirestoreQueryFilter::Composite(
-                FirestoreQueryFilterComposite::new(filters),
+                FirestoreQueryFilterComposite::new(filters, op),
             ))
         }
+    }
+
+    #[inline]
+    pub fn for_all<I>(&self, filter_expressions: I) -> Option<FirestoreQueryFilter>
+    where
+        I: IntoIterator,
+        I::Item: FirestoreQueryFilterExpr,
+    {
+        self.build_filter_with_op(
+            filter_expressions,
+            FirestoreQueryFilterCompositeOperator::And,
+        )
+    }
+
+    #[inline]
+    pub fn for_any<I>(&self, filter_expressions: I) -> Option<FirestoreQueryFilter>
+    where
+        I: IntoIterator,
+        I::Item: FirestoreQueryFilterExpr,
+    {
+        self.build_filter_with_op(
+            filter_expressions,
+            FirestoreQueryFilterCompositeOperator::Or,
+        )
     }
 
     #[inline]
