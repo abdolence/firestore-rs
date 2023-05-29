@@ -34,11 +34,11 @@ pub fn serialize_reference_for_firestore<T: ?Sized + Serialize>(
     value: &T,
     none_as_null: bool,
 ) -> Result<FirestoreValue, FirestoreError> {
-    struct TimestampSerializer {
+    struct ReferenceSerializer {
         none_as_null: bool,
     }
 
-    impl Serializer for TimestampSerializer {
+    impl Serializer for ReferenceSerializer {
         type Ok = FirestoreValue;
         type Error = FirestoreError;
         type SerializeSeq = crate::firestore_serde::serializer::SerializeVec;
@@ -306,5 +306,5 @@ pub fn serialize_reference_for_firestore<T: ?Sized + Serialize>(
         }
     }
 
-    value.serialize(TimestampSerializer { none_as_null })
+    value.serialize(ReferenceSerializer { none_as_null })
 }
