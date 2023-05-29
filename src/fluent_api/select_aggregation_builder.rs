@@ -49,6 +49,15 @@ impl FirestoreAggregationFieldExpr {
             FirestoreAggregationOperator::Count(FirestoreAggregationOperatorCount::new()),
         ))
     }
+
+    #[inline]
+    pub fn count_up_to(self, up_to: usize) -> Option<FirestoreAggregation> {
+        Some(FirestoreAggregation::new(self.field_name).with_operator(
+            FirestoreAggregationOperator::Count(
+                FirestoreAggregationOperatorCount::new().with_up_to(up_to),
+            ),
+        ))
+    }
 }
 
 impl FirestoreAggregationExpr for FirestoreAggregation {
