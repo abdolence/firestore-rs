@@ -224,6 +224,7 @@ impl FirestoreDb {
                             target::ResumeType::ReadTime(to_timestamp(dt))
                         }
                     }),
+                ..Default::default()
             })),
         })
     }
