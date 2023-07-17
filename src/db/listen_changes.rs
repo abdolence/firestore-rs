@@ -393,7 +393,7 @@ where
                                                 for target_id_num in &target_change.target_ids {
                                                     match FirestoreListenerTarget::try_from(*target_id_num) {
                                                         Ok(target_id) => {
-                                                            if let Some(mut target) = targets_state.get_mut(&target_id) {
+                                                            if let Some(target) = targets_state.get_mut(&target_id) {
                                                                 let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
 
                                                                 if let Err(err) = storage.update_resume_token(&target.target, new_token.clone()).await {
