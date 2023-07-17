@@ -158,7 +158,7 @@ where
         Self {
             db,
             params,
-            _pd: PhantomData::default(),
+            _pd: PhantomData,
         }
     }
 
