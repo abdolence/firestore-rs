@@ -38,13 +38,21 @@ impl From<&FirestoreAggregation> for structured_aggregation_query::Aggregation {
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreAggregationOperator {
     Count(FirestoreAggregationOperatorCount),
+    Sum(FirestoreAggregationOperatorSum),
+    Avg(FirestoreAggregationOperatorAvg),
 }
 
 impl From<&FirestoreAggregationOperator> for structured_aggregation_query::aggregation::Operator {
     fn from(op: &FirestoreAggregationOperator) -> Self {
         match op {
-            FirestoreAggregationOperator::Count(cnt) => {
-                structured_aggregation_query::aggregation::Operator::Count(cnt.into())
+            FirestoreAggregationOperator::Count(opts) => {
+                structured_aggregation_query::aggregation::Operator::Count(opts.into())
+            }
+            FirestoreAggregationOperator::Sum(opts) => {
+                structured_aggregation_query::aggregation::Operator::Sum(opts.into())
+            }
+            FirestoreAggregationOperator::Avg(opts) => {
+                structured_aggregation_query::aggregation::Operator::Avg(opts.into())
             }
         }
     }
@@ -59,6 +67,36 @@ impl From<&FirestoreAggregationOperatorCount> for structured_aggregation_query::
     fn from(cnt: &FirestoreAggregationOperatorCount) -> Self {
         structured_aggregation_query::aggregation::Count {
             up_to: cnt.up_to.map(|v| v as i64),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreAggregationOperatorSum {
+    pub field_name: String,
+}
+
+impl From<&FirestoreAggregationOperatorSum> for structured_aggregation_query::aggregation::Sum {
+    fn from(operator: &FirestoreAggregationOperatorSum) -> Self {
+        structured_aggregation_query::aggregation::Sum {
+            field: Some(structured_query::FieldReference {
+                field_path: operator.field_name.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreAggregationOperatorAvg {
+    pub field_name: String,
+}
+
+impl From<&FirestoreAggregationOperatorAvg> for structured_aggregation_query::aggregation::Avg {
+    fn from(operator: &FirestoreAggregationOperatorAvg) -> Self {
+        structured_aggregation_query::aggregation::Avg {
+            field: Some(structured_query::FieldReference {
+                field_path: operator.field_name.clone(),
+            }),
         }
     }
 }
