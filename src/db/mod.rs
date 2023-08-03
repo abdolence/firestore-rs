@@ -113,6 +113,18 @@ impl FirestoreDb {
         .await
     }
 
+    pub async fn with_options_service_account_key_file(
+        options: FirestoreDbOptions,
+        service_account_key_path: std::path::PathBuf,
+    ) -> FirestoreResult<Self> {
+        Self::with_options_token_source(
+            options,
+            gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
+            gcloud_sdk::TokenSourceType::File(service_account_key_path),
+        )
+        .await
+    }
+
     pub async fn with_options_token_source(
         options: FirestoreDbOptions,
         token_scopes: Vec<String>,
