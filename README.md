@@ -26,7 +26,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 Cargo.toml:
 ```toml
 [dependencies]
-firestore = "0.32"
+firestore = "0.33"
 ```
 
 ## Examples
