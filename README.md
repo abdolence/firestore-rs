@@ -368,7 +368,7 @@ let object_returned = db
     .fluent()
     .insert()
     .into(TEST_COLLECTION_NAME)
-    .document_id(&my_struct.some_id)
+    .document_id("test-1")
     .document(FirestoreDb::serialize_map_to_doc("",
       [
         ("some_id", "test-id".into()),
@@ -377,11 +377,11 @@ let object_returned = db
         (
         "embedded_obj",
           FirestoreValue::from_map([
-            ("inner_some_id", "inner-value".into()),
-            ("inner_some_string", "inner-value".into()),
+            ("inner_some_id", "inner-id-value".into()),
+            ("inner_some_string", "inner-some-value".into()),
           ]),
         ),
-        ("created_at", Utc::now().into()),
+        ("created_at", FirestoreTimestamp(Utc::now()).into()),
       ]
      )?)
     .execute()
