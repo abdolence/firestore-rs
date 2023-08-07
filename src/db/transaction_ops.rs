@@ -45,7 +45,7 @@ where
             current_document: self.precondition.map(|cond| cond.try_into()).transpose()?,
             operation: Some(gcloud_sdk::google::firestore::v1::write::Operation::Update(
                 FirestoreDb::serialize_to_doc(
-                    &safe_document_path(
+                    safe_document_path(
                         &self.parent,
                         self.collection_id.as_str(),
                         self.document_id.as_ref(),

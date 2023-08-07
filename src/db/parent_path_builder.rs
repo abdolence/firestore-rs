@@ -44,6 +44,12 @@ impl From<ParentPathBuilder> for String {
     }
 }
 
+impl<'a> From<&'a ParentPathBuilder> for &'a str {
+    fn from(pb: &'a ParentPathBuilder) -> &'a str {
+        pb.value.as_str()
+    }
+}
+
 impl From<ParentPathBuilder> for FirestoreReference {
     fn from(pb: ParentPathBuilder) -> Self {
         FirestoreReference(pb.value)

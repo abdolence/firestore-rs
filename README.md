@@ -359,6 +359,34 @@ struct MyTestStructure {
 
 Complete example available [here](examples/generated-document-id.rs).
 
+## Working on dynamic/document level
+Sometimes having static structure may restrict you from working with dynamic data, 
+so there is a way to use Fluent API to work with documents without introducing structures at all.
+
+```rust
+
+let fields: HashMap<&str, FirestoreValue> = [
+  ("some_id", my_struct.some_id.clone().into()),
+  ("some_string", my_struct.some_string.clone().into()),
+  ("one_more_string", my_struct.one_more_string.clone().into()),
+  ("some_num", my_struct.some_num.into()),
+  ("created_at", my_struct.created_at.into()),
+]
+.into_iter()
+.collect();
+
+let object_returned = db
+    .fluent()
+    .insert()
+    .into(TEST_COLLECTION_NAME)
+    .document_id(&my_struct.some_id)
+    .document(FirestoreDb::serialize_map_to_doc("", fields)?)
+    .execute()
+    .await?;
+
+```
+Full example available [here](examples/dynamic_doc_level_crud.rs).
+
 ## Document transformations
 The library supports server side document transformations in transactions and batch writes:
 
