@@ -91,7 +91,8 @@ impl FirestoreCreateSupport for FirestoreDb {
             Level::DEBUG,
             "Firestore Create Document",
             "/firestore/collection_name" = collection_id,
-            "/firestore/response_time" = field::Empty
+            "/firestore/response_time" = field::Empty,
+            "/firestore/document_name" = field::Empty,
         );
 
         let create_document_request = tonic::Request::new(CreateDocumentRequest {
@@ -123,6 +124,10 @@ impl FirestoreCreateSupport for FirestoreDb {
             query_duration.num_milliseconds(),
         );
 
+        let response_inner = create_response.into_inner();
+
+        span.record("/firestore/document_name", &response_inner.name);
+
         span.in_scope(|| {
             debug!(
                 "[DB]: Created a new document: {}/{:?}",
@@ -131,7 +136,7 @@ impl FirestoreCreateSupport for FirestoreDb {
             );
         });
 
-        Ok(create_response.into_inner())
+        Ok(response_inner)
     }
 
     async fn create_obj<I, O, S>(
