@@ -50,6 +50,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         ("some_string", my_struct.some_string.clone().into()),
         ("one_more_string", my_struct.one_more_string.clone().into()),
         ("some_num", my_struct.some_num.into()),
+        (
+            "embedded_obj",
+            FirestoreValue::from_map([
+                ("inner_some_id", my_struct.some_id.clone().into()),
+                ("inner_some_string", my_struct.some_string.clone().into()),
+            ]),
+        ),
         ("created_at", my_struct.created_at.into()),
     ]
     .into_iter()
