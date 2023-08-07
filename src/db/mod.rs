@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod get;
+
 pub use get::*;
 
 mod create;
@@ -32,7 +33,7 @@ pub use listen_changes::*;
 mod listen_changes_state_storage;
 pub use listen_changes_state_storage::*;
 
-use crate::FirestoreResult;
+use crate::{FirestoreDocument, FirestoreResult, FirestoreValue};
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::*;
@@ -168,11 +169,23 @@ impl FirestoreDb {
         crate::firestore_serde::firestore_document_to_serializable(doc)
     }
 
-    pub fn serialize_to_doc<T>(document_path: &str, obj: &T) -> FirestoreResult<Document>
+    pub fn serialize_to_doc<S, T>(document_path: S, obj: &T) -> FirestoreResult<Document>
     where
+        S: AsRef<str>,
         T: Serialize,
     {
         crate::firestore_serde::firestore_document_from_serializable(document_path, obj)
+    }
+
+    pub fn serialize_map_to_doc<S, I>(
+        document_path: S,
+        fields: I,
+    ) -> FirestoreResult<FirestoreDocument>
+    where
+        S: AsRef<str>,
+        I: IntoIterator<Item = (String, FirestoreValue)>,
+    {
+        crate::firestore_serde::firestore_document_from_map(document_path, fields)
     }
 
     pub async fn ping(&self) -> FirestoreResult<()> {
