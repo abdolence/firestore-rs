@@ -589,17 +589,18 @@ where
     }
 }
 
-pub fn firestore_document_from_map<S, I>(
+pub fn firestore_document_from_map<S, I, IS>(
     document_path: S,
     fields: I,
 ) -> Result<gcloud_sdk::google::firestore::v1::Document, FirestoreError>
 where
     S: AsRef<str>,
-    I: IntoIterator<Item = (String, FirestoreValue)>,
+    I: IntoIterator<Item = (IS, FirestoreValue)>,
+    IS: AsRef<str>,
 {
     let fields_map: HashMap<String, gcloud_sdk::google::firestore::v1::Value> = fields
         .into_iter()
-        .map(|(k, v)| (k.to_string(), v.value))
+        .map(|(k, v)| (k.as_ref().to_string(), v.value))
         .collect();
 
     Ok(gcloud_sdk::google::firestore::v1::Document {

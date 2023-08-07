@@ -177,13 +177,14 @@ impl FirestoreDb {
         crate::firestore_serde::firestore_document_from_serializable(document_path, obj)
     }
 
-    pub fn serialize_map_to_doc<S, I>(
+    pub fn serialize_map_to_doc<S, I, IS>(
         document_path: S,
         fields: I,
     ) -> FirestoreResult<FirestoreDocument>
     where
         S: AsRef<str>,
-        I: IntoIterator<Item = (String, FirestoreValue)>,
+        I: IntoIterator<Item = (IS, FirestoreValue)>,
+        IS: AsRef<str>,
     {
         crate::firestore_serde::firestore_document_from_map(document_path, fields)
     }

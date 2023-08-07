@@ -45,18 +45,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    let fields: HashMap<String, FirestoreValue> = [
-        ("some_id".to_string(), my_struct.some_id.clone().into()),
-        (
-            "some_string".to_string(),
-            my_struct.some_string.clone().into(),
-        ),
-        (
-            "one_more_string".to_string(),
-            my_struct.one_more_string.clone().into(),
-        ),
-        ("some_num".to_string(), my_struct.some_num.into()),
-        ("created_at".to_string(), my_struct.created_at.into()),
+    let fields: HashMap<&str, FirestoreValue> = [
+        ("some_id", my_struct.some_id.clone().into()),
+        ("some_string", my_struct.some_string.clone().into()),
+        ("one_more_string", my_struct.one_more_string.clone().into()),
+        ("some_num", my_struct.some_num.into()),
+        ("created_at", my_struct.created_at.into()),
     ]
     .into_iter()
     .collect();
@@ -72,9 +66,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Created {:?}", object_returned);
 
-    let updated_fields: HashMap<String, FirestoreValue> = [
-        ("one_more_string".to_string(), "update-string".into()),
-        ("some_num".to_string(), 42.into()),
+    let updated_fields: HashMap<&str, FirestoreValue> = [
+        ("one_more_string", "update-string".into()),
+        ("some_num", 42.into()),
     ]
     .into_iter()
     .collect();
@@ -82,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let object_updated = db
         .fluent()
         .update()
-        .fields(paths!(MyTestStructure::{some_num, one_more_string}))
+        .fields(["some_num", "one_more_string"])
         .in_col(TEST_COLLECTION_NAME)
         .document(FirestoreDb::serialize_map_to_doc(
             db.parent_path(TEST_COLLECTION_NAME, &my_struct.some_id)?,
