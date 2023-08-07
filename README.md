@@ -364,30 +364,26 @@ Sometimes having static structure may restrict you from working with dynamic dat
 so there is a way to use Fluent API to work with documents without introducing structures at all.
 
 ```rust
-
-let fields: HashMap<&str, FirestoreValue> = [
-  ("some_id", my_struct.some_id.clone().into()),
-  ("some_string", my_struct.some_string.clone().into()),
-  ("one_more_string", my_struct.one_more_string.clone().into()),
-  ("some_num", my_struct.some_num.into()),
-  (
-  "embedded_obj",
-    FirestoreValue::from_map([
-      ("inner_some_id", my_struct.some_id.clone().into()),
-      ("inner_some_string", my_struct.some_string.clone().into()),
-    ]),
-  ),
-  ("created_at", my_struct.created_at.into()),
-]
-.into_iter()
-.collect();
-
 let object_returned = db
     .fluent()
     .insert()
     .into(TEST_COLLECTION_NAME)
     .document_id(&my_struct.some_id)
-    .document(FirestoreDb::serialize_map_to_doc("", fields)?)
+    .document(FirestoreDb::serialize_map_to_doc("",
+      [
+        ("some_id", "test-id".into()),
+        ("some_string", "test-value".into()),
+        ("some_num", 42.into()),
+        (
+        "embedded_obj",
+          FirestoreValue::from_map([
+            ("inner_some_id", "inner-value".into()),
+            ("inner_some_string", "inner-value".into()),
+          ]),
+        ),
+        ("created_at", my_struct.created_at.into()),
+      ]
+     )?)
     .execute()
     .await?;
 
