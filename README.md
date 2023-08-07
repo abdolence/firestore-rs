@@ -381,7 +381,7 @@ let object_returned = db
             ("inner_some_string", "inner-value".into()),
           ]),
         ),
-        ("created_at", my_struct.created_at.into()),
+        ("created_at", Utc::now().into()),
       ]
      )?)
     .execute()
