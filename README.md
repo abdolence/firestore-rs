@@ -139,7 +139,7 @@ The library supports rich querying API with filters, ordering, pagination, etc.
 
 ```rust
 // Query as a stream our data
-let object_stream: BoxStream<MyTestStructure> = db.fluent()
+let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db.fluent()
     .select()
     .fields(paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at})) // Optionally select the fields needed
     .from(TEST_COLLECTION_NAME)
@@ -157,10 +157,10 @@ let object_stream: BoxStream<MyTestStructure> = db.fluent()
         FirestoreQueryDirection::Descending,
     )])
     .obj() // Reading documents as structures using Serde gRPC deserializer
-    .stream_query()
+    .stream_query_with_errors()
     .await?;
 
-let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
+let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
 println!("{:?}", as_vec);
 ```
 Use:
