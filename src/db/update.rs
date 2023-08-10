@@ -116,14 +116,15 @@ impl FirestoreUpdateSupport for FirestoreDb {
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
     ) -> FirestoreResult<Document> {
+        let document_id = firestore_doc.name.clone();
+
         let span = span!(
             Level::DEBUG,
             "Firestore Update Document",
             "/firestore/collection_name" = collection_id,
-            "/firestore/response_time" = field::Empty
+            "/firestore/document_name" = document_id,
+            "/firestore/response_time" = field::Empty,
         );
-
-        let document_id = firestore_doc.name.clone();
 
         let update_document_request = tonic::Request::new(UpdateDocumentRequest {
             update_mask: update_only.map({
