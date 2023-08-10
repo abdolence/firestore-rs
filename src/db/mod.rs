@@ -131,8 +131,10 @@ impl FirestoreDb {
         token_scopes: Vec<String>,
         token_source_type: TokenSourceType,
     ) -> FirestoreResult<Self> {
-        let firestore_database_path =
-            format!("projects/{}/databases/(default)", options.google_project_id);
+        let firestore_database_path = format!(
+            "projects/{}/databases/{}",
+            options.google_project_id, options.database_id
+        );
         let firestore_database_doc_path = format!("{firestore_database_path}/documents");
 
         let effective_firebase_api_url = options
