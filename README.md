@@ -17,7 +17,11 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 - Full async based on Tokio runtime;
 - Macro that helps you use JSON paths as references to your structure fields;
 - Implements own Serde serializer to Firestore protobuf values;
-- Supports for Firestore timestamp with `#[serde(with)]` and a specialized structure
+- Support for multiple database IDs
+- Supports for extended datatypes:
+   - Firestore timestamp with `#[serde(with)]` and a specialized structure
+   - Lat/Lng
+   - References
 - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
   that automatically detects GKE environment or application default accounts for local development;
 
@@ -26,7 +30,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 Cargo.toml:
 ```toml
 [dependencies]
-firestore = "0.33"
+firestore = "0.34"
 ```
 
 ## Examples
