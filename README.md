@@ -81,7 +81,7 @@ Firebase supports [multiple databases per project now](https://cloud.google.com/
 so you can specify the database ID in the options:
 
 ```rust
-    let db = FirestoreDb::with_options(
+FirestoreDb::with_options(
       FirestoreDbOptions::new("your-project_id".to_string())
         .with_database_id("your-database-id".to_string()),
 )
