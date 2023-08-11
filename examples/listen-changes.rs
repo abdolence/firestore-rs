@@ -87,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                 }
                 _ => {
+                    //storage.remove_target(&TEST_TARGET_ID_BY_DOC_IDS).ok();
                     println!("Received a listen response event to handle: {event:?}");
                 }
             }

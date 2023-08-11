@@ -234,7 +234,7 @@ pub type FirestoreListenEvent = listen_response::ResponseType;
 
 pub trait FirestoreTargetManager {
     fn add_target(&mut self, target: FirestoreListenerTargetParams) -> FirestoreResult<()>;
-    fn remove_target(&mut self, target: FirestoreListenerTarget) -> FirestoreResult<()>;
+    fn remove_target(&mut self, target: &FirestoreListenerTarget) -> FirestoreResult<()>;
 }
 
 #[derive(Debug, Clone, Builder)]
@@ -248,9 +248,9 @@ where
     S: FirestoreResumeStateStorage,
 {
     db: D,
-    storage: S,
+    initial_targets_storage: FirestoreTargetManagerStorage,
+    resume_state_storage: S,
     listener_params: FirestoreListenerParams,
-    targets: Vec<FirestoreListenerTargetParams>,
     shutdown_flag: Arc<AtomicBool>,
     shutdown_handle: Option<JoinHandle<()>>,
     shutdown_writer: Option<Arc<UnboundedSender<i8>>>,
@@ -263,14 +263,14 @@ where
 {
     pub async fn new(
         db: D,
-        storage: S,
+        resume_state_storage: S,
         listener_params: FirestoreListenerParams,
     ) -> FirestoreResult<FirestoreListener<D, S>> {
         Ok(FirestoreListener {
             db,
-            storage,
+            initial_targets_storage: FirestoreTargetManagerStorage::new(false),
+            resume_state_storage,
             listener_params,
-            targets: vec![],
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_handle: None,
             shutdown_writer: None,
@@ -283,15 +283,15 @@ where
         F: Future<Output = AnyBoxedErrResult<()>> + Send + 'static,
     {
         info!(
-            "Starting a Firestore listener for targets: {:?}...",
-            &self.targets.len()
+            "Starting a Firestore listener for initial targets: {:?}...",
+            &self.initial_targets_storage.targets.len()
         );
 
-        let mut initial_states: HashMap<FirestoreListenerTarget, FirestoreListenerTargetParams> =
-            HashMap::new();
-        for target_params in &self.targets {
-            let initial_state = self
-                .storage
+        let mut targets_storage = self.initial_targets_storage.clone();
+
+        for (_, target_params) in &mut targets_storage.targets {
+            let maybe_initial_token = self
+                .resume_state_storage
                 .read_resume_state(&target_params.target)
                 .map_err(|err| {
                     FirestoreError::SystemError(FirestoreSystemError::new(
@@ -301,10 +301,7 @@ where
                 })
                 .await?;
 
-            initial_states.insert(
-                target_params.target.clone(),
-                target_params.clone().opt_resume_type(initial_state),
-            );
+            target_params.mopt_resume_type(maybe_initial_token);
         }
 
         let (tx, rx): (UnboundedSender<i8>, UnboundedReceiver<i8>) =
@@ -313,9 +310,9 @@ where
         self.shutdown_writer = Some(Arc::new(tx));
         self.shutdown_handle = Some(tokio::spawn(Self::listener_loop(
             self.db.clone(),
-            self.storage.clone(),
+            self.resume_state_storage.clone(),
             self.shutdown_flag.clone(),
-            initial_states,
+            targets_storage,
             self.listener_params.clone(),
             rx,
             cb,
@@ -342,7 +339,7 @@ where
         db: D,
         storage: S,
         shutdown_flag: Arc<AtomicBool>,
-        mut targets_state: HashMap<FirestoreListenerTarget, FirestoreListenerTargetParams>,
+        mut targets_state: FirestoreTargetManagerStorage,
         listener_params: FirestoreListenerParams,
         mut shutdown_receiver: UnboundedReceiver<i8>,
         cb: FN,
@@ -356,10 +353,13 @@ where
             .unwrap_or_else(|| std::time::Duration::from_secs(5));
 
         while !shutdown_flag.load(Ordering::Relaxed) {
-            debug!("Start listening on {} targets ... ", targets_state.len());
+            debug!(
+                "Start listening on {} targets ... ",
+                targets_state.targets.len()
+            );
 
             match db
-                .listen_doc_changes(targets_state.values().cloned().collect())
+                .listen_doc_changes(targets_state.targets.values().cloned().collect())
                 .await
             {
                 Err(err) => {
@@ -370,7 +370,7 @@ where
                 Ok(mut listen_stream) => loop {
                     tokio::select! {
                         _ = shutdown_receiver.recv() => {
-                            debug!("Exiting from listener on {} targets...", targets_state.len());
+                            debug!("Exiting from listener on {} targets...", targets_state.targets.len());
                             shutdown_receiver.close();
                             break;
                         }
@@ -383,33 +383,32 @@ where
                                     Ok(Some(event)) => {
                                         trace!("Received a listen response event to handle: {:?}", event);
                                         match event.response_type {
-                                            Some(listen_response::ResponseType::TargetChange(ref target_change))
-                                                if !target_change.resume_token.is_empty() =>
-                                            {
-                                                for target_id_num in &target_change.target_ids {
-                                                    match FirestoreListenerTarget::try_from(*target_id_num) {
-                                                        Ok(target_id) => {
-                                                            if let Some(target) = targets_state.get_mut(&target_id) {
-                                                                let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
+                                            Some(response_type) => {
+                                                if let listen_response::ResponseType::TargetChange(ref target_change) = &response_type {
+                                                    if !target_change.resume_token.is_empty() {
+                                                        for target_id_num in &target_change.target_ids {
+                                                            match FirestoreListenerTarget::try_from(*target_id_num) {
+                                                                Ok(target_id) => {
+                                                                    if let Some(target) = targets_state.targets.get_mut(&target_id) {
+                                                                        let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
 
-                                                                if let Err(err) = storage.update_resume_token(&target.target, new_token.clone()).await {
-                                                                    error!("Listener token storage error occurred {:?}.", err);
+                                                                        if let Err(err) = storage.update_resume_token(&target.target, new_token.clone()).await {
+                                                                            error!("Listener token storage error occurred {:?}.", err);
+                                                                            break;
+                                                                        }
+                                                                        else {
+                                                                            target.resume_type = Some(FirestoreListenerTargetResumeType::Token(new_token))
+                                                                        }
+                                                                    }
+                                                                },
+                                                                Err(err) => {
+                                                                    error!("Listener system error - unexpected target ID: {} {:?}.", target_id_num, err);
                                                                     break;
                                                                 }
-                                                                else {
-                                                                    target.resume_type = Some(FirestoreListenerTargetResumeType::Token(new_token))
-                                                                }
                                                             }
-                                                        },
-                                                        Err(err) => {
-                                                            error!("Listener system error - unexpected target ID: {} {:?}.", target_id_num, err);
-                                                            break;
                                                         }
                                                     }
                                                 }
-
-                                            }
-                                            Some(response_type) => {
                                                 if let Err(err) = cb(response_type, db.clone()).await {
                                                     error!("Listener callback function error occurred {:?}.", err);
                                                     break;
@@ -472,13 +471,45 @@ where
     S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
 {
     fn add_target(&mut self, target_params: FirestoreListenerTargetParams) -> FirestoreResult<()> {
+        self.initial_targets_storage.add_target(target_params)
+    }
+
+    fn remove_target(&mut self, target: &FirestoreListenerTarget) -> FirestoreResult<()> {
+        self.initial_targets_storage.remove_target(target)
+    }
+}
+
+#[derive(Clone)]
+pub struct FirestoreTargetManagerStorage {
+    targets: HashMap<FirestoreListenerTarget, FirestoreListenerTargetParams>,
+    change_log_mode: bool,
+    to_remove: Vec<FirestoreListenerTarget>,
+}
+
+impl FirestoreTargetManagerStorage {
+    fn new(change_log_mode: bool) -> Self {
+        Self {
+            targets: HashMap::new(),
+            change_log_mode,
+            to_remove: Vec::new(),
+        }
+    }
+}
+
+impl FirestoreTargetManager for FirestoreTargetManagerStorage {
+    fn add_target(&mut self, target_params: FirestoreListenerTargetParams) -> FirestoreResult<()> {
         target_params.validate()?;
-        self.targets.push(target_params);
+        self.targets
+            .insert(target_params.target.clone(), target_params);
         Ok(())
     }
 
-    fn remove_target(&mut self, target: FirestoreListenerTarget) -> FirestoreResult<()> {
-        self.targets.retain(|t| t.target != target);
+    fn remove_target(&mut self, target: &FirestoreListenerTarget) -> FirestoreResult<()> {
+        if self.targets.remove(target).is_none() {
+            if self.change_log_mode {
+                self.to_remove.push(target.clone());
+            }
+        }
         Ok(())
     }
 }
