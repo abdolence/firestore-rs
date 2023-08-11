@@ -289,7 +289,7 @@ where
 
         let mut targets_storage = self.initial_targets_storage.clone();
 
-        for (_, target_params) in &mut targets_storage.targets {
+        for target_params in &mut targets_storage.targets.values_mut() {
             let maybe_initial_token = self
                 .resume_state_storage
                 .read_resume_state(&target_params.target)
@@ -382,39 +382,36 @@ where
                                 match tried {
                                     Ok(Some(event)) => {
                                         trace!("Received a listen response event to handle: {:?}", event);
-                                        match event.response_type {
-                                            Some(response_type) => {
-                                                if let listen_response::ResponseType::TargetChange(ref target_change) = &response_type {
-                                                    if !target_change.resume_token.is_empty() {
-                                                        for target_id_num in &target_change.target_ids {
-                                                            match FirestoreListenerTarget::try_from(*target_id_num) {
-                                                                Ok(target_id) => {
-                                                                    if let Some(target) = targets_state.targets.get_mut(&target_id) {
-                                                                        let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
+                                        if let Some(response_type) = event.response_type {
+                                            if let listen_response::ResponseType::TargetChange(ref target_change) = &response_type {
+                                                if !target_change.resume_token.is_empty() {
+                                                    for target_id_num in &target_change.target_ids {
+                                                        match FirestoreListenerTarget::try_from(*target_id_num) {
+                                                            Ok(target_id) => {
+                                                                if let Some(target) = targets_state.targets.get_mut(&target_id) {
+                                                                    let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
 
-                                                                        if let Err(err) = storage.update_resume_token(&target.target, new_token.clone()).await {
-                                                                            error!("Listener token storage error occurred {:?}.", err);
-                                                                            break;
-                                                                        }
-                                                                        else {
-                                                                            target.resume_type = Some(FirestoreListenerTargetResumeType::Token(new_token))
-                                                                        }
+                                                                    if let Err(err) = storage.update_resume_token(&target.target, new_token.clone()).await {
+                                                                        error!("Listener token storage error occurred {:?}.", err);
+                                                                        break;
                                                                     }
-                                                                },
-                                                                Err(err) => {
-                                                                    error!("Listener system error - unexpected target ID: {} {:?}.", target_id_num, err);
-                                                                    break;
+                                                                    else {
+                                                                        target.resume_type = Some(FirestoreListenerTargetResumeType::Token(new_token))
+                                                                    }
                                                                 }
+                                                            },
+                                                            Err(err) => {
+                                                                error!("Listener system error - unexpected target ID: {} {:?}.", target_id_num, err);
+                                                                break;
                                                             }
                                                         }
                                                     }
                                                 }
-                                                if let Err(err) = cb(response_type, db.clone()).await {
-                                                    error!("Listener callback function error occurred {:?}.", err);
-                                                    break;
-                                                }
                                             }
-                                            None  =>  {}
+                                            if let Err(err) = cb(response_type, db.clone()).await {
+                                                error!("Listener callback function error occurred {:?}.", err);
+                                                break;
+                                            }
                                         }
                                     }
                                     Ok(None) => break,
@@ -505,10 +502,8 @@ impl FirestoreTargetManager for FirestoreTargetManagerStorage {
     }
 
     fn remove_target(&mut self, target: &FirestoreListenerTarget) -> FirestoreResult<()> {
-        if self.targets.remove(target).is_none() {
-            if self.change_log_mode {
-                self.to_remove.push(target.clone());
-            }
+        if self.targets.remove(target).is_none() && self.change_log_mode {
+            self.to_remove.push(target.clone());
         }
         Ok(())
     }
