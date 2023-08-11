@@ -82,10 +82,10 @@ so you can specify the database ID in the options:
 
 ```rust
 FirestoreDb::with_options(
-      FirestoreDbOptions::new("your-project_id".to_string())
-        .with_database_id("your-database-id".to_string()),
+  FirestoreDbOptions::new("your-project-id".to_string())
+    .with_database_id("your-database-id".to_string())
 )
-.await?;
+.await?
 ```
 
 ## Fluent API
