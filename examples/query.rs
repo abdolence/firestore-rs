@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use firestore::*;
 use futures::stream::BoxStream;
-use futures::StreamExt;
+use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Querying a test collection as a stream using Fluent API");
 
     // Query as a stream our data
-    let object_stream: BoxStream<MyTestStructure> = db
+    let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db
         .fluent()
         .select()
         .fields(
@@ -82,10 +82,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             FirestoreQueryDirection::Descending,
         )])
         .obj()
-        .stream_query()
+        .stream_query_with_errors()
         .await?;
 
-    let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
+    let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
     println!("{:?}", as_vec);
 
     Ok(())

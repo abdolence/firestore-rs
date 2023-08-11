@@ -17,7 +17,11 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 - Full async based on Tokio runtime;
 - Macro that helps you use JSON paths as references to your structure fields;
 - Implements own Serde serializer to Firestore protobuf values;
-- Supports for Firestore timestamp with `#[serde(with)]` and a specialized structure
+- Support for multiple database IDs
+- Supports for extended datatypes:
+   - Firestore timestamp with `#[serde(with)]` and a specialized structure
+   - Lat/Lng
+   - References
 - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
   that automatically detects GKE environment or application default accounts for local development;
 
@@ -26,15 +30,62 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 Cargo.toml:
 ```toml
 [dependencies]
-firestore = "0.26"
+firestore = "0.34"
 ```
 
 ## Examples
-All examples available at [examples](examples) directory.
+All examples available in the [examples](examples) directory.
 
-To run example use it with environment variables:
+To run an example with environment variables:
 ```
 PROJECT_ID=<your-google-project-id> cargo run --example crud
+```
+
+## Firestore database client instance and lifecycle
+
+To create a new instance of Firestore client you need to provide at least a GCP project ID.
+It is not recommended creating a new client for each request, so it is recommended to create a client once and reuse it whenever possible.
+Cloning instances is much cheaper than creating a new one.
+
+The client is created using the `Firestore::new` method:
+```rust
+use firestore::*;
+
+// Create an instance
+let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+```
+This is the recommended way to create a new instance of the client, since it 
+automatically detects the environment and uses credentials, service accounts, Workload Identity on GCP, etc. 
+Look at the section below [Google authentication](#google-authentication) for more details. 
+
+In cases if you need to create a new instance explicitly specifying a key file, you can use:
+
+```rust
+FirestoreDb::with_options_service_account_key_file(
+        FirestoreDbOptions::new(config_env_var("PROJECT_ID")?.to_string()),
+        "/tmp/key.json".into()
+).await?
+```
+
+or if you need even more flexibility you can use a preconfigured token source and scopes with:
+
+```rust
+FirestoreDb::with_options_token_source(
+        FirestoreDbOptions::new(config_env_var("PROJECT_ID")?.to_string()),
+        gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
+        gcloud_sdk::TokenSourceType::File("/tmp/key.json".into())
+).await?
+```
+
+Firebase supports [multiple databases per project now](https://cloud.google.com/firestore/docs/manage-databases), 
+so you can specify the database ID in the options:
+
+```rust
+FirestoreDb::with_options(
+  FirestoreDbOptions::new("your-project-id".to_string())
+    .with_database_id("your-database-id".to_string())
+)
+.await?
 ```
 
 ## Fluent API
@@ -46,9 +97,6 @@ The library provides two APIs:
 ```rust
 use firestore::*;
 
-// Create an instance
-let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
-
 const TEST_COLLECTION_NAME: &'static str = "test";
 
 let my_struct = MyTestStructure {
@@ -58,7 +106,7 @@ let my_struct = MyTestStructure {
   some_num: 42,
 };
 
-// Create data
+// Create
 let object_returned: MyTestStructure = db.fluent()
   .insert()
   .into(TEST_COLLECTION_NAME)
@@ -67,7 +115,8 @@ let object_returned: MyTestStructure = db.fluent()
   .execute()
   .await?;
 
-// Update data
+// Update or Create 
+// (Firestore supports creating documents with update if you provide the document ID).
 let object_updated: MyTestStructure = db.fluent()
   .update()
   .fields(paths!(MyTestStructure::{some_num, one_more_string}))
@@ -89,8 +138,23 @@ let find_it_again: Option<MyTestStructure> = db.fluent()
   .one(&my_struct.some_id)
   .await?;
 
+// Delete data
+db.fluent()
+  .delete()
+  .from(TEST_COLLECTION_NAME)
+  .document_id(&my_struct.some_id)
+  .execute()
+  .await?;
+
+```
+
+## Querying
+
+The library supports rich querying API with filters, ordering, pagination, etc.
+
+```rust
 // Query as a stream our data
-let object_stream: BoxStream<MyTestStructure> = db.fluent()
+let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db.fluent()
     .select()
     .fields(paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at})) // Optionally select the fields needed
     .from(TEST_COLLECTION_NAME)
@@ -108,21 +172,17 @@ let object_stream: BoxStream<MyTestStructure> = db.fluent()
         FirestoreQueryDirection::Descending,
     )])
     .obj() // Reading documents as structures using Serde gRPC deserializer
-    .stream_query()
+    .stream_query_with_errors()
     .await?;
 
-let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
+let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
 println!("{:?}", as_vec);
-
-// Delete data
-db.fluent()
-  .delete()
-  .from(TEST_COLLECTION_NAME)
-  .document_id(&my_struct.some_id)
-  .execute()
-  .await?;
-
 ```
+Use:
+- `q.for_all` for AND conditions
+- `q.for_any` for OR conditions (Firestore has just recently added support for OR conditions)
+
+You can nest `q.for_all`/`q.for_any`.
 
 ## Get and batch get support
 
@@ -314,6 +374,37 @@ struct MyTestStructure {
 
 Complete example available [here](examples/generated-document-id.rs).
 
+## Working on dynamic/document level
+Sometimes having static structure may restrict you from working with dynamic data, 
+so there is a way to use Fluent API to work with documents without introducing structures at all.
+
+```rust
+let object_returned = db
+    .fluent()
+    .insert()
+    .into(TEST_COLLECTION_NAME)
+    .document_id("test-1")
+    .document(FirestoreDb::serialize_map_to_doc("",
+      [
+        ("some_id", "test-id".into()),
+        ("some_string", "test-value".into()),
+        ("some_num", 42.into()),
+        (
+        "embedded_obj",
+          FirestoreValue::from_map([
+            ("inner_some_id", "inner-id-value".into()),
+            ("inner_some_string", "inner-some-value".into()),
+          ]),
+        ),
+        ("created_at", FirestoreTimestamp(Utc::now()).into()),
+      ]
+     )?)
+    .execute()
+    .await?;
+
+```
+Full example available [here](examples/dynamic_doc_level_crud.rs).
+
 ## Document transformations
 The library supports server side document transformations in transactions and batch writes:
 
@@ -352,9 +443,17 @@ db.fluent()
 To help to work with asynchronous event listener the library supports high level API for
 listening the events from Firestore on a separate thread:
 
+The listener implementation needs to be provided with a storage for the last received token for specified targets to be able to resume listening the changes from the last handled token and to avoid receiving all previous changes.
+
+The library provides basic implementations for storing the tokens but you can implement your own more sophisticated storage if needed:
+- `FirestoreTempFilesListenStateStorage` - resume tokens stored as temporary files on local FS;
+- `FirestoreMemListenStateStorage` - in memory storage backed by HashMap (with this implementation if you restart your app, you will receive all notifications again);
+
 ```rust
 
-let mut listener = db.create_listener(TempFileTokenStorage).await?;
+let mut listener = db.create_listener(
+    FirestoreTempFilesListenStateStorage::new() // or FirestoreMemListenStateStorage or your own implementation 
+).await?;
 
 // Adding query listener
 db.fluent()
@@ -436,9 +535,9 @@ db.fluent()
   .await?;
 ```
 
-## Update preconditions
+## Update/delete preconditions
 
-The library supports the preconditions for the updates using:
+The library supports the preconditions:
 
 ```rust
   .precondition(FirestoreWritePrecondition::Exists(true))
@@ -459,8 +558,26 @@ The latter obtains user access credentials via a web flow and puts them in the w
 This command is useful when you are developing code that would normally use a service account but need to run the code in a local development environment where it's easier to provide user credentials.
 So to work for local development you need to use `gcloud auth application-default login`.
 
+## Working with docker images
+
+When you design your Dockerfile make sure you either installed Root CA certificates or use base images that already include them.
+If you don't have certs installed you usually observe the errors such as:
+
+```
+SystemError(FirestoreSystemError { public: FirestoreErrorPublicGenericDetails { code: "GrpcStatus(tonic::transport::Error(Transport, hyper::Error(Connect, Custom { kind: InvalidData, error: InvalidCertificateData(\"invalid peer certificate: UnknownIssuer\") })))" }, message: "GCloud system error: Tonic/gRPC error: transport error" })
+```
+
+For example for Debian based images, this usually can be fixed using this package:
+
+```
+RUN apt-get install -y ca-certificates
+```
+
+Also, I recommend considering using [Google Distroless images](https://github.com/GoogleContainerTools/distroless) since they are secure, already include Root CA certs, and are optimised for size.
+
+
 ## Firestore emulator
-To work with the Google Firestore emulator you can use environment variable:
+To work with the Google Firestore emulator you can use the environment variable:
 ```
 export FIRESTORE_EMULATOR_HOST="localhost:8080"
 ```

@@ -1,102 +1,44 @@
-use chrono::prelude::*;
 use gcloud_sdk::google::firestore::v1::value;
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::{
-    errors::FirestoreSerializationError, timestamp_utils::to_timestamp, FirestoreError,
-    FirestoreValue,
-};
+use crate::errors::*;
+use crate::FirestoreValue;
 
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Default)]
-pub struct FirestoreTimestamp(pub DateTime<Utc>);
+pub(crate) const FIRESTORE_REFERENCE_TYPE_TAG_TYPE: &str = "FirestoreReference";
 
-impl From<DateTime<Utc>> for FirestoreTimestamp {
-    fn from(dt: DateTime<Utc>) -> Self {
-        FirestoreTimestamp(dt)
-    }
-}
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash, Default)]
+pub struct FirestoreReference(pub String);
 
-pub(crate) const FIRESTORE_TS_TYPE_TAG_TYPE: &str = "FirestoreTimestamp";
-
-pub(crate) const FIRESTORE_TS_NULL_TYPE_TAG_TYPE: &str = "FirestoreTimestampAsNull";
-
-pub mod serialize_as_timestamp {
-    use chrono::{DateTime, Utc};
+pub mod serialize_as_reference {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S>(date: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(str: &String, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer
-            .serialize_newtype_struct(crate::firestore_serde::FIRESTORE_TS_TYPE_TAG_TYPE, &date)
+        serializer.serialize_newtype_struct(
+            crate::firestore_serde::FIRESTORE_REFERENCE_TYPE_TAG_TYPE,
+            &str,
+        )
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<String, D::Error>
     where
         D: Deserializer<'de>,
     {
-        DateTime::<Utc>::deserialize(deserializer)
+        String::deserialize(deserializer)
     }
 }
 
-pub mod serialize_as_optional_timestamp {
-    use chrono::{DateTime, Utc};
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(date: &Option<DateTime<Utc>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match date {
-            Some(v) => serializer
-                .serialize_newtype_struct(crate::firestore_serde::FIRESTORE_TS_TYPE_TAG_TYPE, v),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Option::<DateTime<Utc>>::deserialize(deserializer)
-    }
-}
-
-pub mod serialize_as_null_timestamp {
-    use chrono::{DateTime, Utc};
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(date: &Option<DateTime<Utc>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match date {
-            Some(v) => serializer.serialize_newtype_struct(
-                crate::firestore_serde::FIRESTORE_TS_NULL_TYPE_TAG_TYPE,
-                v,
-            ),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Option::<DateTime<Utc>>::deserialize(deserializer)
-    }
-}
-
-pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
+pub fn serialize_reference_for_firestore<T: ?Sized + Serialize>(
     value: &T,
     none_as_null: bool,
 ) -> Result<FirestoreValue, FirestoreError> {
-    struct TimestampSerializer {
+    struct ReferenceSerializer {
         none_as_null: bool,
     }
 
-    impl Serializer for TimestampSerializer {
+    impl Serializer for ReferenceSerializer {
         type Ok = FirestoreValue;
         type Error = FirestoreError;
         type SerializeSeq = crate::firestore_serde::serializer::SerializeVec;
@@ -110,7 +52,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -118,7 +60,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_i8(self, _v: i8) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -126,7 +68,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_i16(self, _v: i16) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -134,7 +76,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_i32(self, _v: i32) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -142,7 +84,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_i64(self, _v: i64) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -150,7 +92,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_u8(self, _v: u8) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -158,7 +100,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_u16(self, _v: u16) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -166,7 +108,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_u32(self, _v: u32) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -174,7 +116,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_u64(self, _v: u64) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -182,7 +124,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_f32(self, _v: f32) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -190,7 +132,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_f64(self, _v: f64) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -198,16 +140,15 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
 
         fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-            let dt = v.parse::<DateTime<Utc>>()?;
             Ok(FirestoreValue::from(
                 gcloud_sdk::google::firestore::v1::Value {
-                    value_type: Some(value::ValueType::TimestampValue(to_timestamp(dt))),
+                    value_type: Some(value::ValueType::ReferenceValue(v.to_string())),
                 },
             ))
         }
@@ -215,7 +156,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -283,7 +224,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -291,7 +232,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -299,7 +240,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -311,7 +252,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         ) -> Result<Self::SerializeTupleStruct, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -325,7 +266,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         ) -> Result<Self::SerializeTupleVariant, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -333,7 +274,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -345,7 +286,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         ) -> Result<Self::SerializeStruct, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
@@ -359,11 +300,11 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         ) -> Result<Self::SerializeStructVariant, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
-                    "Timestamp serializer doesn't support this type",
+                    "Reference serializer doesn't support this type",
                 ),
             ))
         }
     }
 
-    value.serialize(TimestampSerializer { none_as_null })
+    value.serialize(ReferenceSerializer { none_as_null })
 }

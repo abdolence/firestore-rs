@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod get;
+
 pub use get::*;
 
 mod create;
@@ -23,13 +24,16 @@ pub use query::*;
 mod aggregated_query;
 pub use aggregated_query::*;
 
-mod list_doc;
-pub use list_doc::*;
+mod list;
+pub use list::*;
 
 mod listen_changes;
 pub use listen_changes::*;
 
-use crate::FirestoreResult;
+mod listen_changes_state_storage;
+pub use listen_changes_state_storage::*;
+
+use crate::{FirestoreDocument, FirestoreResult, FirestoreValue};
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::*;
@@ -69,16 +73,21 @@ use crate::errors::{
     FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
 };
 use std::fmt::Formatter;
+use std::sync::Arc;
 
 mod transform_models;
 pub use transform_models::*;
 
-#[derive(Clone)]
-pub struct FirestoreDb {
+struct FirestoreDbInner {
     database_path: String,
     doc_path: String,
     options: FirestoreDbOptions,
     client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
+}
+
+#[derive(Clone)]
+pub struct FirestoreDb {
+    inner: Arc<FirestoreDbInner>,
     session_params: FirestoreDbSessionParams,
 }
 
@@ -105,13 +114,27 @@ impl FirestoreDb {
         .await
     }
 
+    pub async fn with_options_service_account_key_file(
+        options: FirestoreDbOptions,
+        service_account_key_path: std::path::PathBuf,
+    ) -> FirestoreResult<Self> {
+        Self::with_options_token_source(
+            options,
+            gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
+            gcloud_sdk::TokenSourceType::File(service_account_key_path),
+        )
+        .await
+    }
+
     pub async fn with_options_token_source(
         options: FirestoreDbOptions,
         token_scopes: Vec<String>,
         token_source_type: TokenSourceType,
     ) -> FirestoreResult<Self> {
-        let firestore_database_path =
-            format!("projects/{}/databases/(default)", options.google_project_id);
+        let firestore_database_path = format!(
+            "projects/{}/databases/{}",
+            options.google_project_id, options.database_id
+        );
         let firestore_database_doc_path = format!("{firestore_database_path}/documents");
 
         let effective_firebase_api_url = options
@@ -140,11 +163,15 @@ impl FirestoreDb {
         )
         .await?;
 
-        Ok(Self {
+        let inner = FirestoreDbInner {
             database_path: firestore_database_path,
             doc_path: firestore_database_doc_path,
             client,
             options,
+        };
+
+        Ok(Self {
+            inner: Arc::new(inner),
             session_params: FirestoreDbSessionParams::new(),
         })
     }
@@ -156,11 +183,24 @@ impl FirestoreDb {
         crate::firestore_serde::firestore_document_to_serializable(doc)
     }
 
-    pub fn serialize_to_doc<T>(document_path: &str, obj: &T) -> FirestoreResult<Document>
+    pub fn serialize_to_doc<S, T>(document_path: S, obj: &T) -> FirestoreResult<Document>
     where
+        S: AsRef<str>,
         T: Serialize,
     {
         crate::firestore_serde::firestore_document_from_serializable(document_path, obj)
+    }
+
+    pub fn serialize_map_to_doc<S, I, IS>(
+        document_path: S,
+        fields: I,
+    ) -> FirestoreResult<FirestoreDocument>
+    where
+        S: AsRef<str>,
+        I: IntoIterator<Item = (IS, FirestoreValue)>,
+        IS: AsRef<str>,
+    {
+        crate::firestore_serde::firestore_document_from_map(document_path, fields)
     }
 
     pub async fn ping(&self) -> FirestoreResult<()> {
@@ -172,13 +212,13 @@ impl FirestoreDb {
     }
 
     #[inline]
-    pub const fn get_database_path(&self) -> &String {
-        &self.database_path
+    pub fn get_database_path(&self) -> &String {
+        &self.inner.database_path
     }
 
     #[inline]
-    pub const fn get_documents_path(&self) -> &String {
-        &self.doc_path
+    pub fn get_documents_path(&self) -> &String {
+        &self.inner.doc_path
     }
 
     #[inline]
@@ -191,25 +231,25 @@ impl FirestoreDb {
         S: AsRef<str>,
     {
         Ok(ParentPathBuilder::new(safe_document_path(
-            self.doc_path.as_str(),
+            self.inner.doc_path.as_str(),
             parent_collection_name,
             parent_document_id.as_ref(),
         )?))
     }
 
     #[inline]
-    pub const fn get_options(&self) -> &FirestoreDbOptions {
-        &self.options
+    pub fn get_options(&self) -> &FirestoreDbOptions {
+        &self.inner.options
     }
 
     #[inline]
-    pub const fn get_session_params(&self) -> &FirestoreDbSessionParams {
+    pub fn get_session_params(&self) -> &FirestoreDbSessionParams {
         &self.session_params
     }
 
     #[inline]
-    pub const fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
-        &self.client
+    pub fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
+        &self.inner.client
     }
 
     #[inline]
@@ -252,9 +292,9 @@ fn ensure_url_scheme(url: String) -> String {
 impl std::fmt::Debug for FirestoreDb {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FirestoreDb")
-            .field("options", &self.options)
-            .field("database_path", &self.database_path)
-            .field("doc_path", &self.doc_path)
+            .field("options", &self.inner.options)
+            .field("database_path", &self.inner.database_path)
+            .field("doc_path", &self.inner.doc_path)
             .field("session_params", &self.session_params)
             .finish()
     }
@@ -266,7 +306,7 @@ pub(crate) fn safe_document_path<S>(
     document_id: S,
 ) -> FirestoreResult<String>
 where
-    S: AsRef<str> + Send,
+    S: AsRef<str>,
 {
     // All restrictions described here: https://firebase.google.com/docs/firestore/quotas#collections_documents_and_fields
     // Here we check only the most dangerous one for `/` to avoid document_id injections, leaving other validation to the server side.

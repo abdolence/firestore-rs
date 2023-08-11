@@ -38,13 +38,21 @@ impl From<&FirestoreAggregation> for structured_aggregation_query::Aggregation {
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreAggregationOperator {
     Count(FirestoreAggregationOperatorCount),
+    Sum(FirestoreAggregationOperatorSum),
+    Avg(FirestoreAggregationOperatorAvg),
 }
 
 impl From<&FirestoreAggregationOperator> for structured_aggregation_query::aggregation::Operator {
     fn from(op: &FirestoreAggregationOperator) -> Self {
         match op {
-            FirestoreAggregationOperator::Count(cnt) => {
-                structured_aggregation_query::aggregation::Operator::Count(cnt.into())
+            FirestoreAggregationOperator::Count(opts) => {
+                structured_aggregation_query::aggregation::Operator::Count(opts.into())
+            }
+            FirestoreAggregationOperator::Sum(opts) => {
+                structured_aggregation_query::aggregation::Operator::Sum(opts.into())
+            }
+            FirestoreAggregationOperator::Avg(opts) => {
+                structured_aggregation_query::aggregation::Operator::Avg(opts.into())
             }
         }
     }
@@ -59,6 +67,36 @@ impl From<&FirestoreAggregationOperatorCount> for structured_aggregation_query::
     fn from(cnt: &FirestoreAggregationOperatorCount) -> Self {
         structured_aggregation_query::aggregation::Count {
             up_to: cnt.up_to.map(|v| v as i64),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreAggregationOperatorSum {
+    pub field_name: String,
+}
+
+impl From<&FirestoreAggregationOperatorSum> for structured_aggregation_query::aggregation::Sum {
+    fn from(operator: &FirestoreAggregationOperatorSum) -> Self {
+        structured_aggregation_query::aggregation::Sum {
+            field: Some(structured_query::FieldReference {
+                field_path: operator.field_name.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreAggregationOperatorAvg {
+    pub field_name: String,
+}
+
+impl From<&FirestoreAggregationOperatorAvg> for structured_aggregation_query::aggregation::Avg {
+    fn from(operator: &FirestoreAggregationOperatorAvg) -> Self {
+        structured_aggregation_query::aggregation::Avg {
+            field: Some(structured_query::FieldReference {
+                field_path: operator.field_name.clone(),
+            }),
         }
     }
 }
@@ -233,7 +271,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
 impl FirestoreDb {
     fn create_aggregated_query_request(
         &self,
-        params: &FirestoreAggregatedQueryParams,
+        params: FirestoreAggregatedQueryParams,
     ) -> FirestoreResult<tonic::Request<RunAggregationQueryRequest>> {
         Ok(tonic::Request::new(RunAggregationQueryRequest {
             parent: params
@@ -251,7 +289,7 @@ impl FirestoreDb {
             query_type: Some(run_aggregation_query_request::QueryType::StructuredAggregationQuery(
                 StructuredAggregationQuery {
                     aggregations: params.aggregations.iter().map(|agg| agg.into()).collect(),
-                    query_type: Some(gcloud_sdk::google::firestore::v1::structured_aggregation_query::QueryType::StructuredQuery(params.query_params.to_structured_query())),
+                    query_type: Some(gcloud_sdk::google::firestore::v1::structured_aggregation_query::QueryType::StructuredQuery(params.query_params.into())),
                 }
             )),
         }))
@@ -264,11 +302,11 @@ impl FirestoreDb {
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
         async move {
-            let query_request = self.create_aggregated_query_request(&params)?;
+            let query_request = self.create_aggregated_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
-                .client
+                .client()
                 .get()
                 .run_aggregation_query(query_request)
                 .map_err(|e| e.into())
@@ -300,13 +338,13 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.options.max_retries =>
+                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
                             "[DB]: Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
-                            self.options.max_retries
+                            self.inner.options.max_retries
                         );
 
                         self.stream_aggregated_query_doc_with_retries(params, retries + 1, span)
@@ -326,11 +364,11 @@ impl FirestoreDb {
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<Vec<Document>>> {
         async move {
-            let query_request = self.create_aggregated_query_request(&params)?;
+            let query_request = self.create_aggregated_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
-                .client
+                .client()
                 .get()
                 .run_aggregation_query(query_request)
                 .map_err(|e| e.into())
@@ -364,13 +402,13 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.options.max_retries =>
+                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
                             "[DB]: Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
-                            self.options.max_retries
+                            self.inner.options.max_retries
                         );
                         self.aggregated_query_doc_with_retries(params, retries + 1, span)
                             .await

@@ -611,7 +611,7 @@ where
     for<'de> T: Deserialize<'de>,
 {
     let mut fields: HashMap<String, gcloud_sdk::google::firestore::v1::Value> =
-        HashMap::with_capacity(document.fields.len());
+        HashMap::with_capacity(document.fields.len() + 4);
 
     for (k, v) in document.fields.iter() {
         fields.insert(k.to_owned(), v.to_owned());

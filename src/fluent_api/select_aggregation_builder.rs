@@ -1,5 +1,6 @@
 use crate::{
-    FirestoreAggregation, FirestoreAggregationOperator, FirestoreAggregationOperatorCount,
+    FirestoreAggregation, FirestoreAggregationOperator, FirestoreAggregationOperatorAvg,
+    FirestoreAggregationOperatorCount, FirestoreAggregationOperatorSum,
 };
 
 pub struct FirestoreAggregationBuilder {}
@@ -47,6 +48,39 @@ impl FirestoreAggregationFieldExpr {
     pub fn count(self) -> Option<FirestoreAggregation> {
         Some(FirestoreAggregation::new(self.field_name).with_operator(
             FirestoreAggregationOperator::Count(FirestoreAggregationOperatorCount::new()),
+        ))
+    }
+
+    #[inline]
+    pub fn count_up_to(self, up_to: usize) -> Option<FirestoreAggregation> {
+        Some(FirestoreAggregation::new(self.field_name).with_operator(
+            FirestoreAggregationOperator::Count(
+                FirestoreAggregationOperatorCount::new().with_up_to(up_to),
+            ),
+        ))
+    }
+
+    #[inline]
+    pub fn sum<S>(self, sum_on_field_name: S) -> Option<FirestoreAggregation>
+    where
+        S: AsRef<str>,
+    {
+        Some(FirestoreAggregation::new(self.field_name).with_operator(
+            FirestoreAggregationOperator::Sum(FirestoreAggregationOperatorSum::new(
+                sum_on_field_name.as_ref().to_string(),
+            )),
+        ))
+    }
+
+    #[inline]
+    pub fn avg<S>(self, avg_on_field_name: S) -> Option<FirestoreAggregation>
+    where
+        S: AsRef<str>,
+    {
+        Some(FirestoreAggregation::new(self.field_name).with_operator(
+            FirestoreAggregationOperator::Avg(FirestoreAggregationOperatorAvg::new(
+                avg_on_field_name.as_ref().to_string(),
+            )),
         ))
     }
 }

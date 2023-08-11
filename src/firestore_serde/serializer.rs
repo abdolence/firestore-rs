@@ -227,6 +227,11 @@ impl serde::Serializer for FirestoreValueSerializer {
             crate::firestore_serde::latlng_serializers::FIRESTORE_LATLNG_TYPE_TAG_TYPE => {
                 crate::firestore_serde::latlng_serializers::serialize_latlng_for_firestore(value)
             }
+            crate::firestore_serde::reference_serializers::FIRESTORE_REFERENCE_TYPE_TAG_TYPE => {
+                crate::firestore_serde::reference_serializers::serialize_reference_for_firestore(
+                    value, false,
+                )
+            }
             _ => value.serialize(self),
         }
     }
@@ -558,11 +563,12 @@ impl serde::ser::SerializeStructVariant for SerializeStructVariant {
     }
 }
 
-pub fn firestore_document_from_serializable<T>(
-    document_path: &str,
+pub fn firestore_document_from_serializable<S, T>(
+    document_path: S,
     object: &T,
 ) -> Result<gcloud_sdk::google::firestore::v1::Document, FirestoreError>
 where
+    S: AsRef<str>,
     T: Serialize,
 {
     let serializer = crate::firestore_serde::serializer::FirestoreValueSerializer {
@@ -573,13 +579,33 @@ where
     match document_value.value.value_type {
         Some(value::ValueType::MapValue(mv)) => Ok(gcloud_sdk::google::firestore::v1::Document {
             fields: mv.fields,
-            name: document_path.into(),
-            create_time: None,
-            update_time: None,
+            name: document_path.as_ref().to_string(),
+            ..Default::default()
         }),
         _ => Err(FirestoreError::SystemError(FirestoreSystemError::new(
             FirestoreErrorPublicGenericDetails::new("SystemError".into()),
             "Unable to create document from value. No object found".into(),
         ))),
     }
+}
+
+pub fn firestore_document_from_map<S, I, IS>(
+    document_path: S,
+    fields: I,
+) -> Result<gcloud_sdk::google::firestore::v1::Document, FirestoreError>
+where
+    S: AsRef<str>,
+    I: IntoIterator<Item = (IS, FirestoreValue)>,
+    IS: AsRef<str>,
+{
+    let fields_map: HashMap<String, gcloud_sdk::google::firestore::v1::Value> = fields
+        .into_iter()
+        .map(|(k, v)| (k.as_ref().to_string(), v.value))
+        .collect();
+
+    Ok(gcloud_sdk::google::firestore::v1::Document {
+        fields: fields_map,
+        name: document_path.as_ref().to_string(),
+        ..Default::default()
+    })
 }

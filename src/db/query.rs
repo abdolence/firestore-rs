@@ -73,7 +73,7 @@ pub trait FirestoreQuerySupport {
 impl FirestoreDb {
     fn create_query_request(
         &self,
-        params: &FirestoreQueryParams,
+        params: FirestoreQueryParams,
     ) -> FirestoreResult<tonic::Request<RunQueryRequest>> {
         Ok(tonic::Request::new(RunQueryRequest {
             parent: params
@@ -98,11 +98,11 @@ impl FirestoreDb {
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
         async move {
-            let query_request = self.create_query_request(&params)?;
+            let query_request = self.create_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
-                .client
+                .client()
                 .get()
                 .run_query(query_request)
                 .map_err(|e| e.into())
@@ -134,13 +134,13 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.options.max_retries =>
+                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
                             "[DB]: Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
-                            self.options.max_retries
+                            self.inner.options.max_retries
                         );
 
                         self.stream_query_doc_with_retries(params, retries + 1, span)
@@ -160,11 +160,12 @@ impl FirestoreDb {
         span: &'a Span,
     ) -> BoxFuture<'a, FirestoreResult<Vec<Document>>> {
         async move {
-            let query_request = self.create_query_request(&params)?;
+            let collection_id = params.collection_id.to_string();
+            let query_request = self.create_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
             match self
-                .client
+                .client()
                 .get()
                 .run_query(query_request)
                 .map_err(|e| e.into())
@@ -189,7 +190,7 @@ impl FirestoreDb {
                     span.in_scope(|| {
                         debug!(
                             "[DB]: Querying documents in {:?} took {}ms",
-                            params.collection_id,
+                            collection_id,
                             query_duration.num_milliseconds()
                         );
                     });
@@ -198,13 +199,13 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.options.max_retries =>
+                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
                             "[DB]: Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
-                            self.options.max_retries
+                            self.inner.options.max_retries
                         );
                         self.query_doc_with_retries(params, retries + 1, span).await
                     }
@@ -361,7 +362,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                                 consistency_selector: maybe_consistency_selector.clone(),
                                 query_type: Some(
                                     partition_query_request::QueryType::StructuredQuery(
-                                        params.query_params.to_structured_query(),
+                                        params.query_params.clone().into(),
                                     ),
                                 ),
                                 page_token: params.page_token.clone().unwrap_or_default(),
@@ -457,7 +458,7 @@ impl FirestoreQuerySupport for FirestoreDb {
             let mut cursors_pairs: Vec<Option<FirestoreQueryCursor>> =
                 Vec::with_capacity(cursors.len() + 2);
             cursors_pairs.push(None);
-            cursors_pairs.extend(cursors.drain(..).into_iter().map(Some));
+            cursors_pairs.extend(cursors.drain(..).map(Some));
             cursors_pairs.push(None);
 
             let (tx, rx) =

@@ -372,3 +372,5 @@ pub(crate) fn firestore_err_to_backoff(err: FirestoreError) -> BackoffError<Fire
         other => backoff::Error::permanent(other),
     }
 }
+
+pub(crate) type AnyBoxedErrResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;

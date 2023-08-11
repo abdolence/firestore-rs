@@ -9,6 +9,8 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyAggTestStructure {
     counter: usize,
+    calc_sum: Option<usize>,
+    calc_avg: Option<usize>,
 }
 
 #[tokio::main]
@@ -30,7 +32,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
-        .aggregate(|a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
+        .aggregate(|a| {
+            a.fields([
+                a.field(path!(MyAggTestStructure::counter)).count(),
+                //a.field(path!(MyAggTestStructure::calc_sum)).sum("some_num"), // Not supported/enabled yet by Firestore, exists only on proto level
+                //a.field(path!(MyAggTestStructure::calc_avg)).avg("some_num"),
+            ])
+        })
         .obj()
         .query()
         .await?;

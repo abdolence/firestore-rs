@@ -1,5 +1,5 @@
 use crate::db::safe_document_path;
-use crate::FirestoreResult;
+use crate::{FirestoreReference, FirestoreResult};
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
@@ -35,5 +35,23 @@ impl Display for ParentPathBuilder {
 impl AsRef<str> for ParentPathBuilder {
     fn as_ref(&self) -> &str {
         self.value.as_str()
+    }
+}
+
+impl From<ParentPathBuilder> for String {
+    fn from(pb: ParentPathBuilder) -> Self {
+        pb.value
+    }
+}
+
+impl<'a> From<&'a ParentPathBuilder> for &'a str {
+    fn from(pb: &'a ParentPathBuilder) -> &'a str {
+        pb.value.as_str()
+    }
+}
+
+impl From<ParentPathBuilder> for FirestoreReference {
+    fn from(pb: ParentPathBuilder) -> Self {
+        FirestoreReference(pb.value)
     }
 }

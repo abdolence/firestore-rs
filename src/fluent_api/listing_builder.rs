@@ -1,6 +1,6 @@
 use crate::{
-    FirestoreListDocParams, FirestoreListDocResult, FirestoreListingSupport, FirestoreQueryOrder,
-    FirestoreResult,
+    FirestoreListCollectionIdsParams, FirestoreListCollectionIdsResult, FirestoreListDocParams,
+    FirestoreListDocResult, FirestoreListingSupport, FirestoreQueryOrder, FirestoreResult,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -50,6 +50,11 @@ where
         let params: FirestoreListDocParams = FirestoreListDocParams::new(collection.to_string())
             .opt_return_only_fields(self.return_only_fields);
         FirestoreListingDocBuilder::new(self.db, params)
+    }
+
+    #[inline]
+    pub fn collections(self) -> FirestoreListCollectionIdsBuilder<'a, D> {
+        FirestoreListCollectionIdsBuilder::new(self.db)
     }
 }
 
@@ -153,7 +158,7 @@ where
         Self {
             db,
             params,
-            _pd: PhantomData::default(),
+            _pd: PhantomData,
         }
     }
 
@@ -165,5 +170,62 @@ where
         self,
     ) -> FirestoreResult<BoxStream<'a, FirestoreResult<T>>> {
         self.db.stream_list_obj_with_errors(self.params).await
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FirestoreListCollectionIdsBuilder<'a, D>
+where
+    D: FirestoreListingSupport,
+{
+    db: &'a D,
+    params: FirestoreListCollectionIdsParams,
+}
+
+impl<'a, D> FirestoreListCollectionIdsBuilder<'a, D>
+where
+    D: FirestoreListingSupport,
+{
+    #[inline]
+    pub(crate) fn new(db: &'a D) -> Self {
+        Self {
+            db,
+            params: FirestoreListCollectionIdsParams::new(),
+        }
+    }
+
+    #[inline]
+    pub fn parent<S>(self, parent: S) -> Self
+    where
+        S: AsRef<str>,
+    {
+        Self {
+            params: self.params.with_parent(parent.as_ref().to_string()),
+            ..self
+        }
+    }
+
+    #[inline]
+    pub fn page_size(self, value: usize) -> Self {
+        Self {
+            params: self.params.with_page_size(value),
+            ..self
+        }
+    }
+
+    pub async fn get_page(self) -> FirestoreResult<FirestoreListCollectionIdsResult> {
+        self.db.list_collection_ids(self.params).await
+    }
+
+    pub async fn stream_all(self) -> FirestoreResult<BoxStream<'a, String>> {
+        self.db.stream_list_collection_ids(self.params).await
+    }
+
+    pub async fn stream_all_with_errors(
+        self,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<String>>> {
+        self.db
+            .stream_list_collection_ids_with_errors(self.params)
+            .await
     }
 }

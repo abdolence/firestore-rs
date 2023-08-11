@@ -265,7 +265,7 @@ where
         Self {
             db,
             params,
-            _pd: PhantomData::default(),
+            _pd: PhantomData,
         }
     }
 
@@ -498,7 +498,7 @@ where
             collection,
             parent,
             return_only_fields,
-            _pd: PhantomData::default(),
+            _pd: PhantomData,
         }
     }
 
@@ -697,7 +697,7 @@ where
             parallelism: 2,
             partition_count: 10,
             page_size: 1000,
-            _ph: PhantomData::default(),
+            _ph: PhantomData,
         }
     }
 
@@ -865,7 +865,7 @@ where
         Self {
             db,
             params,
-            _ph: PhantomData::default(),
+            _ph: PhantomData,
         }
     }
 

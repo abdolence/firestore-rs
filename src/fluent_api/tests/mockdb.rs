@@ -269,6 +269,27 @@ impl FirestoreListingSupport for MockDatabase {
     {
         unreachable!()
     }
+
+    async fn list_collection_ids(
+        &self,
+        params: FirestoreListCollectionIdsParams,
+    ) -> FirestoreResult<FirestoreListCollectionIdsResult> {
+        unreachable!()
+    }
+
+    async fn stream_list_collection_ids_with_errors(
+        &self,
+        params: FirestoreListCollectionIdsParams,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<String>>> {
+        unreachable!()
+    }
+
+    async fn stream_list_collection_ids(
+        &self,
+        params: FirestoreListCollectionIdsParams,
+    ) -> FirestoreResult<BoxStream<String>> {
+        unreachable!()
+    }
 }
 
 #[allow(unused)]

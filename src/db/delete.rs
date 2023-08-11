@@ -63,7 +63,8 @@ impl FirestoreDeleteSupport for FirestoreDb {
             Level::DEBUG,
             "Firestore Delete Document",
             "/firestore/collection_name" = collection_id,
-            "/firestore/response_time" = field::Empty
+            "/firestore/response_time" = field::Empty,
+            "/firestore/document_name" = document_path.as_str(),
         );
 
         let request = tonic::Request::new(DeleteDocumentRequest {
