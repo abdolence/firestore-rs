@@ -4,11 +4,10 @@ use crate::select_filter_builder::FirestoreQueryFilterBuilder;
 use crate::{
     FirestoreAggregatedQueryParams, FirestoreAggregatedQuerySupport, FirestoreAggregation,
     FirestoreCollectionDocuments, FirestoreGetByIdSupport, FirestoreListenSupport,
-    FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
-    FirestoreListenerTargetParams, FirestorePartition, FirestorePartitionQueryParams,
-    FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
-    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult, FirestoreResumeStateStorage,
-    FirestoreTargetType,
+    FirestoreListenerParams, FirestoreListenerTarget, FirestoreListenerTargetParams,
+    FirestorePartition, FirestorePartitionQueryParams, FirestoreQueryCollection,
+    FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder, FirestoreQueryParams,
+    FirestoreQuerySupport, FirestoreResult, FirestoreTargetManager, FirestoreTargetType,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -780,13 +779,13 @@ where
     }
 
     #[inline]
-    pub fn add_target<S>(
+    pub fn add_target<TM>(
         self,
         target: FirestoreListenerTarget,
-        listener: &mut FirestoreListener<D, S>,
+        listener: &mut TM,
     ) -> FirestoreResult<()>
     where
-        S: FirestoreResumeStateStorage + Send + Sync + Clone + 'static,
+        TM: FirestoreTargetManager,
     {
         listener.add_target(FirestoreListenerTargetParams::new(
             target,

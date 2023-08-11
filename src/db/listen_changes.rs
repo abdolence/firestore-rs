@@ -232,6 +232,11 @@ impl FirestoreDb {
 
 pub type FirestoreListenEvent = listen_response::ResponseType;
 
+pub trait FirestoreTargetManager {
+    fn add_target(&mut self, target: FirestoreListenerTargetParams) -> FirestoreResult<()>;
+    fn remove_target(&mut self, target: FirestoreListenerTarget) -> FirestoreResult<()>;
+}
+
 #[derive(Debug, Clone, Builder)]
 pub struct FirestoreListenerParams {
     pub retry_delay: Option<std::time::Duration>,
@@ -270,15 +275,6 @@ where
             shutdown_handle: None,
             shutdown_writer: None,
         })
-    }
-
-    pub fn add_target(
-        &mut self,
-        target_params: FirestoreListenerTargetParams,
-    ) -> FirestoreResult<()> {
-        target_params.validate()?;
-        self.targets.push(target_params);
-        Ok(())
     }
 
     pub async fn start<FN, F>(&mut self, cb: FN) -> FirestoreResult<()>
@@ -467,5 +463,22 @@ where
                 false
             }
         }
+    }
+}
+
+impl<D, S> FirestoreTargetManager for FirestoreListener<D, S>
+where
+    D: FirestoreListenSupport + Clone + Send + Sync + 'static,
+    S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+{
+    fn add_target(&mut self, target_params: FirestoreListenerTargetParams) -> FirestoreResult<()> {
+        target_params.validate()?;
+        self.targets.push(target_params);
+        Ok(())
+    }
+
+    fn remove_target(&mut self, target: FirestoreListenerTarget) -> FirestoreResult<()> {
+        self.targets.retain(|t| t.target != target);
+        Ok(())
     }
 }
