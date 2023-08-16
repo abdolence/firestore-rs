@@ -36,7 +36,7 @@ prost-types = "0.11"
 tokio = { version = "1" }
 tokio-stream = "0.1"
 futures = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde", "clock"], default-features = false }
 async-trait = "0.1"
 hex = "0.4"
 backoff = { version = "0.4", features = ["tokio"] }
