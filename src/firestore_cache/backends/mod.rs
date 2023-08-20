@@ -32,8 +32,8 @@ impl FirestoreCacheBackend for FirestoreMemoryOnlyCacheBackend {
         &mut self,
         options: &FirestoreCacheOptions,
         config: &FirestoreCacheConfiguration,
-    ) -> Result<(), FirestoreError> {
-        Ok(())
+    ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
+        Ok(Vec::new())
     }
 
     async fn shutdown(&mut self) -> Result<(), FirestoreError> {
@@ -42,7 +42,7 @@ impl FirestoreCacheBackend for FirestoreMemoryOnlyCacheBackend {
 }
 
 #[async_trait]
-impl FirestoreCacheGetDocsSupport for FirestoreMemoryOnlyCacheBackend {
+impl FirestoreCacheDocsByPathSupport for FirestoreMemoryOnlyCacheBackend {
     async fn get_doc_by_path(
         &self,
         collection_id: &str,
@@ -51,12 +51,9 @@ impl FirestoreCacheGetDocsSupport for FirestoreMemoryOnlyCacheBackend {
     ) -> FirestoreResult<Option<FirestoreDocument>> {
         Ok(None)
     }
-}
 
-#[async_trait]
-impl FirestoreCacheDocUpdateSupport for FirestoreMemoryOnlyCacheBackend {
     async fn update_doc_by_path(
-        &mut self,
+        &self,
         collection_id: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {

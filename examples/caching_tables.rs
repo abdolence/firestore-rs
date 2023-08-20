@@ -28,20 +28,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+
+    const TEST_COLLECTION_NAME: &'static str = "test-caching";
+
     const TEST_CACHE: &'static str = "example-cache";
 
     db.register_cache(
         TEST_CACHE,
         FirestoreCacheConfiguration::new()
-            .collection("test-caching".into())
-            .collection("test-caching2".into()),
+            .collection(TEST_COLLECTION_NAME)
+            .collection("test-caching2"),
         FirestoreMemoryOnlyCacheBackend::new(FirestoreMemoryOnlyCacheBackendMode::LoadAll),
     )
     .await?;
 
     db.load_caches().await?;
-
-    const TEST_COLLECTION_NAME: &'static str = "test-caching";
 
     if db
         .fluent()

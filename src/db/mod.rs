@@ -361,7 +361,8 @@ impl FirestoreDb {
         let existing_session_params = (*self.session_params).clone();
 
         self.clone_with_session_params(
-            existing_session_params.with_read_through_cache(cache_name.into()),
+            existing_session_params
+                .with_cache_mode(FirestoreDbSessionCacheMode::ReadThrough(cache_name.into())),
         )
     }
 }

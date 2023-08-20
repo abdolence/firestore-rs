@@ -4,6 +4,14 @@ use rsb_derive::*;
 #[derive(Debug, Clone, Builder)]
 pub struct FirestoreDbSessionParams {
     pub consistency_selector: Option<FirestoreConsistencySelector>,
+
+    #[default = "FirestoreDbSessionCacheMode::None"]
+    pub cache_mode: FirestoreDbSessionCacheMode,
+}
+
+#[derive(Debug, Clone)]
+pub enum FirestoreDbSessionCacheMode {
+    None,
     #[cfg(feature = "caching")]
-    pub read_through_cache: Option<crate::FirestoreCacheName>,
+    ReadThrough(crate::FirestoreCacheName),
 }

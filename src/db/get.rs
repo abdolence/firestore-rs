@@ -697,7 +697,8 @@ impl FirestoreDb {
                 let stream = response
                     .into_inner()
                     .filter_map(move |r| {
-                        let _collection_id = collection_id.clone();
+                        #[cfg(feature = "caching")]
+                        let collection_id = collection_id.clone();
                         async move {
                             match r {
                                 Ok(doc_response) => match doc_response.result {
@@ -711,7 +712,7 @@ impl FirestoreDb {
                                         #[cfg(feature = "caching")]
                                         {
                                             self.offer_doc_update_to_cache(
-                                                _collection_id.as_str(),
+                                                collection_id.as_str(),
                                                 &document,
                                             )
                                             .await
@@ -748,14 +749,15 @@ impl FirestoreDb {
     }
 
     #[cfg(feature = "caching")]
-    #[inline]
     pub(crate) async fn get_doc_from_cache(
         &self,
         collection_id: &str,
         document_path: &str,
         return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
-        if let Some(ref cache_name) = self.session_params.read_through_cache {
+        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name) =
+            self.session_params.cache_mode
+        {
             let caches = self.inner.caches.read().await;
             if let Some(cache) = caches.get(cache_name) {
                 let begin_query_utc: DateTime<Utc> = Utc::now();
@@ -813,7 +815,9 @@ impl FirestoreDb {
         full_doc_ids: &Vec<String>,
         return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<Option<BoxStream<FirestoreResult<(String, Option<Document>)>>>> {
-        if let Some(ref cache_name) = self.session_params.read_through_cache {
+        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name) =
+            self.session_params.cache_mode
+        {
             let caches = self.inner.caches.read().await;
             if let Some(cache) = caches.get(cache_name) {
                 let span = span!(
@@ -861,9 +865,13 @@ impl FirestoreDb {
         collection_id: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
-        if let Some(ref cache_name) = self.session_params.read_through_cache {
+        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name) =
+            self.session_params.cache_mode
+        {
             let caches = self.inner.caches.read().await;
-            if let Some(cache) = caches.get(cache_name) {}
+            if let Some(cache) = caches.get(cache_name) {
+                cache.update_doc_by_path(collection_id, document).await?;
+            }
         }
         Ok(())
     }

@@ -13,12 +13,16 @@ impl FirestoreCacheConfiguration {
     }
 
     #[inline]
-    pub fn collection(mut self, collection: &str) -> Self {
-        let collection_name = collection.to_string();
+    pub fn collection<S>(mut self, collection_path: S) -> Self
+    where
+        S: AsRef<str>,
+    {
+        let collection_name_str = collection_path.as_ref().to_string();
+
         self.collections.extend(
             [(
-                collection_name,
-                FirestoreCacheCollectionConfiguration::new(collection.to_string()),
+                collection_name_str.clone(),
+                FirestoreCacheCollectionConfiguration::new(collection_name_str.to_string()),
             )]
             .into_iter()
             .collect::<HashMap<String, FirestoreCacheCollectionConfiguration>>(),

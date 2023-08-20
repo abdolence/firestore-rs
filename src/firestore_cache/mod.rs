@@ -76,20 +76,18 @@ impl FirestoreCache {
 }
 
 #[async_trait]
-pub trait FirestoreCacheBackend:
-    FirestoreCacheGetDocsSupport + FirestoreCacheDocUpdateSupport
-{
+pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
     async fn load(
         &mut self,
         options: &FirestoreCacheOptions,
         config: &FirestoreCacheConfiguration,
-    ) -> Result<(), FirestoreError>;
+    ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError>;
 
     async fn shutdown(&mut self) -> Result<(), FirestoreError>;
 }
 
 #[async_trait]
-pub trait FirestoreCacheGetDocsSupport {
+pub trait FirestoreCacheDocsByPathSupport {
     async fn get_doc_by_path(
         &self,
         collection_id: &str,
@@ -139,10 +137,16 @@ pub trait FirestoreCacheGetDocsSupport {
             }),
         ))
     }
+
+    async fn update_doc_by_path(
+        &self,
+        collection_id: &str,
+        document: &FirestoreDocument,
+    ) -> FirestoreResult<()>;
 }
 
 #[async_trait]
-impl FirestoreCacheGetDocsSupport for FirestoreCache {
+impl FirestoreCacheDocsByPathSupport for FirestoreCache {
     async fn get_doc_by_path(
         &self,
         collection_id: &str,
@@ -154,21 +158,21 @@ impl FirestoreCacheGetDocsSupport for FirestoreCache {
             .get_doc_by_path(collection_id, document_path, return_only_fields)
             .await
     }
-}
 
-#[async_trait]
-pub trait FirestoreCacheDocUpdateSupport {
-    async fn update_doc_by_path(
-        &mut self,
-        collection_id: &str,
-        document: &FirestoreDocument,
-    ) -> FirestoreResult<()>;
-}
+    async fn get_docs_by_paths<'a>(
+        &'a self,
+        collection_id: &'a str,
+        full_doc_ids: &'a Vec<String>,
+        return_only_fields: &'a Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<FirestoreDocument>)>>> {
+        self.inner
+            .backend
+            .get_docs_by_paths(collection_id, full_doc_ids, return_only_fields)
+            .await
+    }
 
-#[async_trait]
-impl FirestoreCacheDocUpdateSupport for FirestoreCache {
     async fn update_doc_by_path(
-        &mut self,
+        &self,
         collection_id: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
