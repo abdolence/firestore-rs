@@ -83,6 +83,12 @@ struct FirestoreDbInner {
     doc_path: String,
     options: FirestoreDbOptions,
     client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
+    #[cfg(feature = "caching")]
+    pub(crate) caches: Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<crate::FirestoreCacheName, crate::FirestoreCache>,
+        >,
+    >,
 }
 
 #[derive(Clone)]
@@ -168,6 +174,8 @@ impl FirestoreDb {
             doc_path: firestore_database_doc_path,
             client,
             options,
+            #[cfg(feature = "caching")]
+            caches: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         };
 
         Ok(Self {
@@ -278,6 +286,49 @@ impl FirestoreDb {
                 .clone()
                 .with_consistency_selector(consistency_selector),
         )
+    }
+
+    #[cfg(feature = "caching")]
+    pub async fn register_cache<S, B>(
+        &self,
+        name: S,
+        config: crate::FirestoreCacheConfiguration,
+        backend: B,
+    ) -> FirestoreResult<&Self>
+    where
+        S: Into<crate::FirestoreCacheName>,
+        B: crate::FirestoreCacheBackend + Send + Sync + 'static,
+    {
+        let cache_name = name.into();
+        let cache = crate::FirestoreCache::new(cache_name.clone(), config, backend);
+        let mut caches = self.inner.caches.write().await;
+        caches.insert(cache_name, cache);
+        Ok(self)
+    }
+
+    #[cfg(feature = "caching")]
+    pub async fn register_cache_with_options<B>(
+        &self,
+        options: crate::FirestoreCacheOptions,
+        config: crate::FirestoreCacheConfiguration,
+        backend: B,
+    ) -> FirestoreResult<&Self>
+    where
+        B: crate::FirestoreCacheBackend + Send + Sync + 'static,
+    {
+        let cache_name = options.name.clone();
+        let cache = crate::FirestoreCache::with_options(options, config, backend);
+        let mut caches = self.inner.caches.write().await;
+        caches.insert(cache_name, cache);
+        Ok(self)
+    }
+
+    pub async fn load_caches(&self) -> FirestoreResult<()> {
+        let caches = self.inner.caches.read().await;
+        for cache in caches.values() {
+            cache.load().await?;
+        }
+        Ok(())
     }
 }
 
