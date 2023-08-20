@@ -33,7 +33,7 @@ pub use listen_changes::*;
 mod listen_changes_state_storage;
 pub use listen_changes_state_storage::*;
 
-use crate::{FirestoreCacheName, FirestoreDocument, FirestoreResult, FirestoreValue};
+use crate::{FirestoreDocument, FirestoreResult, FirestoreValue};
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::*;
@@ -356,7 +356,7 @@ impl FirestoreDb {
     #[cfg(feature = "caching")]
     pub fn read_through_cache<CN>(&self, cache_name: CN) -> Self
     where
-        CN: Into<FirestoreCacheName>,
+        CN: Into<crate::FirestoreCacheName>,
     {
         let existing_session_params = (*self.session_params).clone();
 

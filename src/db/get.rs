@@ -1,5 +1,5 @@
 use crate::db::safe_document_path;
-use crate::{FirestoreDb, FirestoreDocument, FirestoreError, FirestoreResult};
+use crate::*;
 use async_trait::async_trait;
 use chrono::prelude::*;
 use futures::future::{BoxFuture, FutureExt};
@@ -618,7 +618,17 @@ impl FirestoreDb {
                         );
                     });
 
-                    Ok(doc_response.into_inner())
+                    let doc = doc_response.into_inner();
+                    #[cfg(feature = "caching")]
+                    {
+                        self.offer_doc_update_to_cache(
+                            collection_id.as_str(),
+                            document_path.as_str(),
+                            &doc,
+                        )
+                        .await?;
+                    }
+                    Ok(doc)
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
@@ -821,5 +831,20 @@ impl FirestoreDb {
             }
         }
         Ok(None)
+    }
+
+    #[cfg(feature = "caching")]
+    #[inline]
+    pub(crate) async fn offer_doc_update_to_cache(
+        &self,
+        collection_id: &str,
+        document_path: &str,
+        document: &FirestoreDocument,
+    ) -> FirestoreResult<()> {
+        if let Some(ref cache_name) = self.session_params.read_through_cache {
+            let caches = self.inner.caches.read().await;
+            if let Some(cache) = caches.get(cache_name) {}
+        }
+        Ok(())
     }
 }

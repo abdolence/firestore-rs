@@ -76,7 +76,9 @@ impl FirestoreCache {
 }
 
 #[async_trait]
-pub trait FirestoreCacheBackend: FirestoreCacheGetDocsSupport {
+pub trait FirestoreCacheBackend:
+    FirestoreCacheGetDocsSupport + FirestoreCacheDocUpdateSupport
+{
     async fn load(
         &mut self,
         options: &FirestoreCacheOptions,
@@ -150,6 +152,31 @@ impl FirestoreCacheGetDocsSupport for FirestoreCache {
         self.inner
             .backend
             .get_doc_by_path(collection_id, document_path, return_only_fields)
+            .await
+    }
+}
+
+#[async_trait]
+pub trait FirestoreCacheDocUpdateSupport {
+    async fn update_doc_by_path(
+        &mut self,
+        collection_id: &str,
+        document_path: &str,
+        document: &FirestoreDocument,
+    ) -> FirestoreResult<()>;
+}
+
+#[async_trait]
+impl FirestoreCacheDocUpdateSupport for FirestoreCache {
+    async fn update_doc_by_path(
+        &mut self,
+        collection_id: &str,
+        document_path: &str,
+        document: &FirestoreDocument,
+    ) -> FirestoreResult<()> {
+        self.inner
+            .backend
+            .update_doc_by_path(collection_id, document_path, document)
             .await
     }
 }

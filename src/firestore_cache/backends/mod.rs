@@ -52,3 +52,15 @@ impl FirestoreCacheGetDocsSupport for FirestoreMemoryOnlyCacheBackend {
         Ok(None)
     }
 }
+
+#[async_trait]
+impl FirestoreCacheDocUpdateSupport for FirestoreMemoryOnlyCacheBackend {
+    async fn update_doc_by_path(
+        &mut self,
+        collection_id: &str,
+        document_path: &str,
+        document: &FirestoreDocument,
+    ) -> FirestoreResult<()> {
+        Ok(())
+    }
+}
