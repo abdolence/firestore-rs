@@ -1,5 +1,4 @@
 use crate::*;
-use std::sync::Arc;
 
 mod options;
 pub use options::*;
@@ -66,7 +65,7 @@ impl FirestoreCache {
 }
 
 #[async_trait]
-pub trait FirestoreCacheBackend {
+pub trait FirestoreCacheBackend: FirestoreCacheGetDocPathSupport {
     async fn load(
         &mut self,
         options: &FirestoreCacheOptions,
@@ -74,4 +73,27 @@ pub trait FirestoreCacheBackend {
     ) -> Result<(), FirestoreError>;
 
     async fn shutdown(&mut self) -> Result<(), FirestoreError>;
+}
+
+#[async_trait]
+pub trait FirestoreCacheGetDocPathSupport {
+    async fn get_doc_by_path(
+        &self,
+        document_path: &str,
+        return_only_fields: &Option<Vec<String>>,
+    ) -> FirestoreResult<Option<FirestoreDocument>>;
+}
+
+#[async_trait]
+impl FirestoreCacheGetDocPathSupport for FirestoreCache {
+    async fn get_doc_by_path(
+        &self,
+        document_path: &str,
+        return_only_fields: &Option<Vec<String>>,
+    ) -> FirestoreResult<Option<FirestoreDocument>> {
+        self.inner
+            .backend
+            .get_doc_by_path(document_path, return_only_fields)
+            .await
+    }
 }

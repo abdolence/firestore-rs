@@ -11,6 +11,9 @@ use gcloud_sdk::google::firestore::v1::*;
 use serde::Deserialize;
 use tracing::*;
 
+#[cfg(feature = "caching")]
+use crate::firestore_cache::*;
+
 #[async_trait]
 pub trait FirestoreGetByIdSupport {
     async fn get_doc<S>(
@@ -601,6 +604,29 @@ impl FirestoreDb {
     ) -> BoxFuture<FirestoreResult<Document>> {
         async move {
             let begin_query_utc: DateTime<Utc> = Utc::now();
+
+            #[cfg(feature = "caching")]
+            if let Some(ref cache_name) = self.session_params.read_through_cache {
+                let caches = self.inner.caches.read().await;
+                if let Some(cache) = caches.get(cache_name) {
+                    if let Some(doc) = cache
+                        .get_doc_by_path(document_path.as_str(), &return_only_fields)
+                        .await?
+                    {
+                        let end_query_utc: DateTime<Utc> = Utc::now();
+                        let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+
+                        debug!(
+                            "[DB]: Reading document {} from cache {} took {}ms",
+                            document_path,
+                            cache_name,
+                            query_duration.num_milliseconds()
+                        );
+
+                        return Ok(doc);
+                    }
+                }
+            }
 
             let request = tonic::Request::new(GetDocumentRequest {
                 name: document_path.clone(),

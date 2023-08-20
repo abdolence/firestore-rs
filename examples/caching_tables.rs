@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         FirestoreCacheConfiguration::new()
             .collection("test-caching".into())
             .collection("test-caching2".into()),
-        FirestoreMemoryOnlyCacheBackend::new(),
+        FirestoreMemoryOnlyCacheBackend::new(FirestoreMemoryOnlyCacheBackendMode::LoadAll),
     )
     .await?;
 
@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Getting by id");
     let my_struct: Option<MyTestStructure> = db
-        .read_through_caches([TEST_CACHE])?
+        .read_through_cache(TEST_CACHE)
         .fluent()
         .select()
         .by_id_in(TEST_COLLECTION_NAME)

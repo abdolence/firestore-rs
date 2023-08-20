@@ -333,7 +333,7 @@ impl FirestoreDb {
     #[cfg(feature = "caching")]
     pub async fn load_caches(&self) -> FirestoreResult<()> {
         let mut caches = self.inner.caches.write().await;
-        for mut cache in caches.values_mut() {
+        for cache in caches.values_mut() {
             cache.load().await?;
         }
         Ok(())
@@ -342,24 +342,22 @@ impl FirestoreDb {
     #[cfg(feature = "caching")]
     pub async fn shutdown_caches(&self) -> FirestoreResult<()> {
         let mut caches = self.inner.caches.write().await;
-        for mut cache in caches.values_mut() {
+        for cache in caches.values_mut() {
             cache.shutdown().await?;
         }
         Ok(())
     }
 
     #[cfg(feature = "caching")]
-    pub fn read_through_caches<I, CN>(&self, cache_names: I) -> FirestoreResult<Self>
+    pub fn read_through_cache<CN>(&self, cache_name: CN) -> Self
     where
-        I: IntoIterator<Item = CN>,
         CN: Into<FirestoreCacheName>,
     {
         let existing_session_params = (*self.session_params).clone();
 
-        Ok(self.clone_with_session_params(
-            existing_session_params
-                .with_read_through_caches(cache_names.into_iter().map(|cn| cn.into()).collect()),
-        ))
+        self.clone_with_session_params(
+            existing_session_params.with_read_through_cache(cache_name.into()),
+        )
     }
 }
 
