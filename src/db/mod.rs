@@ -33,7 +33,7 @@ pub use listen_changes::*;
 mod listen_changes_state_storage;
 pub use listen_changes_state_storage::*;
 
-use crate::{FirestoreDocument, FirestoreResult, FirestoreValue};
+use crate::{FirestoreCacheName, FirestoreDocument, FirestoreResult, FirestoreValue};
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::*;
@@ -94,7 +94,7 @@ struct FirestoreDbInner {
 #[derive(Clone)]
 pub struct FirestoreDb {
     inner: Arc<FirestoreDbInner>,
-    session_params: FirestoreDbSessionParams,
+    session_params: Arc<FirestoreDbSessionParams>,
 }
 
 const GOOGLE_FIREBASE_API_URL: &str = "https://firestore.googleapis.com";
@@ -180,7 +180,7 @@ impl FirestoreDb {
 
         Ok(Self {
             inner: Arc::new(inner),
-            session_params: FirestoreDbSessionParams::new(),
+            session_params: Arc::new(FirestoreDbSessionParams::new()),
         })
     }
 
@@ -263,7 +263,7 @@ impl FirestoreDb {
     #[inline]
     pub fn clone_with_session_params(&self, session_params: FirestoreDbSessionParams) -> Self {
         Self {
-            session_params,
+            session_params: session_params.into(),
             ..self.clone()
         }
     }
@@ -271,7 +271,7 @@ impl FirestoreDb {
     #[inline]
     pub fn with_session_params(self, session_params: FirestoreDbSessionParams) -> Self {
         Self {
-            session_params,
+            session_params: session_params.into(),
             ..self
         }
     }
@@ -281,10 +281,10 @@ impl FirestoreDb {
         &self,
         consistency_selector: FirestoreConsistencySelector,
     ) -> Self {
+        let existing_session_params = (*self.session_params).clone();
+
         self.clone_with_session_params(
-            self.session_params
-                .clone()
-                .with_consistency_selector(consistency_selector),
+            existing_session_params.with_consistency_selector(consistency_selector),
         )
     }
 
@@ -323,12 +323,27 @@ impl FirestoreDb {
         Ok(self)
     }
 
+    #[cfg(feature = "caching")]
     pub async fn load_caches(&self) -> FirestoreResult<()> {
         let caches = self.inner.caches.read().await;
         for cache in caches.values() {
             cache.load().await?;
         }
         Ok(())
+    }
+
+    #[cfg(feature = "caching")]
+    pub fn read_through_caches<I, CN>(&self, cache_names: I) -> FirestoreResult<Self>
+    where
+        I: IntoIterator<Item = CN>,
+        CN: Into<FirestoreCacheName>,
+    {
+        let existing_session_params = (*self.session_params).clone();
+
+        Ok(self.clone_with_session_params(
+            existing_session_params
+                .with_read_through_caches(cache_names.into_iter().map(|cn| cn.into()).collect()),
+        ))
     }
 }
 

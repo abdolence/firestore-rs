@@ -77,6 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Getting by id");
     let my_struct: Option<MyTestStructure> = db
+        .read_through_caches([TEST_CACHE])?
         .fluent()
         .select()
         .by_id_in(TEST_COLLECTION_NAME)
