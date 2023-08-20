@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         FirestoreCacheConfiguration::new()
             .collection("test-caching".into())
             .collection("test-caching2".into()),
-        FirestoreMemoryOnlyByIdCacheBackend::new(),
+        FirestoreMemoryOnlyCacheBackend::new(),
     )
     .await?;
 
@@ -104,6 +104,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
     println!("{:?}", as_vec);
+
+    db.shutdown().await?;
 
     Ok(())
 }

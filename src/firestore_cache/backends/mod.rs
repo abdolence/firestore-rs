@@ -2,21 +2,25 @@ use crate::errors::FirestoreError;
 use crate::*;
 use async_trait::async_trait;
 
-pub struct FirestoreMemoryOnlyByIdCacheBackend {}
+pub struct FirestoreMemoryOnlyCacheBackend {}
 
-impl FirestoreMemoryOnlyByIdCacheBackend {
+impl FirestoreMemoryOnlyCacheBackend {
     pub fn new() -> Self {
         Self {}
     }
 }
 
 #[async_trait]
-impl FirestoreCacheBackend for FirestoreMemoryOnlyByIdCacheBackend {
+impl FirestoreCacheBackend for FirestoreMemoryOnlyCacheBackend {
     async fn load(
-        &self,
+        &mut self,
         options: &FirestoreCacheOptions,
         config: &FirestoreCacheConfiguration,
     ) -> Result<(), FirestoreError> {
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> Result<(), FirestoreError> {
         Ok(())
     }
 }

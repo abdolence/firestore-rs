@@ -13,7 +13,7 @@ pub use backends::*;
 use async_trait::async_trait;
 
 pub struct FirestoreCache {
-    inner: Arc<FirestoreCacheInner>,
+    inner: FirestoreCacheInner,
 }
 
 struct FirestoreCacheInner {
@@ -43,19 +43,24 @@ impl FirestoreCache {
         B: FirestoreCacheBackend + Send + Sync + 'static,
     {
         Self {
-            inner: Arc::new(FirestoreCacheInner {
+            inner: FirestoreCacheInner {
                 options,
                 config,
                 backend: Box::new(backend),
-            }),
+            },
         }
     }
 
-    pub async fn load(&self) -> Result<(), FirestoreError> {
+    pub async fn load(&mut self) -> Result<(), FirestoreError> {
         self.inner
             .backend
             .load(&self.inner.options, &self.inner.config)
             .await?;
+        Ok(())
+    }
+
+    pub async fn shutdown(&mut self) -> Result<(), FirestoreError> {
+        self.inner.backend.shutdown().await?;
         Ok(())
     }
 }
@@ -63,8 +68,10 @@ impl FirestoreCache {
 #[async_trait]
 pub trait FirestoreCacheBackend {
     async fn load(
-        &self,
+        &mut self,
         options: &FirestoreCacheOptions,
         config: &FirestoreCacheConfiguration,
     ) -> Result<(), FirestoreError>;
+
+    async fn shutdown(&mut self) -> Result<(), FirestoreError>;
 }

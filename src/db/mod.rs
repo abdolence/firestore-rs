@@ -288,6 +288,13 @@ impl FirestoreDb {
         )
     }
 
+    pub async fn shutdown(self) -> FirestoreResult<()> {
+        #[cfg(feature = "caching")]
+        self.shutdown_caches().await?;
+
+        Ok(())
+    }
+
     #[cfg(feature = "caching")]
     pub async fn register_cache<S, B>(
         &self,
@@ -325,9 +332,18 @@ impl FirestoreDb {
 
     #[cfg(feature = "caching")]
     pub async fn load_caches(&self) -> FirestoreResult<()> {
-        let caches = self.inner.caches.read().await;
-        for cache in caches.values() {
+        let mut caches = self.inner.caches.write().await;
+        for mut cache in caches.values_mut() {
             cache.load().await?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "caching")]
+    pub async fn shutdown_caches(&self) -> FirestoreResult<()> {
+        let mut caches = self.inner.caches.write().await;
+        for mut cache in caches.values_mut() {
+            cache.shutdown().await?;
         }
         Ok(())
     }
