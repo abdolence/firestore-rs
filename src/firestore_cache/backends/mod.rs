@@ -42,12 +42,13 @@ impl FirestoreCacheBackend for FirestoreMemoryOnlyCacheBackend {
 }
 
 #[async_trait]
-impl FirestoreCacheGetDocPathSupport for FirestoreMemoryOnlyCacheBackend {
+impl FirestoreCacheGetDocsSupport for FirestoreMemoryOnlyCacheBackend {
     async fn get_doc_by_path(
         &self,
+        collection_id: &str,
         document_path: &str,
         return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
-        todo!()
+        Ok(None)
     }
 }

@@ -10,6 +10,9 @@ mod backends;
 pub use backends::*;
 
 use async_trait::async_trait;
+use futures::stream::BoxStream;
+use futures::StreamExt;
+use tracing::*;
 
 pub struct FirestoreCache {
     inner: FirestoreCacheInner,
@@ -62,10 +65,18 @@ impl FirestoreCache {
         self.inner.backend.shutdown().await?;
         Ok(())
     }
+
+    #[inline]
+    pub fn enabled_for_collection(&self, collection_name: &str) -> bool {
+        self.inner
+            .config
+            .collections
+            .contains_key(collection_name.into())
+    }
 }
 
 #[async_trait]
-pub trait FirestoreCacheBackend: FirestoreCacheGetDocPathSupport {
+pub trait FirestoreCacheBackend: FirestoreCacheGetDocsSupport {
     async fn load(
         &mut self,
         options: &FirestoreCacheOptions,
@@ -76,24 +87,69 @@ pub trait FirestoreCacheBackend: FirestoreCacheGetDocPathSupport {
 }
 
 #[async_trait]
-pub trait FirestoreCacheGetDocPathSupport {
+pub trait FirestoreCacheGetDocsSupport {
     async fn get_doc_by_path(
         &self,
+        collection_id: &str,
         document_path: &str,
         return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<Option<FirestoreDocument>>;
+
+    async fn get_docs_by_paths<'a>(
+        &'a self,
+        collection_id: &'a str,
+        full_doc_ids: &'a Vec<String>,
+        return_only_fields: &'a Option<Vec<String>>,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<FirestoreDocument>)>>>
+    where
+        Self: Sync,
+    {
+        Ok(Box::pin(
+            futures::stream::iter(full_doc_ids.clone()).filter_map({
+                move |document_path| {
+                    let return_only_fields = return_only_fields.clone();
+                    let collection_id = collection_id.to_string();
+                    async move {
+                        match self
+                            .get_doc_by_path(
+                                collection_id.as_str(),
+                                document_path.as_str(),
+                                &return_only_fields,
+                            )
+                            .await
+                        {
+                            Ok(maybe_doc) => maybe_doc.map(|document| {
+                                let doc_id = document
+                                    .name
+                                    .split('/')
+                                    .last()
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| document.name.clone());
+                                Ok((doc_id, Some(document)))
+                            }),
+                            Err(err) => {
+                                error!("[DB]: Error occurred while reading from cache: {}", err);
+                                None
+                            }
+                        }
+                    }
+                }
+            }),
+        ))
+    }
 }
 
 #[async_trait]
-impl FirestoreCacheGetDocPathSupport for FirestoreCache {
+impl FirestoreCacheGetDocsSupport for FirestoreCache {
     async fn get_doc_by_path(
         &self,
+        collection_id: &str,
         document_path: &str,
         return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
         self.inner
             .backend
-            .get_doc_by_path(document_path, return_only_fields)
+            .get_doc_by_path(collection_id, document_path, return_only_fields)
             .await
     }
 }

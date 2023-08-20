@@ -1,31 +1,34 @@
+use std::collections::HashMap;
+
 pub struct FirestoreCacheConfiguration {
-    collections: Vec<FirestoreCacheCollectionConfiguration>,
+    pub collections: HashMap<String, FirestoreCacheCollectionConfiguration>,
 }
 
 impl FirestoreCacheConfiguration {
     #[inline]
     pub fn new() -> Self {
         Self {
-            collections: Vec::new(),
+            collections: HashMap::new(),
         }
     }
 
     #[inline]
-    pub fn collection(self, collection: &str) -> Self {
-        Self {
-            collections: self
-                .collections
-                .into_iter()
-                .chain(vec![FirestoreCacheCollectionConfiguration::new(
-                    collection.to_string(),
-                )])
-                .collect(),
-        }
+    pub fn collection(mut self, collection: &str) -> Self {
+        let collection_name = collection.to_string();
+        self.collections.extend(
+            [(
+                collection_name,
+                FirestoreCacheCollectionConfiguration::new(collection.to_string()),
+            )]
+            .into_iter()
+            .collect::<HashMap<String, FirestoreCacheCollectionConfiguration>>(),
+        );
+        self
     }
 }
 
 pub struct FirestoreCacheCollectionConfiguration {
-    collection: String,
+    pub collection: String,
 }
 
 impl FirestoreCacheCollectionConfiguration {

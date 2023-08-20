@@ -213,9 +213,14 @@ impl FirestoreDb {
 
     pub async fn ping(&self) -> FirestoreResult<()> {
         // Reading non-existing document just to check that database is available to read
-        self.get_doc_by_path(self.get_database_path().clone(), None, 0)
-            .await
-            .ok();
+        self.get_doc_by_path(
+            "-ping-".to_string(),
+            self.get_database_path().clone(),
+            None,
+            0,
+        )
+        .await
+        .ok();
         Ok(())
     }
 
