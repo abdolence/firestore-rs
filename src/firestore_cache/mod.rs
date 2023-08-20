@@ -161,7 +161,6 @@ pub trait FirestoreCacheDocUpdateSupport {
     async fn update_doc_by_path(
         &mut self,
         collection_id: &str,
-        document_path: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()>;
 }
@@ -171,12 +170,11 @@ impl FirestoreCacheDocUpdateSupport for FirestoreCache {
     async fn update_doc_by_path(
         &mut self,
         collection_id: &str,
-        document_path: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
         self.inner
             .backend
-            .update_doc_by_path(collection_id, document_path, document)
+            .update_doc_by_path(collection_id, document)
             .await
     }
 }

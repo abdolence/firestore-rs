@@ -353,7 +353,7 @@ impl FirestoreGetByIdSupport for FirestoreDb {
             .map(|document_id| safe_document_path(parent, collection_id, document_id.as_ref()))
             .collect::<FirestoreResult<Vec<String>>>()?;
 
-        self.get_docs_by_ids(collection_id, full_doc_ids, return_only_fields)
+        self.get_docs_by_ids(collection_id.to_string(), full_doc_ids, return_only_fields)
             .await
     }
 
@@ -621,12 +621,8 @@ impl FirestoreDb {
                     let doc = doc_response.into_inner();
                     #[cfg(feature = "caching")]
                     {
-                        self.offer_doc_update_to_cache(
-                            collection_id.as_str(),
-                            document_path.as_str(),
-                            &doc,
-                        )
-                        .await?;
+                        self.offer_doc_update_to_cache(collection_id.as_str(), &doc)
+                            .await?;
                     }
                     Ok(doc)
                 }
@@ -652,16 +648,20 @@ impl FirestoreDb {
         .boxed()
     }
 
-    pub(crate) async fn get_docs_by_ids(
-        &self,
-        collection_id: &str,
+    pub(crate) async fn get_docs_by_ids<'a>(
+        &'a self,
+        collection_id: String,
         full_doc_ids: Vec<String>,
         return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<(String, Option<Document>)>>> {
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<Document>)>>> {
         #[cfg(feature = "caching")]
         {
             if let Some(stream) = self
-                .get_docs_by_ids_from_cache(collection_id, &full_doc_ids, &return_only_fields)
+                .get_docs_by_ids_from_cache(
+                    collection_id.as_str(),
+                    &full_doc_ids,
+                    &return_only_fields,
+                )
                 .await?
             {
                 return Ok(stream);
@@ -671,7 +671,7 @@ impl FirestoreDb {
         let span = span!(
             Level::DEBUG,
             "Firestore Batch Get",
-            "/firestore/collection_name" = collection_id,
+            "/firestore/collection_name" = collection_id.as_str(),
             "/firestore/ids_count" = full_doc_ids.len()
         );
 
@@ -690,34 +690,55 @@ impl FirestoreDb {
                 }
             }),
         });
+
         match self.client().get().batch_get_documents(request).await {
             Ok(response) => {
                 span.in_scope(|| debug!("Start consuming a batch of documents by ids"));
                 let stream = response
                     .into_inner()
-                    .filter_map(|r| {
-                        future::ready(match r {
-                            Ok(doc_response) => doc_response.result.map(|doc_res| match doc_res {
-                                batch_get_documents_response::Result::Found(document) => {
-                                    let doc_id = document
-                                        .name
-                                        .split('/')
-                                        .last()
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_else(|| document.name.clone());
-                                    Ok((doc_id, Some(document)))
-                                }
-                                batch_get_documents_response::Result::Missing(full_doc_id) => {
-                                    let doc_id = full_doc_id
-                                        .split('/')
-                                        .last()
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_else(|| full_doc_id);
-                                    Ok((doc_id, None))
-                                }
-                            }),
-                            Err(err) => Some(Err(err.into())),
-                        })
+                    .filter_map(move |r| {
+                        let _collection_id = collection_id.clone();
+                        async move {
+                            match r {
+                                Ok(doc_response) => match doc_response.result {
+                                    Some(batch_get_documents_response::Result::Found(document)) => {
+                                        let doc_id = document
+                                            .name
+                                            .split('/')
+                                            .last()
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_else(|| document.name.clone());
+                                        #[cfg(feature = "caching")]
+                                        {
+                                            self.offer_doc_update_to_cache(
+                                                _collection_id.as_str(),
+                                                &document,
+                                            )
+                                            .await
+                                            .ok();
+
+                                            Some(Ok((doc_id, Some(document))))
+                                        }
+                                        #[cfg(not(feature = "caching"))]
+                                        {
+                                            Some(Ok((doc_id, Some(document))))
+                                        }
+                                    }
+                                    Some(batch_get_documents_response::Result::Missing(
+                                        full_doc_id,
+                                    )) => {
+                                        let doc_id = full_doc_id
+                                            .split('/')
+                                            .last()
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_else(|| full_doc_id);
+                                        Some(Ok((doc_id, None)))
+                                    }
+                                    None => None,
+                                },
+                                Err(err) => Some(Err(err.into())),
+                            }
+                        }
                     })
                     .boxed();
                 Ok(stream)
@@ -838,7 +859,6 @@ impl FirestoreDb {
     pub(crate) async fn offer_doc_update_to_cache(
         &self,
         collection_id: &str,
-        document_path: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
         if let Some(ref cache_name) = self.session_params.read_through_cache {
