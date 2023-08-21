@@ -73,6 +73,7 @@ impl FirestoreMemoryCacheBackend {
                             .fluent()
                             .list()
                             .from(collection.as_str())
+                            .page_size(1000)
                             .stream_all_with_errors()
                             .await?;
 
