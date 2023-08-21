@@ -25,7 +25,7 @@ path = "src/lib.rs"
 default = []
 caching = []
 caching-memory = ["caching", "moka"]
-caching-persistent-rocksdb = ["caching", "rocksdb"]
+caching-persistent = ["caching", "redb", "prost"]
 
 [dependencies]
 tracing = "0.1"
@@ -37,6 +37,7 @@ rvstruct = "0.3.2"
 rsb_derive = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 prost-types = "0.11"
+prost = { version = "0.11", optional = true }
 tokio = { version = "1" }
 tokio-stream = "0.1"
 futures = "0.3"
@@ -44,7 +45,7 @@ chrono = { version = "0.4", features = ["serde", "clock"], default-features = fa
 async-trait = "0.1"
 hex = "0.4"
 backoff = { version = "0.4", features = ["tokio"] }
-rocksdb = { version = "0.21", optional = true }
+redb = { version = "1.1", optional = true }
 moka = { version = "0.11", features = ["future"], optional = true } # Caching library
 
 [dev-dependencies]
@@ -58,4 +59,4 @@ required-features = ["caching-memory"]
 
 [[example]]
 name = "caching_persistent_collections"
-required-features = ["caching-persistent-rocksdb"]
+required-features = ["caching-persistent"]

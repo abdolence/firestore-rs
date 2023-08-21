@@ -53,5 +53,6 @@ pub struct FirestoreCacheCollectionConfiguration {
 #[derive(Debug, Clone)]
 pub enum FirestoreCacheCollectionLoadMode {
     PreloadAllDocs,
+    PreloadAllIfEmpty,
     PreloadNone,
 }

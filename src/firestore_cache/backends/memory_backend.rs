@@ -59,7 +59,8 @@ impl FirestoreMemoryCacheBackend {
     async fn preload_collections(&self, db: &FirestoreDb) -> Result<(), FirestoreError> {
         for (collection, config) in &self.config.collections {
             match config.collection_load_mode {
-                FirestoreCacheCollectionLoadMode::PreloadAllDocs => {
+                FirestoreCacheCollectionLoadMode::PreloadAllDocs
+                | FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty => {
                     if let Some(mem_cache) = self.collection_caches.get(collection.as_str()) {
                         debug!("Preloading {}", collection.as_str());
                         let stream = db
