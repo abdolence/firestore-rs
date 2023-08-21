@@ -3,42 +3,44 @@ use crate::*;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream::BoxStream;
-use moka::future::{Cache, CacheBuilder};
 
 use futures::TryStreamExt;
+use rocksdb::*;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use tracing::*;
 
-pub type FirestoreMemCache = Cache<String, FirestoreDocument>;
-
-pub type FirestoreMemCacheOptions = CacheBuilder<String, FirestoreDocument, FirestoreMemCache>;
-
-pub struct FirestoreMemoryCacheBackend {
+pub struct FirestorePersistentCacheBackend {
     pub config: FirestoreCacheConfiguration,
-    collection_caches: HashMap<String, FirestoreMemCache>,
     collection_targets: HashMap<FirestoreListenerTarget, String>,
+    db: DBWithThreadMode<MultiThreaded>,
 }
 
-impl FirestoreMemoryCacheBackend {
-    pub fn new(config: FirestoreCacheConfiguration) -> Self {
-        Self::with_collection_options(config, |_| FirestoreMemCache::builder().max_capacity(10000))
+impl FirestorePersistentCacheBackend {
+    pub fn new(config: FirestoreCacheConfiguration) -> FirestoreResult<Self> {
+        let temp_dir = std::env::temp_dir();
+        let firestore_cache_dir = temp_dir.join("firestore_cache");
+        let db_dir = firestore_cache_dir.join("persistent");
+
+        if !db_dir.exists() {
+            debug!(
+                "Creating a temp directory to store persistent cache: {}",
+                db_dir.display()
+            );
+            std::fs::create_dir_all(&db_dir)?;
+        } else {
+            debug!(
+                "Using a temp directory to store persistent cache: {}",
+                db_dir.display()
+            );
+        }
+        Self::with_options(config, db_dir)
     }
 
-    pub fn with_collection_options(
+    pub fn with_options(
         config: FirestoreCacheConfiguration,
-        collection_mem_options: fn(&str) -> FirestoreMemCacheOptions,
-    ) -> Self {
-        let collection_caches = config
-            .collections
-            .keys()
-            .map(|collection| {
-                (
-                    collection.clone(),
-                    collection_mem_options(collection.as_str()).build(),
-                )
-            })
-            .collect();
-
+        data_dir: PathBuf,
+    ) -> FirestoreResult<Self> {
         let collection_targets = config
             .collections
             .iter()
@@ -49,40 +51,51 @@ impl FirestoreMemoryCacheBackend {
                 )
             })
             .collect();
-        Self {
+
+        debug!("Opening database for persistent cache {:?}...", data_dir);
+
+        let cfs: Vec<String> = config.collections.keys().into_iter().cloned().collect();
+
+        let mut db_opts = Options::default();
+        db_opts.create_missing_column_families(true);
+        db_opts.create_if_missing(true);
+        db_opts.set_compression_type(DBCompressionType::Snappy);
+
+        let db = DBWithThreadMode::open_cf(&db_opts, data_dir, cfs)?;
+        info!("Successfully opened database for persistent cache");
+
+        Ok(Self {
             config,
-            collection_caches,
             collection_targets,
-        }
+            db,
+        })
     }
 
     async fn preload_collections(&self, db: &FirestoreDb) -> Result<(), FirestoreError> {
         for (collection, config) in &self.config.collections {
             match config.collection_load_mode {
                 FirestoreCacheCollectionLoadMode::PreloadAllDocs => {
-                    if let Some(mem_cache) = self.collection_caches.get(collection.as_str()) {
-                        debug!("Preloading {}", collection.as_str());
-                        let stream = db
-                            .fluent()
-                            .list()
-                            .from(collection.as_str())
-                            .page_size(1000)
-                            .stream_all_with_errors()
-                            .await?;
+                    debug!("Preloading {}", collection.as_str());
+                    let stream = db
+                        .fluent()
+                        .list()
+                        .from(collection.as_str())
+                        .page_size(1000)
+                        .stream_all_with_errors()
+                        .await?;
 
-                        stream
-                            .try_for_each_concurrent(2, |doc| async move {
-                                mem_cache.insert(doc.name.clone(), doc).await;
-                                Ok(())
-                            })
-                            .await?;
+                    stream
+                        .try_for_each_concurrent(2, |doc| async move {
+                            unimplemented!();
+                            Ok(())
+                        })
+                        .await?;
 
-                        info!(
-                            "Preloading collection `{}` has been finished. Loaded: {} entries",
-                            collection.as_str(),
-                            mem_cache.entry_count()
-                        );
-                    }
+                    info!(
+                        "Preloading collection `{}` has been finished. Loaded: {} entries",
+                        collection.as_str(),
+                        unimplemented!()
+                    );
                 }
                 FirestoreCacheCollectionLoadMode::PreloadNone => {}
             }
@@ -92,14 +105,12 @@ impl FirestoreMemoryCacheBackend {
 }
 
 #[async_trait]
-impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
+impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
     async fn load(
         &self,
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        let read_from_time = Utc::now();
-
         self.preload_collections(db).await?;
 
         Ok(self
@@ -114,7 +125,6 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                     )),
                     HashMap::new(),
                 )
-                .with_resume_type(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
             })
             .collect())
     }
@@ -131,9 +141,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                         if let Some(mem_cache_name) =
                             self.collection_targets.get(&(*target_id as u32).into())
                         {
-                            if let Some(mem_cache) = self.collection_caches.get(mem_cache_name) {
-                                mem_cache.insert(doc.name.clone(), doc).await;
-                            }
+                            unimplemented!()
                         }
                     }
                 }
@@ -144,9 +152,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                     if let Some(mem_cache_name) =
                         self.collection_targets.get(&(*target_id as u32).into())
                     {
-                        if let Some(mem_cache) = self.collection_caches.get(mem_cache_name) {
-                            mem_cache.remove(&doc_deleted.document).await;
-                        }
+                        unimplemented!()
                     }
                 }
                 Ok(())
@@ -157,16 +163,13 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
 }
 
 #[async_trait]
-impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
+impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
     async fn get_doc_by_path(
         &self,
         collection_id: &str,
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
-        match self.collection_caches.get(collection_id) {
-            Some(mem_cache) => Ok(mem_cache.get(document_path)),
-            None => Ok(None),
-        }
+        unimplemented!()
     }
 
     async fn update_doc_by_path(
@@ -174,26 +177,13 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
         collection_id: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
-        match self.collection_caches.get(collection_id) {
-            Some(mem_cache) => {
-                mem_cache
-                    .insert(document.name.clone(), document.clone())
-                    .await;
-                Ok(())
-            }
-            None => Ok(()),
-        }
+        unimplemented!()
     }
 
     async fn list_all_docs(
         &self,
         collection_id: &str,
     ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
-        match self.collection_caches.get(collection_id) {
-            Some(mem_cache) => Ok(Box::pin(futures::stream::iter(
-                mem_cache.iter().map(|(_, doc)| Ok(doc)),
-            ))),
-            None => Ok(Box::pin(futures::stream::empty())),
-        }
+        unimplemented!()
     }
 }

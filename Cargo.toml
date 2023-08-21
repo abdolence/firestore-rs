@@ -25,7 +25,7 @@ path = "src/lib.rs"
 default = []
 caching = []
 caching-memory = ["caching", "moka"]
-caching-persistent = ["caching", "rocksdb"]
+caching-persistent-rocksdb = ["caching", "rocksdb"]
 
 [dependencies]
 tracing = "0.1"
@@ -54,4 +54,8 @@ tokio = { version = "1", features = ["full"] }
 
 [[example]]
 name = "caching_memory_collections"
-required-features = ["caching", "caching-memory"]
+required-features = ["caching-memory"]
+
+[[example]]
+name = "caching_persistent_collections"
+required-features = ["caching-persistent-rocksdb"]

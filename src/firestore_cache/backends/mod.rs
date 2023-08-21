@@ -1,4 +1,9 @@
 #[cfg(feature = "caching-memory")]
-mod firestore_memory_cache_backend;
+mod memory_backend;
 #[cfg(feature = "caching-memory")]
-pub use firestore_memory_cache_backend::*;
+pub use memory_backend::*;
+
+#[cfg(feature = "caching-persistent-rocksdb")]
+mod persistent_backend;
+#[cfg(feature = "caching-persistent-rocksdb")]
+pub use persistent_backend::*;

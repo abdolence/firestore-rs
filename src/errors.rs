@@ -400,3 +400,13 @@ impl From<std::io::Error> for FirestoreError {
         ))
     }
 }
+
+#[cfg(feature = "caching-persistent-rocksdb")]
+impl From<rocksdb::Error> for FirestoreError {
+    fn from(db_err: rocksdb::Error) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new(format!("{:?}", db_err.kind())),
+            format!("Cache error: {db_err}"),
+        ))
+    }
+}
