@@ -440,7 +440,13 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     where
         V: Visitor<'de>,
     {
-        self.deserialize_any(visitor)
+        match self.value.value_type {
+            Some(value::ValueType::IntegerValue(v)) => {
+                visitor.visit_u64(v as u64)
+            },
+
+            _ => unreachable!()
+        }
     }
 
     fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
