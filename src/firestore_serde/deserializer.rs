@@ -443,7 +443,11 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
         match self.value.value_type {
             Some(value::ValueType::IntegerValue(v)) => visitor.visit_u64(v as u64),
 
-            _ => unreachable!(),
+            _ => Err(FirestoreError::DeserializeError(
+                FirestoreSerializationError::from_message(
+                    "Unexpected field type for u64 deserialization",
+                ),
+            )),
         }
     }
 
