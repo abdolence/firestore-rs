@@ -100,6 +100,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("{:?}", my_struct2);
 
+    println!("Getting batch by ids");
+    let cached_db = db.read_through_cache(TEST_CACHE);
+    let my_struct1_stream: BoxStream<FirestoreResult<(String, Option<MyTestStructure>)>> =
+        cached_db
+            .fluent()
+            .select()
+            .by_id_in(TEST_COLLECTION_NAME)
+            .obj()
+            .batch_with_errors(["test-1", "test-2"])
+            .await?;
+
+    let my_structs1 = my_struct1_stream.try_collect::<Vec<_>>().await?;
+    println!("{:?}", my_structs1);
+
+    // Now from cache
+    let my_struct2_stream: BoxStream<FirestoreResult<(String, Option<MyTestStructure>)>> =
+        cached_db
+            .fluent()
+            .select()
+            .by_id_in(TEST_COLLECTION_NAME)
+            .obj()
+            .batch_with_errors(["test-1", "test-2"])
+            .await?;
+
+    let my_structs2 = my_struct2_stream.try_collect::<Vec<_>>().await?;
+    println!("{:?}", my_structs2);
+
     db.shutdown().await?;
 
     Ok(())
