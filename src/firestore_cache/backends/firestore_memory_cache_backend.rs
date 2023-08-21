@@ -6,17 +6,12 @@ use futures::stream::BoxStream;
 use moka::future::{Cache, CacheBuilder};
 
 use futures::TryStreamExt;
-use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use tracing::*;
 
-pub type FirestoreMemCacheOptions = CacheBuilder<
-    String,
-    FirestoreDocument,
-    Cache<String, gcloud_sdk::google::firestore::v1::Document>,
->;
+pub type FirestoreMemCache = Cache<String, FirestoreDocument>;
 
-pub type FirestoreMemCache = Cache<String, FirestoreDocument, RandomState>;
+pub type FirestoreMemCacheOptions = CacheBuilder<String, FirestoreDocument, FirestoreMemCache>;
 
 pub struct FirestoreMemoryCacheBackend {
     pub config: FirestoreCacheConfiguration,
@@ -26,23 +21,21 @@ pub struct FirestoreMemoryCacheBackend {
 
 impl FirestoreMemoryCacheBackend {
     pub fn new(config: FirestoreCacheConfiguration) -> Self {
-        Self::with_collection_options(config, HashMap::new())
+        Self::with_collection_options(config, |_| FirestoreMemCache::builder().max_capacity(10000))
     }
 
     pub fn with_collection_options(
         config: FirestoreCacheConfiguration,
-        mut mem_options_by_collection: HashMap<String, FirestoreMemCacheOptions>,
+        collection_mem_options: fn(&str) -> FirestoreMemCacheOptions,
     ) -> Self {
         let collection_caches = config
             .collections
             .keys()
             .map(|collection| {
-                mem_options_by_collection
-                    .remove(collection.as_str())
-                    .map_or_else(
-                        || (collection.clone(), FirestoreMemCache::builder().build()),
-                        |mem_options| (collection.clone(), mem_options.build()),
-                    )
+                (
+                    collection.clone(),
+                    collection_mem_options(collection.as_str()).build(),
+                )
             })
             .collect();
 
