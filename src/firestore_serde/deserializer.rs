@@ -441,11 +441,9 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
         V: Visitor<'de>,
     {
         match self.value.value_type {
-            Some(value::ValueType::IntegerValue(v)) => {
-                visitor.visit_u64(v as u64)
-            },
+            Some(value::ValueType::IntegerValue(v)) => visitor.visit_u64(v as u64),
 
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
