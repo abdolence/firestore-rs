@@ -232,7 +232,7 @@ impl FirestoreDb {
 
 pub type FirestoreListenEvent = listen_response::ResponseType;
 
-#[derive(Debug, Clone, Builder)]
+#[derive(Debug, Clone, Eq, PartialEq, Builder)]
 pub struct FirestoreListenerParams {
     pub retry_delay: Option<std::time::Duration>,
 }
@@ -309,6 +309,11 @@ where
                 target_params.target.clone(),
                 target_params.clone().opt_resume_type(initial_state),
             );
+        }
+
+        if initial_states.len() == 0 {
+            warn!("No initial states for listener targets. Exiting...");
+            return Ok(());
         }
 
         let (tx, rx): (UnboundedSender<i8>, UnboundedReceiver<i8>) =

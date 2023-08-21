@@ -312,7 +312,7 @@ impl FirestoreDb {
         B: crate::FirestoreCacheBackend + Send + Sync + 'static,
     {
         let cache_name = name.into();
-        let cache = crate::FirestoreCache::new(cache_name.clone(), config, backend);
+        let cache = crate::FirestoreCache::new(cache_name.clone(), config, backend, self).await?;
         let mut caches = self.inner.caches.write().await;
         caches.insert(cache_name, cache);
         Ok(self)
@@ -329,7 +329,7 @@ impl FirestoreDb {
         B: crate::FirestoreCacheBackend + Send + Sync + 'static,
     {
         let cache_name = options.name.clone();
-        let cache = crate::FirestoreCache::with_options(options, config, backend);
+        let cache = crate::FirestoreCache::with_options(options, config, backend, self).await?;
         let mut caches = self.inner.caches.write().await;
         caches.insert(cache_name, cache);
         Ok(self)

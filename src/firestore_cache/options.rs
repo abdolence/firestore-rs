@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::FirestoreListenerParams;
 use rsb_derive::Builder;
 use rvstruct::ValueStruct;
 
@@ -10,4 +11,5 @@ pub struct FirestoreCacheName(String);
 pub struct FirestoreCacheOptions {
     pub name: FirestoreCacheName,
     pub cache_dir: PathBuf,
+    pub listener_params: Option<FirestoreListenerParams>,
 }

@@ -391,3 +391,12 @@ pub(crate) fn firestore_err_to_backoff(err: FirestoreError) -> BackoffError<Fire
 }
 
 pub(crate) type AnyBoxedErrResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+impl From<std::io::Error> for FirestoreError {
+    fn from(io_error: std::io::Error) -> Self {
+        FirestoreError::SystemError(FirestoreSystemError::new(
+            FirestoreErrorPublicGenericDetails::new(format!("{:?}", io_error.kind())),
+            format!("I/O error: {io_error}"),
+        ))
+    }
+}

@@ -32,7 +32,7 @@ impl FirestoreMemOnlyOnDemandCacheBackend {
 #[async_trait]
 impl FirestoreCacheBackend for FirestoreMemOnlyOnDemandCacheBackend {
     async fn load(
-        &mut self,
+        &self,
         _options: &FirestoreCacheOptions,
         config: &FirestoreCacheConfiguration,
         _db: &FirestoreDb,
@@ -53,8 +53,28 @@ impl FirestoreCacheBackend for FirestoreMemOnlyOnDemandCacheBackend {
             .collect())
     }
 
-    async fn shutdown(&mut self) -> Result<(), FirestoreError> {
+    async fn shutdown(&self) -> Result<(), FirestoreError> {
         Ok(())
+    }
+
+    async fn on_listen_event(&self, event: FirestoreListenEvent) -> FirestoreResult<()> {
+        match event {
+            FirestoreListenEvent::DocumentChange(doc_change) => {
+                if let Some(doc) = doc_change.document {
+                    self.mem_cache.insert(doc.name.clone(), doc).await
+                }
+                Ok(())
+            }
+            FirestoreListenEvent::DocumentDelete(doc_deleted) => {
+                self.mem_cache.remove(&doc_deleted.document).await;
+                Ok(())
+            }
+            FirestoreListenEvent::DocumentRemove(doc_removed) => {
+                self.mem_cache.remove(&doc_removed.document).await;
+                Ok(())
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -62,17 +82,12 @@ impl FirestoreCacheBackend for FirestoreMemOnlyOnDemandCacheBackend {
 impl FirestoreCacheDocsByPathSupport for FirestoreMemOnlyOnDemandCacheBackend {
     async fn get_doc_by_path(
         &self,
-        _collection_id: &str,
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
         Ok(self.mem_cache.get(document_path))
     }
 
-    async fn update_doc_by_path(
-        &self,
-        _collection_id: &str,
-        document: &FirestoreDocument,
-    ) -> FirestoreResult<()> {
+    async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()> {
         Ok(self
             .mem_cache
             .insert(document.name.clone(), document.clone())
