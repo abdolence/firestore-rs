@@ -354,16 +354,30 @@ impl FirestoreDb {
     }
 
     #[cfg(feature = "caching")]
+    pub fn with_cache(&self, cache_mode: crate::FirestoreDbSessionCacheMode) -> Self {
+        let existing_session_params = (*self.session_params).clone();
+
+        self.clone_with_session_params(existing_session_params.with_cache_mode(cache_mode))
+    }
+
+    #[cfg(feature = "caching")]
     pub fn read_through_cache<CN>(&self, cache_name: CN) -> Self
     where
         CN: Into<crate::FirestoreCacheName>,
     {
-        let existing_session_params = (*self.session_params).clone();
+        self.with_cache(crate::FirestoreDbSessionCacheMode::ReadThrough(
+            cache_name.into(),
+        ))
+    }
 
-        self.clone_with_session_params(
-            existing_session_params
-                .with_cache_mode(FirestoreDbSessionCacheMode::ReadThrough(cache_name.into())),
-        )
+    #[cfg(feature = "caching")]
+    pub fn read_only_cached<CN>(&self, cache_name: CN) -> Self
+    where
+        CN: Into<crate::FirestoreCacheName>,
+    {
+        self.with_cache(crate::FirestoreDbSessionCacheMode::ReadOnlyCached(
+            cache_name.into(),
+        ))
     }
 }
 

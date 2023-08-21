@@ -76,6 +76,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         current_batch.write().await?;
     }
 
+    println!("Getting by id only from cache - won't exist");
+    let my_struct0: Option<MyTestStructure> = db
+        .read_only_cached(TEST_CACHE)
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .one("test-1")
+        .await?;
+
+    println!("{:?}", my_struct0);
+
     println!("Getting by id");
     let my_struct1: Option<MyTestStructure> = db
         .read_through_cache(TEST_CACHE)
@@ -102,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Getting batch by ids");
     let cached_db = db.read_through_cache(TEST_CACHE);
+
     let my_struct1_stream: BoxStream<FirestoreResult<(String, Option<MyTestStructure>)>> =
         cached_db
             .fluent()

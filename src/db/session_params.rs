@@ -14,4 +14,6 @@ pub enum FirestoreDbSessionCacheMode {
     None,
     #[cfg(feature = "caching")]
     ReadThrough(crate::FirestoreCacheName),
+    #[cfg(feature = "caching")]
+    ReadOnlyCached(crate::FirestoreCacheName),
 }

@@ -26,6 +26,11 @@ struct FirestoreCacheInner {
     pub listener: FirestoreListener<FirestoreDb, FirestoreTempFilesListenStateStorage>,
 }
 
+pub enum FirestoreCachedValue<T> {
+    UseCached(T),
+    SkipCache,
+}
+
 impl FirestoreCache {
     pub async fn new<B>(
         name: FirestoreCacheName,
@@ -52,7 +57,7 @@ impl FirestoreCache {
             );
         }
 
-        let options = FirestoreCacheOptions::new(name, firestore_cache_dir);
+        let options = FirestoreCacheOptions::new(name, cache_dir);
         Self::with_options(options, config, backend, db).await
     }
 

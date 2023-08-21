@@ -1,4 +1,5 @@
 use crate::db::safe_document_path;
+use crate::errors::*;
 use crate::*;
 use async_trait::async_trait;
 use chrono::prelude::*;
@@ -557,7 +558,7 @@ impl FirestoreDb {
         async move {
             #[cfg(feature = "caching")]
             {
-                if let Some(doc) = self
+                if let FirestoreCachedValue::UseCached(doc) = self
                     .get_doc_from_cache(
                         collection_id.as_str(),
                         document_path.as_str(),
@@ -657,7 +658,7 @@ impl FirestoreDb {
     ) -> FirestoreResult<BoxStream<FirestoreResult<(String, Option<Document>)>>> {
         #[cfg(feature = "caching")]
         {
-            if let Some(stream) = self
+            if let FirestoreCachedValue::UseCached(stream) = self
                 .get_docs_by_ids_from_cache(
                     collection_id.as_str(),
                     &full_doc_ids,
@@ -746,8 +747,9 @@ impl FirestoreDb {
         collection_id: &str,
         document_path: &str,
         _return_only_fields: &Option<Vec<String>>,
-    ) -> FirestoreResult<Option<FirestoreDocument>> {
-        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name) =
+    ) -> FirestoreResult<FirestoreCachedValue<FirestoreDocument>> {
+        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name)
+        | FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache_name) =
             self.session_params.cache_mode
         {
             let caches = self.inner.caches.read().await;
@@ -776,7 +778,7 @@ impl FirestoreDb {
                         );
                     });
 
-                    return Ok(Some(doc));
+                    return Ok(FirestoreCachedValue::UseCached(doc));
                 } else {
                     let span = span!(
                         Level::DEBUG,
@@ -791,10 +793,23 @@ impl FirestoreDb {
                             document_path, cache_name
                         );
                     });
+                    if let FirestoreDbSessionCacheMode::ReadOnlyCached(_) =
+                        self.session_params.cache_mode
+                    {
+                        return Err(FirestoreError::DataNotFoundError(
+                            FirestoreDataNotFoundError::new(
+                                FirestoreErrorPublicGenericDetails::new("CACHE_MISS".to_string()),
+                                format!(
+                                    "Document {} not found in cache {}",
+                                    document_path, cache_name
+                                ),
+                            ),
+                        ));
+                    }
                 }
             }
         }
-        Ok(None)
+        Ok(FirestoreCachedValue::SkipCache)
     }
 
     #[cfg(feature = "caching")]
@@ -804,8 +819,10 @@ impl FirestoreDb {
         collection_id: &str,
         full_doc_ids: &Vec<String>,
         _return_only_fields: &Option<Vec<String>>,
-    ) -> FirestoreResult<Option<BoxStream<FirestoreResult<(String, Option<Document>)>>>> {
-        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name) =
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<(String, Option<Document>)>>>>
+    {
+        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name)
+        | FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache_name) =
             self.session_params.cache_mode
         {
             let caches = self.inner.caches.read().await;
@@ -830,8 +847,13 @@ impl FirestoreDb {
                 let cached_vec: Vec<(String, Option<FirestoreDocument>)> =
                     cached_stream.try_collect::<Vec<_>>().await?;
 
-                if cached_vec.len() == full_doc_ids.len() {
-                    return Ok(Some(Box::pin(
+                if cached_vec.len() == full_doc_ids.len()
+                    || matches!(
+                        self.session_params.cache_mode,
+                        FirestoreDbSessionCacheMode::ReadOnlyCached(_)
+                    )
+                {
+                    return Ok(FirestoreCachedValue::UseCached(Box::pin(
                         futures::stream::iter(cached_vec)
                             .map(|(doc_id, maybe_doc)| Ok((doc_id, maybe_doc))),
                     )));
@@ -839,11 +861,11 @@ impl FirestoreDb {
                     span.in_scope(|| {
                         info!("Not all documents were found in cache. Reading from Firestore.")
                     });
-                    return Ok(None);
+                    return Ok(FirestoreCachedValue::SkipCache);
                 }
             }
         }
-        Ok(None)
+        Ok(FirestoreCachedValue::SkipCache)
     }
 
     #[cfg(feature = "caching")]
