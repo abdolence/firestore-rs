@@ -5,8 +5,10 @@ use chrono::Utc;
 use futures::stream::BoxStream;
 use moka::future::{Cache, CacheBuilder};
 
+use futures::TryStreamExt;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
+use tracing::*;
 
 pub type FirestoreMemCacheOptions = CacheBuilder<
     String,
@@ -60,6 +62,39 @@ impl FirestoreMemoryCacheBackend {
             collection_targets,
         }
     }
+
+    async fn preload_collections(&self, db: &FirestoreDb) -> Result<(), FirestoreError> {
+        for (collection, config) in &self.config.collections {
+            match config.collection_load_mode {
+                FirestoreCacheCollectionLoadMode::PreloadAllDocs => {
+                    if let Some(mem_cache) = self.collection_caches.get(collection.as_str()) {
+                        debug!("Preloading {}", collection.as_str());
+                        let stream = db
+                            .fluent()
+                            .list()
+                            .from(collection.as_str())
+                            .stream_all_with_errors()
+                            .await?;
+
+                        stream
+                            .try_for_each_concurrent(2, |doc| async move {
+                                mem_cache.insert(doc.name.clone(), doc).await;
+                                Ok(())
+                            })
+                            .await?;
+
+                        info!(
+                            "Preloading collection `{}` has been finished. Loaded: {} entries",
+                            collection.as_str(),
+                            mem_cache.entry_count()
+                        );
+                    }
+                }
+                FirestoreCacheCollectionLoadMode::PreloadNone => {}
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -67,8 +102,12 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
     async fn load(
         &self,
         _options: &FirestoreCacheOptions,
-        _db: &FirestoreDb,
+        db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
+        let read_from_time = Utc::now();
+
+        self.preload_collections(db).await?;
+
         Ok(self
             .config
             .collections
@@ -81,7 +120,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                     )),
                     HashMap::new(),
                 )
-                .with_resume_type(FirestoreListenerTargetResumeType::ReadTime(Utc::now()))
+                .with_resume_type(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
             })
             .collect())
     }
