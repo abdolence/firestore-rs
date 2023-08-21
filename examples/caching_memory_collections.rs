@@ -36,10 +36,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     db.register_cache(
         TEST_CACHE,
-        FirestoreMemoryCacheBackend::new(
-            FirestoreCacheConfiguration::new()
-                .collection(TEST_COLLECTION_NAME, FirestoreListenerTarget::new(1000)),
-        ),
+        FirestoreMemoryCacheBackend::new(FirestoreCacheConfiguration::new().add_collection_config(
+            TEST_COLLECTION_NAME,
+            FirestoreListenerTarget::new(1000),
+            FirestoreCacheCollectionLoadMode::PreloadNone,
+        )),
     )
     .await?;
 

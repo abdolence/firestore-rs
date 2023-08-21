@@ -16,10 +16,11 @@ impl FirestoreCacheConfiguration {
     }
 
     #[inline]
-    pub fn collection<S>(
+    pub fn add_collection_config<S>(
         mut self,
         collection_path: S,
         listener_target: FirestoreListenerTarget,
+        collection_load_mode: FirestoreCacheCollectionLoadMode,
     ) -> Self
     where
         S: AsRef<str>,
@@ -32,6 +33,7 @@ impl FirestoreCacheConfiguration {
                 FirestoreCacheCollectionConfiguration::new(
                     collection_name_str.to_string(),
                     listener_target,
+                    collection_load_mode,
                 ),
             )]
             .into_iter()
@@ -45,4 +47,11 @@ impl FirestoreCacheConfiguration {
 pub struct FirestoreCacheCollectionConfiguration {
     pub collection: String,
     pub listener_target: FirestoreListenerTarget,
+    pub collection_load_mode: FirestoreCacheCollectionLoadMode,
+}
+
+#[derive(Debug, Clone)]
+pub enum FirestoreCacheCollectionLoadMode {
+    PreloadAllDocs,
+    PreloadNone,
 }
