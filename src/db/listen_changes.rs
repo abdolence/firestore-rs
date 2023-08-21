@@ -294,21 +294,30 @@ where
         let mut initial_states: HashMap<FirestoreListenerTarget, FirestoreListenerTargetParams> =
             HashMap::new();
         for target_params in &self.targets {
-            let initial_state = self
-                .storage
-                .read_resume_state(&target_params.target)
-                .map_err(|err| {
-                    FirestoreError::SystemError(FirestoreSystemError::new(
-                        FirestoreErrorPublicGenericDetails::new("SystemError".into()),
-                        format!("Listener init error: {err}"),
-                    ))
-                })
-                .await?;
-
-            initial_states.insert(
-                target_params.target.clone(),
-                target_params.clone().opt_resume_type(initial_state),
-            );
+            match &target_params.resume_type {
+                Some(resume_type) => {
+                    initial_states.insert(
+                        target_params.target.clone(),
+                        target_params.clone().with_resume_type(resume_type.clone()),
+                    );
+                }
+                None => {
+                    let resume_type = self
+                        .storage
+                        .read_resume_state(&target_params.target)
+                        .map_err(|err| {
+                            FirestoreError::SystemError(FirestoreSystemError::new(
+                                FirestoreErrorPublicGenericDetails::new("SystemError".into()),
+                                format!("Listener init error: {err}"),
+                            ))
+                        })
+                        .await?;
+                    initial_states.insert(
+                        target_params.target.clone(),
+                        target_params.clone().opt_resume_type(resume_type),
+                    );
+                }
+            }
         }
 
         if initial_states.is_empty() {
