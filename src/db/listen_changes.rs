@@ -311,7 +311,7 @@ where
             );
         }
 
-        if initial_states.len() == 0 {
+        if initial_states.is_empty() {
             warn!("No initial states for listener targets. Exiting...");
             return Ok(());
         }

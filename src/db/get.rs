@@ -649,12 +649,12 @@ impl FirestoreDb {
         .boxed()
     }
 
-    pub(crate) async fn get_docs_by_ids<'a>(
-        &'a self,
+    pub(crate) async fn get_docs_by_ids(
+        &self,
         collection_id: String,
         full_doc_ids: Vec<String>,
         return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<Document>)>>> {
+    ) -> FirestoreResult<BoxStream<FirestoreResult<(String, Option<Document>)>>> {
         #[cfg(feature = "caching")]
         {
             if let Some(stream) = self

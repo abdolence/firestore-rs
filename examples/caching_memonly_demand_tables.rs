@@ -100,24 +100,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("{:?}", my_struct2);
 
-    println!("Querying a test collection as a stream using Fluent API");
-
-    // Query as a stream our data
-    let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db
-        .fluent()
-        .select()
-        .fields(
-            paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at}),
-        )
-        .from(TEST_COLLECTION_NAME)
-        .filter(|q| q.for_all([q.field(path!(MyTestStructure::some_id)).eq("test-1")]))
-        .obj()
-        .stream_query_with_errors()
-        .await?;
-
-    let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
-    println!("{:?}", as_vec);
-
     db.shutdown().await?;
 
     Ok(())

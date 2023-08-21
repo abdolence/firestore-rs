@@ -88,9 +88,9 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemOnlyOnDemandCacheBackend {
     }
 
     async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()> {
-        Ok(self
-            .mem_cache
+        self.mem_cache
             .insert(document.name.clone(), document.clone())
-            .await)
+            .await;
+        Ok(())
     }
 }

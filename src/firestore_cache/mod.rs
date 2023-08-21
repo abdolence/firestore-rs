@@ -120,10 +120,7 @@ impl FirestoreCache {
 
     #[inline]
     pub fn enabled_for_collection(&self, collection_name: &str) -> bool {
-        self.inner
-            .config
-            .collections
-            .contains_key(collection_name.into())
+        self.inner.config.collections.contains_key(collection_name)
     }
 }
 
@@ -150,7 +147,7 @@ pub trait FirestoreCacheDocsByPathSupport {
 
     async fn get_docs_by_paths<'a>(
         &'a self,
-        full_doc_ids: &'a Vec<String>,
+        full_doc_ids: &'a [String],
     ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<FirestoreDocument>)>>>
     where
         Self: Sync,
@@ -192,7 +189,7 @@ impl FirestoreCacheDocsByPathSupport for FirestoreCache {
 
     async fn get_docs_by_paths<'a>(
         &'a self,
-        full_doc_ids: &'a Vec<String>,
+        full_doc_ids: &'a [String],
     ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<FirestoreDocument>)>>> {
         self.inner.backend.get_docs_by_paths(full_doc_ids).await
     }

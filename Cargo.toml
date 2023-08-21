@@ -53,6 +53,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["full"] }
 
 [[example]]
-name = "caching_tables"
+name = "caching_memonly_demand_tables"
 required-features = ["caching", "caching-memory"]
 
