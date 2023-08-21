@@ -2,6 +2,7 @@ use crate::errors::*;
 use crate::*;
 use async_trait::async_trait;
 use chrono::Utc;
+use futures::stream::BoxStream;
 use moka::future::{Cache, CacheBuilder};
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
@@ -14,10 +15,10 @@ pub type FirestoreMemCacheOptions = CacheBuilder<
 
 pub type FirestoreMemCache = Cache<String, FirestoreDocument, RandomState>;
 
-pub struct FirestoreMemOnlyOnDemandCacheBackend {
+pub struct FirestoreMemoryCacheBackend {
     mem_cache: FirestoreMemCache,
 }
-impl FirestoreMemOnlyOnDemandCacheBackend {
+impl FirestoreMemoryCacheBackend {
     pub fn new() -> Self {
         Self::with_options(FirestoreMemCache::builder().max_capacity(10000))
     }
@@ -30,7 +31,7 @@ impl FirestoreMemOnlyOnDemandCacheBackend {
 }
 
 #[async_trait]
-impl FirestoreCacheBackend for FirestoreMemOnlyOnDemandCacheBackend {
+impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
     async fn load(
         &self,
         _options: &FirestoreCacheOptions,
@@ -79,7 +80,7 @@ impl FirestoreCacheBackend for FirestoreMemOnlyOnDemandCacheBackend {
 }
 
 #[async_trait]
-impl FirestoreCacheDocsByPathSupport for FirestoreMemOnlyOnDemandCacheBackend {
+impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
     async fn get_doc_by_path(
         &self,
         document_path: &str,
@@ -92,5 +93,13 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemOnlyOnDemandCacheBackend {
             .insert(document.name.clone(), document.clone())
             .await;
         Ok(())
+    }
+
+    async fn list_all_docs(
+        &self,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
+        Ok(Box::pin(futures::stream::iter(
+            self.mem_cache.iter().map(|(_, doc)| Ok(doc)),
+        )))
     }
 }

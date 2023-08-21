@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         FirestoreCacheConfiguration::new()
             .collection(TEST_COLLECTION_NAME, FirestoreListenerTarget::new(1000))
             .collection("test-caching2", FirestoreListenerTarget::new(1001)),
-        FirestoreMemOnlyOnDemandCacheBackend::new(),
+        FirestoreMemoryCacheBackend::new(),
     )
     .await?;
 

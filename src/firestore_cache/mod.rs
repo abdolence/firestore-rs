@@ -181,6 +181,9 @@ pub trait FirestoreCacheDocsByPathSupport {
     }
 
     async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()>;
+
+    async fn list_all_docs(&self)
+        -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>>;
 }
 
 #[async_trait]
@@ -201,5 +204,11 @@ impl FirestoreCacheDocsByPathSupport for FirestoreCache {
 
     async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()> {
         self.inner.backend.update_doc_by_path(document).await
+    }
+
+    async fn list_all_docs(
+        &self,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
+        self.inner.backend.list_all_docs().await
     }
 }
