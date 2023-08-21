@@ -1,4 +1,5 @@
 use crate::*;
+use std::sync::atomic::AtomicU32;
 
 mod options;
 pub use options::*;
@@ -22,6 +23,7 @@ struct FirestoreCacheInner {
     pub options: FirestoreCacheOptions,
     pub config: FirestoreCacheConfiguration,
     pub backend: Box<dyn FirestoreCacheBackend + Send + Sync + 'static>,
+    pub current_target_id: AtomicU32,
 }
 
 impl FirestoreCache {
@@ -44,21 +46,43 @@ impl FirestoreCache {
     where
         B: FirestoreCacheBackend + Send + Sync + 'static,
     {
+        let initial_target_id = *options.allocated_target_id_range.start().value();
         Self {
             inner: FirestoreCacheInner {
                 options,
                 config,
                 backend: Box::new(backend),
+                current_target_id: AtomicU32::new(initial_target_id),
             },
         }
     }
 
     pub async fn load(&mut self) -> Result<(), FirestoreError> {
+        let allocated_target_id: FirestoreListenerTarget = self.allocate_new_target_id();
+
         self.inner
             .backend
-            .load(&self.inner.options, &self.inner.config)
+            .load(&self.inner.options, &self.inner.config, allocated_target_id)
             .await?;
         Ok(())
+    }
+
+    fn allocate_new_target_id(&self) -> FirestoreListenerTarget {
+        self.inner
+            .current_target_id
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |current_value| {
+                    if current_value < *self.inner.options.allocated_target_id_range.end().value() {
+                        Some(current_value + 1)
+                    } else {
+                        Some(*self.inner.options.allocated_target_id_range.start().value())
+                    }
+                },
+            )
+            .unwrap_or_else(|_| *self.inner.options.allocated_target_id_range.start().value())
+            .into()
     }
 
     pub async fn shutdown(&mut self) -> Result<(), FirestoreError> {
@@ -81,6 +105,7 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
         &mut self,
         options: &FirestoreCacheOptions,
         config: &FirestoreCacheConfiguration,
+        allocated_target_id: FirestoreListenerTarget,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError>;
 
     async fn shutdown(&mut self) -> Result<(), FirestoreError>;

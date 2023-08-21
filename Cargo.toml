@@ -53,4 +53,5 @@ tokio = { version = "1", features = ["full"] }
 
 [[example]]
 name = "caching_tables"
-required-features = ["caching"]
+required-features = ["caching", "caching-memory"]
+
