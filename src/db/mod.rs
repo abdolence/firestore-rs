@@ -301,18 +301,13 @@ impl FirestoreDb {
     }
 
     #[cfg(feature = "caching")]
-    pub async fn register_cache<S, B>(
-        &self,
-        name: S,
-        config: crate::FirestoreCacheConfiguration,
-        backend: B,
-    ) -> FirestoreResult<&Self>
+    pub async fn register_cache<S, B>(&self, name: S, backend: B) -> FirestoreResult<&Self>
     where
         S: Into<crate::FirestoreCacheName>,
         B: crate::FirestoreCacheBackend + Send + Sync + 'static,
     {
         let cache_name = name.into();
-        let cache = crate::FirestoreCache::new(cache_name.clone(), config, backend, self).await?;
+        let cache = crate::FirestoreCache::new(cache_name.clone(), backend, self).await?;
         let mut caches = self.inner.caches.write().await;
         caches.insert(cache_name, cache);
         Ok(self)
@@ -322,14 +317,13 @@ impl FirestoreDb {
     pub async fn register_cache_with_options<B>(
         &self,
         options: crate::FirestoreCacheOptions,
-        config: crate::FirestoreCacheConfiguration,
         backend: B,
     ) -> FirestoreResult<&Self>
     where
         B: crate::FirestoreCacheBackend + Send + Sync + 'static,
     {
         let cache_name = options.name.clone();
-        let cache = crate::FirestoreCache::with_options(options, config, backend, self).await?;
+        let cache = crate::FirestoreCache::with_options(options, backend, self).await?;
         let mut caches = self.inner.caches.write().await;
         caches.insert(cache_name, cache);
         Ok(self)

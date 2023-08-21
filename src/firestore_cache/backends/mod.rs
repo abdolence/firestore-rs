@@ -1,4 +1,4 @@
 #[cfg(feature = "caching-memory")]
-mod firestore_mem_on_demand_cache_backend;
+mod firestore_memory_cache_backend;
 #[cfg(feature = "caching-memory")]
-pub use firestore_mem_on_demand_cache_backend::*;
+pub use firestore_memory_cache_backend::*;

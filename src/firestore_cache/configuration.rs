@@ -2,6 +2,7 @@ use crate::FirestoreListenerTarget;
 use rsb_derive::Builder;
 use std::collections::HashMap;
 
+#[derive(Clone)]
 pub struct FirestoreCacheConfiguration {
     pub collections: HashMap<String, FirestoreCacheCollectionConfiguration>,
 }
@@ -40,7 +41,7 @@ impl FirestoreCacheConfiguration {
     }
 }
 
-#[derive(Debug, Builder)]
+#[derive(Debug, Builder, Clone)]
 pub struct FirestoreCacheCollectionConfiguration {
     pub collection: String,
     pub listener_target: FirestoreListenerTarget,

@@ -3,6 +3,7 @@ use firestore::*;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
+use std::io::Read;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|e| format!("{}: {}", name, e))
@@ -35,10 +36,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     db.register_cache(
         TEST_CACHE,
-        FirestoreCacheConfiguration::new()
-            .collection(TEST_COLLECTION_NAME, FirestoreListenerTarget::new(1000))
-            .collection("test-caching2", FirestoreListenerTarget::new(1001)),
-        FirestoreMemoryCacheBackend::new(),
+        FirestoreMemoryCacheBackend::new(
+            FirestoreCacheConfiguration::new()
+                .collection(TEST_COLLECTION_NAME, FirestoreListenerTarget::new(1000)),
+        ),
     )
     .await?;
 
@@ -99,6 +100,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     println!("{:?}", my_struct1);
+
+    std::io::stdin().read(&mut [1])?;
 
     println!("Getting by id from cache now");
     let my_struct2: Option<MyTestStructure> = db
