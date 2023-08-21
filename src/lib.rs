@@ -150,7 +150,7 @@ pub use fluent_api::*;
 pub extern crate struct_path;
 
 #[cfg(feature = "caching")]
-mod firestore_cache;
+mod cache;
 
 #[cfg(feature = "caching")]
-pub use firestore_cache::*;
+pub use cache::*;

@@ -12,9 +12,6 @@ use gcloud_sdk::google::firestore::v1::*;
 use serde::Deserialize;
 use tracing::*;
 
-#[cfg(feature = "caching")]
-use crate::firestore_cache::*;
-
 #[async_trait]
 pub trait FirestoreGetByIdSupport {
     async fn get_doc<S>(

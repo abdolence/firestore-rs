@@ -137,11 +137,10 @@ impl FirestorePersistentCacheBackend {
                     );
                 }
                 FirestoreCacheCollectionLoadMode::PreloadNone => {
-                    let tx = self.redb.begin_read()?;
-                    if let Some(table) = tx.list_tables()?.find(|t| t.name() == collection.as_str())
-                    {
-                        debug!("Found corresponding collection table `{}`", table.name());
-                    }
+                    let tx = self.redb.begin_write()?;
+                    debug!("Creating corresponding collection table `{}`", collection);
+                    tx.open_table(td)?;
+                    tx.commit()?;
                 }
             }
         }
@@ -182,10 +181,13 @@ impl FirestorePersistentCacheBackend {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id);
 
         let write_txn = self.redb.begin_write()?;
-        let mut table = write_txn.open_table(td)?;
-        let doc_key = &doc.name;
-        let doc_bytes = Self::document_to_buf(doc)?;
-        table.insert(doc_key.as_str(), doc_bytes.as_slice())?;
+        {
+            let mut table = write_txn.open_table(td)?;
+            let doc_key = &doc.name;
+            let doc_bytes = Self::document_to_buf(doc)?;
+            table.insert(doc_key.as_str(), doc_bytes.as_slice())?;
+        }
+        write_txn.commit()?;
         Ok(())
     }
 }
