@@ -569,6 +569,8 @@ impl FirestoreDb {
                 }
             }
 
+            let _return_only_fields_empty = return_only_fields.is_none();
+
             let span = span!(
                 Level::DEBUG,
                 "Firestore Get Doc",
@@ -620,7 +622,7 @@ impl FirestoreDb {
 
                     let doc = doc_response.into_inner();
                     #[cfg(feature = "caching")]
-                    {
+                    if _return_only_fields_empty {
                         self.offer_doc_update_to_cache(collection_id.as_str(), &doc)
                             .await?;
                     }
@@ -753,7 +755,7 @@ impl FirestoreDb {
         &self,
         collection_id: &str,
         document_path: &str,
-        return_only_fields: &Option<Vec<String>>,
+        _return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
         if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name) =
             self.session_params.cache_mode
@@ -762,9 +764,7 @@ impl FirestoreDb {
             if let Some(cache) = caches.get(cache_name) {
                 let begin_query_utc: DateTime<Utc> = Utc::now();
 
-                let cache_response = cache
-                    .get_doc_by_path(collection_id, document_path, &return_only_fields)
-                    .await?;
+                let cache_response = cache.get_doc_by_path(collection_id, document_path).await?;
 
                 let end_query_utc: DateTime<Utc> = Utc::now();
                 let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
@@ -813,7 +813,7 @@ impl FirestoreDb {
         &self,
         collection_id: &str,
         full_doc_ids: &Vec<String>,
-        return_only_fields: &Option<Vec<String>>,
+        _return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<Option<BoxStream<FirestoreResult<(String, Option<Document>)>>>> {
         if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name) =
             self.session_params.cache_mode
@@ -835,9 +835,7 @@ impl FirestoreDb {
                 });
 
                 let cached_stream: BoxStream<FirestoreResult<(String, Option<FirestoreDocument>)>> =
-                    cache
-                        .get_docs_by_paths(collection_id, full_doc_ids, &return_only_fields)
-                        .await?;
+                    cache.get_docs_by_paths(collection_id, full_doc_ids).await?;
 
                 let cached_vec: Vec<(String, Option<FirestoreDocument>)> =
                     cached_stream.try_collect::<Vec<_>>().await?;

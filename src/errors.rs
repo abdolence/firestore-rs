@@ -17,6 +17,7 @@ pub enum FirestoreError {
     DeserializeError(FirestoreSerializationError),
     NetworkError(FirestoreNetworkError),
     ErrorInTransaction(FirestoreErrorInTransaction),
+    CacheError(FirestoreCacheError),
 }
 
 impl Display for FirestoreError {
@@ -31,6 +32,7 @@ impl Display for FirestoreError {
             FirestoreError::DeserializeError(ref err) => err.fmt(f),
             FirestoreError::NetworkError(ref err) => err.fmt(f),
             FirestoreError::ErrorInTransaction(ref err) => err.fmt(f),
+            FirestoreError::CacheError(ref err) => err.fmt(f),
         }
     }
 }
@@ -47,6 +49,7 @@ impl Error for FirestoreError {
             FirestoreError::DeserializeError(ref err) => Some(err),
             FirestoreError::NetworkError(ref err) => Some(err),
             FirestoreError::ErrorInTransaction(ref err) => Some(err),
+            FirestoreError::CacheError(ref err) => Some(err),
         }
     }
 }
@@ -268,6 +271,20 @@ impl Display for FirestoreSerializationError {
 }
 
 impl std::error::Error for FirestoreSerializationError {}
+
+#[derive(Debug, Builder)]
+pub struct FirestoreCacheError {
+    pub public: FirestoreErrorPublicGenericDetails,
+    pub message: String,
+}
+
+impl Display for FirestoreCacheError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "Cache error: {}", self.message)
+    }
+}
+
+impl std::error::Error for FirestoreCacheError {}
 
 impl From<chrono::ParseError> for FirestoreError {
     fn from(parse_err: chrono::ParseError) -> Self {

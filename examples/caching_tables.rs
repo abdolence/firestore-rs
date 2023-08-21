@@ -36,8 +36,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     db.register_cache(
         TEST_CACHE,
         FirestoreCacheConfiguration::new()
-            .collection(TEST_COLLECTION_NAME)
-            .collection("test-caching2"),
+            .collection(TEST_COLLECTION_NAME, FirestoreListenerTarget::new(1000))
+            .collection("test-caching2", FirestoreListenerTarget::new(1001)),
         FirestoreMemOnlyOnDemandCacheBackend::new(),
     )
     .await?;
@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     println!("Getting by id");
-    let my_struct: Option<MyTestStructure> = db
+    let my_struct1: Option<MyTestStructure> = db
         .read_through_cache(TEST_CACHE)
         .fluent()
         .select()
@@ -86,7 +86,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .one("test-1")
         .await?;
 
-    println!("{:?}", my_struct);
+    println!("{:?}", my_struct1);
+
+    println!("Getting by id from cache now");
+    let my_struct2: Option<MyTestStructure> = db
+        .read_through_cache(TEST_CACHE)
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .one("test-1")
+        .await?;
+
+    println!("{:?}", my_struct2);
 
     println!("Querying a test collection as a stream using Fluent API");
 

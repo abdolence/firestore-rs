@@ -1,10 +1,31 @@
+use crate::errors::*;
 use crate::*;
 use async_trait::async_trait;
+use chrono::Utc;
+use moka::future::{Cache, CacheBuilder};
+use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
 
-pub struct FirestoreMemOnlyOnDemandCacheBackend {}
+pub type FirestoreMemCacheOptions = CacheBuilder<
+    String,
+    FirestoreDocument,
+    Cache<String, gcloud_sdk::google::firestore::v1::Document>,
+>;
+
+pub type FirestoreMemCache = Cache<String, FirestoreDocument, RandomState>;
+
+pub struct FirestoreMemOnlyOnDemandCacheBackend {
+    mem_cache: FirestoreMemCache,
+}
 impl FirestoreMemOnlyOnDemandCacheBackend {
     pub fn new() -> Self {
-        Self {}
+        Self::with_options(FirestoreMemCache::builder().max_capacity(10000))
+    }
+
+    pub fn with_options(cache_options: FirestoreMemCacheOptions) -> Self {
+        Self {
+            mem_cache: cache_options.build(),
+        }
     }
 }
 
@@ -12,11 +33,24 @@ impl FirestoreMemOnlyOnDemandCacheBackend {
 impl FirestoreCacheBackend for FirestoreMemOnlyOnDemandCacheBackend {
     async fn load(
         &mut self,
-        options: &FirestoreCacheOptions,
+        _options: &FirestoreCacheOptions,
         config: &FirestoreCacheConfiguration,
-        allocated_target_id: FirestoreListenerTarget,
+        _db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        Ok(Vec::new())
+        Ok(config
+            .collections
+            .iter()
+            .map(|(collection, collection_config)| {
+                FirestoreListenerTargetParams::new(
+                    collection_config.listener_target.clone(),
+                    FirestoreTargetType::Query(FirestoreQueryParams::new(
+                        collection.as_str().into(),
+                    )),
+                    HashMap::new(),
+                )
+                .with_resume_type(FirestoreListenerTargetResumeType::ReadTime(Utc::now()))
+            })
+            .collect())
     }
 
     async fn shutdown(&mut self) -> Result<(), FirestoreError> {
@@ -28,18 +62,20 @@ impl FirestoreCacheBackend for FirestoreMemOnlyOnDemandCacheBackend {
 impl FirestoreCacheDocsByPathSupport for FirestoreMemOnlyOnDemandCacheBackend {
     async fn get_doc_by_path(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         document_path: &str,
-        return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
-        Ok(None)
+        Ok(self.mem_cache.get(document_path))
     }
 
     async fn update_doc_by_path(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
-        Ok(())
+        Ok(self
+            .mem_cache
+            .insert(document.name.clone(), document.clone())
+            .await)
     }
 }

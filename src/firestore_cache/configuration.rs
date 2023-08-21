@@ -1,3 +1,5 @@
+use crate::FirestoreListenerTarget;
+use rsb_derive::Builder;
 use std::collections::HashMap;
 
 pub struct FirestoreCacheConfiguration {
@@ -13,7 +15,11 @@ impl FirestoreCacheConfiguration {
     }
 
     #[inline]
-    pub fn collection<S>(mut self, collection_path: S) -> Self
+    pub fn collection<S>(
+        mut self,
+        collection_path: S,
+        listener_target: FirestoreListenerTarget,
+    ) -> Self
     where
         S: AsRef<str>,
     {
@@ -22,7 +28,10 @@ impl FirestoreCacheConfiguration {
         self.collections.extend(
             [(
                 collection_name_str.clone(),
-                FirestoreCacheCollectionConfiguration::new(collection_name_str.to_string()),
+                FirestoreCacheCollectionConfiguration::new(
+                    collection_name_str.to_string(),
+                    listener_target,
+                ),
             )]
             .into_iter()
             .collect::<HashMap<String, FirestoreCacheCollectionConfiguration>>(),
@@ -31,13 +40,8 @@ impl FirestoreCacheConfiguration {
     }
 }
 
+#[derive(Debug, Builder)]
 pub struct FirestoreCacheCollectionConfiguration {
     pub collection: String,
-}
-
-impl FirestoreCacheCollectionConfiguration {
-    #[inline]
-    pub fn new(collection: String) -> Self {
-        Self { collection }
-    }
+    pub listener_target: FirestoreListenerTarget,
 }

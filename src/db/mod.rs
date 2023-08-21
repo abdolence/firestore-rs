@@ -339,7 +339,7 @@ impl FirestoreDb {
     pub async fn load_caches(&self) -> FirestoreResult<()> {
         let mut caches = self.inner.caches.write().await;
         for cache in caches.values_mut() {
-            cache.load().await?;
+            cache.load(self).await?;
         }
         Ok(())
     }
