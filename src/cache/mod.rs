@@ -188,7 +188,7 @@ pub trait FirestoreCacheDocsByPathSupport {
                                 Ok((doc_id, Some(document)))
                             }),
                             Err(err) => {
-                                error!("[DB]: Error occurred while reading from cache: {}", err);
+                                error!("Error occurred while reading from cache: {}", err);
                                 None
                             }
                         }

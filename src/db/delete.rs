@@ -84,7 +84,7 @@ impl FirestoreDeleteSupport for FirestoreDb {
 
         span.in_scope(|| {
             debug!(
-                "[DB]: Deleted a document: {}/{}",
+                "Deleted a document: {}/{}",
                 collection_id,
                 document_id.as_ref()
             );

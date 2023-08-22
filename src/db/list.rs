@@ -376,7 +376,7 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "[DB]: Listing documents in {:?} took {}ms",
+                            "Listing documents in {:?} took {}ms",
                             params.collection_id,
                             listing_duration.num_milliseconds()
                         );
@@ -389,7 +389,7 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "[DB]: Listing failed with {}. Retrying: {}/{}",
+                            "Listing failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
                             self.inner.options.max_retries
@@ -458,7 +458,7 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "[DB]: Listing collections took {}ms",
+                            "Listing collections took {}ms",
                             listing_duration.num_milliseconds()
                         );
                     });
@@ -470,7 +470,7 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "[DB]: Listing failed with {}. Retrying: {}/{}",
+                            "Listing failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
                             self.inner.options.max_retries
@@ -503,7 +503,7 @@ impl FirestoreDb {
             );
 
             span.in_scope(|| {
-                debug!("[DB]: Reading all {} documents from cache", collection_id);
+                debug!("Reading all {} documents from cache", collection_id);
             });
 
             let stream = cache.list_all_docs(collection_id.as_str()).await?;

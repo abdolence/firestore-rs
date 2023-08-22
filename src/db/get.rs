@@ -612,7 +612,7 @@ impl FirestoreDb {
                 Ok(doc_response) => {
                     span.in_scope(|| {
                         debug!(
-                            "[DB]: Reading document {} took {}ms",
+                            "Reading document {} took {}ms",
                             document_path,
                             query_duration.num_milliseconds()
                         );
@@ -632,7 +632,7 @@ impl FirestoreDb {
                     {
                         span.in_scope(|| {
                             warn!(
-                                "[DB]: Failed with {}. Retrying: {}/{}",
+                                "Failed with {}. Retrying: {}/{}",
                                 db_err,
                                 retries + 1,
                                 self.get_options().max_retries
@@ -775,7 +775,7 @@ impl FirestoreDb {
                 );
                 span.in_scope(|| {
                     debug!(
-                        "[DB]: Reading document {} from cache took {}ms",
+                        "Reading document {} from cache took {}ms",
                         document_path,
                         query_duration.num_milliseconds()
                     );
@@ -791,7 +791,7 @@ impl FirestoreDb {
                     "/firestore/document_name" = document_path
                 );
                 span.in_scope(|| {
-                    debug!("[DB]: Missing document {} in cache", document_path);
+                    debug!("Missing document {} in cache", document_path);
                 });
                 if let FirestoreDbSessionCacheMode::ReadCachedOnly(_) =
                     self.session_params.cache_mode
@@ -827,7 +827,7 @@ impl FirestoreDb {
             );
 
             span.in_scope(|| {
-                debug!("[DB]: Reading {} documents from cache", full_doc_ids.len());
+                debug!("Reading {} documents from cache", full_doc_ids.len());
             });
 
             let cached_stream: BoxStream<FirestoreResult<(String, Option<FirestoreDocument>)>> =
