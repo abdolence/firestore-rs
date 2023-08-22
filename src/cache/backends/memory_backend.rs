@@ -143,6 +143,10 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                             self.collection_targets.get(&(*target_id as u32).into())
                         {
                             if let Some(mem_cache) = self.collection_caches.get(mem_cache_name) {
+                                trace!(
+                                    "Writing document to cache due to listener event: {:?}",
+                                    doc.name
+                                );
                                 mem_cache.insert(doc.name.clone(), doc).await;
                             }
                         }
@@ -156,6 +160,10 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                         self.collection_targets.get(&(*target_id as u32).into())
                     {
                         if let Some(mem_cache) = self.collection_caches.get(mem_cache_name) {
+                            trace!(
+                                "Removing document from cache due to listener event: {:?}",
+                                doc_deleted.document.as_str()
+                            );
                             mem_cache.remove(&doc_deleted.document).await;
                         }
                     }

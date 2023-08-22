@@ -3,6 +3,7 @@ use crate::*;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 
+use chrono::Utc;
 use futures::StreamExt;
 use gcloud_sdk::google::firestore::v1::Document;
 use prost::Message;
@@ -199,6 +200,13 @@ impl FirestorePersistentCacheBackend {
         write_txn.commit()?;
         Ok(())
     }
+
+    fn table_len(&self, collection_id: &str) -> FirestoreResult<u64> {
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id);
+        let read_tx = self.redb.begin_read()?;
+        let len = read_tx.open_table(td)?.len()?;
+        Ok(len)
+    }
 }
 
 #[async_trait]
@@ -208,6 +216,8 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
+        let read_from_time = Utc::now();
+
         self.preload_collections(db).await?;
 
         Ok(self
@@ -215,6 +225,12 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             .collections
             .iter()
             .map(|(collection, collection_config)| {
+                let collection_table_len = self.table_len(collection).ok().unwrap_or(0);
+                let resume_type = if collection_table_len == 0 {
+                    Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
+                } else {
+                    None
+                };
                 FirestoreListenerTargetParams::new(
                     collection_config.listener_target.clone(),
                     FirestoreTargetType::Query(FirestoreQueryParams::new(
@@ -222,6 +238,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                     )),
                     HashMap::new(),
                 )
+                .opt_resume_type(resume_type)
             })
             .collect())
     }
@@ -257,6 +274,10 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                         if let Some(collection_id) =
                             self.collection_targets.get(&(*target_id as u32).into())
                         {
+                            trace!(
+                                "Writing document to cache due to listener event: {:?}",
+                                doc.name
+                            );
                             self.write_document(&doc, collection_id)?;
                         }
                     }
@@ -272,6 +293,10 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                         let td: TableDefinition<&str, &[u8]> =
                             TableDefinition::new(collection_id.as_str());
                         let mut table = write_txn.open_table(td)?;
+                        trace!(
+                            "Removing document from cache due to listener event: {:?}",
+                            doc_deleted.document.as_str()
+                        );
                         table.remove(doc_deleted.document.as_str())?;
                     }
                 }

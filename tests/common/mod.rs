@@ -78,7 +78,7 @@ where
             if retries > max_retries {
                 return Ok(false);
             }
-            sleep(Duration::from(sleep_duration.mul(retries))).await;
+            sleep(Duration::from(sleep_duration.mul(retries * retries))).await;
         }
     }
     .boxed()

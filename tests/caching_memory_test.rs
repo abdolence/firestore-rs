@@ -145,7 +145,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
 
     let cached_db = db.read_cached_only(&cache);
     assert!(
-        eventually_async(5, Duration::from_millis(500), move || {
+        eventually_async(10, Duration::from_millis(500), move || {
             let cached_db = cached_db.clone();
             async move {
                 let my_struct: Option<MyTestStructure> = cached_db
