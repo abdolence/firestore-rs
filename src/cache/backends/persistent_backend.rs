@@ -219,6 +219,25 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             .collect())
     }
 
+    async fn invalidate_all(&self) -> FirestoreResult<()> {
+        for collection_id in self.config.collections.keys() {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id.as_str());
+
+            let write_txn = self.redb.begin_write()?;
+            {
+                debug!(
+                    "Invalidating {} and draining the corresponding table",
+                    collection_id
+                );
+                let mut table = write_txn.open_table(td)?;
+                table.drain::<&str>(..)?;
+            }
+            write_txn.commit()?;
+        }
+
+        Ok(())
+    }
+
     async fn shutdown(&self) -> Result<(), FirestoreError> {
         Ok(())
     }

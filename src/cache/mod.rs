@@ -139,6 +139,10 @@ where
     pub fn backend(&self) -> Arc<B> {
         self.inner.backend.clone()
     }
+
+    pub async fn invalidate_all(&self) -> FirestoreResult<()> {
+        self.inner.backend.invalidate_all().await
+    }
 }
 
 #[async_trait]
@@ -148,6 +152,8 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
         options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError>;
+
+    async fn invalidate_all(&self) -> FirestoreResult<()>;
 
     async fn shutdown(&self) -> FirestoreResult<()>;
 

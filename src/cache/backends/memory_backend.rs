@@ -122,6 +122,14 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
             .collect())
     }
 
+    async fn invalidate_all(&self) -> FirestoreResult<()> {
+        for (collection_id, mem_cache) in &self.collection_caches {
+            debug!("Invalidating cache for {}", collection_id);
+            mem_cache.invalidate_all();
+        }
+        Ok(())
+    }
+
     async fn shutdown(&self) -> Result<(), FirestoreError> {
         Ok(())
     }
