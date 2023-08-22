@@ -669,7 +669,7 @@ let my_struct0: Option<MyTestStructure> = db.read_cached_only(&cache)
   .await?;
 
 ```
-Full examples available [here](examples/caching_memory_colllections.rs) and [here](examples/caching_persistent_collections.rs).
+Full examples available [here](examples/caching_memory_collections.rs) and [here](examples/caching_persistent_collections.rs).
 
 ## How this library is tested
 
