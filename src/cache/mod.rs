@@ -53,22 +53,6 @@ where
     where
         B: FirestoreCacheBackend + Send + Sync + 'static,
     {
-        let temp_dir = std::env::temp_dir();
-        let firestore_cache_dir = temp_dir.join("firestore_cache");
-        let cache_dir = firestore_cache_dir.join(name.value().clone());
-        if !cache_dir.exists() {
-            debug!(
-                "Creating a temp directory to store listener state: {}",
-                cache_dir.display()
-            );
-            std::fs::create_dir_all(&cache_dir)?;
-        } else {
-            debug!(
-                "Using a temp directory to store listener state: {}",
-                cache_dir.display()
-            );
-        }
-
         let options = FirestoreCacheOptions::new(name);
         Self::with_options(options, db, backend, listener_storage).await
     }

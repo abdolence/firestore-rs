@@ -3,6 +3,7 @@ use futures::future::BoxFuture;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
+use std::ops::Mul;
 use tokio::time::{sleep, Duration};
 use tracing::*;
 
@@ -59,7 +60,7 @@ where
 
 #[allow(dead_code)]
 pub fn eventually_async<'a, F, FN>(
-    max_retries: usize,
+    max_retries: u32,
     sleep_duration: std::time::Duration,
     f: FN,
 ) -> BoxFuture<'a, Result<bool, Box<dyn std::error::Error + Send + Sync>>>
@@ -77,7 +78,7 @@ where
             if retries > max_retries {
                 return Ok(false);
             }
-            sleep(Duration::from(sleep_duration)).await;
+            sleep(Duration::from(sleep_duration.mul(retries))).await;
         }
     }
     .boxed()

@@ -40,7 +40,7 @@ impl FirestorePersistentCacheBackend {
 
     pub fn with_options(
         config: FirestoreCacheConfiguration,
-        data_file_dir: PathBuf,
+        data_file_path: PathBuf,
     ) -> FirestoreResult<Self> {
         let collection_targets = config
             .collections
@@ -53,12 +53,19 @@ impl FirestorePersistentCacheBackend {
             })
             .collect();
 
-        debug!(
-            "Opening database for persistent cache {:?}...",
-            data_file_dir
-        );
+        if data_file_path.exists() {
+            debug!(
+                "Opening database for persistent cache {:?}...",
+                data_file_path
+            );
+        } else {
+            debug!(
+                "Creating database for persistent cache {:?}...",
+                data_file_path
+            );
+        }
 
-        let mut db = Database::create(data_file_dir)?;
+        let mut db = Database::create(data_file_path)?;
 
         db.compact()?;
         info!("Successfully opened database for persistent cache");
