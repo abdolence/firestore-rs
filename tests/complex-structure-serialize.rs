@@ -1,3 +1,4 @@
+use approx::relative_eq;
 use chrono::{DateTime, Utc};
 use firestore::*;
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,12 @@ struct MyTestStructure {
     #[serde(default)]
     #[serde(with = "firestore::serialize_as_null")]
     test_null2: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+struct MyFloatStructure {
+    some_f32: f32,
+    some_f64: f64,
 }
 
 #[tokio::test]
@@ -136,12 +143,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
 
     assert_eq!(updated_obj.some_num, to_update.some_num);
+    println!("updated_obj.some_num: {:?}", to_update.some_num);
+
     assert_eq!(updated_obj.some_string, to_update.some_string);
     assert_eq!(updated_obj.test1, to_update.test1);
 
     assert_eq!(updated_obj.some_num, find_it_again.some_num);
     assert_eq!(updated_obj.some_string, find_it_again.some_string);
     assert_eq!(updated_obj.test1, find_it_again.test1);
+
+    let my_float_structure = MyFloatStructure {
+        some_f32: 42.0,
+        some_f64: 42.0,
+    };
+    let my_float_structure_returned: MyFloatStructure = db
+        .fluent()
+        .update()
+        .in_col(TEST_COLLECTION_NAME)
+        .document_id("test-floats")
+        .object(&my_float_structure)
+        .execute()
+        .await?;
+
+    assert!(relative_eq!(
+        my_float_structure_returned.some_f32,
+        my_float_structure.some_f32
+    ));
+    assert!(relative_eq!(
+        my_float_structure_returned.some_f64,
+        my_float_structure.some_f64
+    ));
 
     Ok(())
 }

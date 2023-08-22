@@ -53,6 +53,7 @@ cargo-husky = { version = "1.5", default-features = false, features = ["run-for-
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
+approx = "0.5"
 
 [[example]]
 name = "caching_memory_collections"
