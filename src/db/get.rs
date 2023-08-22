@@ -755,8 +755,8 @@ impl FirestoreDb {
         document_path: &str,
         _return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<FirestoreCachedValue<FirestoreDocument>> {
-        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache)
-        | FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache) = self.session_params.cache_mode
+        if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache)
+        | FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) = self.session_params.cache_mode
         {
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
@@ -793,7 +793,7 @@ impl FirestoreDb {
                 span.in_scope(|| {
                     debug!("[DB]: Missing document {} in cache", document_path);
                 });
-                if let FirestoreDbSessionCacheMode::ReadOnlyCached(_) =
+                if let FirestoreDbSessionCacheMode::ReadCachedOnly(_) =
                     self.session_params.cache_mode
                 {
                     return Err(FirestoreError::DataNotFoundError(
@@ -817,8 +817,8 @@ impl FirestoreDb {
         _return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<(String, Option<Document>)>>>>
     {
-        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache)
-        | FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache) = self.session_params.cache_mode
+        if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache)
+        | FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) = self.session_params.cache_mode
         {
             let span = span!(
                 Level::DEBUG,
@@ -839,7 +839,7 @@ impl FirestoreDb {
             if cached_vec.len() == full_doc_ids.len()
                 || matches!(
                     self.session_params.cache_mode,
-                    FirestoreDbSessionCacheMode::ReadOnlyCached(_)
+                    FirestoreDbSessionCacheMode::ReadCachedOnly(_)
                 )
             {
                 return Ok(FirestoreCachedValue::UseCached(Box::pin(
@@ -863,7 +863,8 @@ impl FirestoreDb {
         collection_id: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
-        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache) = self.session_params.cache_mode
+        if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache) =
+            self.session_params.cache_mode
         {
             cache.update_doc_by_path(collection_id, document).await?;
         }

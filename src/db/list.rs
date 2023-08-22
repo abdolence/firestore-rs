@@ -493,7 +493,7 @@ impl FirestoreDb {
         _return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'a, FirestoreResult<FirestoreDocument>>>>
     {
-        if let FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache) =
+        if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) =
             self.session_params.cache_mode
         {
             let span = span!(

@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Getting by id only from cache - won't exist");
     let my_struct0: Option<MyTestStructure> = db
-        .read_only_cached(&cache)
+        .read_cached_only(&cache)
         .fluent()
         .select()
         .by_id_in(TEST_COLLECTION_NAME)
@@ -146,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("{:?}", my_structs2);
 
     // List from cache
-    let cached_db = db.read_only_cached(&cache);
+    let cached_db = db.read_cached_only(&cache);
     let all_items_stream = cached_db
         .fluent()
         .list()

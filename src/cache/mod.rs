@@ -15,15 +15,19 @@ use futures::stream::BoxStream;
 use futures::StreamExt;
 use tracing::*;
 
-pub type FirestoreSharedCacheBackend = Arc<Box<dyn FirestoreCacheBackend + Send + Sync + 'static>>;
-
-pub struct FirestoreCache {
-    inner: FirestoreCacheInner,
+pub struct FirestoreCache<B>
+where
+    B: FirestoreCacheBackend + Send + Sync + 'static,
+{
+    inner: FirestoreCacheInner<B>,
 }
 
-struct FirestoreCacheInner {
+struct FirestoreCacheInner<B>
+where
+    B: FirestoreCacheBackend + Send + Sync + 'static,
+{
     pub options: FirestoreCacheOptions,
-    pub backend: FirestoreSharedCacheBackend,
+    pub backend: Arc<B>,
     pub listener: FirestoreListener<FirestoreDb, FirestoreTempFilesListenStateStorage>,
     pub db: FirestoreDb,
 }
@@ -33,8 +37,11 @@ pub enum FirestoreCachedValue<T> {
     SkipCache,
 }
 
-impl FirestoreCache {
-    pub async fn new<B>(
+impl<B> FirestoreCache<B>
+where
+    B: FirestoreCacheBackend + Send + Sync + 'static,
+{
+    pub async fn new(
         name: FirestoreCacheName,
         backend: B,
         db: &FirestoreDb,
@@ -62,7 +69,7 @@ impl FirestoreCache {
         Self::with_options(options, backend, db).await
     }
 
-    pub async fn with_options<B>(
+    pub async fn with_options(
         options: FirestoreCacheOptions,
         backend: B,
         db: &FirestoreDb,
@@ -83,7 +90,7 @@ impl FirestoreCache {
         Ok(Self {
             inner: FirestoreCacheInner {
                 options,
-                backend: Arc::new(Box::new(backend)),
+                backend: Arc::new(backend),
                 listener,
                 db: db.clone(),
             },
@@ -127,7 +134,7 @@ impl FirestoreCache {
         Ok(())
     }
 
-    pub fn backend(&self) -> FirestoreSharedCacheBackend {
+    pub fn backend(&self) -> Arc<B> {
         self.inner.backend.clone()
     }
 }

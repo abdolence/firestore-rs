@@ -293,15 +293,21 @@ impl FirestoreDb {
     }
 
     #[cfg(feature = "caching")]
-    pub fn read_through_cache(&self, cache: &FirestoreCache) -> Self {
-        self.with_cache(crate::FirestoreDbSessionCacheMode::ReadThrough(
+    pub fn read_through_cache<B>(&self, cache: &FirestoreCache<B>) -> Self
+    where
+        B: FirestoreCacheBackend + Send + Sync + 'static,
+    {
+        self.with_cache(crate::FirestoreDbSessionCacheMode::ReadThroughCache(
             cache.backend(),
         ))
     }
 
     #[cfg(feature = "caching")]
-    pub fn read_only_cached(&self, cache: &FirestoreCache) -> Self {
-        self.with_cache(crate::FirestoreDbSessionCacheMode::ReadOnlyCached(
+    pub fn read_cached_only<B>(&self, cache: &FirestoreCache<B>) -> Self
+    where
+        B: FirestoreCacheBackend + Send + Sync + 'static,
+    {
+        self.with_cache(crate::FirestoreDbSessionCacheMode::ReadCachedOnly(
             cache.backend(),
         ))
     }

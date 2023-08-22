@@ -13,7 +13,11 @@ pub struct FirestoreDbSessionParams {
 pub enum FirestoreDbSessionCacheMode {
     None,
     #[cfg(feature = "caching")]
-    ReadThrough(crate::FirestoreSharedCacheBackend),
+    ReadThroughCache(FirestoreSharedCacheBackend),
     #[cfg(feature = "caching")]
-    ReadOnlyCached(crate::FirestoreSharedCacheBackend),
+    ReadCachedOnly(FirestoreSharedCacheBackend),
 }
+
+#[cfg(feature = "caching")]
+pub type FirestoreSharedCacheBackend =
+    std::sync::Arc<dyn crate::FirestoreCacheBackend + Send + Sync + 'static>;
