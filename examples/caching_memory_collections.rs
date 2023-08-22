@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const TEST_COLLECTION_NAME: &'static str = "test-caching";
 
     let mut cache = FirestoreCache::new(
-        "example-cache".into(),
+        "example-mem-cache".into(),
         &db,
         FirestoreMemoryCacheBackend::new(
             FirestoreCacheConfiguration::new().add_collection_config(

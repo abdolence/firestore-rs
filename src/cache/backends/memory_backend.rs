@@ -3,7 +3,7 @@ use crate::*;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream::BoxStream;
-use moka::future::{Cache, CacheBuilder};
+use moka::future::{Cache, CacheBuilder, ConcurrentCacheExt};
 
 use futures::TryStreamExt;
 use std::collections::HashMap;
@@ -77,6 +77,8 @@ impl FirestoreMemoryCacheBackend {
                                 Ok(())
                             })
                             .await?;
+
+                        mem_cache.sync();
 
                         info!(
                             "Preloading collection `{}` has been finished. Loaded: {} entries",

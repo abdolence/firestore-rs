@@ -60,3 +60,14 @@ required-features = ["caching-memory"]
 [[example]]
 name = "caching_persistent_collections"
 required-features = ["caching-persistent"]
+
+[[test]]
+name = "caching_memory_test"
+path = "tests/caching_memory_test.rs"
+required-features = ["caching-memory"]
+
+[[test]]
+name = "caching_persistent_test"
+path = "tests/caching_persistent_test.rs"
+required-features = ["caching-persistent"]
+
