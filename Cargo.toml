@@ -52,6 +52,7 @@ moka = { version = "0.11", features = ["future"], optional = true } # Caching li
 cargo-husky = { version = "1.5", default-features = false, features = ["run-for-all", "prepush-hook", "run-cargo-fmt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["full"] }
+tempfile = "3"
 
 [[example]]
 name = "caching_memory_collections"

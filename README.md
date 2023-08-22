@@ -22,6 +22,9 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
    - Firestore timestamp with `#[serde(with)]` and a specialized structure
    - Lat/Lng
    - References
+- Caching support for collections and documents:
+    - In-memory cache;
+    - Persistent cache;
 - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
   that automatically detects GKE environment or application default accounts for local development;
 
@@ -582,6 +585,91 @@ To work with the Google Firestore emulator you can use the environment variable:
 export FIRESTORE_EMULATOR_HOST="localhost:8080"
 ```
 or specify it as an option using `FirestoreDb::with_options()`
+
+## Caching
+The library supports caching for collections and documents.
+
+This is useful to avoid reading and paying the same documents from Firestore multiple times.
+Especially for some data such as dictionaries, configuration, and other information 
+that is not changed frequently. In fact this may be really helpful to reduce both costs
+and latency in your applications.
+
+
+Caching works on the document level.
+The cache will be used for the following operations:
+- Reading documents by IDs (get and batch get);
+- Listing all documents in a collection;
+
+(Caching other operations maybe extended in the future).
+
+Caching is leveraging the Firestore listener to update the cache when the document is changed.
+
+The library provides two implementations of the cache:
+- In-memory cache, implemented using [moka cache library](https://github.com/moka-rs/moka);
+- Persistent cache, implemented using [redb](https://github.com/cberner/redb) and protobuf;
+
+Caching is opt-in and you need to enable it when needed using cargo features:
+- `caching-memory` for in-memory cache;
+- `caching-persistent` for in-memory cache;
+
+### Load modes
+Caching supports different init/load modes:
+- `PreloadNone`: Don't preload anything, just fill in the cache while working;
+- `PreloadAllDocs`: Preload all documents from the collection to the cache;
+- `PreloadAllIfEmpty`: Preload all documents from the collection to the cache only if the cache is empty (this is only useful for persistent cache, for memory cache it is the same as `PreloadAllDocs`);
+
+### How cache is updated
+
+Update cache is done in the following cases:
+- When you read a document by ID and it is not found in the cache, it will be loaded from Firestore and cached;
+- Firestore listener will update the cache when it receives a notification about the document change;
+
+### Usage
+
+```rust
+// Create an instance
+let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+
+const TEST_COLLECTION_NAME: &'static str = "test-caching";
+
+// Create a cache instance that also creates an internal Firestore listener
+let mut cache = FirestoreCache::new(
+    "example-mem-cache".into(),
+    &db,
+    FirestoreMemoryCacheBackend::new(
+        FirestoreCacheConfiguration::new().add_collection_config(
+            TEST_COLLECTION_NAME,
+            FirestoreListenerTarget::new(1000),
+            FirestoreCacheCollectionLoadMode::PreloadNone,
+        ),
+    )?,
+    FirestoreMemListenStateStorage::new(),
+)
+.await?;
+
+// Load and init cache
+cache.load().await?; // Required even if you don't preload anything
+
+// Read a document through the cache. If it is not found in the cache, it will be loaded from Firestore and cached.
+let my_struct0: Option<MyTestStructure> = db.read_through_cache(&cache)
+  .fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .one("test-1")
+  .await?;
+
+// Read a document only from the cache. If it is not found in the cache, it will return None.
+let my_struct0: Option<MyTestStructure> = db.read_cached_only(&cache)
+  .fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .one("test-1")
+  .await?;
+
+```
+Full examples available [here](examples/caching_memory_colllections.rs) and [here](examples/caching_persistent_collections.rs).
 
 ## How this library is tested
 

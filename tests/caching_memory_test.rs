@@ -59,6 +59,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
                     FirestoreCacheCollectionLoadMode::PreloadAllDocs,
                 ),
         )?,
+        FirestoreMemListenStateStorage::new(),
     )
     .await?;
 

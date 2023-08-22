@@ -15,20 +15,22 @@ use futures::stream::BoxStream;
 use futures::StreamExt;
 use tracing::*;
 
-pub struct FirestoreCache<B>
+pub struct FirestoreCache<B, LS>
 where
     B: FirestoreCacheBackend + Send + Sync + 'static,
+    LS: FirestoreResumeStateStorage,
 {
-    inner: FirestoreCacheInner<B>,
+    inner: FirestoreCacheInner<B, LS>,
 }
 
-struct FirestoreCacheInner<B>
+struct FirestoreCacheInner<B, LS>
 where
     B: FirestoreCacheBackend + Send + Sync + 'static,
+    LS: FirestoreResumeStateStorage,
 {
     pub options: FirestoreCacheOptions,
     pub backend: Arc<B>,
-    pub listener: FirestoreListener<FirestoreDb, FirestoreTempFilesListenStateStorage>,
+    pub listener: FirestoreListener<FirestoreDb, LS>,
     pub db: FirestoreDb,
 }
 
@@ -37,14 +39,16 @@ pub enum FirestoreCachedValue<T> {
     SkipCache,
 }
 
-impl<B> FirestoreCache<B>
+impl<B, LS> FirestoreCache<B, LS>
 where
     B: FirestoreCacheBackend + Send + Sync + 'static,
+    LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
 {
     pub async fn new(
         name: FirestoreCacheName,
         db: &FirestoreDb,
         backend: B,
+        listener_storage: LS,
     ) -> FirestoreResult<Self>
     where
         B: FirestoreCacheBackend + Send + Sync + 'static,
@@ -65,21 +69,19 @@ where
             );
         }
 
-        let options = FirestoreCacheOptions::new(name, cache_dir);
-        Self::with_options(options, backend, db).await
+        let options = FirestoreCacheOptions::new(name);
+        Self::with_options(options, db, backend, listener_storage).await
     }
 
     pub async fn with_options(
         options: FirestoreCacheOptions,
-        backend: B,
         db: &FirestoreDb,
+        backend: B,
+        listener_storage: LS,
     ) -> FirestoreResult<Self>
     where
         B: FirestoreCacheBackend + Send + Sync + 'static,
     {
-        let listener_storage =
-            FirestoreTempFilesListenStateStorage::with_temp_dir(options.cache_dir.clone());
-
         let listener = if let Some(ref listener_params) = options.listener_params {
             db.create_listener_with_params(listener_storage, listener_params.clone())
                 .await?

@@ -41,6 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 FirestoreCacheCollectionLoadMode::PreloadNone,
             ),
         )?,
+        FirestoreMemListenStateStorage::new(),
     )
     .await?;
 

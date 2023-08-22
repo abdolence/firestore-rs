@@ -45,10 +45,13 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     )
     .await?;
 
+    let temp_state_dir = tempfile::tempdir()?;
+    let temp_db_dir = tempfile::tempdir()?;
+
     let mut cache = FirestoreCache::new(
         "example-persistent-cache".into(),
         &db,
-        FirestorePersistentCacheBackend::new(
+        FirestorePersistentCacheBackend::with_options(
             FirestoreCacheConfiguration::new()
                 .add_collection_config(
                     TEST_COLLECTION_NAME_NO_PRELOAD,
@@ -60,7 +63,9 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
                     FirestoreListenerTarget::new(1001),
                     FirestoreCacheCollectionLoadMode::PreloadAllDocs,
                 ),
+            temp_db_dir.into_path().join("redb"),
         )?,
+        FirestoreTempFilesListenStateStorage::with_temp_dir(temp_state_dir.into_path()),
     )
     .await?;
 
