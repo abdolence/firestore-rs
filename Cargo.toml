@@ -1,6 +1,6 @@
 [package]
 name = "firestore"
-version = "0.35.0"
+version = "0.34.3-alpha.0"
 authors = ["Abdulla Abdurakhmanov <me@abdolence.dev>"]
 edition = "2021"
 rust-version = "1.63"
