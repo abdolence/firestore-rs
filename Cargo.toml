@@ -56,10 +56,12 @@ tempfile = "3"
 
 [[example]]
 name = "caching_memory_collections"
+path = "examples/caching_memory_collections.rs"
 required-features = ["caching-memory"]
 
 [[example]]
 name = "caching_persistent_collections"
+path = "examples/caching_persistent_collections.rs"
 required-features = ["caching-persistent"]
 
 [[test]]
