@@ -406,66 +406,6 @@ impl From<std::io::Error> for FirestoreError {
 }
 
 #[cfg(feature = "caching-persistent")]
-impl From<redb::Error> for FirestoreError {
-    fn from(db_err: redb::Error) -> Self {
-        FirestoreError::CacheError(FirestoreCacheError::new(
-            FirestoreErrorPublicGenericDetails::new("RedbError".into()),
-            format!("Cache error: {db_err}"),
-        ))
-    }
-}
-
-#[cfg(feature = "caching-persistent")]
-impl From<redb::DatabaseError> for FirestoreError {
-    fn from(db_err: redb::DatabaseError) -> Self {
-        FirestoreError::CacheError(FirestoreCacheError::new(
-            FirestoreErrorPublicGenericDetails::new("RedbDatabaseError".into()),
-            format!("Cache error: {db_err}"),
-        ))
-    }
-}
-
-#[cfg(feature = "caching-persistent")]
-impl From<redb::TransactionError> for FirestoreError {
-    fn from(db_err: redb::TransactionError) -> Self {
-        FirestoreError::CacheError(FirestoreCacheError::new(
-            FirestoreErrorPublicGenericDetails::new("RedbTransactionError".into()),
-            format!("Cache error: {db_err}"),
-        ))
-    }
-}
-
-#[cfg(feature = "caching-persistent")]
-impl From<redb::TableError> for FirestoreError {
-    fn from(db_err: redb::TableError) -> Self {
-        FirestoreError::CacheError(FirestoreCacheError::new(
-            FirestoreErrorPublicGenericDetails::new("RedbTableError".into()),
-            format!("Cache error: {db_err}"),
-        ))
-    }
-}
-
-#[cfg(feature = "caching-persistent")]
-impl From<redb::CommitError> for FirestoreError {
-    fn from(db_err: redb::CommitError) -> Self {
-        FirestoreError::CacheError(FirestoreCacheError::new(
-            FirestoreErrorPublicGenericDetails::new("RedbCommitError".into()),
-            format!("Cache error: {db_err}"),
-        ))
-    }
-}
-
-#[cfg(feature = "caching-persistent")]
-impl From<redb::StorageError> for FirestoreError {
-    fn from(db_err: redb::StorageError) -> Self {
-        FirestoreError::CacheError(FirestoreCacheError::new(
-            FirestoreErrorPublicGenericDetails::new("RedbStorageError".into()),
-            format!("Cache error: {db_err}"),
-        ))
-    }
-}
-
-#[cfg(feature = "caching-persistent")]
 impl From<prost::EncodeError> for FirestoreError {
     fn from(err: prost::EncodeError) -> Self {
         FirestoreError::SerializeError(FirestoreSerializationError::new(

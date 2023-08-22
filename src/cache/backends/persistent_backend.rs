@@ -58,7 +58,9 @@ impl FirestorePersistentCacheBackend {
             data_file_dir
         );
 
-        let db = Database::create(data_file_dir)?;
+        let mut db = Database::create(data_file_dir)?;
+
+        db.compact()?;
         info!("Successfully opened database for persistent cache");
 
         Ok(Self {
@@ -296,5 +298,68 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         }
 
         Ok(Box::pin(futures::stream::iter(docs)))
+    }
+}
+
+impl From<redb::Error> for FirestoreError {
+    fn from(db_err: redb::Error) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("RedbError".into()),
+            format!("Cache error: {db_err}"),
+        ))
+    }
+}
+
+impl From<redb::DatabaseError> for FirestoreError {
+    fn from(db_err: redb::DatabaseError) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("RedbDatabaseError".into()),
+            format!("Cache error: {db_err}"),
+        ))
+    }
+}
+
+impl From<redb::TransactionError> for FirestoreError {
+    fn from(db_err: redb::TransactionError) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("RedbTransactionError".into()),
+            format!("Cache error: {db_err}"),
+        ))
+    }
+}
+
+impl From<redb::TableError> for FirestoreError {
+    fn from(db_err: redb::TableError) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("RedbTableError".into()),
+            format!("Cache error: {db_err}"),
+        ))
+    }
+}
+
+impl From<redb::CommitError> for FirestoreError {
+    fn from(db_err: redb::CommitError) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("RedbCommitError".into()),
+            format!("Cache error: {db_err}"),
+        ))
+    }
+}
+
+impl From<redb::StorageError> for FirestoreError {
+    fn from(db_err: redb::StorageError) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("RedbStorageError".into()),
+            format!("Cache error: {db_err}"),
+        ))
+    }
+}
+
+impl From<redb::CompactionError> for FirestoreError {
+    fn from(db_err: redb::CompactionError) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("RedbCompactionError".into()),
+            format!("Cache error: {db_err}"),
+        ))
     }
 }
