@@ -33,7 +33,7 @@ pub use listen_changes::*;
 mod listen_changes_state_storage;
 pub use listen_changes_state_storage::*;
 
-use crate::{FirestoreDocument, FirestoreResult, FirestoreValue};
+use crate::*;
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::*;
@@ -83,12 +83,6 @@ struct FirestoreDbInner {
     doc_path: String,
     options: FirestoreDbOptions,
     client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
-    #[cfg(feature = "caching")]
-    pub(crate) caches: Arc<
-        tokio::sync::RwLock<
-            std::collections::HashMap<crate::FirestoreCacheName, crate::FirestoreCache>,
-        >,
-    >,
 }
 
 #[derive(Clone)]
@@ -174,8 +168,6 @@ impl FirestoreDb {
             doc_path: firestore_database_doc_path,
             client,
             options,
-            #[cfg(feature = "caching")]
-            caches: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         };
 
         Ok(Self {
@@ -293,60 +285,6 @@ impl FirestoreDb {
         )
     }
 
-    pub async fn shutdown(self) -> FirestoreResult<()> {
-        #[cfg(feature = "caching")]
-        self.shutdown_caches().await?;
-
-        Ok(())
-    }
-
-    #[cfg(feature = "caching")]
-    pub async fn register_cache<S, B>(&self, name: S, backend: B) -> FirestoreResult<&Self>
-    where
-        S: Into<crate::FirestoreCacheName>,
-        B: crate::FirestoreCacheBackend + Send + Sync + 'static,
-    {
-        let cache_name = name.into();
-        let cache = crate::FirestoreCache::new(cache_name.clone(), backend, self).await?;
-        let mut caches = self.inner.caches.write().await;
-        caches.insert(cache_name, cache);
-        Ok(self)
-    }
-
-    #[cfg(feature = "caching")]
-    pub async fn register_cache_with_options<B>(
-        &self,
-        options: crate::FirestoreCacheOptions,
-        backend: B,
-    ) -> FirestoreResult<&Self>
-    where
-        B: crate::FirestoreCacheBackend + Send + Sync + 'static,
-    {
-        let cache_name = options.name.clone();
-        let cache = crate::FirestoreCache::with_options(options, backend, self).await?;
-        let mut caches = self.inner.caches.write().await;
-        caches.insert(cache_name, cache);
-        Ok(self)
-    }
-
-    #[cfg(feature = "caching")]
-    pub async fn load_caches(&self) -> FirestoreResult<()> {
-        let mut caches = self.inner.caches.write().await;
-        for cache in caches.values_mut() {
-            cache.load(self).await?;
-        }
-        Ok(())
-    }
-
-    #[cfg(feature = "caching")]
-    pub async fn shutdown_caches(&self) -> FirestoreResult<()> {
-        let mut caches = self.inner.caches.write().await;
-        for cache in caches.values_mut() {
-            cache.shutdown().await?;
-        }
-        Ok(())
-    }
-
     #[cfg(feature = "caching")]
     pub fn with_cache(&self, cache_mode: crate::FirestoreDbSessionCacheMode) -> Self {
         let existing_session_params = (*self.session_params).clone();
@@ -355,22 +293,16 @@ impl FirestoreDb {
     }
 
     #[cfg(feature = "caching")]
-    pub fn read_through_cache<CN>(&self, cache_name: CN) -> Self
-    where
-        CN: Into<crate::FirestoreCacheName>,
-    {
+    pub fn read_through_cache(&self, cache: &FirestoreCache) -> Self {
         self.with_cache(crate::FirestoreDbSessionCacheMode::ReadThrough(
-            cache_name.into(),
+            cache.backend(),
         ))
     }
 
     #[cfg(feature = "caching")]
-    pub fn read_only_cached<CN>(&self, cache_name: CN) -> Self
-    where
-        CN: Into<crate::FirestoreCacheName>,
-    {
+    pub fn read_only_cached(&self, cache: &FirestoreCache) -> Self {
         self.with_cache(crate::FirestoreDbSessionCacheMode::ReadOnlyCached(
-            cache_name.into(),
+            cache.backend(),
         ))
     }
 }
@@ -389,7 +321,6 @@ impl std::fmt::Debug for FirestoreDb {
             .field("options", &self.inner.options)
             .field("database_path", &self.inner.database_path)
             .field("doc_path", &self.inner.doc_path)
-            .field("session_params", &self.session_params)
             .finish()
     }
 }

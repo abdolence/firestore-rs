@@ -1,4 +1,4 @@
-use crate::{FirestoreDb, FirestoreError, FirestoreQueryOrder, FirestoreResult};
+use crate::*;
 use async_trait::async_trait;
 use chrono::prelude::*;
 use futures::future::BoxFuture;
@@ -115,6 +115,16 @@ impl FirestoreListingSupport for FirestoreDb {
         &self,
         params: FirestoreListDocParams,
     ) -> FirestoreResult<BoxStream<FirestoreResult<Document>>> {
+        #[cfg(feature = "caching")]
+        {
+            let collection_id = params.collection_id.clone();
+            if let FirestoreCachedValue::UseCached(stream) = self
+                .list_docs_from_cache(collection_id, &params.return_only_fields)
+                .await?
+            {
+                return Ok(stream);
+            }
+        }
         let stream: BoxStream<FirestoreResult<Document>> = Box::pin(
             futures::stream::unfold(Some(params), move |maybe_params| async move {
                 if let Some(params) = maybe_params {
@@ -473,5 +483,32 @@ impl FirestoreDb {
             }
         }
         .boxed()
+    }
+
+    #[cfg(feature = "caching")]
+    #[inline]
+    pub async fn list_docs_from_cache<'a>(
+        &'a self,
+        collection_id: String,
+        _return_only_fields: &Option<Vec<String>>,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'a, FirestoreResult<FirestoreDocument>>>>
+    {
+        if let FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache) =
+            self.session_params.cache_mode
+        {
+            let span = span!(
+                Level::DEBUG,
+                "Firestore List Cached",
+                "/firestore/collection_name" = collection_id,
+            );
+
+            span.in_scope(|| {
+                debug!("[DB]: Reading all {} documents from cache", collection_id);
+            });
+
+            let stream = cache.list_all_docs(collection_id.as_str()).await?;
+            return Ok(FirestoreCachedValue::UseCached(stream));
+        }
+        Ok(FirestoreCachedValue::SkipCache)
     }
 }

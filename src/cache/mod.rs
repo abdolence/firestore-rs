@@ -15,14 +15,17 @@ use futures::stream::BoxStream;
 use futures::StreamExt;
 use tracing::*;
 
+pub type FirestoreSharedCacheBackend = Arc<Box<dyn FirestoreCacheBackend + Send + Sync + 'static>>;
+
 pub struct FirestoreCache {
     inner: FirestoreCacheInner,
 }
 
 struct FirestoreCacheInner {
     pub options: FirestoreCacheOptions,
-    pub backend: Arc<Box<dyn FirestoreCacheBackend + Send + Sync + 'static>>,
+    pub backend: FirestoreSharedCacheBackend,
     pub listener: FirestoreListener<FirestoreDb, FirestoreTempFilesListenStateStorage>,
+    pub db: FirestoreDb,
 }
 
 pub enum FirestoreCachedValue<T> {
@@ -82,12 +85,21 @@ impl FirestoreCache {
                 options,
                 backend: Arc::new(Box::new(backend)),
                 listener,
+                db: db.clone(),
             },
         })
     }
 
-    pub async fn load(&mut self, db: &FirestoreDb) -> Result<(), FirestoreError> {
-        let backend_target_params = self.inner.backend.load(&self.inner.options, db).await?;
+    pub fn name(&self) -> &FirestoreCacheName {
+        &self.inner.options.name
+    }
+
+    pub async fn load(&mut self) -> Result<(), FirestoreError> {
+        let backend_target_params = self
+            .inner
+            .backend
+            .load(&self.inner.options, &self.inner.db)
+            .await?;
 
         for target_params in backend_target_params {
             self.inner.listener.add_target(target_params)?;
@@ -113,6 +125,10 @@ impl FirestoreCache {
         self.inner.listener.shutdown().await?;
         self.inner.backend.shutdown().await?;
         Ok(())
+    }
+
+    pub fn backend(&self) -> FirestoreSharedCacheBackend {
+        self.inner.backend.clone()
     }
 }
 
@@ -185,47 +201,4 @@ pub trait FirestoreCacheDocsByPathSupport {
         &self,
         collection_id: &str,
     ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>>;
-}
-
-#[async_trait]
-impl FirestoreCacheDocsByPathSupport for FirestoreCache {
-    async fn get_doc_by_path(
-        &self,
-        collection_id: &str,
-        document_path: &str,
-    ) -> FirestoreResult<Option<FirestoreDocument>> {
-        self.inner
-            .backend
-            .get_doc_by_path(collection_id, document_path)
-            .await
-    }
-
-    async fn get_docs_by_paths<'a>(
-        &'a self,
-        collection_id: &str,
-        full_doc_ids: &'a [String],
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<FirestoreDocument>)>>> {
-        self.inner
-            .backend
-            .get_docs_by_paths(collection_id, full_doc_ids)
-            .await
-    }
-
-    async fn update_doc_by_path(
-        &self,
-        collection_id: &str,
-        document: &FirestoreDocument,
-    ) -> FirestoreResult<()> {
-        self.inner
-            .backend
-            .update_doc_by_path(collection_id, document)
-            .await
-    }
-
-    async fn list_all_docs(
-        &self,
-        collection_id: &str,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
-        self.inner.backend.list_all_docs(collection_id).await
-    }
 }

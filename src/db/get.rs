@@ -755,64 +755,53 @@ impl FirestoreDb {
         document_path: &str,
         _return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<FirestoreCachedValue<FirestoreDocument>> {
-        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name)
-        | FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache_name) =
-            self.session_params.cache_mode
+        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache)
+        | FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache) = self.session_params.cache_mode
         {
-            let caches = self.inner.caches.read().await;
-            if let Some(cache) = caches.get(cache_name) {
-                let begin_query_utc: DateTime<Utc> = Utc::now();
+            let begin_query_utc: DateTime<Utc> = Utc::now();
 
-                let cache_response = cache.get_doc_by_path(collection_id, document_path).await?;
+            let cache_response = cache.get_doc_by_path(collection_id, document_path).await?;
 
-                let end_query_utc: DateTime<Utc> = Utc::now();
-                let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+            let end_query_utc: DateTime<Utc> = Utc::now();
+            let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
 
-                if let Some(doc) = cache_response {
-                    let span = span!(
-                        Level::DEBUG,
-                        "Firestore Get Cache Hit",
-                        "/firestore/collection_name" = collection_id,
-                        "/firestore/response_time" = query_duration.num_milliseconds(),
-                        "/firestore/document_name" = document_path
+            if let Some(doc) = cache_response {
+                let span = span!(
+                    Level::DEBUG,
+                    "Firestore Get Cache Hit",
+                    "/firestore/collection_name" = collection_id,
+                    "/firestore/response_time" = query_duration.num_milliseconds(),
+                    "/firestore/document_name" = document_path
+                );
+                span.in_scope(|| {
+                    debug!(
+                        "[DB]: Reading document {} from cache took {}ms",
+                        document_path,
+                        query_duration.num_milliseconds()
                     );
-                    span.in_scope(|| {
-                        debug!(
-                            "[DB]: Reading document {} from cache {} took {}ms",
-                            document_path,
-                            cache_name,
-                            query_duration.num_milliseconds()
-                        );
-                    });
+                });
 
-                    return Ok(FirestoreCachedValue::UseCached(doc));
-                } else {
-                    let span = span!(
-                        Level::DEBUG,
-                        "Firestore Get Cache Miss",
-                        "/firestore/collection_name" = collection_id,
-                        "/firestore/response_time" = query_duration.num_milliseconds(),
-                        "/firestore/document_name" = document_path
-                    );
-                    span.in_scope(|| {
-                        debug!(
-                            "[DB]: Missing document {} in cache {}",
-                            document_path, cache_name
-                        );
-                    });
-                    if let FirestoreDbSessionCacheMode::ReadOnlyCached(_) =
-                        self.session_params.cache_mode
-                    {
-                        return Err(FirestoreError::DataNotFoundError(
-                            FirestoreDataNotFoundError::new(
-                                FirestoreErrorPublicGenericDetails::new("CACHE_MISS".to_string()),
-                                format!(
-                                    "Document {} not found in cache {}",
-                                    document_path, cache_name
-                                ),
-                            ),
-                        ));
-                    }
+                return Ok(FirestoreCachedValue::UseCached(doc));
+            } else {
+                let span = span!(
+                    Level::DEBUG,
+                    "Firestore Get Cache Miss",
+                    "/firestore/collection_name" = collection_id,
+                    "/firestore/response_time" = query_duration.num_milliseconds(),
+                    "/firestore/document_name" = document_path
+                );
+                span.in_scope(|| {
+                    debug!("[DB]: Missing document {} in cache", document_path);
+                });
+                if let FirestoreDbSessionCacheMode::ReadOnlyCached(_) =
+                    self.session_params.cache_mode
+                {
+                    return Err(FirestoreError::DataNotFoundError(
+                        FirestoreDataNotFoundError::new(
+                            FirestoreErrorPublicGenericDetails::new("CACHE_MISS".to_string()),
+                            format!("Document {} not found in cache", document_path),
+                        ),
+                    ));
                 }
             }
         }
@@ -828,48 +817,40 @@ impl FirestoreDb {
         _return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<(String, Option<Document>)>>>>
     {
-        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name)
-        | FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache_name) =
-            self.session_params.cache_mode
+        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache)
+        | FirestoreDbSessionCacheMode::ReadOnlyCached(ref cache) = self.session_params.cache_mode
         {
-            let caches = self.inner.caches.read().await;
-            if let Some(cache) = caches.get(cache_name) {
-                let span = span!(
-                    Level::DEBUG,
-                    "Firestore Batch Get Cached",
-                    "/firestore/collection_name" = collection_id,
-                );
+            let span = span!(
+                Level::DEBUG,
+                "Firestore Batch Get Cached",
+                "/firestore/collection_name" = collection_id,
+            );
 
+            span.in_scope(|| {
+                debug!("[DB]: Reading {} documents from cache", full_doc_ids.len());
+            });
+
+            let cached_stream: BoxStream<FirestoreResult<(String, Option<FirestoreDocument>)>> =
+                cache.get_docs_by_paths(collection_id, full_doc_ids).await?;
+
+            let cached_vec: Vec<(String, Option<FirestoreDocument>)> =
+                cached_stream.try_collect::<Vec<_>>().await?;
+
+            if cached_vec.len() == full_doc_ids.len()
+                || matches!(
+                    self.session_params.cache_mode,
+                    FirestoreDbSessionCacheMode::ReadOnlyCached(_)
+                )
+            {
+                return Ok(FirestoreCachedValue::UseCached(Box::pin(
+                    futures::stream::iter(cached_vec)
+                        .map(|(doc_id, maybe_doc)| Ok((doc_id, maybe_doc))),
+                )));
+            } else {
                 span.in_scope(|| {
-                    debug!(
-                        "[DB]: Reading {} documents from cache {}",
-                        full_doc_ids.len(),
-                        cache_name
-                    );
+                    info!("Not all documents were found in cache. Reading from Firestore.")
                 });
-
-                let cached_stream: BoxStream<FirestoreResult<(String, Option<FirestoreDocument>)>> =
-                    cache.get_docs_by_paths(collection_id, full_doc_ids).await?;
-
-                let cached_vec: Vec<(String, Option<FirestoreDocument>)> =
-                    cached_stream.try_collect::<Vec<_>>().await?;
-
-                if cached_vec.len() == full_doc_ids.len()
-                    || matches!(
-                        self.session_params.cache_mode,
-                        FirestoreDbSessionCacheMode::ReadOnlyCached(_)
-                    )
-                {
-                    return Ok(FirestoreCachedValue::UseCached(Box::pin(
-                        futures::stream::iter(cached_vec)
-                            .map(|(doc_id, maybe_doc)| Ok((doc_id, maybe_doc))),
-                    )));
-                } else {
-                    span.in_scope(|| {
-                        info!("Not all documents were found in cache. Reading from Firestore.")
-                    });
-                    return Ok(FirestoreCachedValue::SkipCache);
-                }
+                return Ok(FirestoreCachedValue::SkipCache);
             }
         }
         Ok(FirestoreCachedValue::SkipCache)
@@ -882,13 +863,9 @@ impl FirestoreDb {
         collection_id: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
-        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache_name) =
-            self.session_params.cache_mode
+        if let FirestoreDbSessionCacheMode::ReadThrough(ref cache) = self.session_params.cache_mode
         {
-            let caches = self.inner.caches.read().await;
-            if let Some(cache) = caches.get(cache_name) {
-                cache.update_doc_by_path(collection_id, document).await?;
-            }
+            cache.update_doc_by_path(collection_id, document).await?;
         }
         Ok(())
     }

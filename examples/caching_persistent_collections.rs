@@ -32,10 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     const TEST_COLLECTION_NAME: &'static str = "test-caching";
 
-    const TEST_CACHE: &'static str = "example-cache";
-
-    db.register_cache(
-        TEST_CACHE,
+    let mut cache = FirestoreCache::new(
+        "example-cache".into(),
         FirestorePersistentCacheBackend::new(
             FirestoreCacheConfiguration::new().add_collection_config(
                 TEST_COLLECTION_NAME,
@@ -43,10 +41,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty,
             ),
         )?,
+        &db,
     )
     .await?;
 
-    db.load_caches().await?;
+    cache.load().await?;
 
     if db
         .fluent()
@@ -82,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Getting by id only from cache - won't exist");
     let my_struct0: Option<MyTestStructure> = db
-        .read_only_cached(TEST_CACHE)
+        .read_only_cached(&cache)
         .fluent()
         .select()
         .by_id_in(TEST_COLLECTION_NAME)
@@ -94,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Getting by id");
     let my_struct1: Option<MyTestStructure> = db
-        .read_through_cache(TEST_CACHE)
+        .read_through_cache(&cache)
         .fluent()
         .select()
         .by_id_in(TEST_COLLECTION_NAME)
@@ -108,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Getting by id from cache now");
     let my_struct2: Option<MyTestStructure> = db
-        .read_through_cache(TEST_CACHE)
+        .read_through_cache(&cache)
         .fluent()
         .select()
         .by_id_in(TEST_COLLECTION_NAME)
@@ -119,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("{:?}", my_struct2);
 
     println!("Getting batch by ids");
-    let cached_db = db.read_through_cache(TEST_CACHE);
+    let cached_db = db.read_through_cache(&cache);
 
     let my_struct1_stream: BoxStream<FirestoreResult<(String, Option<MyTestStructure>)>> =
         cached_db
@@ -146,7 +145,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let my_structs2 = my_struct2_stream.try_collect::<Vec<_>>().await?;
     println!("{:?}", my_structs2);
 
-    db.shutdown().await?;
+    // List from cache
+    let cached_db = db.read_only_cached(&cache);
+    let all_items_stream = cached_db
+        .fluent()
+        .list()
+        .from(TEST_COLLECTION_NAME)
+        .obj::<MyTestStructure>()
+        .stream_all_with_errors()
+        .await?;
+
+    let all_items = all_items_stream.try_collect::<Vec<_>>().await?;
+    println!("{:?}", all_items.len());
+
+    cache.shutdown().await?;
 
     Ok(())
 }

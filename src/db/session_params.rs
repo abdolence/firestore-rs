@@ -1,7 +1,7 @@
 use crate::FirestoreConsistencySelector;
 use rsb_derive::*;
 
-#[derive(Debug, Clone, Builder)]
+#[derive(Clone, Builder)]
 pub struct FirestoreDbSessionParams {
     pub consistency_selector: Option<FirestoreConsistencySelector>,
 
@@ -9,11 +9,11 @@ pub struct FirestoreDbSessionParams {
     pub cache_mode: FirestoreDbSessionCacheMode,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum FirestoreDbSessionCacheMode {
     None,
     #[cfg(feature = "caching")]
-    ReadThrough(crate::FirestoreCacheName),
+    ReadThrough(crate::FirestoreSharedCacheBackend),
     #[cfg(feature = "caching")]
-    ReadOnlyCached(crate::FirestoreCacheName),
+    ReadOnlyCached(crate::FirestoreSharedCacheBackend),
 }
