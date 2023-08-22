@@ -250,7 +250,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                 Ok(Some(doc)) => Some(doc),
                 Ok(None) => None,
                 Err(err) => {
-                    error!("[DB] Error occurred while consuming query: {}", err);
+                    error!("Error occurred while consuming query: {}", err);
                     None
                 }
             })
@@ -277,7 +277,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                 Ok(Some(doc)) => Some(Ok(doc)),
                 Ok(None) => None,
                 Err(err) => {
-                    error!("[DB] Error occurred while consuming query: {}", err);
+                    error!("Error occurred while consuming query: {}", err);
                     Some(Err(err))
                 }
             })
@@ -308,7 +308,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                 Ok(obj) => Some(obj),
                 Err(err) => {
                     error!(
-                        "[DB] Error occurred while consuming query document as a stream: {}",
+                        "Error occurred while consuming query document as a stream: {}",
                         err
                     );
                     None

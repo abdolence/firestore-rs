@@ -43,8 +43,8 @@ where
 {
     pub async fn new(
         name: FirestoreCacheName,
-        backend: B,
         db: &FirestoreDb,
+        backend: B,
     ) -> FirestoreResult<Self>
     where
         B: FirestoreCacheBackend + Send + Sync + 'static,

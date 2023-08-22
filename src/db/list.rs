@@ -146,7 +146,7 @@ impl FirestoreListingSupport for FirestoreDb {
                             }
                         }
                         Err(err) => {
-                            error!("[DB] Error occurred while consuming documents: {}", err);
+                            error!("Error occurred while consuming documents: {}", err);
                             Some((Err(err), None))
                         }
                     }
@@ -178,7 +178,7 @@ impl FirestoreListingSupport for FirestoreDb {
             future::ready(match doc_res {
                 Ok(doc) => Some(doc),
                 Err(err) => {
-                    error!("[DB] Error occurred while consuming documents: {}", err);
+                    error!("Error occurred while consuming documents: {}", err);
                     None
                 }
             })
@@ -199,7 +199,7 @@ impl FirestoreListingSupport for FirestoreDb {
                 Ok(obj) => Some(obj),
                 Err(err) => {
                     error!(
-                        "[DB] Error occurred while consuming list document as a stream: {}",
+                        "Error occurred while consuming list document as a stream: {}",
                         err
                     );
                     None
@@ -245,10 +245,7 @@ impl FirestoreListingSupport for FirestoreDb {
             future::ready(match col_res {
                 Ok(col) => Some(col),
                 Err(err) => {
-                    error!(
-                        "[DB] Error occurred while consuming collection IDs: {}",
-                        err
-                    );
+                    error!("Error occurred while consuming collection IDs: {}", err);
                     None
                 }
             })
@@ -280,7 +277,7 @@ impl FirestoreListingSupport for FirestoreDb {
                             }
                         }
                         Err(err) => {
-                            error!("[DB] Error occurred while consuming documents: {}", err);
+                            error!("Error occurred while consuming documents: {}", err);
                             Some((Err(err), None))
                         }
                     }

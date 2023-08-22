@@ -380,7 +380,7 @@ impl FirestoreGetByIdSupport for FirestoreDb {
                 Ok(doc_pair) => Some(doc_pair),
                 Err(err) => {
                     error!(
-                        "[DB] Error occurred while consuming batch get as a stream: {}",
+                        "Error occurred while consuming batch get as a stream: {}",
                         err
                     );
                     None
@@ -463,23 +463,23 @@ impl FirestoreGetByIdSupport for FirestoreDb {
             .batch_stream_get_docs_at(parent, collection_id, document_ids, return_only_fields)
             .await?;
 
-        Ok(Box::pin(doc_stream.filter_map(|(doc_id,maybe_doc)| async move {
-            match maybe_doc {
-                Some(doc) => {
-                    match Self::deserialize_doc_to(&doc) {
+        Ok(Box::pin(doc_stream.filter_map(
+            |(doc_id, maybe_doc)| async move {
+                match maybe_doc {
+                    Some(doc) => match Self::deserialize_doc_to(&doc) {
                         Ok(obj) => Some((doc_id, Some(obj))),
                         Err(err) => {
                             error!(
-                                "[DB] Error occurred while consuming batch documents as a stream: {}",
+                                "Error occurred while consuming batch documents as a stream: {}",
                                 err
                             );
                             None
                         }
-                    }
-                },
-                None => Some((doc_id, None))
-            }
-        })))
+                    },
+                    None => Some((doc_id, None)),
+                }
+            },
+        )))
     }
 
     async fn batch_stream_get_objects_at_with_errors<'a, T, S, I>(
@@ -765,14 +765,17 @@ impl FirestoreDb {
             let end_query_utc: DateTime<Utc> = Utc::now();
             let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
 
+            let span = span!(
+                Level::DEBUG,
+                "Firestore Get Cache",
+                "/firestore/collection_name" = collection_id,
+                "/firestore/response_time" = query_duration.num_milliseconds(),
+                "/firestore/document_name" = document_path,
+                "/firestore/cache_result" = field::Empty,
+            );
+
             if let Some(doc) = cache_response {
-                let span = span!(
-                    Level::DEBUG,
-                    "Firestore Get Cache Hit",
-                    "/firestore/collection_name" = collection_id,
-                    "/firestore/response_time" = query_duration.num_milliseconds(),
-                    "/firestore/document_name" = document_path
-                );
+                span.record("/firestore/cache_result", "hit");
                 span.in_scope(|| {
                     debug!(
                         "Reading document {} from cache took {}ms",
@@ -783,13 +786,7 @@ impl FirestoreDb {
 
                 return Ok(FirestoreCachedValue::UseCached(doc));
             } else {
-                let span = span!(
-                    Level::DEBUG,
-                    "Firestore Get Cache Miss",
-                    "/firestore/collection_name" = collection_id,
-                    "/firestore/response_time" = query_duration.num_milliseconds(),
-                    "/firestore/document_name" = document_path
-                );
+                span.record("/firestore/cache_result", "miss");
                 span.in_scope(|| {
                     debug!("Missing document {} in cache", document_path);
                 });
@@ -824,11 +821,9 @@ impl FirestoreDb {
                 Level::DEBUG,
                 "Firestore Batch Get Cached",
                 "/firestore/collection_name" = collection_id,
+                "/firestore/ids_count" = full_doc_ids.len(),
+                "/firestore/cache_result" = field::Empty,
             );
-
-            span.in_scope(|| {
-                debug!("Reading {} documents from cache", full_doc_ids.len());
-            });
 
             let cached_stream: BoxStream<FirestoreResult<(String, Option<FirestoreDocument>)>> =
                 cache.get_docs_by_paths(collection_id, full_doc_ids).await?;
@@ -842,11 +837,16 @@ impl FirestoreDb {
                     FirestoreDbSessionCacheMode::ReadCachedOnly(_)
                 )
             {
+                span.record("/firestore/cache_result", "hit");
+                span.in_scope(|| {
+                    debug!("Reading {} documents from cache", full_doc_ids.len());
+                });
                 return Ok(FirestoreCachedValue::UseCached(Box::pin(
                     futures::stream::iter(cached_vec)
                         .map(|(doc_id, maybe_doc)| Ok((doc_id, maybe_doc))),
                 )));
             } else {
+                span.record("/firestore/cache_result", "miss");
                 span.in_scope(|| {
                     info!("Not all documents were found in cache. Reading from Firestore.")
                 });

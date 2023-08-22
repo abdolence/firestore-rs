@@ -34,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let mut cache = FirestoreCache::new(
         "example-cache".into(),
+        &db,
         FirestoreMemoryCacheBackend::new(
             FirestoreCacheConfiguration::new().add_collection_config(
                 TEST_COLLECTION_NAME,
@@ -41,7 +42,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 FirestoreCacheCollectionLoadMode::PreloadAllDocs,
             ),
         )?,
-        &db,
     )
     .await?;
 
