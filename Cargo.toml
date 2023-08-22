@@ -24,8 +24,8 @@ path = "src/lib.rs"
 [features]
 default = []
 caching = []
-caching-memory = ["caching", "moka"]
-caching-persistent = ["caching", "redb", "prost"]
+caching-memory = ["caching", "dep:moka"]
+caching-persistent = ["caching", "dep:redb", "dep:prost"]
 
 [dependencies]
 tracing = "0.1"
