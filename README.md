@@ -243,7 +243,7 @@ In your queries you need to use the wrapping class `firestore::FirestoreTimestam
 ```
 
 ## Nested collections
-You can work with nested collection specifying path/location to a parent for documents:
+You can work with nested collections specifying path/location to a parent for documents:
 
 ```rust
 
@@ -587,11 +587,12 @@ export FIRESTORE_EMULATOR_HOST="localhost:8080"
 or specify it as an option using `FirestoreDb::with_options()`
 
 ## Caching
-The library supports caching for collections and documents.
+The library supports caching for collections and documents. Caching is leveraging the Firestore listener to update the cache when the document is changed, 
+that means the updates will be propagated across distributed instances automatically for you.
 
-This is useful to avoid reading and paying the same documents from Firestore multiple times.
+This is useful to avoid reading and paying for the same documents from Firestore multiple times.
 Especially for some data such as dictionaries, configuration, and other information 
-that is not changed frequently. In fact this may be really helpful to reduce both costs
+that is not changed frequently. In fact, this may be really helpful to reduce both costs
 and latency in your applications.
 
 
@@ -600,9 +601,9 @@ The cache will be used for the following operations:
 - Reading documents by IDs (get and batch get);
 - Listing all documents in a collection;
 
-(Caching other operations maybe extended in the future).
+(Caching other operations may be extended in the future).
 
-Caching is leveraging the Firestore listener to update the cache when the document is changed.
+
 
 The library provides two implementations of the cache:
 - In-memory cache, implemented using [moka cache library](https://github.com/moka-rs/moka);
@@ -618,11 +619,11 @@ Caching supports different init/load modes:
 - `PreloadAllDocs`: Preload all documents from the collection to the cache;
 - `PreloadAllIfEmpty`: Preload all documents from the collection to the cache only if the cache is empty (this is only useful for persistent cache, for memory cache it is the same as `PreloadAllDocs`);
 
-### How cache is updated
+### How a cache is updated
 
 Update cache is done in the following cases:
-- When you read a document by ID and it is not found in the cache, it will be loaded from Firestore and cached;
-- Firestore listener will update the cache when it receives a notification about the document change;
+- When you read a document through a cache by ID and it is not found in the cache, it will be loaded from Firestore and cached;
+- Firestore listener will update the cache when it receives a notification about the document change (externally or from your app);
 
 ### Usage
 
@@ -673,7 +674,7 @@ Full examples available [here](examples/caching_memory_collections.rs) and [here
 
 ## How this library is tested
 
-There are integration tests in tests directory that runs for every commit against the real
+There are integration tests in the tests directory that runs for every commit against the real
 Firestore instance allocated for testing purposes. Be aware not to introduce huge document reads/updates
 and collection isolation from other tests.
 
