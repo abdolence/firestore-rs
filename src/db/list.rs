@@ -1,4 +1,4 @@
-use crate::{FirestoreDb, FirestoreError, FirestoreQueryOrder, FirestoreResult};
+use crate::*;
 use async_trait::async_trait;
 use chrono::prelude::*;
 use futures::future::BoxFuture;
@@ -115,6 +115,16 @@ impl FirestoreListingSupport for FirestoreDb {
         &self,
         params: FirestoreListDocParams,
     ) -> FirestoreResult<BoxStream<FirestoreResult<Document>>> {
+        #[cfg(feature = "caching")]
+        {
+            let collection_id = params.collection_id.clone();
+            if let FirestoreCachedValue::UseCached(stream) = self
+                .list_docs_from_cache(collection_id, &params.return_only_fields)
+                .await?
+            {
+                return Ok(stream);
+            }
+        }
         let stream: BoxStream<FirestoreResult<Document>> = Box::pin(
             futures::stream::unfold(Some(params), move |maybe_params| async move {
                 if let Some(params) = maybe_params {
@@ -136,7 +146,7 @@ impl FirestoreListingSupport for FirestoreDb {
                             }
                         }
                         Err(err) => {
-                            error!("[DB] Error occurred while consuming documents: {}", err);
+                            error!("Error occurred while consuming documents: {}", err);
                             Some((Err(err), None))
                         }
                     }
@@ -168,7 +178,7 @@ impl FirestoreListingSupport for FirestoreDb {
             future::ready(match doc_res {
                 Ok(doc) => Some(doc),
                 Err(err) => {
-                    error!("[DB] Error occurred while consuming documents: {}", err);
+                    error!("Error occurred while consuming documents: {}", err);
                     None
                 }
             })
@@ -189,7 +199,7 @@ impl FirestoreListingSupport for FirestoreDb {
                 Ok(obj) => Some(obj),
                 Err(err) => {
                     error!(
-                        "[DB] Error occurred while consuming list document as a stream: {}",
+                        "Error occurred while consuming list document as a stream: {}",
                         err
                     );
                     None
@@ -235,10 +245,7 @@ impl FirestoreListingSupport for FirestoreDb {
             future::ready(match col_res {
                 Ok(col) => Some(col),
                 Err(err) => {
-                    error!(
-                        "[DB] Error occurred while consuming collection IDs: {}",
-                        err
-                    );
+                    error!("Error occurred while consuming collection IDs: {}", err);
                     None
                 }
             })
@@ -270,7 +277,7 @@ impl FirestoreListingSupport for FirestoreDb {
                             }
                         }
                         Err(err) => {
-                            error!("[DB] Error occurred while consuming documents: {}", err);
+                            error!("Error occurred while consuming documents: {}", err);
                             Some((Err(err), None))
                         }
                     }
@@ -366,7 +373,7 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "[DB]: Listing documents in {:?} took {}ms",
+                            "Listing documents in {:?} took {}ms",
                             params.collection_id,
                             listing_duration.num_milliseconds()
                         );
@@ -379,7 +386,7 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "[DB]: Listing failed with {}. Retrying: {}/{}",
+                            "Listing failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
                             self.inner.options.max_retries
@@ -448,7 +455,7 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "[DB]: Listing collections took {}ms",
+                            "Listing collections took {}ms",
                             listing_duration.num_milliseconds()
                         );
                     });
@@ -460,7 +467,7 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "[DB]: Listing failed with {}. Retrying: {}/{}",
+                            "Listing failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
                             self.inner.options.max_retries
@@ -473,5 +480,32 @@ impl FirestoreDb {
             }
         }
         .boxed()
+    }
+
+    #[cfg(feature = "caching")]
+    #[inline]
+    pub async fn list_docs_from_cache<'a>(
+        &'a self,
+        collection_id: String,
+        _return_only_fields: &Option<Vec<String>>,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'a, FirestoreResult<FirestoreDocument>>>>
+    {
+        if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) =
+            self.session_params.cache_mode
+        {
+            let span = span!(
+                Level::DEBUG,
+                "Firestore List Cached",
+                "/firestore/collection_name" = collection_id,
+            );
+
+            span.in_scope(|| {
+                debug!("Reading all {} documents from cache", collection_id);
+            });
+
+            let stream = cache.list_all_docs(collection_id.as_str()).await?;
+            return Ok(FirestoreCachedValue::UseCached(stream));
+        }
+        Ok(FirestoreCachedValue::SkipCache)
     }
 }

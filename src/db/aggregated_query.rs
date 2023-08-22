@@ -181,7 +181,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
                 Ok(Some(doc)) => Some(doc),
                 Ok(None) => None,
                 Err(err) => {
-                    error!("[DB] Error occurred while consuming query: {}", err);
+                    error!("Error occurred while consuming query: {}", err);
                     None
                 }
             })
@@ -210,7 +210,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
                 Ok(Some(doc)) => Some(Ok(doc)),
                 Ok(None) => None,
                 Err(err) => {
-                    error!("[DB] Error occurred while consuming query: {}", err);
+                    error!("Error occurred while consuming query: {}", err);
                     Some(Err(err))
                 }
             })
@@ -244,7 +244,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
                 Ok(obj) => Some(obj),
                 Err(err) => {
                     error!(
-                        "[DB] Error occurred while consuming query document as a stream: {}",
+                        "Error occurred while consuming query document as a stream: {}",
                         err
                     );
                     None
@@ -328,7 +328,7 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "[DB]: Querying stream of documents in {:?} took {}ms",
+                            "Querying stream of documents in {:?} took {}ms",
                             params.query_params.collection_id,
                             query_duration.num_milliseconds()
                         );
@@ -341,7 +341,7 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "[DB]: Failed with {}. Retrying: {}/{}",
+                            "Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
                             self.inner.options.max_retries
@@ -392,7 +392,7 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "[DB]: Querying documents in {:?} took {}ms",
+                            "Querying documents in {:?} took {}ms",
                             params.query_params.collection_id,
                             query_duration.num_milliseconds()
                         );
@@ -405,7 +405,7 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "[DB]: Failed with {}. Retrying: {}/{}",
+                            "Failed with {}. Retrying: {}/{}",
                             db_err,
                             retries + 1,
                             self.inner.options.max_retries

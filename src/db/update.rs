@@ -154,10 +154,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
         );
 
         span.in_scope(|| {
-            debug!(
-                "[DB]: Updated the document: {}/{}",
-                collection_id, document_id
-            );
+            debug!("Updated the document: {}/{}", collection_id, document_id);
         });
 
         Ok(update_response.into_inner())

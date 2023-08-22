@@ -148,3 +148,9 @@ mod fluent_api;
 pub use fluent_api::*;
 
 pub extern crate struct_path;
+
+#[cfg(feature = "caching")]
+mod cache;
+
+#[cfg(feature = "caching")]
+pub use cache::*;

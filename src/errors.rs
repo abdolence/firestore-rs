@@ -17,6 +17,7 @@ pub enum FirestoreError {
     DeserializeError(FirestoreSerializationError),
     NetworkError(FirestoreNetworkError),
     ErrorInTransaction(FirestoreErrorInTransaction),
+    CacheError(FirestoreCacheError),
 }
 
 impl Display for FirestoreError {
@@ -31,6 +32,7 @@ impl Display for FirestoreError {
             FirestoreError::DeserializeError(ref err) => err.fmt(f),
             FirestoreError::NetworkError(ref err) => err.fmt(f),
             FirestoreError::ErrorInTransaction(ref err) => err.fmt(f),
+            FirestoreError::CacheError(ref err) => err.fmt(f),
         }
     }
 }
@@ -47,6 +49,7 @@ impl Error for FirestoreError {
             FirestoreError::DeserializeError(ref err) => Some(err),
             FirestoreError::NetworkError(ref err) => Some(err),
             FirestoreError::ErrorInTransaction(ref err) => Some(err),
+            FirestoreError::CacheError(ref err) => Some(err),
         }
     }
 }
@@ -252,12 +255,16 @@ impl serde::de::Error for FirestoreError {
 #[derive(Debug, Builder)]
 pub struct FirestoreSerializationError {
     pub public: FirestoreErrorPublicGenericDetails,
+    pub message: String,
 }
 
 impl FirestoreSerializationError {
     pub fn from_message<S: AsRef<str>>(message: S) -> FirestoreSerializationError {
         let message_str = message.as_ref().to_string();
-        FirestoreSerializationError::new(FirestoreErrorPublicGenericDetails::new(message_str))
+        FirestoreSerializationError::new(
+            FirestoreErrorPublicGenericDetails::new("SerializationError".to_string()),
+            message_str,
+        )
     }
 }
 
@@ -268,6 +275,20 @@ impl Display for FirestoreSerializationError {
 }
 
 impl std::error::Error for FirestoreSerializationError {}
+
+#[derive(Debug, Builder)]
+pub struct FirestoreCacheError {
+    pub public: FirestoreErrorPublicGenericDetails,
+    pub message: String,
+}
+
+impl Display for FirestoreCacheError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "Cache error: {}", self.message)
+    }
+}
+
+impl std::error::Error for FirestoreCacheError {}
 
 impl From<chrono::ParseError> for FirestoreError {
     fn from(parse_err: chrono::ParseError) -> Self {
@@ -374,3 +395,32 @@ pub(crate) fn firestore_err_to_backoff(err: FirestoreError) -> BackoffError<Fire
 }
 
 pub(crate) type AnyBoxedErrResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+impl From<std::io::Error> for FirestoreError {
+    fn from(io_error: std::io::Error) -> Self {
+        FirestoreError::SystemError(FirestoreSystemError::new(
+            FirestoreErrorPublicGenericDetails::new(format!("{:?}", io_error.kind())),
+            format!("I/O error: {io_error}"),
+        ))
+    }
+}
+
+#[cfg(feature = "caching-persistent")]
+impl From<prost::EncodeError> for FirestoreError {
+    fn from(err: prost::EncodeError) -> Self {
+        FirestoreError::SerializeError(FirestoreSerializationError::new(
+            FirestoreErrorPublicGenericDetails::new("PrototBufEncodeError".into()),
+            format!("Protobuf serialization error: {err}"),
+        ))
+    }
+}
+
+#[cfg(feature = "caching-persistent")]
+impl From<prost::DecodeError> for FirestoreError {
+    fn from(err: prost::DecodeError) -> Self {
+        FirestoreError::SerializeError(FirestoreSerializationError::new(
+            FirestoreErrorPublicGenericDetails::new("PrototBufDecodeError".into()),
+            format!("Protobuf deserialization error: {err}"),
+        ))
+    }
+}

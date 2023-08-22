@@ -33,7 +33,7 @@ pub use listen_changes::*;
 mod listen_changes_state_storage;
 pub use listen_changes_state_storage::*;
 
-use crate::{FirestoreDocument, FirestoreResult, FirestoreValue};
+use crate::*;
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::*;
@@ -88,7 +88,7 @@ struct FirestoreDbInner {
 #[derive(Clone)]
 pub struct FirestoreDb {
     inner: Arc<FirestoreDbInner>,
-    session_params: FirestoreDbSessionParams,
+    session_params: Arc<FirestoreDbSessionParams>,
 }
 
 const GOOGLE_FIREBASE_API_URL: &str = "https://firestore.googleapis.com";
@@ -172,7 +172,7 @@ impl FirestoreDb {
 
         Ok(Self {
             inner: Arc::new(inner),
-            session_params: FirestoreDbSessionParams::new(),
+            session_params: Arc::new(FirestoreDbSessionParams::new()),
         })
     }
 
@@ -205,9 +205,14 @@ impl FirestoreDb {
 
     pub async fn ping(&self) -> FirestoreResult<()> {
         // Reading non-existing document just to check that database is available to read
-        self.get_doc_by_path(self.get_database_path().clone(), None, 0)
-            .await
-            .ok();
+        self.get_doc_by_path(
+            "-ping-".to_string(),
+            self.get_database_path().clone(),
+            None,
+            0,
+        )
+        .await
+        .ok();
         Ok(())
     }
 
@@ -255,7 +260,7 @@ impl FirestoreDb {
     #[inline]
     pub fn clone_with_session_params(&self, session_params: FirestoreDbSessionParams) -> Self {
         Self {
-            session_params,
+            session_params: session_params.into(),
             ..self.clone()
         }
     }
@@ -263,7 +268,7 @@ impl FirestoreDb {
     #[inline]
     pub fn with_session_params(self, session_params: FirestoreDbSessionParams) -> Self {
         Self {
-            session_params,
+            session_params: session_params.into(),
             ..self
         }
     }
@@ -273,11 +278,40 @@ impl FirestoreDb {
         &self,
         consistency_selector: FirestoreConsistencySelector,
     ) -> Self {
+        let existing_session_params = (*self.session_params).clone();
+
         self.clone_with_session_params(
-            self.session_params
-                .clone()
-                .with_consistency_selector(consistency_selector),
+            existing_session_params.with_consistency_selector(consistency_selector),
         )
+    }
+
+    #[cfg(feature = "caching")]
+    pub fn with_cache(&self, cache_mode: crate::FirestoreDbSessionCacheMode) -> Self {
+        let existing_session_params = (*self.session_params).clone();
+
+        self.clone_with_session_params(existing_session_params.with_cache_mode(cache_mode))
+    }
+
+    #[cfg(feature = "caching")]
+    pub fn read_through_cache<B, LS>(&self, cache: &FirestoreCache<B, LS>) -> Self
+    where
+        B: FirestoreCacheBackend + Send + Sync + 'static,
+        LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    {
+        self.with_cache(crate::FirestoreDbSessionCacheMode::ReadThroughCache(
+            cache.backend(),
+        ))
+    }
+
+    #[cfg(feature = "caching")]
+    pub fn read_cached_only<B, LS>(&self, cache: &FirestoreCache<B, LS>) -> Self
+    where
+        B: FirestoreCacheBackend + Send + Sync + 'static,
+        LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    {
+        self.with_cache(crate::FirestoreDbSessionCacheMode::ReadCachedOnly(
+            cache.backend(),
+        ))
     }
 }
 
@@ -295,7 +329,6 @@ impl std::fmt::Debug for FirestoreDb {
             .field("options", &self.inner.options)
             .field("database_path", &self.inner.database_path)
             .field("doc_path", &self.inner.doc_path)
-            .field("session_params", &self.session_params)
             .finish()
     }
 }
