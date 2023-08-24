@@ -2,7 +2,6 @@ use crate::common::setup;
 use firestore::*;
 
 mod common;
-use tracing::*;
 
 #[tokio::test]
 async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -42,6 +41,27 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .add_to_transaction(&mut transaction)?;
 
     transaction.commit().await?;
+
+    let doc_returned = db
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .one("test-t0")
+        .await?;
+
+    assert_eq!(
+        doc_returned.map(|d| d.fields),
+        Some(
+            FirestoreDb::serialize_map_to_doc(
+                "",
+                [(
+                    "bar",
+                    FirestoreValue::from_map([("123", ["inner-value", "987654321"].into())]),
+                )],
+            )?
+            .fields
+        )
+    );
 
     Ok(())
 }
