@@ -283,6 +283,14 @@ let objs_stream: BoxStream<MyChildStructure> = db.fluent()
 ```
 Complete example available [here](examples/nested_collections.rs).
 
+You can nest multiple levels of collections using `at()`:
+```rust
+let parent_path = 
+    db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
+        .at(TEST_CHILD_COLLECTION_NAME, "child-id")?
+        .at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id")?;
+```
+
 ## Transactions
 
 To manage transactions manually you can use `db.begin_transaction()`, and
