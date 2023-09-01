@@ -131,6 +131,10 @@ impl<'a> FirestoreTransaction<'a> {
 
         Ok(())
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.writes.is_empty()
+    }
 }
 
 impl<'a> Drop for FirestoreTransaction<'a> {
