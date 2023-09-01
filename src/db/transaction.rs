@@ -79,6 +79,14 @@ impl<'a> FirestoreTransaction<'a> {
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
 
+        if self.writes.is_empty() {
+            self.transaction_span.in_scope(|| {
+                debug!("Transaction has been committed without any writes");
+            });
+
+            return Ok(FirestoreTransactionResponse::new(Vec::new()));
+        }
+
         let request = tonic::Request::new(CommitRequest {
             database: self.db.get_database_path().clone(),
             writes: self.writes.drain(..).collect(),
