@@ -3,7 +3,7 @@ use crate::*;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream::BoxStream;
-use moka::future::{Cache, CacheBuilder, ConcurrentCacheExt};
+use moka::future::{Cache, CacheBuilder};
 
 use futures::TryStreamExt;
 use std::collections::HashMap;
@@ -78,7 +78,7 @@ impl FirestoreMemoryCacheBackend {
                             })
                             .await?;
 
-                        mem_cache.sync();
+                        mem_cache.run_pending_tasks().await;
 
                         info!(
                             "Preloading collection `{}` has been finished. Loaded: {} entries",
@@ -183,7 +183,7 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
         match self.collection_caches.get(collection_id) {
-            Some(mem_cache) => Ok(mem_cache.get(document_path)),
+            Some(mem_cache) => Ok(mem_cache.get(document_path).await),
             None => Ok(None),
         }
     }
