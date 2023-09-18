@@ -126,6 +126,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         for (collection_id, mem_cache) in &self.collection_caches {
             debug!("Invalidating cache for {}", collection_id);
             mem_cache.invalidate_all();
+            mem_cache.run_pending_tasks().await;
         }
         Ok(())
     }
