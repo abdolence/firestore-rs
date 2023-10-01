@@ -73,7 +73,7 @@ impl FirestoreListenSupport for FirestoreDb {
             .map(|target_params| self.create_listen_request(target_params))
             .collect::<FirestoreResult<Vec<ListenRequest>>>()?;
 
-        let request = tonic::Request::new(
+        let request = gcloud_sdk::tonic::Request::new(
             futures::stream::iter(listen_requests).chain(futures::stream::pending()),
         );
 

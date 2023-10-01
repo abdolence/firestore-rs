@@ -14,7 +14,6 @@ use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
-use tonic::Code;
 
 use crate::timestamp_utils::from_timestamp;
 use tracing::*;
@@ -142,7 +141,7 @@ impl FirestoreStreamingBatchWriter {
                                     .ok();
                                 break;
                             }
-                            Err(err) if err.code() == Code::Cancelled => {
+                            Err(err) if err.code() == gcloud_sdk::tonic::Code::Cancelled => {
                                 debug!("Batch write operation finished on: {}", received_counter);
                                 responses_writer
                                     .send(Ok(FirestoreBatchWriteResponse::new(

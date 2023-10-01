@@ -305,8 +305,8 @@ impl FirestoreDb {
     fn create_list_doc_request(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<tonic::Request<ListDocumentsRequest>> {
-        Ok(tonic::Request::new(ListDocumentsRequest {
+    ) -> FirestoreResult<gcloud_sdk::tonic::Request<ListDocumentsRequest>> {
+        Ok(gcloud_sdk::tonic::Request::new(ListDocumentsRequest {
             parent: params
                 .parent
                 .as_ref()
@@ -403,8 +403,8 @@ impl FirestoreDb {
     fn create_list_collection_ids_request(
         &self,
         params: &FirestoreListCollectionIdsParams,
-    ) -> FirestoreResult<tonic::Request<ListCollectionIdsRequest>> {
-        Ok(tonic::Request::new(ListCollectionIdsRequest {
+    ) -> FirestoreResult<gcloud_sdk::tonic::Request<ListCollectionIdsRequest>> {
+        Ok(gcloud_sdk::tonic::Request::new(ListCollectionIdsRequest {
             parent: params
                 .parent
                 .as_ref()

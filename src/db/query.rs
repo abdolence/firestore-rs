@@ -74,8 +74,8 @@ impl FirestoreDb {
     fn create_query_request(
         &self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<tonic::Request<RunQueryRequest>> {
-        Ok(tonic::Request::new(RunQueryRequest {
+    ) -> FirestoreResult<gcloud_sdk::tonic::Request<RunQueryRequest>> {
+        Ok(gcloud_sdk::tonic::Request::new(RunQueryRequest {
             parent: params
                 .parent
                 .as_ref()
@@ -350,7 +350,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                     Some((params, consistency_selector)),
                     move |maybe_params| async move {
                         if let Some((params, maybe_consistency_selector)) = maybe_params {
-                            let request = tonic::Request::new(PartitionQueryRequest {
+                            let request = gcloud_sdk::tonic::Request::new(PartitionQueryRequest {
                                 page_size: params.page_size as i32,
                                 partition_count: params.partition_count as i64,
                                 parent: params

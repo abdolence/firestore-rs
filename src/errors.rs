@@ -163,32 +163,32 @@ impl From<gcloud_sdk::error::Error> for FirestoreError {
     }
 }
 
-impl From<tonic::Status> for FirestoreError {
-    fn from(status: tonic::Status) -> Self {
+impl From<gcloud_sdk::tonic::Status> for FirestoreError {
+    fn from(status: gcloud_sdk::tonic::Status) -> Self {
         match status.code() {
-            tonic::Code::AlreadyExists => {
+            gcloud_sdk::tonic::Code::AlreadyExists => {
                 FirestoreError::DataConflictError(FirestoreDataConflictError::new(
                     FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
                     format!("{status}"),
                 ))
             }
-            tonic::Code::NotFound => {
+            gcloud_sdk::tonic::Code::NotFound => {
                 FirestoreError::DataNotFoundError(FirestoreDataNotFoundError::new(
                     FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
                     format!("{status}"),
                 ))
             }
-            tonic::Code::Aborted
-            | tonic::Code::Cancelled
-            | tonic::Code::Unavailable
-            | tonic::Code::ResourceExhausted => {
+            gcloud_sdk::tonic::Code::Aborted
+            | gcloud_sdk::tonic::Code::Cancelled
+            | gcloud_sdk::tonic::Code::Unavailable
+            | gcloud_sdk::tonic::Code::ResourceExhausted => {
                 FirestoreError::DatabaseError(FirestoreDatabaseError::new(
                     FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
                     format!("{status}"),
                     true,
                 ))
             }
-            tonic::Code::Unknown => check_hyper_errors(status),
+            gcloud_sdk::tonic::Code::Unknown => check_hyper_errors(status),
             _ => FirestoreError::DatabaseError(FirestoreDatabaseError::new(
                 FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
                 format!("{status}"),
@@ -198,7 +198,7 @@ impl From<tonic::Status> for FirestoreError {
     }
 }
 
-fn check_hyper_errors(status: tonic::Status) -> FirestoreError {
+fn check_hyper_errors(status: gcloud_sdk::tonic::Status) -> FirestoreError {
     match status.source() {
         Some(hyper_error) => match hyper_error.downcast_ref::<hyper::Error>() {
             Some(err) if err.is_closed() => {
@@ -406,8 +406,8 @@ impl From<std::io::Error> for FirestoreError {
 }
 
 #[cfg(feature = "caching-persistent")]
-impl From<prost::EncodeError> for FirestoreError {
-    fn from(err: prost::EncodeError) -> Self {
+impl From<gcloud_sdk::prost::EncodeError> for FirestoreError {
+    fn from(err: gcloud_sdk::prost::EncodeError) -> Self {
         FirestoreError::SerializeError(FirestoreSerializationError::new(
             FirestoreErrorPublicGenericDetails::new("PrototBufEncodeError".into()),
             format!("Protobuf serialization error: {err}"),
@@ -416,8 +416,8 @@ impl From<prost::EncodeError> for FirestoreError {
 }
 
 #[cfg(feature = "caching-persistent")]
-impl From<prost::DecodeError> for FirestoreError {
-    fn from(err: prost::DecodeError) -> Self {
+impl From<gcloud_sdk::prost::DecodeError> for FirestoreError {
+    fn from(err: gcloud_sdk::prost::DecodeError) -> Self {
         FirestoreError::SerializeError(FirestoreSerializationError::new(
             FirestoreErrorPublicGenericDetails::new("PrototBufDecodeError".into()),
             format!("Protobuf deserialization error: {err}"),

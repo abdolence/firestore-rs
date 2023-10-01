@@ -67,7 +67,7 @@ impl FirestoreDeleteSupport for FirestoreDb {
             "/firestore/document_name" = document_path.as_str(),
         );
 
-        let request = tonic::Request::new(DeleteDocumentRequest {
+        let request = gcloud_sdk::tonic::Request::new(DeleteDocumentRequest {
             name: document_path,
             current_document: precondition.map(|cond| cond.try_into()).transpose()?,
         });

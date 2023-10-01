@@ -32,7 +32,7 @@ impl<'a> FirestoreTransaction<'a> {
             "/firestore/commit_time" = field::Empty
         );
 
-        let request = tonic::Request::new(BeginTransactionRequest {
+        let request = gcloud_sdk::tonic::Request::new(BeginTransactionRequest {
             database: db.get_database_path().clone(),
             options: Some(options.clone().try_into()?),
         });
@@ -87,7 +87,7 @@ impl<'a> FirestoreTransaction<'a> {
             return Ok(FirestoreTransactionResponse::new(Vec::new()));
         }
 
-        let request = tonic::Request::new(CommitRequest {
+        let request = gcloud_sdk::tonic::Request::new(CommitRequest {
             database: self.db.get_database_path().clone(),
             writes: self.writes.drain(..).collect(),
             transaction: self.transaction_id.clone(),
@@ -118,7 +118,7 @@ impl<'a> FirestoreTransaction<'a> {
 
     pub async fn rollback(mut self) -> FirestoreResult<()> {
         self.finished = true;
-        let request = tonic::Request::new(RollbackRequest {
+        let request = gcloud_sdk::tonic::Request::new(RollbackRequest {
             database: self.db.get_database_path().clone(),
             transaction: self.transaction_id.clone(),
         });

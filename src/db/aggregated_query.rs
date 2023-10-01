@@ -272,8 +272,8 @@ impl FirestoreDb {
     fn create_aggregated_query_request(
         &self,
         params: FirestoreAggregatedQueryParams,
-    ) -> FirestoreResult<tonic::Request<RunAggregationQueryRequest>> {
-        Ok(tonic::Request::new(RunAggregationQueryRequest {
+    ) -> FirestoreResult<gcloud_sdk::tonic::Request<RunAggregationQueryRequest>> {
+        Ok(gcloud_sdk::tonic::Request::new(RunAggregationQueryRequest {
             parent: params
                 .query_params
                 .parent

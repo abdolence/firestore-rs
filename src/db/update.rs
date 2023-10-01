@@ -126,7 +126,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
 
-        let update_document_request = tonic::Request::new(UpdateDocumentRequest {
+        let update_document_request = gcloud_sdk::tonic::Request::new(UpdateDocumentRequest {
             update_mask: update_only.map({
                 |vf| DocumentMask {
                     field_paths: vf.iter().map(|f| f.to_string()).collect(),

@@ -95,7 +95,7 @@ impl FirestoreCreateSupport for FirestoreDb {
             "/firestore/document_name" = field::Empty,
         );
 
-        let create_document_request = tonic::Request::new(CreateDocumentRequest {
+        let create_document_request = gcloud_sdk::tonic::Request::new(CreateDocumentRequest {
             parent: parent.into(),
             document_id: document_id
                 .as_ref()
