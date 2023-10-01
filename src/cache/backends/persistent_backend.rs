@@ -6,7 +6,7 @@ use futures::stream::BoxStream;
 use chrono::Utc;
 use futures::StreamExt;
 use gcloud_sdk::google::firestore::v1::Document;
-use prost::Message;
+use gcloud_sdk::prost::Message;
 use redb::*;
 use std::collections::HashMap;
 use std::path::PathBuf;

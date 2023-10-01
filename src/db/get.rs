@@ -578,7 +578,7 @@ impl FirestoreDb {
             );
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
-            let request = tonic::Request::new(GetDocumentRequest {
+            let request = gcloud_sdk::tonic::Request::new(GetDocumentRequest {
                 name: document_path.clone(),
                 consistency_selector: self
                     .session_params
@@ -675,7 +675,7 @@ impl FirestoreDb {
             "/firestore/ids_count" = full_doc_ids.len()
         );
 
-        let request = tonic::Request::new(BatchGetDocumentsRequest {
+        let request = gcloud_sdk::tonic::Request::new(BatchGetDocumentsRequest {
             database: self.get_database_path().clone(),
             documents: full_doc_ids,
             consistency_selector: self
