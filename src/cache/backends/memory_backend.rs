@@ -108,30 +108,38 @@ impl FirestoreMemoryCacheBackend {
         query_engine: FirestoreCacheQueryEngine,
     ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
         match self.collection_caches.get(collection_path) {
-            Some(mem_cache) => Ok(Box::pin(
-                futures::stream::unfold(
-                    (query_engine, mem_cache.iter()),
-                    |(query_engine, mut iter)| async move {
-                        match iter.next() {
-                            Some((_, doc)) => {
-                                if query_engine.matches_doc(&doc) {
-                                    Some((Ok(Some(doc)), (query_engine, iter)))
-                                } else {
-                                    Some((Ok(None), (query_engine, iter)))
+            Some(mem_cache) => {
+                let filtered_stream = Box::pin(
+                    futures::stream::unfold(
+                        (query_engine.clone(), mem_cache.iter()),
+                        |(query_engine, mut iter)| async move {
+                            match iter.next() {
+                                Some((_, doc)) => {
+                                    if query_engine.matches_doc(&doc) {
+                                        Some((Ok(Some(doc)), (query_engine, iter)))
+                                    } else {
+                                        Some((Ok(None), (query_engine, iter)))
+                                    }
                                 }
+                                None => None,
                             }
-                            None => None,
-                        }
-                    },
-                )
-                .filter_map(|doc_res| {
-                    future::ready(match doc_res {
-                        Ok(Some(doc)) => Some(Ok(doc)),
-                        Ok(None) => None,
-                        Err(err) => Some(Err(err)),
-                    })
-                }),
-            )),
+                        },
+                    )
+                    .filter_map(|doc_res| {
+                        future::ready(match doc_res {
+                            Ok(Some(doc)) => Some(Ok(doc)),
+                            Ok(None) => None,
+                            Err(err) => Some(Err(err)),
+                        })
+                    }),
+                );
+
+                if query_engine.query.order_by.is_some() {
+                    Ok(query_engine.sort_stream(filtered_stream).await?)
+                } else {
+                    Ok(filtered_stream)
+                }
+            }
             None => Ok(Box::pin(futures::stream::empty())),
         }
     }

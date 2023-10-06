@@ -10,6 +10,7 @@ use firestore::*;
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct MyTestStructure {
     some_id: String,
+    some_num: u64,
     some_string: String,
 }
 
@@ -28,6 +29,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         10,
         |i| MyTestStructure {
             some_id: format!("test-{}", i),
+            some_num: i as u64,
             some_string: format!("Test value {}", i),
         },
         |ms| ms.some_id.clone(),
@@ -40,6 +42,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         10,
         |i| MyTestStructure {
             some_id: format!("test-{}", i),
+            some_num: i as u64,
             some_string: format!("Test value {}", i),
         },
         |ms| ms.some_id.clone(),
@@ -152,6 +155,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         .document_id("test-2")
         .object(&MyTestStructure {
             some_id: "test-2".to_string(),
+            some_num: 2,
             some_string: "updated".to_string(),
         })
         .execute()
@@ -178,6 +182,28 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         })
         .await?
     );
+
+    let cached_db = db.read_cached_only(&cache);
+    let queried = cached_db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME_PRELOAD)
+        .filter(|q| {
+            q.for_all([q
+                .field(path!(MyTestStructure::some_num))
+                .greater_than_or_equal(5)])
+        })
+        .order_by([(
+            path!(MyTestStructure::some_num),
+            FirestoreQueryDirection::Descending,
+        )])
+        .obj::<MyTestStructure>()
+        .stream_query_with_errors()
+        .await?;
+
+    let queried_items = queried.try_collect::<Vec<_>>().await?;
+    assert_eq!(queried_items.len(), 5);
+    assert_eq!(queried_items.first().map(|d| d.some_num), Some(9));
 
     cache.shutdown().await?;
 

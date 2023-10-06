@@ -6,9 +6,8 @@ pub fn firestore_doc_get_field_by_path<'d>(
     field_path: &str,
 ) -> Option<&'d gcloud_sdk::google::firestore::v1::value::ValueType> {
     let field_path: Vec<String> = field_path
-        .split(".")
-        .into_iter()
-        .map(|s| s.to_string().replace("`", ""))
+        .split('.')
+        .map(|s| s.to_string().replace('`', ""))
         .collect();
     firestore_doc_get_field_by_path_arr(&doc.fields, &field_path)
 }

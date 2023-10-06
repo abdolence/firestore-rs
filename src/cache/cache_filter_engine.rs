@@ -11,7 +11,7 @@ impl<'a> FirestoreCacheFilterEngine<'a> {
     }
 
     pub fn matches_doc(&'a self, doc: &FirestoreDocument) -> bool {
-        Self::matches_doc_filter(doc, &self.filter)
+        Self::matches_doc_filter(doc, self.filter)
     }
 
     pub fn matches_doc_filter(doc: &FirestoreDocument, filter: &FirestoreQueryFilter) -> bool {
@@ -63,17 +63,21 @@ impl<'a> FirestoreCacheFilterEngine<'a> {
             }
             FirestoreQueryFilterUnary::IsNull(field_path) => {
                 firestore_doc_get_field_by_path(doc, field_path)
-                    .map(|field_value| match field_value {
-                        gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(_) => true,
-                        _ => false,
+                    .map(|field_value| {
+                        matches!(
+                            field_value,
+                            gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(_)
+                        )
                     })
                     .unwrap_or(true)
             }
             FirestoreQueryFilterUnary::IsNotNull(field_path) => {
                 firestore_doc_get_field_by_path(doc, field_path)
-                    .map(|field_value| match field_value {
-                        gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(_) => false,
-                        _ => true,
+                    .map(|field_value| {
+                        !matches!(
+                            field_value,
+                            gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(_)
+                        )
                     })
                     .unwrap_or(false)
             }
@@ -240,7 +244,7 @@ impl<'a> FirestoreCacheFilterEngine<'a> {
     }
 }
 
-enum CompareOp {
+pub(super) enum CompareOp {
     Equal,
     NotEqual,
     LessThan,
@@ -253,7 +257,7 @@ enum CompareOp {
     NotIn,
 }
 
-fn compare_values(
+pub(super) fn compare_values(
     op: CompareOp,
     a: &gcloud_sdk::google::firestore::v1::value::ValueType,
     b: &gcloud_sdk::google::firestore::v1::value::ValueType,
@@ -404,14 +408,12 @@ fn compare_values(
         ) => a_val
             .values
             .iter()
-            .map(|v| &v.value_type)
-            .flatten()
+            .flat_map(|v| &v.value_type)
             .any(|a_val| {
                 b_val
                     .values
                     .iter()
-                    .map(|v| &v.value_type)
-                    .flatten()
+                    .flat_map(|v| &v.value_type)
                     .all(|b_val| compare_values(CompareOp::Equal, a_val, b_val))
             }),
 
@@ -422,14 +424,12 @@ fn compare_values(
         ) => a_val
             .values
             .iter()
-            .map(|v| &v.value_type)
-            .flatten()
+            .flat_map(|v| &v.value_type)
             .any(|a_val| {
                 b_val
                     .values
                     .iter()
-                    .map(|v| &v.value_type)
-                    .flatten()
+                    .flat_map(|v| &v.value_type)
                     .any(|b_val| compare_values(CompareOp::Equal, a_val, b_val))
             }),
 
@@ -440,8 +440,7 @@ fn compare_values(
         ) => a_val
             .values
             .iter()
-            .map(|v| &v.value_type)
-            .flatten()
+            .flat_map(|v| &v.value_type)
             .any(|a_val| compare_values(CompareOp::Equal, a_val, b_val)),
 
         (
@@ -451,8 +450,7 @@ fn compare_values(
         ) => a_val
             .values
             .iter()
-            .map(|v| &v.value_type)
-            .flatten()
+            .flat_map(|v| &v.value_type)
             .any(|a_val| !compare_values(CompareOp::Equal, a_val, b_val)),
 
         // Any other combinations result in false

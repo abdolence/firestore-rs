@@ -608,6 +608,9 @@ Caching works on the document level.
 The cache will be used for the following operations:
 - Reading documents by IDs (get and batch get);
 - Listing all documents in a collection;
+- Partial support for querying documents in a collection:
+  - Filtering;
+  - Ordering;
 
 (Caching other operations may be extended in the future).
 
