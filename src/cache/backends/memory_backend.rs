@@ -18,9 +18,20 @@ pub struct FirestoreMemoryCacheBackend {
     collection_caches: HashMap<String, FirestoreMemCache>,
 }
 
+const FIRESTORE_MEMORY_CACHE_DEFAULT_MAX_CAPACITY: u64 = 50000;
+
 impl FirestoreMemoryCacheBackend {
     pub fn new(config: FirestoreCacheConfiguration) -> FirestoreResult<Self> {
-        Self::with_collection_options(config, |_| FirestoreMemCache::builder().max_capacity(10000))
+        Self::with_max_capacity(config, FIRESTORE_MEMORY_CACHE_DEFAULT_MAX_CAPACITY)
+    }
+
+    pub fn with_max_capacity(
+        config: FirestoreCacheConfiguration,
+        max_capacity: u64,
+    ) -> FirestoreResult<Self> {
+        Self::with_collection_options(config, |_| {
+            FirestoreMemCache::builder().max_capacity(max_capacity)
+        })
     }
 
     pub fn with_collection_options<FN>(
