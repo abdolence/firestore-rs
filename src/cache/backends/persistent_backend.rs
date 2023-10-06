@@ -109,7 +109,7 @@ impl FirestorePersistentCacheBackend {
                     stream
                         .ready_chunks(100)
                         .for_each(|docs| async move {
-                            if let Err(err) = self.write_batch_docs(docs) {
+                            if let Err(err) = self.write_batch_docs(collection_path, docs) {
                                 error!("Error while preloading collection: {}", err);
                             }
                         })
@@ -147,15 +147,18 @@ impl FirestorePersistentCacheBackend {
         Ok(())
     }
 
-    fn write_batch_docs(&self, docs: Vec<Document>) -> FirestoreResult<()> {
-        let write_txn = self.redb.begin_write()?;
+    fn write_batch_docs(&self, collection_path: &str, docs: Vec<Document>) -> FirestoreResult<()> {
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-        for doc in docs {
-            let (collection_path, document_id) = split_document_path(&doc.name);
-            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+        let write_txn = self.redb.begin_write()?;
+        {
             let mut table = write_txn.open_table(td)?;
-            let doc_bytes = Self::document_to_buf(&doc)?;
-            table.insert(document_id, doc_bytes.as_slice())?;
+
+            for doc in docs {
+                let (_, document_id) = split_document_path(&doc.name);
+                let doc_bytes = Self::document_to_buf(&doc)?;
+                table.insert(document_id, doc_bytes.as_slice())?;
+            }
         }
         write_txn.commit()?;
 
