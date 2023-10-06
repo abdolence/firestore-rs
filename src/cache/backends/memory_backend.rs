@@ -134,11 +134,9 @@ impl FirestoreMemoryCacheBackend {
                     }),
                 );
 
-                if query_engine.query.order_by.is_some() {
-                    Ok(query_engine.sort_stream(filtered_stream).await?)
-                } else {
-                    Ok(filtered_stream)
-                }
+                let output_stream = query_engine.process_query_stream(filtered_stream).await?;
+
+                Ok(output_stream)
             }
             None => Ok(Box::pin(futures::stream::empty())),
         }

@@ -172,14 +172,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         })
         .order_by([(
             path!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Descending,
+            FirestoreQueryDirection::Ascending,
         )])
         .obj::<MyTestStructure>()
         .stream_query_with_errors()
         .await?;
 
     let queried_items = all_items_stream.try_collect::<Vec<_>>().await?;
-    println!("{:?}", queried_items.len());
+    println!(
+        "{:?} {:?}...",
+        queried_items.len(),
+        queried_items.iter().take(5).collect::<Vec<_>>()
+    );
 
     cache.shutdown().await?;
 

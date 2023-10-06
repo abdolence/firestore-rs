@@ -1,7 +1,8 @@
 use crate::cache::cache_filter_engine::FirestoreCacheFilterEngine;
 use crate::*;
 use futures::stream::BoxStream;
-use futures::{StreamExt, TryStreamExt};
+use futures::stream::StreamExt;
+use futures::{future, TryStreamExt};
 use std::cmp::Ordering;
 
 #[derive(Clone)]
@@ -18,11 +19,6 @@ impl FirestoreCacheQueryEngine {
 
     pub fn params_supported(&self) -> bool {
         self.query.all_descendants.iter().all(|x| !*x)
-            && self.query.start_at.is_none()
-            && self.query.end_at.is_none()
-            && self.query.offset.is_none()
-            && self.query.limit.is_none()
-            && self.query.return_only_fields.is_none()
     }
 
     pub fn matches_doc(&self, doc: &FirestoreDocument) -> bool {
@@ -83,5 +79,202 @@ impl FirestoreCacheQueryEngine {
         } else {
             Ok(input)
         }
+    }
+
+    pub async fn limit_stream<'a, 'b>(
+        &'a self,
+        input: BoxStream<'b, FirestoreResult<FirestoreDocument>>,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
+        if let Some(limit) = self.query.limit {
+            Ok(input
+                .scan(0_u32, move |index, doc| {
+                    if *index < limit {
+                        *index += 1;
+                        future::ready(Some(doc))
+                    } else {
+                        future::ready(None)
+                    }
+                })
+                .boxed())
+        } else {
+            Ok(input)
+        }
+    }
+
+    pub async fn offset_stream<'a, 'b>(
+        &'a self,
+        input: BoxStream<'b, FirestoreResult<FirestoreDocument>>,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
+        if let Some(offset) = self.query.offset {
+            Ok(input.skip(offset as usize).boxed())
+        } else {
+            Ok(input)
+        }
+    }
+
+    pub async fn start_at_stream<'a, 'b>(
+        &'a self,
+        input: BoxStream<'b, FirestoreResult<FirestoreDocument>>,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
+        if let Some(start_at) = &self.query.start_at {
+            if let Some(order_by) = &self.query.order_by {
+                let start_at = start_at.clone();
+                let order_by = order_by.clone();
+                Ok(input
+                    .skip_while(move |doc_res| match doc_res {
+                        Ok(doc) => match &start_at {
+                            FirestoreQueryCursor::BeforeValue(values) => {
+                                let result = values.iter().zip(&order_by).any(
+                                    |(value, ordered_field)| {
+                                        let order_by_comp = match ordered_field.direction {
+                                            FirestoreQueryDirection::Ascending => cache::cache_filter_engine::CompareOp::LessThan,
+                                            FirestoreQueryDirection::Descending => cache::cache_filter_engine::CompareOp::GreaterThan
+                                        };
+                                        match (
+                                            firestore_doc_get_field_by_path(
+                                                doc,
+                                                &ordered_field.field_name,
+                                            ),
+                                            &value.value.value_type,
+                                        ) {
+                                            (Some(field_a), Some(field_b)) => {
+                                                cache::cache_filter_engine::compare_values(
+                                                    order_by_comp,
+                                                    field_a,
+                                                    field_b,
+                                                )
+                                            }
+                                            (_, _) => false,
+                                        }
+                                    },
+                                );
+                                future::ready(result)
+                            }
+                            FirestoreQueryCursor::AfterValue(values) => {
+                                let result = values.iter().zip(&order_by).any(
+                                    |(value, ordered_field)| {
+                                        let order_by_comp = match ordered_field.direction {
+                                            FirestoreQueryDirection::Ascending => cache::cache_filter_engine::CompareOp::LessThanOrEqual,
+                                            FirestoreQueryDirection::Descending => cache::cache_filter_engine::CompareOp::GreaterThanOrEqual
+                                        };
+                                        match (
+                                            firestore_doc_get_field_by_path(
+                                                doc,
+                                                &ordered_field.field_name,
+                                            ),
+                                            &value.value.value_type,
+                                        ) {
+                                            (Some(field_a), Some(field_b)) => {
+                                                cache::cache_filter_engine::compare_values(
+                                                    order_by_comp,
+                                                    field_a,
+                                                    field_b,
+                                                )
+                                            }
+                                            (_, _) => false,
+                                        }
+                                    },
+                                );
+                                future::ready(result)
+                            }
+                        },
+                        Err(_) => future::ready(false),
+                    })
+                    .boxed())
+            } else {
+                Ok(input)
+            }
+        } else {
+            Ok(input)
+        }
+    }
+
+    pub async fn end_at_stream<'a, 'b>(
+        &'a self,
+        input: BoxStream<'b, FirestoreResult<FirestoreDocument>>,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
+        if let Some(end_at) = &self.query.end_at {
+            if let Some(order_by) = &self.query.order_by {
+                let end_at = end_at.clone();
+                let order_by = order_by.clone();
+                Ok(input
+                    .take_while(move |doc_res| match doc_res {
+                        Ok(doc) => match &end_at {
+                            FirestoreQueryCursor::BeforeValue(values) => {
+                                let result = values.iter().zip(&order_by).any(
+                                    |(value, ordered_field)| {
+                                        let order_by_comp = match ordered_field.direction {
+                                            FirestoreQueryDirection::Ascending => cache::cache_filter_engine::CompareOp::LessThan,
+                                            FirestoreQueryDirection::Descending => cache::cache_filter_engine::CompareOp::GreaterThan
+                                        };
+                                        match (
+                                            firestore_doc_get_field_by_path(
+                                                doc,
+                                                &ordered_field.field_name,
+                                            ),
+                                            &value.value.value_type,
+                                        ) {
+                                            (Some(field_a), Some(field_b)) => {
+                                                cache::cache_filter_engine::compare_values(
+                                                    order_by_comp,
+                                                    field_a,
+                                                    field_b,
+                                                )
+                                            }
+                                            (_, _) => false,
+                                        }
+                                    },
+                                );
+                                future::ready(result)
+                            }
+                            FirestoreQueryCursor::AfterValue(values) => {
+                                let result = values.iter().zip(&order_by).any(
+                                    |(value, ordered_field)| {
+                                        let order_by_comp = match ordered_field.direction {
+                                            FirestoreQueryDirection::Ascending => cache::cache_filter_engine::CompareOp::LessThanOrEqual,
+                                            FirestoreQueryDirection::Descending => cache::cache_filter_engine::CompareOp::GreaterThanOrEqual
+                                        };
+                                        match (
+                                            firestore_doc_get_field_by_path(
+                                                doc,
+                                                &ordered_field.field_name,
+                                            ),
+                                            &value.value.value_type,
+                                        ) {
+                                            (Some(field_a), Some(field_b)) => {
+                                                cache::cache_filter_engine::compare_values(
+                                                    order_by_comp,
+                                                    field_a,
+                                                    field_b,
+                                                )
+                                            }
+                                            (_, _) => false,
+                                        }
+                                    },
+                                );
+                                future::ready(result)
+                            }
+                        },
+                        Err(_) => future::ready(false),
+                    })
+                    .boxed())
+            } else {
+                Ok(input)
+            }
+        } else {
+            Ok(input)
+        }
+    }
+
+    pub async fn process_query_stream<'a, 'b>(
+        &'a self,
+        input: BoxStream<'b, FirestoreResult<FirestoreDocument>>,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
+        let input = self.sort_stream(input).await?;
+        let input = self.limit_stream(input).await?;
+        let input = self.offset_stream(input).await?;
+        let input = self.start_at_stream(input).await?;
+        let input = self.end_at_stream(input).await?;
+        Ok(input)
     }
 }
