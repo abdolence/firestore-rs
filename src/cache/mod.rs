@@ -187,4 +187,10 @@ pub trait FirestoreCacheDocsByPathSupport {
         &self,
         collection_path: &str,
     ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>>;
+
+    async fn query_docs(
+        &self,
+        collection_path: &str,
+        query: &FirestoreQueryParams,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>>;
 }

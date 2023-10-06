@@ -331,6 +331,14 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
 
         Ok(Box::pin(futures::stream::iter(docs)))
     }
+
+    async fn query_docs(
+        &self,
+        collection_path: &str,
+        query: &FirestoreQueryParams,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
+        todo!()
+    }
 }
 
 impl From<redb::Error> for FirestoreError {

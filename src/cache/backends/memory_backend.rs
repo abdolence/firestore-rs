@@ -23,10 +23,13 @@ impl FirestoreMemoryCacheBackend {
         Self::with_collection_options(config, |_| FirestoreMemCache::builder().max_capacity(10000))
     }
 
-    pub fn with_collection_options(
+    pub fn with_collection_options<FN>(
         config: FirestoreCacheConfiguration,
-        collection_mem_options: fn(&str) -> FirestoreMemCacheOptions,
-    ) -> FirestoreResult<Self> {
+        collection_mem_options: FN,
+    ) -> FirestoreResult<Self>
+    where
+        FN: Fn(&str) -> FirestoreMemCacheOptions,
+    {
         let collection_caches = config
             .collections
             .keys()
@@ -200,5 +203,13 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
             ))),
             None => Ok(Box::pin(futures::stream::empty())),
         }
+    }
+
+    async fn query_docs(
+        &self,
+        collection_path: &str,
+        query: &FirestoreQueryParams,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
+        todo!()
     }
 }
