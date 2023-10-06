@@ -619,7 +619,7 @@ The library provides two implementations of the cache:
 
 Caching is opt-in and you need to enable it when needed using cargo features:
 - `caching-memory` for in-memory cache;
-- `caching-persistent` for in-memory cache;
+- `caching-persistent` for persistent/disk-backed cache;
 
 ### Load modes
 Caching supports different init/load modes:
