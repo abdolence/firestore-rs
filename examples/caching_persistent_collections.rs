@@ -36,9 +36,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         &db,
         FirestorePersistentCacheBackend::new(
             FirestoreCacheConfiguration::new().add_collection_config(
-                TEST_COLLECTION_NAME,
-                FirestoreListenerTarget::new(1000),
-                FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty,
+                &db,
+                FirestoreCacheCollectionConfiguration::new(
+                    TEST_COLLECTION_NAME,
+                    FirestoreListenerTarget::new(1000),
+                    FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty,
+                ),
             ),
         )?,
         FirestoreTempFilesListenStateStorage::new(),

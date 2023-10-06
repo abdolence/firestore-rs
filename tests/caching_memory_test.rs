@@ -49,14 +49,20 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         FirestoreMemoryCacheBackend::new(
             FirestoreCacheConfiguration::new()
                 .add_collection_config(
-                    TEST_COLLECTION_NAME_NO_PRELOAD,
-                    FirestoreListenerTarget::new(1000),
-                    FirestoreCacheCollectionLoadMode::PreloadNone,
+                    &db,
+                    FirestoreCacheCollectionConfiguration::new(
+                        TEST_COLLECTION_NAME_NO_PRELOAD,
+                        FirestoreListenerTarget::new(1000),
+                        FirestoreCacheCollectionLoadMode::PreloadNone,
+                    ),
                 )
                 .add_collection_config(
-                    TEST_COLLECTION_NAME_PRELOAD,
-                    FirestoreListenerTarget::new(1001),
-                    FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+                    &db,
+                    FirestoreCacheCollectionConfiguration::new(
+                        TEST_COLLECTION_NAME_PRELOAD,
+                        FirestoreListenerTarget::new(1001),
+                        FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+                    ),
                 ),
         )?,
         FirestoreMemListenStateStorage::new(),

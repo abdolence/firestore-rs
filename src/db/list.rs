@@ -117,10 +117,8 @@ impl FirestoreListingSupport for FirestoreDb {
     ) -> FirestoreResult<BoxStream<FirestoreResult<Document>>> {
         #[cfg(feature = "caching")]
         {
-            let collection_id = params.collection_id.clone();
-            if let FirestoreCachedValue::UseCached(stream) = self
-                .list_docs_from_cache(collection_id, &params.return_only_fields)
-                .await?
+            if let FirestoreCachedValue::UseCached(stream) =
+                self.list_docs_from_cache(&params).await?
             {
                 return Ok(stream);
             }
@@ -486,8 +484,7 @@ impl FirestoreDb {
     #[inline]
     pub async fn list_docs_from_cache<'a>(
         &'a self,
-        collection_id: String,
-        _return_only_fields: &Option<Vec<String>>,
+        params: &FirestoreListDocParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'a, FirestoreResult<FirestoreDocument>>>>
     {
         if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) =
@@ -496,14 +493,24 @@ impl FirestoreDb {
             let span = span!(
                 Level::DEBUG,
                 "Firestore List Cached",
-                "/firestore/collection_name" = collection_id,
+                "/firestore/collection_name" = params.collection_id,
             );
 
             span.in_scope(|| {
-                debug!("Reading all {} documents from cache", collection_id);
+                debug!("Reading all {} documents from cache", params.collection_id);
             });
 
-            let stream = cache.list_all_docs(collection_id.as_str()).await?;
+            let collection_path = if let Some(parent) = params.parent.as_ref() {
+                format!("{}/{}", parent, params.collection_id.as_str())
+            } else {
+                format!(
+                    "{}/{}",
+                    self.get_documents_path(),
+                    params.collection_id.as_str()
+                )
+            };
+
+            let stream = cache.list_all_docs(&collection_path).await?;
             return Ok(FirestoreCachedValue::UseCached(stream));
         }
         Ok(FirestoreCachedValue::SkipCache)
