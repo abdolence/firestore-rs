@@ -156,8 +156,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .stream_all_with_errors()
         .await?;
 
-    let all_items = all_items_stream.try_collect::<Vec<_>>().await?;
-    println!("{:?}", all_items.len());
+    let listed_items = all_items_stream.try_collect::<Vec<_>>().await?;
+    println!("{:?}", listed_items.len());
+
+    // Query from cache
+    let all_items_stream = cached_db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .obj::<MyTestStructure>()
+        .stream_query_with_errors()
+        .await?;
+
+    let queried_items = all_items_stream.try_collect::<Vec<_>>().await?;
+    println!("{:?}", queried_items.len());
 
     cache.shutdown().await?;
 

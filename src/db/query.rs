@@ -179,7 +179,7 @@ impl FirestoreDb {
                         format!("{}/{}", self.get_documents_path(), collection_id.as_str())
                     };
 
-                    cache.query_docs(&collection_path, &params).await
+                    cache.query_docs(&collection_path, params).await
                 } else {
                     Ok(FirestoreCachedValue::SkipCache)
                 }

@@ -337,7 +337,22 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         collection_path: &str,
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
-        todo!()
+        // For now only basic/simple query all supported
+        if query.all_descendants.iter().all(|x| !*x)
+            && query.order_by.is_none()
+            && query.filter.is_none()
+            && query.start_at.is_none()
+            && query.end_at.is_none()
+            && query.offset.is_none()
+            && query.limit.is_none()
+            && query.return_only_fields.is_none()
+        {
+            Ok(FirestoreCachedValue::UseCached(
+                self.list_all_docs(collection_path).await?,
+            ))
+        } else {
+            Ok(FirestoreCachedValue::SkipCache)
+        }
     }
 }
 
