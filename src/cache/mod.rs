@@ -15,6 +15,9 @@ use futures::stream::BoxStream;
 use futures::StreamExt;
 use tracing::*;
 
+mod cache_filter_engine;
+mod cache_query_engine;
+
 pub struct FirestoreCache<B, LS>
 where
     B: FirestoreCacheBackend + Send + Sync + 'static,

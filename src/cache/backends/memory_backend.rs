@@ -5,7 +5,9 @@ use chrono::Utc;
 use futures::stream::BoxStream;
 use moka::future::{Cache, CacheBuilder};
 
+use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
 use futures::TryStreamExt;
+use futures::{future, StreamExt};
 use std::collections::HashMap;
 use tracing::*;
 
@@ -98,6 +100,40 @@ impl FirestoreMemoryCacheBackend {
             }
         }
         Ok(())
+    }
+
+    async fn query_cached_docs(
+        &self,
+        collection_path: &str,
+        query_engine: FirestoreCacheQueryEngine,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
+        match self.collection_caches.get(collection_path) {
+            Some(mem_cache) => Ok(Box::pin(
+                futures::stream::unfold(
+                    (query_engine, mem_cache.iter()),
+                    |(query_engine, mut iter)| async move {
+                        match iter.next() {
+                            Some((_, doc)) => {
+                                if query_engine.matches_doc(&doc) {
+                                    Some((Ok(Some(doc)), (query_engine, iter)))
+                                } else {
+                                    Some((Ok(None), (query_engine, iter)))
+                                }
+                            }
+                            None => None,
+                        }
+                    },
+                )
+                .filter_map(|doc_res| {
+                    future::ready(match doc_res {
+                        Ok(Some(doc)) => Some(Ok(doc)),
+                        Ok(None) => None,
+                        Err(err) => Some(Err(err)),
+                    })
+                }),
+            )),
+            None => Ok(Box::pin(futures::stream::empty())),
+        }
     }
 }
 
@@ -221,18 +257,11 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
         collection_path: &str,
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
-        // For now only basic/simple query all supported
-        if query.all_descendants.iter().all(|x| !*x)
-            && query.order_by.is_none()
-            && query.filter.is_none()
-            && query.start_at.is_none()
-            && query.end_at.is_none()
-            && query.offset.is_none()
-            && query.limit.is_none()
-            && query.return_only_fields.is_none()
-        {
+        let simple_query_engine = FirestoreCacheQueryEngine::new(query);
+        if simple_query_engine.params_supported() {
             Ok(FirestoreCachedValue::UseCached(
-                self.list_all_docs(collection_path).await?,
+                self.query_cached_docs(collection_path, simple_query_engine)
+                    .await?,
             ))
         } else {
             Ok(FirestoreCachedValue::SkipCache)

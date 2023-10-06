@@ -164,6 +164,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
+        .filter(|q| {
+            q.for_all(
+                q.field(path!(MyTestStructure::some_num))
+                    .greater_than_or_equal(250),
+            )
+        })
         .obj::<MyTestStructure>()
         .stream_query_with_errors()
         .await?;
