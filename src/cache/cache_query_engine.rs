@@ -18,7 +18,6 @@ impl FirestoreCacheQueryEngine {
 
     pub fn params_supported(&self) -> bool {
         self.query.all_descendants.iter().all(|x| !*x)
-            && self.query.order_by.is_none()
             && self.query.start_at.is_none()
             && self.query.end_at.is_none()
             && self.query.offset.is_none()
@@ -41,7 +40,6 @@ impl FirestoreCacheQueryEngine {
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
         if let Some(order_by) = &self.query.order_by {
             let mut collected: Vec<FirestoreDocument> = input.try_collect().await?;
-
             collected.sort_by(|doc_a, doc_b| {
                 let mut current_ordering = Ordering::Equal;
                 for sort_field in order_by {

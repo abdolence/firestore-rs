@@ -167,11 +167,8 @@ impl FirestoreDb {
                         Level::DEBUG,
                         "Firestore Query Cached",
                         "/firestore/collection_name" = collection_id.as_str(),
+                        "/firestore/cache_result" = field::Empty,
                     );
-
-                    span.in_scope(|| {
-                        debug!("Querying {} documents from cache", collection_id);
-                    });
 
                     let collection_path = if let Some(parent) = params.parent.as_ref() {
                         format!("{}/{}", parent, collection_id)
@@ -179,7 +176,23 @@ impl FirestoreDb {
                         format!("{}/{}", self.get_documents_path(), collection_id.as_str())
                     };
 
-                    cache.query_docs(&collection_path, params).await
+                    let result = cache.query_docs(&collection_path, params).await?;
+                    match result {
+                        FirestoreCachedValue::UseCached(stream) => {
+                            span.record("/firestore/cache_result", "hit");
+                            span.in_scope(|| {
+                                debug!("Querying {} documents from cache", collection_id);
+                            });
+                            Ok(FirestoreCachedValue::UseCached(stream))
+                        }
+                        FirestoreCachedValue::SkipCache => {
+                            span.record("/firestore/cache_result", "miss");
+                            span.in_scope(|| {
+                                debug!("Querying {} documents from cache skipped", collection_id);
+                            });
+                            Ok(FirestoreCachedValue::SkipCache)
+                        }
+                    }
                 } else {
                     Ok(FirestoreCachedValue::SkipCache)
                 }

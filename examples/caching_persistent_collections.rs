@@ -172,7 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         })
         .order_by([(
             path!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Ascending,
+            FirestoreQueryDirection::Descending,
         )])
         .obj::<MyTestStructure>()
         .stream_query_with_errors()
