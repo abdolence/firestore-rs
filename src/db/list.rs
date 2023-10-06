@@ -324,7 +324,7 @@ impl FirestoreDb {
                         .collect::<Vec<String>>()
                         .join(", ")
                 })
-                .unwrap_or_else(|| "".to_string()),
+                .unwrap_or_default(),
             mask: params
                 .return_only_fields
                 .map(|masks| DocumentMask { field_paths: masks }),

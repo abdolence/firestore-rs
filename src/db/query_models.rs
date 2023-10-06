@@ -61,7 +61,7 @@ impl From<FirestoreQueryParams> for StructuredQuery {
             order_by: params
                 .order_by
                 .map(|po| po.into_iter().map(|fo| fo.into()).collect())
-                .unwrap_or_else(Vec::new),
+                .unwrap_or_default(),
             from: match params.collection_id {
                 FirestoreQueryCollection::Single(collection_id) => {
                     vec![structured_query::CollectionSelector {
