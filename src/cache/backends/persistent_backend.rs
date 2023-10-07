@@ -183,16 +183,20 @@ impl FirestorePersistentCacheBackend {
     fn write_document(&self, doc: &Document) -> FirestoreResult<()> {
         let (collection_path, document_id) = split_document_path(&doc.name);
 
-        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+        if self.config.collections.get(collection_path).is_some() {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-        let write_txn = self.redb.begin_write()?;
-        {
-            let mut table = write_txn.open_table(td)?;
-            let doc_bytes = Self::document_to_buf(doc)?;
-            table.insert(document_id, doc_bytes.as_slice())?;
+            let write_txn = self.redb.begin_write()?;
+            {
+                let mut table = write_txn.open_table(td)?;
+                let doc_bytes = Self::document_to_buf(doc)?;
+                table.insert(document_id, doc_bytes.as_slice())?;
+            }
+            write_txn.commit()?;
+            Ok(())
+        } else {
+            Ok(())
         }
-        write_txn.commit()?;
-        Ok(())
     }
 
     fn table_len(&self, collection_id: &str) -> FirestoreResult<u64> {
@@ -326,12 +330,15 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
         let (collection_path, document_id) = split_document_path(document_path);
-
-        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-        let read_tx = self.redb.begin_read()?;
-        let table = read_tx.open_table(td)?;
-        let value = table.get(document_id)?;
-        value.map(|v| Self::buf_to_document(v.value())).transpose()
+        if self.config.collections.get(collection_path).is_some() {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+            let read_tx = self.redb.begin_read()?;
+            let table = read_tx.open_table(td)?;
+            let value = table.get(document_id)?;
+            value.map(|v| Self::buf_to_document(v.value())).transpose()
+        } else {
+            Ok(None)
+        }
     }
 
     async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()> {
@@ -342,22 +349,28 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
     async fn list_all_docs(
         &self,
         collection_path: &str,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
-        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
+        if self.config.collections.get(collection_path).is_some() {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-        let read_tx = self.redb.begin_read()?;
-        let table = read_tx.open_table(td)?;
-        let iter = table.iter()?;
+            let read_tx = self.redb.begin_read()?;
+            let table = read_tx.open_table(td)?;
+            let iter = table.iter()?;
 
-        // It seems there is no way to work with streaming for redb, so this is not efficient
-        let mut docs: Vec<FirestoreResult<FirestoreDocument>> = Vec::new();
-        for record in iter {
-            let (_, v) = record?;
-            let doc = Self::buf_to_document(v.value())?;
-            docs.push(Ok(doc));
+            // It seems there is no way to work with streaming for redb, so this is not efficient
+            let mut docs: Vec<FirestoreResult<FirestoreDocument>> = Vec::new();
+            for record in iter {
+                let (_, v) = record?;
+                let doc = Self::buf_to_document(v.value())?;
+                docs.push(Ok(doc));
+            }
+
+            Ok(FirestoreCachedValue::UseCached(Box::pin(
+                futures::stream::iter(docs),
+            )))
+        } else {
+            Ok(FirestoreCachedValue::SkipCache)
         }
-
-        Ok(Box::pin(futures::stream::iter(docs)))
     }
 
     async fn query_docs(
@@ -365,13 +378,17 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         collection_path: &str,
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
-        // For now only basic/simple query all supported
-        let simple_query_engine = FirestoreCacheQueryEngine::new(query);
-        if simple_query_engine.params_supported() {
-            Ok(FirestoreCachedValue::UseCached(
-                self.query_cached_docs(collection_path, simple_query_engine)
-                    .await?,
-            ))
+        if self.config.collections.get(collection_path).is_some() {
+            // For now only basic/simple query all supported
+            let simple_query_engine = FirestoreCacheQueryEngine::new(query);
+            if simple_query_engine.params_supported() {
+                Ok(FirestoreCachedValue::UseCached(
+                    self.query_cached_docs(collection_path, simple_query_engine)
+                        .await?,
+                ))
+            } else {
+                Ok(FirestoreCachedValue::SkipCache)
+            }
         } else {
             Ok(FirestoreCachedValue::SkipCache)
         }

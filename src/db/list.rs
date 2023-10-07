@@ -510,8 +510,8 @@ impl FirestoreDb {
                 )
             };
 
-            let stream = cache.list_all_docs(&collection_path).await?;
-            return Ok(FirestoreCachedValue::UseCached(stream));
+            let cached_result = cache.list_all_docs(&collection_path).await?;
+            return Ok(cached_result);
         }
         Ok(FirestoreCachedValue::SkipCache)
     }

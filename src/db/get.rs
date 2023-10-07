@@ -838,7 +838,7 @@ impl FirestoreDb {
             } else {
                 span.record("/firestore/cache_result", "miss");
                 span.in_scope(|| {
-                    info!("Not all documents were found in cache. Reading from Firestore.")
+                    debug!("Not all documents were found in cache. Reading from Firestore.")
                 });
                 return Ok(FirestoreCachedValue::SkipCache);
             }

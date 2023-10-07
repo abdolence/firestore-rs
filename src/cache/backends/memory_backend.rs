@@ -249,12 +249,12 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
     async fn list_all_docs(
         &self,
         collection_path: &str,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
         match self.collection_caches.get(collection_path) {
-            Some(mem_cache) => Ok(Box::pin(futures::stream::iter(
-                mem_cache.iter().map(|(_, doc)| Ok(doc)),
+            Some(mem_cache) => Ok(FirestoreCachedValue::UseCached(Box::pin(
+                futures::stream::iter(mem_cache.iter().map(|(_, doc)| Ok(doc))),
             ))),
-            None => Ok(Box::pin(futures::stream::empty())),
+            None => Ok(FirestoreCachedValue::SkipCache),
         }
     }
 
