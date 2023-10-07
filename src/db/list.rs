@@ -495,7 +495,10 @@ impl FirestoreDb {
                 "Firestore List Cached",
                 "/firestore/collection_name" = params.collection_id,
                 "/firestore/cache_result" = field::Empty,
+                "/firestore/response_time" = field::Empty
             );
+
+            let begin_query_utc: DateTime<Utc> = Utc::now();
 
             let collection_path = if let Some(parent) = params.parent.as_ref() {
                 format!("{}/{}", parent, params.collection_id.as_str())
@@ -508,6 +511,14 @@ impl FirestoreDb {
             };
 
             let cached_result = cache.list_all_docs(&collection_path).await?;
+
+            let end_query_utc: DateTime<Utc> = Utc::now();
+            let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+
+            span.record(
+                "/firestore/response_time",
+                query_duration.num_milliseconds(),
+            );
 
             match cached_result {
                 FirestoreCachedValue::UseCached(stream) => {
