@@ -3,6 +3,7 @@ use crate::*;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 
+use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
 use chrono::Utc;
 use futures::StreamExt;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -14,7 +15,6 @@ use tracing::*;
 
 pub struct FirestorePersistentCacheBackend {
     pub config: FirestoreCacheConfiguration,
-    collection_targets: HashMap<FirestoreListenerTarget, String>,
     redb: Database,
 }
 
@@ -43,17 +43,6 @@ impl FirestorePersistentCacheBackend {
         config: FirestoreCacheConfiguration,
         data_file_path: PathBuf,
     ) -> FirestoreResult<Self> {
-        let collection_targets = config
-            .collections
-            .iter()
-            .map(|(collection, collection_config)| {
-                (
-                    collection_config.listener_target.clone(),
-                    collection.clone(),
-                )
-            })
-            .collect();
-
         if data_file_path.exists() {
             debug!(
                 "Opening database for persistent cache {:?}...",
@@ -71,16 +60,12 @@ impl FirestorePersistentCacheBackend {
         db.compact()?;
         info!("Successfully opened database for persistent cache");
 
-        Ok(Self {
-            config,
-            collection_targets,
-            redb: db,
-        })
+        Ok(Self { config, redb: db })
     }
 
     async fn preload_collections(&self, db: &FirestoreDb) -> Result<(), FirestoreError> {
-        for (collection, config) in &self.config.collections {
-            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection.as_str());
+        for (collection_path, config) in &self.config.collections {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path.as_str());
 
             match config.collection_load_mode {
                 FirestoreCacheCollectionLoadMode::PreloadAllDocs
@@ -89,7 +74,7 @@ impl FirestorePersistentCacheBackend {
                         let read_tx = self.redb.begin_read()?;
                         if read_tx
                             .list_tables()?
-                            .any(|t| t.name() == collection.as_str())
+                            .any(|t| t.name() == collection_path.as_str())
                         {
                             read_tx.open_table(td)?.len()?
                         } else {
@@ -104,25 +89,28 @@ impl FirestorePersistentCacheBackend {
                     {
                         info!(
                                 "Preloading collection `{}` has been skipped. Already loaded: {} entries",
-                                collection.as_str(),
+                                collection_path.as_str(),
                                 existing_records
                             );
                         continue;
                     }
 
-                    debug!("Preloading {}", collection.as_str());
-                    let stream = db
-                        .fluent()
-                        .list()
-                        .from(collection.as_str())
-                        .page_size(1000)
-                        .stream_all()
-                        .await?;
+                    debug!("Preloading {}", collection_path.as_str());
+                    let params = if let Some(parent) = &config.parent {
+                        db.fluent()
+                            .list()
+                            .from(&config.collection_name)
+                            .parent(parent)
+                    } else {
+                        db.fluent().list().from(&config.collection_name)
+                    };
+
+                    let stream = params.page_size(1000).stream_all().await?;
 
                     stream
                         .ready_chunks(100)
                         .for_each(|docs| async move {
-                            if let Err(err) = self.write_batch_docs(collection, docs) {
+                            if let Err(err) = self.write_batch_docs(collection_path, docs) {
                                 error!("Error while preloading collection: {}", err);
                             }
                         })
@@ -142,13 +130,16 @@ impl FirestorePersistentCacheBackend {
 
                     info!(
                         "Preloading collection `{}` has been finished. Loaded: {} entries",
-                        collection.as_str(),
+                        collection_path.as_str(),
                         updated_records
                     );
                 }
                 FirestoreCacheCollectionLoadMode::PreloadNone => {
                     let tx = self.redb.begin_write()?;
-                    debug!("Creating corresponding collection table `{}`", collection);
+                    debug!(
+                        "Creating corresponding collection table `{}`",
+                        collection_path
+                    );
                     tx.open_table(td)?;
                     tx.commit()?;
                 }
@@ -157,16 +148,18 @@ impl FirestorePersistentCacheBackend {
         Ok(())
     }
 
-    fn write_batch_docs(&self, collection: &str, docs: Vec<Document>) -> FirestoreResult<()> {
-        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection);
+    fn write_batch_docs(&self, collection_path: &str, docs: Vec<Document>) -> FirestoreResult<()> {
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
         let write_txn = self.redb.begin_write()?;
-
-        for doc in docs {
+        {
             let mut table = write_txn.open_table(td)?;
-            let doc_key = &doc.name;
-            let doc_bytes = Self::document_to_buf(&doc)?;
-            table.insert(doc_key.as_str(), doc_bytes.as_slice())?;
+
+            for doc in docs {
+                let (_, document_id) = split_document_path(&doc.name);
+                let doc_bytes = Self::document_to_buf(&doc)?;
+                table.insert(document_id, doc_bytes.as_slice())?;
+            }
         }
         write_txn.commit()?;
 
@@ -187,18 +180,23 @@ impl FirestorePersistentCacheBackend {
         Ok(doc)
     }
 
-    fn write_document(&self, doc: &Document, collection_id: &str) -> FirestoreResult<()> {
-        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id);
+    fn write_document(&self, doc: &Document) -> FirestoreResult<()> {
+        let (collection_path, document_id) = split_document_path(&doc.name);
 
-        let write_txn = self.redb.begin_write()?;
-        {
-            let mut table = write_txn.open_table(td)?;
-            let doc_key = &doc.name;
-            let doc_bytes = Self::document_to_buf(doc)?;
-            table.insert(doc_key.as_str(), doc_bytes.as_slice())?;
+        if self.config.collections.get(collection_path).is_some() {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+
+            let write_txn = self.redb.begin_write()?;
+            {
+                let mut table = write_txn.open_table(td)?;
+                let doc_bytes = Self::document_to_buf(doc)?;
+                table.insert(document_id, doc_bytes.as_slice())?;
+            }
+            write_txn.commit()?;
+            Ok(())
+        } else {
+            Ok(())
         }
-        write_txn.commit()?;
-        Ok(())
     }
 
     fn table_len(&self, collection_id: &str) -> FirestoreResult<u64> {
@@ -206,6 +204,33 @@ impl FirestorePersistentCacheBackend {
         let read_tx = self.redb.begin_read()?;
         let len = read_tx.open_table(td)?.len()?;
         Ok(len)
+    }
+
+    async fn query_cached_docs(
+        &self,
+        collection_path: &str,
+        query_engine: FirestoreCacheQueryEngine,
+    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+
+        let read_tx = self.redb.begin_read()?;
+        let table = read_tx.open_table(td)?;
+        let iter = table.iter()?;
+
+        // It seems there is no way to work with streaming for redb, so this is not efficient
+        let mut docs: Vec<FirestoreResult<FirestoreDocument>> = Vec::new();
+        for record in iter {
+            let (_, v) = record?;
+            let doc = Self::buf_to_document(v.value())?;
+            if query_engine.matches_doc(&doc) {
+                docs.push(Ok(doc));
+            }
+        }
+
+        let filtered_stream = Box::pin(futures::stream::iter(docs));
+        let output_stream = query_engine.process_query_stream(filtered_stream).await?;
+
+        Ok(output_stream)
     }
 }
 
@@ -224,8 +249,8 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             .config
             .collections
             .iter()
-            .map(|(collection, collection_config)| {
-                let collection_table_len = self.table_len(collection).ok().unwrap_or(0);
+            .map(|(collection_path, collection_config)| {
+                let collection_table_len = self.table_len(collection_path).ok().unwrap_or(0);
                 let resume_type = if collection_table_len == 0 {
                     Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
                 } else {
@@ -233,9 +258,12 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                 };
                 FirestoreListenerTargetParams::new(
                     collection_config.listener_target.clone(),
-                    FirestoreTargetType::Query(FirestoreQueryParams::new(
-                        collection.as_str().into(),
-                    )),
+                    FirestoreTargetType::Query(
+                        FirestoreQueryParams::new(
+                            collection_config.collection_name.as_str().into(),
+                        )
+                        .opt_parent(collection_config.parent.clone()),
+                    ),
                     HashMap::new(),
                 )
                 .opt_resume_type(resume_type)
@@ -244,14 +272,14 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
     }
 
     async fn invalidate_all(&self) -> FirestoreResult<()> {
-        for collection_id in self.config.collections.keys() {
-            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id.as_str());
+        for collection_path in self.config.collections.keys() {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path.as_str());
 
             let write_txn = self.redb.begin_write()?;
             {
                 debug!(
                     "Invalidating {} and draining the corresponding table",
-                    collection_id
+                    collection_path
                 );
                 let mut table = write_txn.open_table(td)?;
                 table.drain::<&str>(..)?;
@@ -270,36 +298,24 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         match event {
             FirestoreListenEvent::DocumentChange(doc_change) => {
                 if let Some(doc) = doc_change.document {
-                    if let Some(target_id) = doc_change.target_ids.first() {
-                        if let Some(collection_id) =
-                            self.collection_targets.get(&(*target_id as u32).into())
-                        {
-                            trace!(
-                                "Writing document to cache due to listener event: {:?}",
-                                doc.name
-                            );
-                            self.write_document(&doc, collection_id)?;
-                        }
-                    }
+                    trace!(
+                        "Writing document to cache due to listener event: {:?}",
+                        doc.name
+                    );
+                    self.write_document(&doc)?;
                 }
                 Ok(())
             }
             FirestoreListenEvent::DocumentDelete(doc_deleted) => {
-                if let Some(target_id) = doc_deleted.removed_target_ids.first() {
-                    if let Some(collection_id) =
-                        self.collection_targets.get(&(*target_id as u32).into())
-                    {
-                        let write_txn = self.redb.begin_write()?;
-                        let td: TableDefinition<&str, &[u8]> =
-                            TableDefinition::new(collection_id.as_str());
-                        let mut table = write_txn.open_table(td)?;
-                        trace!(
-                            "Removing document from cache due to listener event: {:?}",
-                            doc_deleted.document.as_str()
-                        );
-                        table.remove(doc_deleted.document.as_str())?;
-                    }
-                }
+                let (collection_path, document_id) = split_document_path(&doc_deleted.document);
+                let write_txn = self.redb.begin_write()?;
+                let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+                let mut table = write_txn.open_table(td)?;
+                trace!(
+                    "Removing document from cache due to listener event: {:?}",
+                    doc_deleted.document.as_str()
+                );
+                table.remove(document_id)?;
                 Ok(())
             }
             _ => Ok(()),
@@ -311,44 +327,71 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
 impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
     async fn get_doc_by_path(
         &self,
-        collection_id: &str,
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
-        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id);
-        let read_tx = self.redb.begin_read()?;
-        let table = read_tx.open_table(td)?;
-        let value = table.get(document_path)?;
-        value.map(|v| Self::buf_to_document(v.value())).transpose()
+        let (collection_path, document_id) = split_document_path(document_path);
+        if self.config.collections.get(collection_path).is_some() {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+            let read_tx = self.redb.begin_read()?;
+            let table = read_tx.open_table(td)?;
+            let value = table.get(document_id)?;
+            value.map(|v| Self::buf_to_document(v.value())).transpose()
+        } else {
+            Ok(None)
+        }
     }
 
-    async fn update_doc_by_path(
-        &self,
-        collection_id: &str,
-        document: &FirestoreDocument,
-    ) -> FirestoreResult<()> {
-        self.write_document(document, collection_id)?;
+    async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()> {
+        self.write_document(document)?;
         Ok(())
     }
 
     async fn list_all_docs(
         &self,
-        collection_id: &str,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
-        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id);
+        collection_path: &str,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
+        if self.config.collections.get(collection_path).is_some() {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-        let read_tx = self.redb.begin_read()?;
-        let table = read_tx.open_table(td)?;
-        let iter = table.iter()?;
+            let read_tx = self.redb.begin_read()?;
+            let table = read_tx.open_table(td)?;
+            let iter = table.iter()?;
 
-        // It seems there is no way to work with streaming for redb, so this is not efficient
-        let mut docs: Vec<FirestoreResult<FirestoreDocument>> = Vec::new();
-        for record in iter {
-            let (_, v) = record?;
-            let doc = Self::buf_to_document(v.value())?;
-            docs.push(Ok(doc));
+            // It seems there is no way to work with streaming for redb, so this is not efficient
+            let mut docs: Vec<FirestoreResult<FirestoreDocument>> = Vec::new();
+            for record in iter {
+                let (_, v) = record?;
+                let doc = Self::buf_to_document(v.value())?;
+                docs.push(Ok(doc));
+            }
+
+            Ok(FirestoreCachedValue::UseCached(Box::pin(
+                futures::stream::iter(docs),
+            )))
+        } else {
+            Ok(FirestoreCachedValue::SkipCache)
         }
+    }
 
-        Ok(Box::pin(futures::stream::iter(docs)))
+    async fn query_docs(
+        &self,
+        collection_path: &str,
+        query: &FirestoreQueryParams,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
+        if self.config.collections.get(collection_path).is_some() {
+            // For now only basic/simple query all supported
+            let simple_query_engine = FirestoreCacheQueryEngine::new(query);
+            if simple_query_engine.params_supported() {
+                Ok(FirestoreCachedValue::UseCached(
+                    self.query_cached_docs(collection_path, simple_query_engine)
+                        .await?,
+                ))
+            } else {
+                Ok(FirestoreCachedValue::SkipCache)
+            }
+        } else {
+            Ok(FirestoreCachedValue::SkipCache)
+        }
     }
 }
 

@@ -1,7 +1,4 @@
-use crate::{
-    FirestoreDb, FirestoreError, FirestorePartition, FirestorePartitionQueryParams,
-    FirestoreQueryCursor, FirestoreQueryParams, FirestoreResult,
-};
+use crate::*;
 use async_trait::async_trait;
 use chrono::prelude::*;
 use futures::future::BoxFuture;
@@ -21,33 +18,33 @@ pub type PeekableBoxStream<'a, T> = futures::stream::Peekable<BoxStream<'a, T>>;
 pub trait FirestoreQuerySupport {
     async fn query_doc(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<Document>>;
 
-    async fn stream_query_doc<'b>(
-        &self,
+    async fn stream_query_doc<'a>(
+        &'a self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, Document>>;
+    ) -> FirestoreResult<BoxStream<'a, Document>>;
 
-    async fn stream_query_doc_with_errors<'b>(
-        &self,
+    async fn stream_query_doc_with_errors<'a>(
+        &'a self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>>;
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<Document>>>;
 
     async fn query_obj<T>(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
     where
         for<'de> T: Deserialize<'de>;
-    async fn stream_query_obj<'b, T>(
-        &self,
+    async fn stream_query_obj<'a, T>(
+        &'a self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, T>>
+    ) -> FirestoreResult<BoxStream<'a, T>>
     where
         for<'de> T: Deserialize<'de>;
 
-    async fn stream_query_obj_with_errors<'b, T>(
-        &self,
+    async fn stream_query_obj_with_errors<'a, T>(
+        &'a self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<T>>>
     where
         for<'de> T: Deserialize<'de>,
-        T: Send + 'b;
+        T: Send + 'a;
 
     fn stream_partition_cursors_with_errors(
         &self,
@@ -91,12 +88,12 @@ impl FirestoreDb {
         }))
     }
 
-    fn stream_query_doc_with_retries<'a, 'b>(
-        &'a self,
+    fn stream_query_doc_with_retries(
+        &self,
         params: FirestoreQueryParams,
         retries: usize,
-        span: &'a Span,
-    ) -> BoxFuture<'a, FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
+        span: Span,
+    ) -> BoxFuture<FirestoreResult<BoxStream<FirestoreResult<Option<Document>>>>> {
         async move {
             let query_request = self.create_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
@@ -153,102 +150,73 @@ impl FirestoreDb {
         .boxed()
     }
 
-    fn query_doc_with_retries<'a>(
+    #[cfg(feature = "caching")]
+    #[inline]
+    async fn query_docs_from_cache<'a>(
         &'a self,
-        params: FirestoreQueryParams,
-        retries: usize,
-        span: &'a Span,
-    ) -> BoxFuture<'a, FirestoreResult<Vec<Document>>> {
-        async move {
-            let collection_id = params.collection_id.to_string();
-            let query_request = self.create_query_request(params.clone())?;
-            let begin_query_utc: DateTime<Utc> = Utc::now();
-
-            match self
-                .client()
-                .get()
-                .run_query(query_request)
-                .map_err(|e| e.into())
-                .await
-            {
-                Ok(query_response) => {
-                    let query_stream = query_response
-                        .into_inner()
-                        .map_ok(|rs| rs.document)
-                        .try_collect::<Vec<Option<Document>>>()
-                        .await?
-                        .into_iter()
-                        .flatten()
-                        .collect();
-                    let end_query_utc: DateTime<Utc> = Utc::now();
-                    let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
-
-                    span.record(
-                        "/firestore/response_time",
-                        query_duration.num_milliseconds(),
+        params: &FirestoreQueryParams,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'a, FirestoreResult<FirestoreDocument>>>>
+    {
+        match &params.collection_id {
+            FirestoreQueryCollection::Group(_) => Ok(FirestoreCachedValue::SkipCache),
+            FirestoreQueryCollection::Single(collection_id) => {
+                if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) =
+                    self.session_params.cache_mode
+                {
+                    let span = span!(
+                        Level::DEBUG,
+                        "Firestore Query Cached",
+                        "/firestore/collection_name" = collection_id.as_str(),
+                        "/firestore/cache_result" = field::Empty,
                     );
-                    span.in_scope(|| {
-                        debug!(
-                            "Querying documents in {:?} took {}ms",
-                            collection_id,
-                            query_duration.num_milliseconds()
-                        );
-                    });
 
-                    Ok(query_stream)
-                }
-                Err(err) => match err {
-                    FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
-                    {
-                        warn!(
-                            "Failed with {}. Retrying: {}/{}",
-                            db_err,
-                            retries + 1,
-                            self.inner.options.max_retries
-                        );
-                        self.query_doc_with_retries(params, retries + 1, span).await
+                    let collection_path = if let Some(parent) = params.parent.as_ref() {
+                        format!("{}/{}", parent, collection_id)
+                    } else {
+                        format!("{}/{}", self.get_documents_path(), collection_id.as_str())
+                    };
+
+                    let result = cache.query_docs(&collection_path, params).await?;
+                    match result {
+                        FirestoreCachedValue::UseCached(stream) => {
+                            span.record("/firestore/cache_result", "hit");
+                            span.in_scope(|| {
+                                debug!("Querying {} documents from cache", collection_id);
+                            });
+                            Ok(FirestoreCachedValue::UseCached(stream))
+                        }
+                        FirestoreCachedValue::SkipCache => {
+                            span.record("/firestore/cache_result", "miss");
+                            span.in_scope(|| {
+                                debug!("Querying {} documents from cache skipped", collection_id);
+                            });
+                            Ok(FirestoreCachedValue::SkipCache)
+                        }
                     }
-                    _ => Err(err),
-                },
+                } else {
+                    Ok(FirestoreCachedValue::SkipCache)
+                }
             }
         }
-        .boxed()
     }
 }
 
 #[async_trait]
 impl FirestoreQuerySupport for FirestoreDb {
     async fn query_doc(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<Document>> {
-        let collection_str = params.collection_id.to_string();
-        let span = span!(
-            Level::DEBUG,
-            "Firestore Query",
-            "/firestore/collection_name" = collection_str.as_str(),
-            "/firestore/response_time" = field::Empty
-        );
-        self.query_doc_with_retries(params, 0, &span).await
+        let doc_stream = self.stream_query_doc_with_errors(params).await?;
+        Ok(doc_stream.try_collect::<Vec<Document>>().await?)
     }
 
-    async fn stream_query_doc<'b>(
-        &self,
+    async fn stream_query_doc<'a>(
+        &'a self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, Document>> {
-        let collection_str = params.collection_id.to_string();
-
-        let span = span!(
-            Level::DEBUG,
-            "Firestore Streaming Query",
-            "/firestore/collection_name" = collection_str.as_str(),
-            "/firestore/response_time" = field::Empty
-        );
-
-        let doc_stream = self.stream_query_doc_with_retries(params, 0, &span).await?;
+    ) -> FirestoreResult<BoxStream<'a, Document>> {
+        let doc_stream = self.stream_query_doc_with_errors(params).await?;
 
         Ok(Box::pin(doc_stream.filter_map(|doc_res| {
             future::ready(match doc_res {
-                Ok(Some(doc)) => Some(doc),
-                Ok(None) => None,
+                Ok(doc) => Some(doc),
                 Err(err) => {
                     error!("Error occurred while consuming query: {}", err);
                     None
@@ -257,10 +225,19 @@ impl FirestoreQuerySupport for FirestoreDb {
         })))
     }
 
-    async fn stream_query_doc_with_errors<'b>(
-        &self,
+    async fn stream_query_doc_with_errors<'a>(
+        &'a self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<Document>>> {
+        #[cfg(feature = "caching")]
+        {
+            if let FirestoreCachedValue::UseCached(stream) =
+                self.query_docs_from_cache(&params).await?
+            {
+                return Ok(stream);
+            }
+        }
+
         let collection_str = params.collection_id.to_string();
 
         let span = span!(
@@ -270,7 +247,7 @@ impl FirestoreQuerySupport for FirestoreDb {
             "/firestore/response_time" = field::Empty
         );
 
-        let doc_stream = self.stream_query_doc_with_retries(params, 0, &span).await?;
+        let doc_stream = self.stream_query_doc_with_retries(params, 0, span).await?;
 
         Ok(Box::pin(doc_stream.filter_map(|doc_res| {
             future::ready(match doc_res {
@@ -295,10 +272,10 @@ impl FirestoreQuerySupport for FirestoreDb {
             .collect()
     }
 
-    async fn stream_query_obj<'b, T>(
-        &self,
+    async fn stream_query_obj<'a, T>(
+        &'a self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, T>>
+    ) -> FirestoreResult<BoxStream<'a, T>>
     where
         for<'de> T: Deserialize<'de>,
     {
@@ -308,7 +285,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                 Ok(obj) => Some(obj),
                 Err(err) => {
                     error!(
-                        "Error occurred while consuming query document as a stream: {}",
+                        "Error occurred while converting query document in a stream: {}",
                         err
                     );
                     None
@@ -317,13 +294,13 @@ impl FirestoreQuerySupport for FirestoreDb {
         })))
     }
 
-    async fn stream_query_obj_with_errors<'b, T>(
-        &self,
+    async fn stream_query_obj_with_errors<'a, T>(
+        &'a self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<T>>>
     where
         for<'de> T: Deserialize<'de>,
-        T: Send + 'b,
+        T: Send + 'a,
     {
         let doc_stream = self.stream_query_doc_with_errors(params).await?;
         Ok(Box::pin(doc_stream.and_then(|doc| {
@@ -470,10 +447,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                     Some(parallelism),
                     |(cursor_pair, tx, partition_params, span)| async move {
                         span.in_scope(|| {
-                            debug!(
-                                    "Streaming partition cursor {:?}",
-                                    cursor_pair
-                                )
+                            debug!("Streaming partition cursor {:?}",cursor_pair)
                         });
 
                         let mut params_with_cursors = partition_params.query_params;

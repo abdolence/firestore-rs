@@ -36,9 +36,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         &db,
         FirestoreMemoryCacheBackend::new(
             FirestoreCacheConfiguration::new().add_collection_config(
-                TEST_COLLECTION_NAME,
-                FirestoreListenerTarget::new(1000),
-                FirestoreCacheCollectionLoadMode::PreloadNone,
+                &db,
+                FirestoreCacheCollectionConfiguration::new(
+                    TEST_COLLECTION_NAME,
+                    FirestoreListenerTarget::new(1000),
+                    FirestoreCacheCollectionLoadMode::PreloadNone,
+                ),
             ),
         )?,
         FirestoreMemListenStateStorage::new(),
@@ -153,8 +156,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .stream_all_with_errors()
         .await?;
 
-    let all_items = all_items_stream.try_collect::<Vec<_>>().await?;
-    println!("{:?}", all_items.len());
+    let listed_items = all_items_stream.try_collect::<Vec<_>>().await?;
+    println!("{:?}", listed_items.len());
+
+    // Query from cache
+    let all_items_stream = cached_db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .filter(|q| {
+            q.for_all(
+                q.field(path!(MyTestStructure::some_num))
+                    .greater_than_or_equal(2),
+            )
+        })
+        .obj::<MyTestStructure>()
+        .stream_query_with_errors()
+        .await?;
+
+    let queried_items = all_items_stream.try_collect::<Vec<_>>().await?;
+    println!("{:?}", queried_items.len());
 
     cache.shutdown().await?;
 

@@ -29,34 +29,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "test";
+    const TEST_COLLECTION_NAME: &'static str = "test-query";
 
-    println!("Populating a test collection");
-    for i in 0..10 {
-        let my_struct = MyTestStructure {
-            some_id: format!("test-{}", i),
-            some_string: "Test".to_string(),
-            one_more_string: "Test2".to_string(),
-            some_num: 42 - i,
-            created_at: Utc::now(),
-        };
+    if db
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .one("test-0")
+        .await?
+        .is_none()
+    {
+        println!("Populating a test collection");
+        let batch_writer = db.create_simple_batch_writer().await?;
+        let mut current_batch = batch_writer.new_batch();
 
-        // Remove if it already exist
-        db.fluent()
-            .delete()
-            .from(TEST_COLLECTION_NAME)
-            .document_id(&my_struct.some_id)
-            .execute()
-            .await?;
+        for i in 0..500 {
+            let my_struct = MyTestStructure {
+                some_id: format!("test-{}", i),
+                some_string: "Test".to_string(),
+                one_more_string: "Test2".to_string(),
+                some_num: i,
+                created_at: Utc::now(),
+            };
 
-        // Let's insert some data
-        db.fluent()
-            .insert()
-            .into(TEST_COLLECTION_NAME)
-            .document_id(&my_struct.some_id)
-            .object(&my_struct)
-            .execute()
-            .await?;
+            // Let's insert some data
+            db.fluent()
+                .update()
+                .in_col(TEST_COLLECTION_NAME)
+                .document_id(&my_struct.some_id)
+                .object(&my_struct)
+                .add_to_batch(&mut current_batch)?;
+        }
+        current_batch.write().await?;
     }
 
     println!("Querying a test collection as a stream using Fluent API");

@@ -621,8 +621,7 @@ impl FirestoreDb {
                     let doc = doc_response.into_inner();
                     #[cfg(feature = "caching")]
                     if _return_only_fields_empty {
-                        self.offer_doc_update_to_cache(collection_id.as_str(), &doc)
-                            .await?;
+                        self.offer_doc_update_to_cache(&doc).await?;
                     }
                     Ok(doc)
                 }
@@ -696,49 +695,40 @@ impl FirestoreDb {
                 span.in_scope(|| debug!("Start consuming a batch of documents by ids"));
                 let stream = response
                     .into_inner()
-                    .filter_map(move |r| {
-                        #[cfg(feature = "caching")]
-                        let collection_id = collection_id.clone();
-                        async move {
-                            match r {
-                                Ok(doc_response) => match doc_response.result {
-                                    Some(batch_get_documents_response::Result::Found(document)) => {
-                                        let doc_id = document
-                                            .name
-                                            .split('/')
-                                            .last()
-                                            .map(|s| s.to_string())
-                                            .unwrap_or_else(|| document.name.clone());
-                                        #[cfg(feature = "caching")]
-                                        {
-                                            self.offer_doc_update_to_cache(
-                                                collection_id.as_str(),
-                                                &document,
-                                            )
-                                            .await
-                                            .ok();
+                    .filter_map(move |r| async move {
+                        match r {
+                            Ok(doc_response) => match doc_response.result {
+                                Some(batch_get_documents_response::Result::Found(document)) => {
+                                    let doc_id = document
+                                        .name
+                                        .split('/')
+                                        .last()
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| document.name.clone());
+                                    #[cfg(feature = "caching")]
+                                    {
+                                        self.offer_doc_update_to_cache(&document).await.ok();
 
-                                            Some(Ok((doc_id, Some(document))))
-                                        }
-                                        #[cfg(not(feature = "caching"))]
-                                        {
-                                            Some(Ok((doc_id, Some(document))))
-                                        }
+                                        Some(Ok((doc_id, Some(document))))
                                     }
-                                    Some(batch_get_documents_response::Result::Missing(
-                                        full_doc_id,
-                                    )) => {
-                                        let doc_id = full_doc_id
-                                            .split('/')
-                                            .last()
-                                            .map(|s| s.to_string())
-                                            .unwrap_or_else(|| full_doc_id);
-                                        Some(Ok((doc_id, None)))
+                                    #[cfg(not(feature = "caching"))]
+                                    {
+                                        Some(Ok((doc_id, Some(document))))
                                     }
-                                    None => None,
-                                },
-                                Err(err) => Some(Err(err.into())),
-                            }
+                                }
+                                Some(batch_get_documents_response::Result::Missing(
+                                    full_doc_id,
+                                )) => {
+                                    let doc_id = full_doc_id
+                                        .split('/')
+                                        .last()
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| full_doc_id);
+                                    Some(Ok((doc_id, None)))
+                                }
+                                None => None,
+                            },
+                            Err(err) => Some(Err(err.into())),
                         }
                     })
                     .boxed();
@@ -760,7 +750,7 @@ impl FirestoreDb {
         {
             let begin_query_utc: DateTime<Utc> = Utc::now();
 
-            let cache_response = cache.get_doc_by_path(collection_id, document_path).await?;
+            let cache_response = cache.get_doc_by_path(document_path).await?;
 
             let end_query_utc: DateTime<Utc> = Utc::now();
             let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
@@ -826,7 +816,7 @@ impl FirestoreDb {
             );
 
             let cached_stream: BoxStream<FirestoreResult<(String, Option<FirestoreDocument>)>> =
-                cache.get_docs_by_paths(collection_id, full_doc_ids).await?;
+                cache.get_docs_by_paths(full_doc_ids).await?;
 
             let cached_vec: Vec<(String, Option<FirestoreDocument>)> =
                 cached_stream.try_collect::<Vec<_>>().await?;
@@ -848,7 +838,7 @@ impl FirestoreDb {
             } else {
                 span.record("/firestore/cache_result", "miss");
                 span.in_scope(|| {
-                    info!("Not all documents were found in cache. Reading from Firestore.")
+                    debug!("Not all documents were found in cache. Reading from Firestore.")
                 });
                 return Ok(FirestoreCachedValue::SkipCache);
             }
@@ -860,13 +850,12 @@ impl FirestoreDb {
     #[inline]
     pub(crate) async fn offer_doc_update_to_cache(
         &self,
-        collection_id: &str,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
         if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache) =
             self.session_params.cache_mode
         {
-            cache.update_doc_by_path(collection_id, document).await?;
+            cache.update_doc_by_path(document).await?;
         }
         Ok(())
     }

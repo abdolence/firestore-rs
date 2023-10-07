@@ -608,6 +608,9 @@ Caching works on the document level.
 The cache will be used for the following operations:
 - Reading documents by IDs (get and batch get);
 - Listing all documents in a collection;
+- Partial support for querying documents in a collection:
+  - Filtering;
+  - Ordering;
 
 (Caching other operations may be extended in the future).
 
@@ -619,7 +622,7 @@ The library provides two implementations of the cache:
 
 Caching is opt-in and you need to enable it when needed using cargo features:
 - `caching-memory` for in-memory cache;
-- `caching-persistent` for in-memory cache;
+- `caching-persistent` for persistent/disk-backed cache;
 
 ### Load modes
 Caching supports different init/load modes:
@@ -647,9 +650,12 @@ let mut cache = FirestoreCache::new(
     &db,
     FirestoreMemoryCacheBackend::new(
         FirestoreCacheConfiguration::new().add_collection_config(
-            TEST_COLLECTION_NAME,
-            FirestoreListenerTarget::new(1000),
-            FirestoreCacheCollectionLoadMode::PreloadNone,
+            &db,
+            FirestoreCacheCollectionConfiguration::new(
+              TEST_COLLECTION_NAME,
+              FirestoreListenerTarget::new(1000),
+              FirestoreCacheCollectionLoadMode::PreloadNone,
+            )
         ),
     )?,
     FirestoreMemListenStateStorage::new(),

@@ -144,6 +144,9 @@ pub type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
 
 pub type FirestoreDocument = gcloud_sdk::google::firestore::v1::Document;
 
+mod firestore_document_functions;
+pub use firestore_document_functions::*;
+
 mod fluent_api;
 pub use fluent_api::*;
 

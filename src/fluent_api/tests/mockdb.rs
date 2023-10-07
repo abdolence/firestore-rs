@@ -15,17 +15,17 @@ impl FirestoreQuerySupport for MockDatabase {
         unreachable!()
     }
 
-    async fn stream_query_doc<'b>(
-        &self,
+    async fn stream_query_doc<'a>(
+        &'a self,
         _params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, Document>> {
+    ) -> FirestoreResult<BoxStream<'a, Document>> {
         unreachable!()
     }
 
-    async fn stream_query_doc_with_errors<'b>(
-        &self,
+    async fn stream_query_doc_with_errors<'a>(
+        &'a self,
         _params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<Document>>> {
         unreachable!()
     }
 
@@ -36,23 +36,23 @@ impl FirestoreQuerySupport for MockDatabase {
         unreachable!()
     }
 
-    async fn stream_query_obj<'b, T>(
-        &self,
+    async fn stream_query_obj<'a, T>(
+        &'a self,
         _params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, T>>
+    ) -> FirestoreResult<BoxStream<'a, T>>
     where
         for<'de> T: Deserialize<'de>,
     {
         unreachable!()
     }
 
-    async fn stream_query_obj_with_errors<'b, T>(
-        &self,
+    async fn stream_query_obj_with_errors<'a, T>(
+        &'a self,
         _params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<T>>>
     where
         for<'de> T: Deserialize<'de>,
-        T: Send + 'b,
+        T: Send + 'a,
     {
         unreachable!()
     }

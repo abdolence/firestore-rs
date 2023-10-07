@@ -15,6 +15,9 @@ use futures::stream::BoxStream;
 use futures::StreamExt;
 use tracing::*;
 
+mod cache_filter_engine;
+mod cache_query_engine;
+
 pub struct FirestoreCache<B, LS>
 where
     B: FirestoreCacheBackend + Send + Sync + 'static,
@@ -148,41 +151,32 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
 pub trait FirestoreCacheDocsByPathSupport {
     async fn get_doc_by_path(
         &self,
-        collection_id: &str,
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>>;
 
     async fn get_docs_by_paths<'a>(
         &'a self,
-        collection_id: &str,
         full_doc_ids: &'a [String],
     ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<FirestoreDocument>)>>>
     where
         Self: Sync,
     {
-        let collection_id = collection_id.to_string();
         Ok(Box::pin(
             futures::stream::iter(full_doc_ids.clone()).filter_map({
-                move |document_path| {
-                    let collection_id = collection_id.to_string();
-                    async move {
-                        match self
-                            .get_doc_by_path(collection_id.as_str(), document_path.as_str())
-                            .await
-                        {
-                            Ok(maybe_doc) => maybe_doc.map(|document| {
-                                let doc_id = document
-                                    .name
-                                    .split('/')
-                                    .last()
-                                    .map(|s| s.to_string())
-                                    .unwrap_or_else(|| document.name.clone());
-                                Ok((doc_id, Some(document)))
-                            }),
-                            Err(err) => {
-                                error!("Error occurred while reading from cache: {}", err);
-                                None
-                            }
+                move |document_path| async move {
+                    match self.get_doc_by_path(document_path.as_str()).await {
+                        Ok(maybe_doc) => maybe_doc.map(|document| {
+                            let doc_id = document
+                                .name
+                                .split('/')
+                                .last()
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| document.name.clone());
+                            Ok((doc_id, Some(document)))
+                        }),
+                        Err(err) => {
+                            error!("Error occurred while reading from cache: {}", err);
+                            None
                         }
                     }
                 }
@@ -190,14 +184,16 @@ pub trait FirestoreCacheDocsByPathSupport {
         ))
     }
 
-    async fn update_doc_by_path(
-        &self,
-        collection_id: &str,
-        document: &FirestoreDocument,
-    ) -> FirestoreResult<()>;
+    async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()>;
 
     async fn list_all_docs(
         &self,
-        collection_id: &str,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>>;
+        collection_path: &str,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>>;
+
+    async fn query_docs(
+        &self,
+        collection_path: &str,
+        query: &FirestoreQueryParams,
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>>;
 }
