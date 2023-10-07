@@ -168,7 +168,10 @@ impl FirestoreDb {
                         "Firestore Query Cached",
                         "/firestore/collection_name" = collection_id.as_str(),
                         "/firestore/cache_result" = field::Empty,
+                        "/firestore/response_time" = field::Empty
                     );
+
+                    let begin_query_utc: DateTime<Utc> = Utc::now();
 
                     let collection_path = if let Some(parent) = params.parent.as_ref() {
                         format!("{}/{}", parent, collection_id)
@@ -177,6 +180,15 @@ impl FirestoreDb {
                     };
 
                     let result = cache.query_docs(&collection_path, params).await?;
+
+                    let end_query_utc: DateTime<Utc> = Utc::now();
+                    let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+
+                    span.record(
+                        "/firestore/response_time",
+                        query_duration.num_milliseconds(),
+                    );
+
                     match result {
                         FirestoreCachedValue::UseCached(stream) => {
                             span.record("/firestore/cache_result", "hit");

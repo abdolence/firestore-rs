@@ -813,13 +813,24 @@ impl FirestoreDb {
                 "/firestore/collection_name" = collection_id,
                 "/firestore/ids_count" = full_doc_ids.len(),
                 "/firestore/cache_result" = field::Empty,
+                "/firestore/response_time" = field::Empty
             );
+
+            let begin_query_utc: DateTime<Utc> = Utc::now();
 
             let cached_stream: BoxStream<FirestoreResult<(String, Option<FirestoreDocument>)>> =
                 cache.get_docs_by_paths(full_doc_ids).await?;
 
             let cached_vec: Vec<(String, Option<FirestoreDocument>)> =
                 cached_stream.try_collect::<Vec<_>>().await?;
+
+            let end_query_utc: DateTime<Utc> = Utc::now();
+            let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+
+            span.record(
+                "/firestore/response_time",
+                query_duration.num_milliseconds(),
+            );
 
             if cached_vec.len() == full_doc_ids.len()
                 || matches!(
