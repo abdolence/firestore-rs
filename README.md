@@ -611,9 +611,9 @@ The cache will be used for the following operations:
 - Partial support for querying documents in a collection:
   - Filtering;
   - Ordering;
+  - Paging/Cursors;
 
 (Caching other operations may be extended in the future).
-
 
 
 The library provides two implementations of the cache:
@@ -635,6 +635,7 @@ Caching supports different init/load modes:
 Update cache is done in the following cases:
 - When you read a document through a cache by ID and it is not found in the cache, it will be loaded from Firestore and cached;
 - Firestore listener will update the cache when it receives a notification about the document change (externally or from your app);
+- Using Preloads at the startup time;
 
 ### Usage
 
