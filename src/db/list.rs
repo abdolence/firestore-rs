@@ -494,11 +494,8 @@ impl FirestoreDb {
                 Level::DEBUG,
                 "Firestore List Cached",
                 "/firestore/collection_name" = params.collection_id,
+                "/firestore/cache_result" = field::Empty,
             );
-
-            span.in_scope(|| {
-                debug!("Reading all {} documents from cache", params.collection_id);
-            });
 
             let collection_path = if let Some(parent) = params.parent.as_ref() {
                 format!("{}/{}", parent, params.collection_id.as_str())
@@ -511,8 +508,44 @@ impl FirestoreDb {
             };
 
             let cached_result = cache.list_all_docs(&collection_path).await?;
-            return Ok(cached_result);
+
+            match cached_result {
+                FirestoreCachedValue::UseCached(stream) => {
+                    span.record("/firestore/cache_result", "hit");
+                    span.in_scope(|| {
+                        debug!("Reading all {} documents from cache", params.collection_id);
+                    });
+
+                    Ok(FirestoreCachedValue::UseCached(stream))
+                }
+                FirestoreCachedValue::SkipCache => {
+                    span.record("/firestore/cache_result", "miss");
+                    if matches!(
+                        self.session_params.cache_mode,
+                        FirestoreDbSessionCacheMode::ReadCachedOnly(_)
+                    ) {
+                        span.in_scope(|| {
+                            debug!(
+                                "Cache doesn't have suitable documents for {}, but cache mode is ReadCachedOnly so returning empty stream",
+                                params.collection_id
+                            );
+                        });
+                        Ok(FirestoreCachedValue::UseCached(Box::pin(
+                            futures::stream::empty(),
+                        )))
+                    } else {
+                        span.in_scope(|| {
+                            debug!(
+                                "Cache doesn't have suitable documents for {} skipping cache and reading from Firestore",
+                                params.collection_id
+                            );
+                        });
+                        Ok(FirestoreCachedValue::SkipCache)
+                    }
+                }
+            }
+        } else {
+            Ok(FirestoreCachedValue::SkipCache)
         }
-        Ok(FirestoreCachedValue::SkipCache)
     }
 }

@@ -187,10 +187,28 @@ impl FirestoreDb {
                         }
                         FirestoreCachedValue::SkipCache => {
                             span.record("/firestore/cache_result", "miss");
-                            span.in_scope(|| {
-                                debug!("Querying {} documents from cache skipped", collection_id);
-                            });
-                            Ok(FirestoreCachedValue::SkipCache)
+                            if matches!(
+                                self.session_params.cache_mode,
+                                FirestoreDbSessionCacheMode::ReadCachedOnly(_)
+                            ) {
+                                span.in_scope(|| {
+                                    debug!(
+                                "Cache doesn't have suitable documents for {}, but cache mode is ReadCachedOnly so returning empty stream",
+                                collection_id.as_str()
+                            );
+                                });
+                                Ok(FirestoreCachedValue::UseCached(Box::pin(
+                                    futures::stream::empty(),
+                                )))
+                            } else {
+                                span.in_scope(|| {
+                                    debug!(
+                                        "Querying {} documents from cache skipped",
+                                        collection_id
+                                    );
+                                });
+                                Ok(FirestoreCachedValue::SkipCache)
+                            }
                         }
                     }
                 } else {
