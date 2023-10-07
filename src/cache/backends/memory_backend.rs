@@ -6,7 +6,6 @@ use futures::stream::BoxStream;
 use moka::future::{Cache, CacheBuilder};
 
 use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
-use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use std::collections::HashMap;
 use tracing::*;
@@ -70,22 +69,32 @@ impl FirestoreMemoryCacheBackend {
 
                         let params = if let Some(parent) = &config.parent {
                             db.fluent()
-                                .list()
-                                .from(&config.collection_name)
+                                .select()
+                                .from(config.collection_name.as_str())
                                 .parent(parent)
                         } else {
-                            db.fluent().list().from(&config.collection_name)
+                            db.fluent().select().from(config.collection_name.as_str())
                         };
 
-                        let stream = params.page_size(1000).stream_all_with_errors().await?;
+                        let stream = params.stream_query().await?;
 
                         stream
-                            .try_for_each_concurrent(2, |doc| async move {
+                            .enumerate()
+                            .map(|(index, docs)| {
+                                if index > 0 && index % 5000 == 0 {
+                                    debug!(
+                                        "Preloading collection `{}`: {} entries loaded",
+                                        collection_path.as_str(),
+                                        index
+                                    );
+                                }
+                                docs
+                            })
+                            .for_each_concurrent(1, |doc| async move {
                                 let (_, document_id) = split_document_path(&doc.name);
                                 mem_cache.insert(document_id.to_string(), doc).await;
-                                Ok(())
                             })
-                            .await?;
+                            .await;
 
                         mem_cache.run_pending_tasks().await;
 
