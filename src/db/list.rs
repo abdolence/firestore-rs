@@ -371,9 +371,10 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "Listing documents in {:?} took {}ms",
+                            "Listing documents in {:?} took {}ms. Returned: {}",
                             params.collection_id,
-                            listing_duration.num_milliseconds()
+                            listing_duration.num_milliseconds(),
+                            result.documents.len()
                         );
                     });
 

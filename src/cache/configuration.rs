@@ -43,6 +43,7 @@ pub struct FirestoreCacheCollectionConfiguration {
     pub parent: Option<String>,
     pub listener_target: FirestoreListenerTarget,
     pub collection_load_mode: FirestoreCacheCollectionLoadMode,
+    pub indices: Vec<FirestoreCacheIndexConfiguration>,
 }
 
 impl FirestoreCacheCollectionConfiguration {
@@ -60,6 +61,7 @@ impl FirestoreCacheCollectionConfiguration {
             parent: None,
             listener_target,
             collection_load_mode,
+            indices: Vec::new(),
         }
     }
 
@@ -73,6 +75,13 @@ impl FirestoreCacheCollectionConfiguration {
             ..self
         }
     }
+
+    #[inline]
+    pub fn with_index(self, index: FirestoreCacheIndexConfiguration) -> Self {
+        let mut indices = self.indices;
+        indices.push(index);
+        Self { indices, ..self }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,4 +89,32 @@ pub enum FirestoreCacheCollectionLoadMode {
     PreloadAllDocs,
     PreloadAllIfEmpty,
     PreloadNone,
+}
+
+#[derive(Debug, Clone)]
+pub struct FirestoreCacheIndexConfiguration {
+    pub fields: Vec<String>,
+    pub unique: bool,
+}
+
+impl FirestoreCacheIndexConfiguration {
+    #[inline]
+    pub fn new<I>(fields: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        Self {
+            fields: fields.into_iter().map(|s| s.as_ref().to_string()).collect(),
+            unique: false,
+        }
+    }
+
+    #[inline]
+    pub fn unique(self, value: bool) -> Self {
+        Self {
+            unique: value,
+            ..self
+        }
+    }
 }

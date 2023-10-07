@@ -98,16 +98,27 @@ impl FirestorePersistentCacheBackend {
                     debug!("Preloading {}", collection_path.as_str());
                     let params = if let Some(parent) = &config.parent {
                         db.fluent()
-                            .list()
-                            .from(&config.collection_name)
+                            .select()
+                            .from(config.collection_name.as_str())
                             .parent(parent)
                     } else {
-                        db.fluent().list().from(&config.collection_name)
+                        db.fluent().select().from(config.collection_name.as_str())
                     };
 
-                    let stream = params.page_size(1000).stream_all().await?;
+                    let stream = params.stream_query().await?;
 
                     stream
+                        .enumerate()
+                        .map(|(index, docs)| {
+                            if index > 0 && index % 5000 == 0 {
+                                debug!(
+                                    "Preloading collection `{}`: {} entries loaded",
+                                    collection_path.as_str(),
+                                    index
+                                );
+                            }
+                            docs
+                        })
                         .ready_chunks(100)
                         .for_each(|docs| async move {
                             if let Err(err) = self.write_batch_docs(collection_path, docs) {
