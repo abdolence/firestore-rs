@@ -121,7 +121,7 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            collection_id = params.collection_id,
+                            collection_id = ?params.collection_id,
                             duration_milliseconds = query_duration.num_milliseconds(),
                             "Queried stream of documents.",
                         );
