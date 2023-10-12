@@ -33,9 +33,10 @@ impl FirestoreTempFilesListenStateStorage {
 
     pub fn with_temp_dir<P: AsRef<std::path::Path>>(temp_dir: P) -> Self {
         debug!(
-            "Using temp dir for listen state storage: {:?}",
-            temp_dir.as_ref()
+            directory = ?temp_dir.as_ref(),
+            "Using temp dir for listen state storage.",
         );
+
         Self {
             temp_dir: Some(temp_dir.as_ref().to_path_buf()),
         }

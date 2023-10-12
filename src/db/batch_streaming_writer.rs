@@ -40,7 +40,8 @@ pub struct FirestoreStreamingBatchWriter {
 impl Drop for FirestoreStreamingBatchWriter {
     fn drop(&mut self) {
         if !self.finished.load(Ordering::Relaxed) {
-            self.batch_span.in_scope(|| warn!("Batch was not finished"));
+            self.batch_span
+                .in_scope(|| warn!("Batch was not finished."));
         }
     }
 }
@@ -122,8 +123,9 @@ impl FirestoreStreamingBatchWriter {
                                         }
                                         Err(err) => {
                                             error!(
-                                                "Batch write operation {} failed: {}",
-                                                received_counter, err
+                                                %err,
+                                                received_counter,
+                                                "Batch write operation failed.",
                                             );
                                             responses_writer.send(Err(err)).ok();
                                             break;
@@ -142,7 +144,7 @@ impl FirestoreStreamingBatchWriter {
                                 break;
                             }
                             Err(err) if err.code() == gcloud_sdk::tonic::Code::Cancelled => {
-                                debug!("Batch write operation finished on: {}", received_counter);
+                                debug!(received_counter, "Batch write operation finished.");
                                 responses_writer
                                     .send(Ok(FirestoreBatchWriteResponse::new(
                                         received_counter - 1,
@@ -154,8 +156,9 @@ impl FirestoreStreamingBatchWriter {
                             }
                             Err(err) => {
                                 error!(
-                                    "Batch write operation {} failed: {}",
-                                    received_counter, err
+                                    %err,
+                                    received_counter,
+                                    "Batch write operation failed.",
                                 );
                                 responses_writer.send(Err(err.into())).ok();
                                 break;
@@ -182,7 +185,10 @@ impl FirestoreStreamingBatchWriter {
                     }
                 }
                 Err(err) => {
-                    error!("Batch write operation failed: {}", err);
+                    error!(
+                        %err,
+                        "Batch write operation failed.",
+                    );
                     responses_writer.send(Err(err.into())).ok();
                 }
             }
@@ -228,7 +234,7 @@ impl FirestoreStreamingBatchWriter {
                 > self.received_counter.load(Ordering::Relaxed) - 1
             {
                 drop(locked);
-                debug!("Still waiting receiving responses for batch writes");
+                debug!("Still waiting to receive responses for batch writes.");
                 self.init_wait_reader.recv().await;
             } else {
                 drop(locked);

@@ -50,7 +50,7 @@ impl<'a> FirestoreTransaction<'a> {
         transaction_span.record("/firestore/transaction_id", hex_trans_id);
 
         transaction_span.in_scope(|| {
-            debug!("Created a new transaction. Mode: {:?}", options.mode);
+            debug!(mode = ?options.mode, "Created a new transaction.");
         });
 
         Ok(Self {
@@ -81,7 +81,7 @@ impl<'a> FirestoreTransaction<'a> {
 
         if self.writes.is_empty() {
             self.transaction_span.in_scope(|| {
-                debug!("Transaction has been committed without any writes");
+                debug!("Transaction has been committed without any writes.");
             });
 
             return Ok(FirestoreTransactionResponse::new(Vec::new()));
@@ -110,7 +110,7 @@ impl<'a> FirestoreTransaction<'a> {
         }
 
         self.transaction_span.in_scope(|| {
-            debug!("Transaction has been committed");
+            debug!("Transaction has been committed.");
         });
 
         Ok(result)
@@ -126,7 +126,7 @@ impl<'a> FirestoreTransaction<'a> {
         self.db.client().get().rollback(request).await?;
 
         self.transaction_span.in_scope(|| {
-            debug!("Transaction has been rollback");
+            debug!("Transaction has been rolled back.");
         });
 
         Ok(())
@@ -141,7 +141,7 @@ impl<'a> Drop for FirestoreTransaction<'a> {
     fn drop(&mut self) {
         if !self.finished {
             self.transaction_span
-                .in_scope(|| warn!("Transaction was neither committed nor rollback"));
+                .in_scope(|| warn!("Transaction was neither committed nor rolled back."));
         }
     }
 }
@@ -202,8 +202,8 @@ impl FirestoreDb {
                             FirestoreError::DatabaseError(ref db_err) if db_err.retry_possible => {
                                 transaction_span.in_scope(|| {
                                     warn!(
-                                        "Transient error occurred in committing transaction: {}",
-                                        &err
+                                        %err,
+                                        "Transient error occurred while committing transaction.",
                                     )
                                 });
                                 // Ignore; we'll try again below
@@ -215,7 +215,7 @@ impl FirestoreDb {
                 Err(err) => match err {
                     BackoffError::Transient { err, retry_after } => {
                         transaction_span.in_scope(|| {
-                            warn!("Transient error occurred in transaction function: {}. Retrying after: {:?}", &err, retry_after)
+                            warn!(%err, delay = ?retry_after, "Transient error occurred in transaction function. Retrying after the specified delay.");
                         });
                         initial_backoff_duration = retry_after;
                     }
@@ -263,7 +263,7 @@ impl FirestoreDb {
                 match backoff_err {
                     BackoffError::Transient { err, retry_after } => {
                         transaction_span.in_scope(|| {
-                            warn!("Transient error occurred in transaction function: {}. Retrying after: {:?}", &err, &retry_after)
+                            warn!(%err, delay = ?retry_after, "Transient error occurred in transaction function. Retrying after the specified delay.");
                         });
 
                         let firestore_err = FirestoreError::ErrorInTransaction(
@@ -307,8 +307,8 @@ impl FirestoreDb {
         if let Err(ref err) = retry_result {
             transaction_span.in_scope(|| {
                 error!(
-                    "Unable to commit transaction: {}. Trying to roll it back",
-                    &err
+                    %err,
+                    "Unable to commit transaction. Trying to roll it back.",
                 )
             });
 

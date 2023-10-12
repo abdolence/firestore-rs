@@ -181,7 +181,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
                 Ok(Some(doc)) => Some(doc),
                 Ok(None) => None,
                 Err(err) => {
-                    error!("Error occurred while consuming query: {}", err);
+                    error!(%err, "Error occurred while consuming query.");
                     None
                 }
             })
@@ -210,7 +210,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
                 Ok(Some(doc)) => Some(Ok(doc)),
                 Ok(None) => None,
                 Err(err) => {
-                    error!("Error occurred while consuming query: {}", err);
+                    error!(%err, "Error occurred while consuming query.");
                     Some(Err(err))
                 }
             })
@@ -244,8 +244,8 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
                 Ok(obj) => Some(obj),
                 Err(err) => {
                     error!(
-                        "Error occurred while consuming query document as a stream: {}",
-                        err
+                        %err,
+                        "Error occurred while consuming query document as a stream.",
                     );
                     None
                 }
@@ -328,9 +328,9 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "Querying stream of documents in {:?} took {}ms",
-                            params.query_params.collection_id,
-                            query_duration.num_milliseconds()
+                            collection_id = ?params.query_params.collection_id,
+                            duration_milliseconds = query_duration.num_milliseconds(),
+                            "Querying stream of documents in specified collection.",
                         );
                     });
 
@@ -341,10 +341,10 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "Failed with {}. Retrying: {}/{}",
-                            db_err,
-                            retries + 1,
-                            self.inner.options.max_retries
+                            err = %db_err,
+                            current_retry = retries + 1,
+                            max_retries = self.inner.options.max_retries,
+                            "Failed to run aggregation query. Retrying up to the specified number of times.",
                         );
 
                         self.stream_aggregated_query_doc_with_retries(params, retries + 1, span)
@@ -392,9 +392,9 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "Querying documents in {:?} took {}ms",
-                            params.query_params.collection_id,
-                            query_duration.num_milliseconds()
+                            collection_id = ?params.query_params.collection_id,
+                            duration_milliseconds = query_duration.num_milliseconds(),
+                            "Querying documents in specified collection.",
                         );
                     });
 
@@ -405,11 +405,12 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "Failed with {}. Retrying: {}/{}",
-                            db_err,
-                            retries + 1,
-                            self.inner.options.max_retries
+                            err = %db_err,
+                            current_retry = retries + 1,
+                            max_retries = self.inner.options.max_retries,
+                            "Failed to run aggregation query. Retrying up to the specified number of times.",
                         );
+
                         self.aggregated_query_doc_with_retries(params, retries + 1, span)
                             .await
                     }
