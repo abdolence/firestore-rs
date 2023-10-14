@@ -26,13 +26,13 @@ impl FirestorePersistentCacheBackend {
 
         if !db_dir.exists() {
             debug!(
-                directory = %db_dir,
+                directory = %db_dir.display(),
                 "Creating a temp directory to store persistent cache.",
             );
             std::fs::create_dir_all(&db_dir)?;
         } else {
             debug!(
-                directory = %db_dir,
+                directory = %db_dir.display(),
                 "Using a temp directory to store persistent cache.",
             );
         }
@@ -120,7 +120,7 @@ impl FirestorePersistentCacheBackend {
                         .ready_chunks(100)
                         .for_each(|docs| async move {
                             if let Err(err) = self.write_batch_docs(collection_path, docs) {
-                                error!(err, "Error while preloading collection.");
+                                error!(?err, "Error while preloading collection.");
                             }
                         })
                         .await;
@@ -144,10 +144,7 @@ impl FirestorePersistentCacheBackend {
                 }
                 FirestoreCacheCollectionLoadMode::PreloadNone => {
                     let tx = self.redb.begin_write()?;
-                    debug!(
-                        collection_path
-                        "Creating corresponding collection table.",
-                    );
+                    debug!(collection_path, "Creating corresponding collection table.",);
                     tx.open_table(td)?;
                     tx.commit()?;
                 }

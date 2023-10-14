@@ -39,7 +39,7 @@ where
     for<'de> T: Deserialize<'de>,
     DF: Fn(&T) -> String,
 {
-    info!(collection_name, "Populating collection.".);
+    info!(collection_name, "Populating collection.");
     let batch_writer = db.create_simple_batch_writer().await?;
     let mut current_batch = batch_writer.new_batch();
 

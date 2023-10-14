@@ -108,7 +108,7 @@ where
                 let backend = backend.clone();
                 async move {
                     if let Err(err) = backend.on_listen_event(event).await {
-                        error!(err, "Error occurred while updating cache.");
+                        error!(?err, "Error occurred while updating cache.");
                     };
                     Ok(())
                 }
@@ -175,7 +175,7 @@ pub trait FirestoreCacheDocsByPathSupport {
                             Ok((doc_id, Some(document)))
                         }),
                         Err(err) => {
-                            error!(err, "Error occurred while reading from cache.");
+                            error!(%err, "Error occurred while reading from cache.");
                             None
                         }
                     }
