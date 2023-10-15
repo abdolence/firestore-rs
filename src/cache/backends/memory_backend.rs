@@ -65,7 +65,7 @@ impl FirestoreMemoryCacheBackend {
                 FirestoreCacheCollectionLoadMode::PreloadAllDocs
                 | FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty => {
                     if let Some(mem_cache) = self.collection_caches.get(collection_path.as_str()) {
-                        debug!("Preloading {}", collection_path.as_str());
+                        debug!(collection_path, "Preloading collection.");
 
                         let params = if let Some(parent) = &config.parent {
                             db.fluent()
@@ -83,9 +83,9 @@ impl FirestoreMemoryCacheBackend {
                             .map(|(index, docs)| {
                                 if index > 0 && index % 5000 == 0 {
                                     debug!(
-                                        "Preloading collection `{}`: {} entries loaded",
-                                        collection_path.as_str(),
-                                        index
+                                        collection_path = collection_path.as_str(),
+                                        entries_loaded = index,
+                                        "Collection preload in progress...",
                                     );
                                 }
                                 docs
@@ -99,9 +99,9 @@ impl FirestoreMemoryCacheBackend {
                         mem_cache.run_pending_tasks().await;
 
                         info!(
-                            "Preloading collection `{}` has been finished. Loaded: {} entries",
-                            collection_path.as_str(),
-                            mem_cache.entry_count()
+                            collection_path = collection_path.as_str(),
+                            entry_count = mem_cache.entry_count(),
+                            "Preloading collection has been finished.",
                         );
                     }
                 }
@@ -185,7 +185,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
 
     async fn invalidate_all(&self) -> FirestoreResult<()> {
         for (collection_path, mem_cache) in &self.collection_caches {
-            debug!("Invalidating cache for {}", collection_path);
+            debug!(collection_path, "Invalidating cache for collection.");
             mem_cache.invalidate_all();
             mem_cache.run_pending_tasks().await;
         }
@@ -203,8 +203,8 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                     let (collection_path, document_id) = split_document_path(&doc.name);
                     if let Some(mem_cache) = self.collection_caches.get(collection_path) {
                         trace!(
-                            "Writing document to cache due to listener event: {:?}",
-                            doc.name
+                            doc_name = ?doc.name,
+                            "Writing document to cache due to listener event.",
                         );
                         mem_cache.insert(document_id.to_string(), doc).await;
                     }
@@ -215,8 +215,8 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                 let (collection_path, document_id) = split_document_path(&doc_deleted.document);
                 if let Some(mem_cache) = self.collection_caches.get(collection_path) {
                     trace!(
-                        "Removing document from cache due to listener event: {:?}",
-                        doc_deleted.document.as_str()
+                        deleted_doc = ?doc_deleted.document.as_str(),
+                        "Removing document from cache due to listener event.",
                     );
                     mem_cache.remove(document_id).await;
                 }

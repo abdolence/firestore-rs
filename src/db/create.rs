@@ -130,9 +130,9 @@ impl FirestoreCreateSupport for FirestoreDb {
 
         span.in_scope(|| {
             debug!(
-                "Created a new document: {}/{:?}",
                 collection_id,
-                document_id.as_ref().map(|id| id.as_ref())
+                document_id = document_id.as_ref().map(|id| id.as_ref()),
+                "Created a new document.",
             );
         });
 

@@ -148,10 +148,10 @@ impl FirestoreDb {
             .unwrap_or_else(|| GOOGLE_FIREBASE_API_URL.to_string());
 
         info!(
-            "Creating a new DB client: {}. API: {} Token scopes: {}",
-            firestore_database_path,
-            effective_firebase_api_url,
-            token_scopes.join(", ")
+            database_path = firestore_database_path,
+            api_url = effective_firebase_api_url,
+            token_scopes = token_scopes.join(", "),
+            "Creating a new database client.",
         );
 
         let client = GoogleApiClient::from_function_with_token_source(

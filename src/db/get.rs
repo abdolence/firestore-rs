@@ -380,8 +380,8 @@ impl FirestoreGetByIdSupport for FirestoreDb {
                 Ok(doc_pair) => Some(doc_pair),
                 Err(err) => {
                     error!(
-                        "Error occurred while consuming batch get as a stream: {}",
-                        err
+                        %err,
+                        "Error occurred while consuming batch get as a stream.",
                     );
                     None
                 }
@@ -470,8 +470,8 @@ impl FirestoreGetByIdSupport for FirestoreDb {
                         Ok(obj) => Some((doc_id, Some(obj))),
                         Err(err) => {
                             error!(
-                                "Error occurred while consuming batch documents as a stream: {}",
-                                err
+                                %err,
+                                "Error occurred while consuming batch documents as a stream.",
                             );
                             None
                         }
@@ -612,9 +612,9 @@ impl FirestoreDb {
                 Ok(doc_response) => {
                     span.in_scope(|| {
                         debug!(
-                            "Reading document {} took {}ms",
                             document_path,
-                            query_duration.num_milliseconds()
+                            duration_milliseconds = query_duration.num_milliseconds(),
+                            "Read document.",
                         );
                     });
 
@@ -631,10 +631,10 @@ impl FirestoreDb {
                     {
                         span.in_scope(|| {
                             warn!(
-                                "Failed with {}. Retrying: {}/{}",
-                                db_err,
-                                retries + 1,
-                                self.get_options().max_retries
+                                err = %db_err,
+                                current_retry = retries + 1,
+                                max_retries = self.get_options().max_retries,
+                                "Failed to get document. Retrying up to the specified number of times.",
                             );
                         });
                         self.get_doc_by_path(collection_id, document_path, None, retries + 1)
@@ -692,7 +692,7 @@ impl FirestoreDb {
 
         match self.client().get().batch_get_documents(request).await {
             Ok(response) => {
-                span.in_scope(|| debug!("Start consuming a batch of documents by ids"));
+                span.in_scope(|| debug!("Start consuming a batch of documents by IDs."));
                 let stream = response
                     .into_inner()
                     .filter_map(move |r| async move {
@@ -768,9 +768,9 @@ impl FirestoreDb {
                 span.record("/firestore/cache_result", "hit");
                 span.in_scope(|| {
                     debug!(
-                        "Reading document {} from cache took {}ms",
                         document_path,
-                        query_duration.num_milliseconds()
+                        duration_milliseconds = query_duration.num_milliseconds(),
+                        "Read document from cache.",
                     );
                 });
 
@@ -778,7 +778,7 @@ impl FirestoreDb {
             } else {
                 span.record("/firestore/cache_result", "miss");
                 span.in_scope(|| {
-                    debug!("Missing document {} in cache", document_path);
+                    debug!(document_path, "Missing document in cache.");
                 });
                 if let FirestoreDbSessionCacheMode::ReadCachedOnly(_) =
                     self.session_params.cache_mode
@@ -786,7 +786,7 @@ impl FirestoreDb {
                     return Err(FirestoreError::DataNotFoundError(
                         FirestoreDataNotFoundError::new(
                             FirestoreErrorPublicGenericDetails::new("CACHE_MISS".to_string()),
-                            format!("Document {} not found in cache", document_path),
+                            format!("Document {document_path} not found in cache"),
                         ),
                     ));
                 }
@@ -840,7 +840,10 @@ impl FirestoreDb {
             {
                 span.record("/firestore/cache_result", "hit");
                 span.in_scope(|| {
-                    debug!("Reading {} documents from cache", full_doc_ids.len());
+                    debug!(
+                        num_documents = full_doc_ids.len(),
+                        "Reading documents from cache."
+                    );
                 });
                 return Ok(FirestoreCachedValue::UseCached(Box::pin(
                     futures::stream::iter(cached_vec)

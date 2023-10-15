@@ -144,7 +144,7 @@ impl FirestoreListingSupport for FirestoreDb {
                             }
                         }
                         Err(err) => {
-                            error!("Error occurred while consuming documents: {}", err);
+                            error!(%err, "Error occurred while consuming documents.");
                             Some((Err(err), None))
                         }
                     }
@@ -176,7 +176,7 @@ impl FirestoreListingSupport for FirestoreDb {
             future::ready(match doc_res {
                 Ok(doc) => Some(doc),
                 Err(err) => {
-                    error!("Error occurred while consuming documents: {}", err);
+                    error!(%err, "Error occurred while consuming documents.");
                     None
                 }
             })
@@ -197,8 +197,8 @@ impl FirestoreListingSupport for FirestoreDb {
                 Ok(obj) => Some(obj),
                 Err(err) => {
                     error!(
-                        "Error occurred while consuming list document as a stream: {}",
-                        err
+                        %err,
+                        "Error occurred while consuming list document as a stream.",
                     );
                     None
                 }
@@ -243,7 +243,7 @@ impl FirestoreListingSupport for FirestoreDb {
             future::ready(match col_res {
                 Ok(col) => Some(col),
                 Err(err) => {
-                    error!("Error occurred while consuming collection IDs: {}", err);
+                    error!(%err, "Error occurred while consuming collection IDs.");
                     None
                 }
             })
@@ -275,7 +275,7 @@ impl FirestoreListingSupport for FirestoreDb {
                             }
                         }
                         Err(err) => {
-                            error!("Error occurred while consuming documents: {}", err);
+                            error!(%err, "Error occurred while consuming documents.");
                             Some((Err(err), None))
                         }
                     }
@@ -371,10 +371,10 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "Listing documents in {:?} took {}ms. Returned: {}",
-                            params.collection_id,
-                            listing_duration.num_milliseconds(),
-                            result.documents.len()
+                            collection_id = params.collection_id,
+                            duration_milliseconds = listing_duration.num_milliseconds(),
+                            num_documents = result.documents.len(),
+                            "Listed documents.",
                         );
                     });
 
@@ -385,11 +385,12 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "Listing failed with {}. Retrying: {}/{}",
-                            db_err,
-                            retries + 1,
-                            self.inner.options.max_retries
+                            err = %db_err,
+                            current_retry = retries + 1,
+                            max_retries = self.inner.options.max_retries,
+                            "Failed to list documents. Retrying up to the specified number of times.",
                         );
+
                         self.list_doc_with_retries(params, retries + 1, span).await
                     }
                     _ => Err(err),
@@ -454,8 +455,8 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "Listing collections took {}ms",
-                            listing_duration.num_milliseconds()
+                            duration_milliseconds = listing_duration.num_milliseconds(),
+                            "Listed collections.",
                         );
                     });
 
@@ -466,11 +467,12 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "Listing failed with {}. Retrying: {}/{}",
-                            db_err,
-                            retries + 1,
-                            self.inner.options.max_retries
+                            err = %db_err,
+                            current_retry = retries + 1,
+                            max_retries = self.inner.options.max_retries,
+                            "Failed to list collection IDs. Retrying up to the specified number of times.",
                         );
+
                         self.list_collection_ids_with_retries(params, retries + 1, span)
                             .await
                     }
@@ -525,7 +527,10 @@ impl FirestoreDb {
                 FirestoreCachedValue::UseCached(stream) => {
                     span.record("/firestore/cache_result", "hit");
                     span.in_scope(|| {
-                        debug!("Reading all {} documents from cache", params.collection_id);
+                        debug!(
+                            collection_id = params.collection_id,
+                            "Reading all documents from cache."
+                        );
                     });
 
                     Ok(FirestoreCachedValue::UseCached(stream))
@@ -538,8 +543,8 @@ impl FirestoreDb {
                     ) {
                         span.in_scope(|| {
                             debug!(
-                                "Cache doesn't have suitable documents for {}, but cache mode is ReadCachedOnly so returning empty stream",
-                                params.collection_id
+                                collection_id = params.collection_id,
+                                "Cache doesn't have suitable documents for specified collection, but cache mode is ReadCachedOnly so returning empty stream.",
                             );
                         });
                         Ok(FirestoreCachedValue::UseCached(Box::pin(
@@ -548,8 +553,8 @@ impl FirestoreDb {
                     } else {
                         span.in_scope(|| {
                             debug!(
-                                "Cache doesn't have suitable documents for {} skipping cache and reading from Firestore",
-                                params.collection_id
+                                collection_id = params.collection_id,
+                                "Cache doesn't have suitable documents for specified collection, so skipping cache and reading from Firestore.",
                             );
                         });
                         Ok(FirestoreCachedValue::SkipCache)

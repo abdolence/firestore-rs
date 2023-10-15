@@ -26,14 +26,14 @@ impl FirestorePersistentCacheBackend {
 
         if !db_dir.exists() {
             debug!(
-                "Creating a temp directory to store persistent cache: {}",
-                db_dir.display()
+                directory = %db_dir.display(),
+                "Creating a temp directory to store persistent cache.",
             );
             std::fs::create_dir_all(&db_dir)?;
         } else {
             debug!(
-                "Using a temp directory to store persistent cache: {}",
-                db_dir.display()
+                directory = %db_dir.display(),
+                "Using a temp directory to store persistent cache.",
             );
         }
         Self::with_options(config, db_dir.join("redb"))
@@ -44,21 +44,15 @@ impl FirestorePersistentCacheBackend {
         data_file_path: PathBuf,
     ) -> FirestoreResult<Self> {
         if data_file_path.exists() {
-            debug!(
-                "Opening database for persistent cache {:?}...",
-                data_file_path
-            );
+            debug!(?data_file_path, "Opening database for persistent cache...",);
         } else {
-            debug!(
-                "Creating database for persistent cache {:?}...",
-                data_file_path
-            );
+            debug!(?data_file_path, "Creating database for persistent cache...",);
         }
 
         let mut db = Database::create(data_file_path)?;
 
         db.compact()?;
-        info!("Successfully opened database for persistent cache");
+        info!("Successfully opened database for persistent cache.");
 
         Ok(Self { config, redb: db })
     }
@@ -88,14 +82,18 @@ impl FirestorePersistentCacheBackend {
                     ) && existing_records > 0
                     {
                         info!(
-                                "Preloading collection `{}` has been skipped. Already loaded: {} entries",
-                                collection_path.as_str(),
-                                existing_records
-                            );
+                            collection_path = collection_path.as_str(),
+                            entries_loaded = existing_records,
+                            "Preloading collection has been skipped.",
+                        );
                         continue;
                     }
 
-                    debug!("Preloading {}", collection_path.as_str());
+                    debug!(
+                        collection_path = collection_path.as_str(),
+                        "Preloading collection."
+                    );
+
                     let params = if let Some(parent) = &config.parent {
                         db.fluent()
                             .select()
@@ -112,9 +110,9 @@ impl FirestorePersistentCacheBackend {
                         .map(|(index, docs)| {
                             if index > 0 && index % 5000 == 0 {
                                 debug!(
-                                    "Preloading collection `{}`: {} entries loaded",
-                                    collection_path.as_str(),
-                                    index
+                                    collection_path = collection_path.as_str(),
+                                    entries_loaded = index,
+                                    "Collection preload in progress...",
                                 );
                             }
                             docs
@@ -122,7 +120,7 @@ impl FirestorePersistentCacheBackend {
                         .ready_chunks(100)
                         .for_each(|docs| async move {
                             if let Err(err) = self.write_batch_docs(collection_path, docs) {
-                                error!("Error while preloading collection: {}", err);
+                                error!(?err, "Error while preloading collection.");
                             }
                         })
                         .await;
@@ -140,17 +138,13 @@ impl FirestorePersistentCacheBackend {
                     };
 
                     info!(
-                        "Preloading collection `{}` has been finished. Loaded: {} entries",
-                        collection_path.as_str(),
-                        updated_records
+                        collection_path = collection_path.as_str(),
+                        updated_records, "Preloading collection has been finished.",
                     );
                 }
                 FirestoreCacheCollectionLoadMode::PreloadNone => {
                     let tx = self.redb.begin_write()?;
-                    debug!(
-                        "Creating corresponding collection table `{}`",
-                        collection_path
-                    );
+                    debug!(collection_path, "Creating corresponding collection table.",);
                     tx.open_table(td)?;
                     tx.commit()?;
                 }
@@ -289,8 +283,8 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             let write_txn = self.redb.begin_write()?;
             {
                 debug!(
-                    "Invalidating {} and draining the corresponding table",
-                    collection_path
+                    collection_path,
+                    "Invalidating collection and draining the corresponding table.",
                 );
                 let mut table = write_txn.open_table(td)?;
                 table.drain::<&str>(..)?;
@@ -310,9 +304,10 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             FirestoreListenEvent::DocumentChange(doc_change) => {
                 if let Some(doc) = doc_change.document {
                     trace!(
-                        "Writing document to cache due to listener event: {:?}",
-                        doc.name
+                        doc_name = ?doc.name,
+                        "Writing document to cache due to listener event.",
                     );
+
                     self.write_document(&doc)?;
                 }
                 Ok(())
@@ -322,10 +317,12 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                 let write_txn = self.redb.begin_write()?;
                 let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
                 let mut table = write_txn.open_table(td)?;
+
                 trace!(
-                    "Removing document from cache due to listener event: {:?}",
-                    doc_deleted.document.as_str()
+                    deleted_doc = ?doc_deleted.document.as_str(),
+                    "Removing document from cache due to listener event.",
                 );
+
                 table.remove(document_id)?;
                 Ok(())
             }

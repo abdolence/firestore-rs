@@ -121,9 +121,9 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            "Querying stream of documents in {:?} took {}ms",
-                            params.collection_id,
-                            query_duration.num_milliseconds()
+                            collection_id = ?params.collection_id,
+                            duration_milliseconds = query_duration.num_milliseconds(),
+                            "Queried stream of documents.",
                         );
                     });
 
@@ -134,10 +134,10 @@ impl FirestoreDb {
                         if db_err.retry_possible && retries < self.inner.options.max_retries =>
                     {
                         warn!(
-                            "Failed with {}. Retrying: {}/{}",
-                            db_err,
-                            retries + 1,
-                            self.inner.options.max_retries
+                            err = %db_err,
+                            current_retry = retries + 1,
+                            max_retries = self.inner.options.max_retries,
+                            "Failed to stream query. Retrying up to the specified number of times.",
                         );
 
                         self.stream_query_doc_with_retries(params, retries + 1, span)
@@ -193,7 +193,7 @@ impl FirestoreDb {
                         FirestoreCachedValue::UseCached(stream) => {
                             span.record("/firestore/cache_result", "hit");
                             span.in_scope(|| {
-                                debug!("Querying {} documents from cache", collection_id);
+                                debug!(collection_id, "Querying documents from cache.");
                             });
                             Ok(FirestoreCachedValue::UseCached(stream))
                         }
@@ -204,9 +204,8 @@ impl FirestoreDb {
                                 FirestoreDbSessionCacheMode::ReadCachedOnly(_)
                             ) {
                                 span.in_scope(|| {
-                                    debug!(
-                                "Cache doesn't have suitable documents for {}, but cache mode is ReadCachedOnly so returning empty stream",
-                                collection_id.as_str()
+                                    debug!(collection_id,
+                                "Cache doesn't have suitable documents, but cache mode is ReadCachedOnly so returning empty stream.",
                             );
                                 });
                                 Ok(FirestoreCachedValue::UseCached(Box::pin(
@@ -215,8 +214,8 @@ impl FirestoreDb {
                             } else {
                                 span.in_scope(|| {
                                     debug!(
-                                        "Querying {} documents from cache skipped",
-                                        collection_id
+                                        collection_id,
+                                        "Querying documents from cache skipped.",
                                     );
                                 });
                                 Ok(FirestoreCachedValue::SkipCache)
@@ -248,7 +247,7 @@ impl FirestoreQuerySupport for FirestoreDb {
             future::ready(match doc_res {
                 Ok(doc) => Some(doc),
                 Err(err) => {
-                    error!("Error occurred while consuming query: {}", err);
+                    error!(%err, "Error occurred while consuming query.");
                     None
                 }
             })
@@ -284,7 +283,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                 Ok(Some(doc)) => Some(Ok(doc)),
                 Ok(None) => None,
                 Err(err) => {
-                    error!("Error occurred while consuming query: {}", err);
+                    error!(%err, "Error occurred while consuming query.");
                     Some(Err(err))
                 }
             })
@@ -315,8 +314,8 @@ impl FirestoreQuerySupport for FirestoreDb {
                 Ok(obj) => Some(obj),
                 Err(err) => {
                     error!(
-                        "Error occurred while converting query document in a stream: {}",
-                        err
+                        %err,
+                        "Error occurred while converting query document in a stream.",
                     );
                     None
                 }
@@ -437,8 +436,8 @@ impl FirestoreQuerySupport for FirestoreDb {
 
         span.in_scope(|| {
             debug!(
-                "Running query on partitions with max parallelism: {}",
-                parallelism
+                parallelism,
+                "Running query on partitions with specified max parallelism.",
             )
         });
 
@@ -451,7 +450,7 @@ impl FirestoreQuerySupport for FirestoreDb {
         if cursors.is_empty() {
             span.in_scope(|| {
                 debug!(
-                    "The server detected the query has too few results to be partitioned. Falling back to normal query"
+                    "The server detected the query has too few results to be partitioned. Falling back to normal query."
                 )
             });
             let doc_stream = self
@@ -472,13 +471,18 @@ impl FirestoreQuerySupport for FirestoreDb {
                 mpsc::unbounded_channel::<FirestoreResult<(FirestorePartition, Document)>>();
 
             futures::stream::iter(cursors_pairs.windows(2))
-                .map(|cursor_pair| (cursor_pair, tx.clone(), partition_params.clone(), span.clone()))
+                .map(|cursor_pair| {
+                    (
+                        cursor_pair,
+                        tx.clone(),
+                        partition_params.clone(),
+                        span.clone(),
+                    )
+                })
                 .for_each_concurrent(
                     Some(parallelism),
                     |(cursor_pair, tx, partition_params, span)| async move {
-                        span.in_scope(|| {
-                            debug!("Streaming partition cursor {:?}",cursor_pair)
-                        });
+                        span.in_scope(|| debug!(?cursor_pair, "Streaming partition cursor."));
 
                         let mut params_with_cursors = partition_params.query_params;
                         if let Some(first_cursor) = cursor_pair.first() {
@@ -488,40 +492,45 @@ impl FirestoreQuerySupport for FirestoreDb {
                             params_with_cursors.mopt_end_at(last_cursor.clone());
                         }
 
-                        let partition = FirestorePartition::new().opt_start_at(params_with_cursors.start_at.clone()).opt_end_at(params_with_cursors.end_at.clone());
+                        let partition = FirestorePartition::new()
+                            .opt_start_at(params_with_cursors.start_at.clone())
+                            .opt_end_at(params_with_cursors.end_at.clone());
 
                         match self.stream_query_doc_with_errors(params_with_cursors).await {
                             Ok(result_stream) => {
                                 result_stream
-                                    .map(|doc_res| (doc_res, tx.clone(), span.clone(), partition.clone()))
+                                    .map(|doc_res| {
+                                        (doc_res, tx.clone(), span.clone(), partition.clone())
+                                    })
                                     .for_each(|(doc_res, tx, span, partition)| async move {
-
                                         let message = doc_res.map(|doc| (partition.clone(), doc));
                                         if let Err(err) = tx.send(message) {
                                             span.in_scope(|| {
                                                 warn!(
-                                                    "Unable to send result for partition {:?}:{:?}",
-                                                    partition,
-                                                    err
+                                                    %err,
+                                                    ?partition,
+                                                    "Unable to send result for partition.",
                                                 )
                                             })
                                         };
-                                    }).await;
-                            },
+                                    })
+                                    .await;
+                            }
                             Err(err) => {
                                 if let Err(err) = tx.send(Err(err)) {
                                     span.in_scope(|| {
                                         warn!(
-                                                "Unable to send result for partition cursor {:?} error {:?}",
-                                                cursor_pair,
-                                                err
-                                            )
+                                            ?err,
+                                            ?cursor_pair,
+                                            "Unable to send result for partition cursor.",
+                                        )
                                     })
                                 };
                             }
                         }
                     },
-                ).await;
+                )
+                .await;
 
             Ok(Box::pin(
                 tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
