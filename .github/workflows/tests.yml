@@ -8,8 +8,8 @@ env:
   GCP_PROJECT: latestbit
   GCP_PROJECT_ID: 288860578009
 concurrency:
-  group: ${{ github.head_ref || github.run_id }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref_protected && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,9 +18,8 @@ jobs:
       id-token: 'write'
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
           toolchain: stable
           components: rustfmt, clippy
       - name: Authenticate to Google Cloud development
