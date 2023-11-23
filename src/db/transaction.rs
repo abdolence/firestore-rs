@@ -83,8 +83,6 @@ impl<'a> FirestoreTransaction<'a> {
             self.transaction_span.in_scope(|| {
                 debug!("Transaction has been committed without any writes.");
             });
-
-            return Ok(FirestoreTransactionResponse::new(Vec::new()));
         }
 
         let request = gcloud_sdk::tonic::Request::new(CommitRequest {
