@@ -24,7 +24,7 @@ jobs:
           components: rustfmt, clippy
       - name: Authenticate to Google Cloud development
         id: auth
-        uses: google-github-actions/auth@v1
+        uses: google-github-actions/auth@v2
         if: github.ref == 'refs/heads/master'
         with:
           workload_identity_provider: 'projects/${{ env.GCP_PROJECT_ID }}/locations/global/workloadIdentityPools/lb-github-identity-pool/providers/lb-github-identity-pool-provider'
