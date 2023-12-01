@@ -71,13 +71,10 @@ pub mod serialize_as_null_timestamp {
     where
         S: Serializer,
     {
-        match date {
-            Some(v) => serializer.serialize_newtype_struct(
-                crate::firestore_serde::FIRESTORE_TS_NULL_TYPE_TAG_TYPE,
-                v,
-            ),
-            None => serializer.serialize_none(),
-        }
+        serializer.serialize_newtype_struct(
+            crate::firestore_serde::FIRESTORE_TS_NULL_TYPE_TAG_TYPE,
+            date,
+        )
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
