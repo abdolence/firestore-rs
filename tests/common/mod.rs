@@ -83,3 +83,28 @@ where
     }
     .boxed()
 }
+
+#[derive(Debug)]
+pub struct CustomUserError {
+    details: String,
+}
+
+impl CustomUserError {
+    pub fn new(msg: &str) -> CustomUserError {
+        CustomUserError {
+            details: msg.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for CustomUserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.details)
+    }
+}
+
+impl std::error::Error for CustomUserError {
+    fn description(&self) -> &str {
+        &self.details
+    }
+}

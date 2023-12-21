@@ -130,6 +130,14 @@ impl<'a> FirestoreTransaction<'a> {
         Ok(())
     }
 
+    pub fn finish(&mut self) -> FirestoreResult<()> {
+        self.finished = true;
+        self.transaction_span.in_scope(|| {
+            debug!("Transaction has been finished locally without rolling back to be able to retry it again.");
+        });
+        Ok(())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.writes.is_empty()
     }
@@ -216,11 +224,13 @@ impl FirestoreDb {
                             warn!(%err, delay = ?retry_after, "Transient error occurred in transaction function. Retrying after the specified delay.");
                         });
                         initial_backoff_duration = retry_after;
+                        transaction.finish().ok();
                     }
                     BackoffError::Permanent(err) => {
+                        transaction.rollback().await.ok();
                         return Err(FirestoreError::ErrorInTransaction(
                             FirestoreErrorInTransaction::new(transaction_id.clone(), Box::new(err)),
-                        ))
+                        ));
                     }
                 },
             }
@@ -258,6 +268,7 @@ impl FirestoreDb {
             );
 
             let ret_val = func(cdb, &mut transaction).await.map_err(|backoff_err| {
+                transaction.finish().ok();
                 match backoff_err {
                     BackoffError::Transient { err, retry_after } => {
                         transaction_span.in_scope(|| {
