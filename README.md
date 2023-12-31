@@ -26,7 +26,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
     - In-memory cache;
     - Persistent cache;
 - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
-  that automatically detects GKE environment or application default accounts for local development;
+  that automatically detects GCE environment or application default accounts for local development;
 
 ## Quick start
 
