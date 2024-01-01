@@ -22,7 +22,7 @@ struct MyTestStructure {
 async fn my_token() -> gcloud_sdk::error::Result<gcloud_sdk::Token> {
     Ok(gcloud_sdk::Token::new(
         "Bearer".to_string(),
-        gcloud_sdk::SecretValue::from(config_env_var("TOKEN_VALUE")?),
+        config_env_var("TOKEN_VALUE").expect("TOKEN_VALUE must be specified").into(),
         chrono::Utc::now().add(std::time::Duration::from_secs(3600)),
     ))
 }
@@ -51,22 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db
         .fluent()
         .select()
-        .fields(
-            paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at}),
-        )
         .from(TEST_COLLECTION_NAME)
-        .filter(|q| {
-            q.for_all([
-                q.field(path!(MyTestStructure::some_num)).is_not_null(),
-                q.field(path!(MyTestStructure::some_string)).eq("Test"),
-                Some("Test2")
-                    .and_then(|value| q.field(path!(MyTestStructure::one_more_string)).eq(value)),
-            ])
-        })
-        .order_by([(
-            path!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Descending,
-        )])
         .obj()
         .stream_query_with_errors()
         .await?;
