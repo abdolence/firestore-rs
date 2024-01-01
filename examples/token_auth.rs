@@ -22,7 +22,9 @@ struct MyTestStructure {
 async fn my_token() -> gcloud_sdk::error::Result<gcloud_sdk::Token> {
     Ok(gcloud_sdk::Token::new(
         "Bearer".to_string(),
-        config_env_var("TOKEN_VALUE").expect("TOKEN_VALUE must be specified").into(),
+        config_env_var("TOKEN_VALUE")
+            .expect("TOKEN_VALUE must be specified")
+            .into(),
         chrono::Utc::now().add(std::time::Duration::from_secs(3600)),
     ))
 }
