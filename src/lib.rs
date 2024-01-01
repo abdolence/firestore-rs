@@ -135,10 +135,13 @@ mod firestore_serde;
 pub use firestore_serde::*;
 
 mod struct_path_macro;
-use crate::errors::FirestoreError;
+
+#[allow(unused_imports)]
 pub use struct_path_macro::*;
 
 pub mod timestamp_utils;
+
+use crate::errors::FirestoreError;
 
 pub type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
 
