@@ -89,6 +89,7 @@ pub struct CustomUserError {
     details: String,
 }
 
+#[allow(dead_code)]
 impl CustomUserError {
     pub fn new(msg: &str) -> CustomUserError {
         CustomUserError {
