@@ -88,12 +88,12 @@ impl FirestoreDb {
         }))
     }
 
-    fn stream_query_doc_with_retries(
+    fn stream_query_doc_with_retries<'b>(
         &self,
         params: FirestoreQueryParams,
         retries: usize,
         span: Span,
-    ) -> BoxFuture<FirestoreResult<BoxStream<FirestoreResult<Option<Document>>>>> {
+    ) -> BoxFuture<FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
         async move {
             let query_request = self.create_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
