@@ -6,7 +6,7 @@ use futures::stream::BoxStream;
 use moka::future::{Cache, CacheBuilder};
 
 use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
-use futures::{future, StreamExt};
+use futures::StreamExt;
 use std::collections::HashMap;
 use tracing::*;
 
@@ -111,39 +111,23 @@ impl FirestoreMemoryCacheBackend {
         Ok(())
     }
 
-    async fn query_cached_docs(
+    async fn query_cached_docs<'b>(
         &self,
         collection_path: &str,
         query_engine: FirestoreCacheQueryEngine,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
         match self.collection_caches.get(collection_path) {
             Some(mem_cache) => {
-                let filtered_stream = Box::pin(
-                    futures::stream::unfold(
-                        (query_engine.clone(), mem_cache.iter()),
-                        |(query_engine, mut iter)| async move {
-                            match iter.next() {
-                                Some((_, doc)) => {
-                                    if query_engine.matches_doc(&doc) {
-                                        Some((Ok(Some(doc)), (query_engine, iter)))
-                                    } else {
-                                        Some((Ok(None), (query_engine, iter)))
-                                    }
-                                }
-                                None => None,
-                            }
-                        },
-                    )
-                    .filter_map(|doc_res| {
-                        future::ready(match doc_res {
-                            Ok(Some(doc)) => Some(Ok(doc)),
-                            Ok(None) => None,
-                            Err(err) => Some(Err(err)),
-                        })
-                    }),
-                );
+                let filtered_results: Vec<FirestoreResult<FirestoreDocument>> = mem_cache
+                    .iter()
+                    .filter(|(_, doc)| query_engine.matches_doc(doc))
+                    .map(|(_, doc)| Ok(doc))
+                    .collect();
 
-                let output_stream = query_engine.process_query_stream(filtered_stream).await?;
+                let filtered_stream = futures::stream::iter(filtered_results);
+                let output_stream = query_engine
+                    .process_query_stream(Box::pin(filtered_stream))
+                    .await?;
 
                 Ok(output_stream)
             }
@@ -255,23 +239,29 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
         }
     }
 
-    async fn list_all_docs(
+    async fn list_all_docs<'b>(
         &self,
         collection_path: &str,
-    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
+    {
         match self.collection_caches.get(collection_path) {
-            Some(mem_cache) => Ok(FirestoreCachedValue::UseCached(Box::pin(
-                futures::stream::iter(mem_cache.iter().map(|(_, doc)| Ok(doc))),
-            ))),
+            Some(mem_cache) => {
+                let all_docs: Vec<FirestoreResult<FirestoreDocument>> =
+                    mem_cache.iter().map(|(_, doc)| Ok(doc)).collect();
+                Ok(FirestoreCachedValue::UseCached(Box::pin(
+                    futures::stream::iter(all_docs),
+                )))
+            }
             None => Ok(FirestoreCachedValue::SkipCache),
         }
     }
 
-    async fn query_docs(
+    async fn query_docs<'b>(
         &self,
         collection_path: &str,
         query: &FirestoreQueryParams,
-    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
+    {
         let simple_query_engine = FirestoreCacheQueryEngine::new(query);
         if simple_query_engine.params_supported() {
             Ok(FirestoreCachedValue::UseCached(

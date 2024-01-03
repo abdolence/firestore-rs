@@ -211,11 +211,11 @@ impl FirestorePersistentCacheBackend {
         Ok(len)
     }
 
-    async fn query_cached_docs(
+    async fn query_cached_docs<'b>(
         &self,
         collection_path: &str,
         query_engine: FirestoreCacheQueryEngine,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<FirestoreDocument>>> {
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
         let read_tx = self.redb.begin_read()?;
@@ -354,10 +354,11 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         Ok(())
     }
 
-    async fn list_all_docs(
+    async fn list_all_docs<'b>(
         &self,
         collection_path: &str,
-    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
+    {
         if self.config.collections.get(collection_path).is_some() {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
@@ -381,11 +382,12 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         }
     }
 
-    async fn query_docs(
+    async fn query_docs<'b>(
         &self,
         collection_path: &str,
         query: &FirestoreQueryParams,
-    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<FirestoreDocument>>>> {
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
+    {
         if self.config.collections.get(collection_path).is_some() {
             // For now only basic/simple query all supported
             let simple_query_engine = FirestoreCacheQueryEngine::new(query);
