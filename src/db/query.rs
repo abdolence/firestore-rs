@@ -18,33 +18,34 @@ pub type PeekableBoxStream<'a, T> = futures::stream::Peekable<BoxStream<'a, T>>;
 pub trait FirestoreQuerySupport {
     async fn query_doc(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<Document>>;
 
-    async fn stream_query_doc<'a>(
-        &'a self,
+    async fn stream_query_doc<'b>(
+        &self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, Document>>;
+    ) -> FirestoreResult<BoxStream<'b, Document>>;
 
-    async fn stream_query_doc_with_errors<'a>(
-        &'a self,
+    async fn stream_query_doc_with_errors<'b>(
+        &self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<Document>>>;
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>>;
 
     async fn query_obj<T>(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
     where
         for<'de> T: Deserialize<'de>;
-    async fn stream_query_obj<'a, T>(
-        &'a self,
+    async fn stream_query_obj<'b, T>(
+        &self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, T>>
-    where
-        for<'de> T: Deserialize<'de>;
-
-    async fn stream_query_obj_with_errors<'a, T>(
-        &'a self,
-        params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'b, T>>
     where
         for<'de> T: Deserialize<'de>,
-        T: Send + 'a;
+        T: Send + 'b;
+
+    async fn stream_query_obj_with_errors<'b, T>(
+        &self,
+        params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b;
 
     fn stream_partition_cursors_with_errors(
         &self,
@@ -152,10 +153,10 @@ impl FirestoreDb {
 
     #[cfg(feature = "caching")]
     #[inline]
-    async fn query_docs_from_cache<'a>(
-        &'a self,
+    async fn query_docs_from_cache<'b>(
+        &self,
         params: &FirestoreQueryParams,
-    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'a, FirestoreResult<FirestoreDocument>>>>
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
         match &params.collection_id {
             FirestoreQueryCollection::Group(_) => Ok(FirestoreCachedValue::SkipCache),
@@ -237,10 +238,10 @@ impl FirestoreQuerySupport for FirestoreDb {
         Ok(doc_stream.try_collect::<Vec<Document>>().await?)
     }
 
-    async fn stream_query_doc<'a>(
-        &'a self,
+    async fn stream_query_doc<'b>(
+        &self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, Document>> {
+    ) -> FirestoreResult<BoxStream<'b, Document>> {
         let doc_stream = self.stream_query_doc_with_errors(params).await?;
 
         Ok(Box::pin(doc_stream.filter_map(|doc_res| {
@@ -254,10 +255,10 @@ impl FirestoreQuerySupport for FirestoreDb {
         })))
     }
 
-    async fn stream_query_doc_with_errors<'a>(
-        &'a self,
+    async fn stream_query_doc_with_errors<'b>(
+        &self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<Document>>> {
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         #[cfg(feature = "caching")]
         {
             if let FirestoreCachedValue::UseCached(stream) =
@@ -301,12 +302,13 @@ impl FirestoreQuerySupport for FirestoreDb {
             .collect()
     }
 
-    async fn stream_query_obj<'a, T>(
-        &'a self,
+    async fn stream_query_obj<'b, T>(
+        &self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, T>>
+    ) -> FirestoreResult<BoxStream<'b, T>>
     where
         for<'de> T: Deserialize<'de>,
+        T: 'b,
     {
         let doc_stream = self.stream_query_doc(params).await?;
         Ok(Box::pin(doc_stream.filter_map(|doc| async move {
@@ -323,13 +325,13 @@ impl FirestoreQuerySupport for FirestoreDb {
         })))
     }
 
-    async fn stream_query_obj_with_errors<'a, T>(
-        &'a self,
+    async fn stream_query_obj_with_errors<'b, T>(
+        &self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
     where
         for<'de> T: Deserialize<'de>,
-        T: Send + 'a,
+        T: Send + 'b,
     {
         let doc_stream = self.stream_query_doc_with_errors(params).await?;
         Ok(Box::pin(doc_stream.and_then(|doc| {

@@ -15,17 +15,17 @@ impl FirestoreQuerySupport for MockDatabase {
         unreachable!()
     }
 
-    async fn stream_query_doc<'a>(
-        &'a self,
+    async fn stream_query_doc<'b>(
+        &self,
         _params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, Document>> {
+    ) -> FirestoreResult<BoxStream<'b, Document>> {
         unreachable!()
     }
 
-    async fn stream_query_doc_with_errors<'a>(
-        &'a self,
+    async fn stream_query_doc_with_errors<'b>(
+        &self,
         _params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<Document>>> {
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         unreachable!()
     }
 
@@ -36,23 +36,24 @@ impl FirestoreQuerySupport for MockDatabase {
         unreachable!()
     }
 
-    async fn stream_query_obj<'a, T>(
-        &'a self,
+    async fn stream_query_obj<'b, T>(
+        &self,
         _params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, T>>
+    ) -> FirestoreResult<BoxStream<'b, T>>
     where
         for<'de> T: Deserialize<'de>,
+        T: 'b,
     {
         unreachable!()
     }
 
-    async fn stream_query_obj_with_errors<'a, T>(
-        &'a self,
+    async fn stream_query_obj_with_errors<'b, T>(
+        &self,
         _params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
     where
         for<'de> T: Deserialize<'de>,
-        T: Send + 'a,
+        T: Send + 'b,
     {
         unreachable!()
     }
@@ -236,36 +237,36 @@ impl FirestoreListingSupport for MockDatabase {
         unreachable!()
     }
 
-    async fn stream_list_doc(
+    async fn stream_list_doc<'b>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<Document>> {
+    ) -> FirestoreResult<BoxStream<'b, Document>> {
         unreachable!()
     }
 
-    async fn stream_list_doc_with_errors(
+    async fn stream_list_doc_with_errors<'b>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<Document>>> {
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         unreachable!()
     }
 
-    async fn stream_list_obj<T>(
+    async fn stream_list_obj<'b, T>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<T>>
+    ) -> FirestoreResult<BoxStream<'b, T>>
     where
-        for<'de> T: Deserialize<'de>,
+        for<'de> T: Deserialize<'de> + 'b,
     {
         unreachable!()
     }
 
-    async fn stream_list_obj_with_errors<T>(
+    async fn stream_list_obj_with_errors<'b, T>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
     where
-        for<'de> T: Deserialize<'de>,
+        for<'de> T: Deserialize<'de> + 'b,
     {
         unreachable!()
     }

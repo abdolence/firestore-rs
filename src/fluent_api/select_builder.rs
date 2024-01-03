@@ -273,15 +273,18 @@ where
         self.db.query_obj(self.params).await
     }
 
-    pub async fn stream_query(self) -> FirestoreResult<BoxStream<'a, T>> {
+    pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, T>>
+    where
+        T: 'b,
+    {
         self.db.stream_query_obj(self.params).await
     }
 
-    pub async fn stream_query_with_errors(
+    pub async fn stream_query_with_errors<'b>(
         self,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
     where
-        T: 'a,
+        T: 'b,
     {
         self.db.stream_query_obj_with_errors(self.params).await
     }
