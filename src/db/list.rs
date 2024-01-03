@@ -57,29 +57,29 @@ pub trait FirestoreListingSupport {
         params: FirestoreListDocParams,
     ) -> FirestoreResult<FirestoreListDocResult>;
 
-    async fn stream_list_doc(
+    async fn stream_list_doc<'b>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<Document>>;
+    ) -> FirestoreResult<BoxStream<'b, Document>>;
 
-    async fn stream_list_doc_with_errors(
+    async fn stream_list_doc_with_errors<'b>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<Document>>>;
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>>;
 
-    async fn stream_list_obj<T>(
+    async fn stream_list_obj<'b, T>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<T>>
+    ) -> FirestoreResult<BoxStream<'b, T>>
     where
-        for<'de> T: Deserialize<'de>;
+        for<'de> T: Deserialize<'de> + 'b;
 
-    async fn stream_list_obj_with_errors<T>(
+    async fn stream_list_obj_with_errors<'b, T>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
     where
-        for<'de> T: Deserialize<'de>;
+        for<'de> T: Deserialize<'de> + 'b;
 
     async fn list_collection_ids(
         &self,
@@ -113,66 +113,17 @@ impl FirestoreListingSupport for FirestoreDb {
         self.list_doc_with_retries(params, 0, span).await
     }
 
-    async fn stream_list_doc_with_errors(
+    async fn stream_list_doc_with_errors<'b>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<Document>>> {
-        #[cfg(feature = "caching")]
-        {
-            if let FirestoreCachedValue::UseCached(stream) =
-                self.list_docs_from_cache(&params).await?
-            {
-                return Ok(stream);
-            }
-        }
-        let stream: BoxStream<FirestoreResult<Document>> = Box::pin(
-            futures::stream::unfold(Some(params), move |maybe_params| async move {
-                if let Some(params) = maybe_params {
-                    let collection_str = params.collection_id.to_string();
-
-                    let span = span!(
-                        Level::DEBUG,
-                        "Firestore Streaming ListDocs",
-                        "/firestore/collection_name" = collection_str.as_str(),
-                        "/firestore/response_time" = field::Empty
-                    );
-
-                    match self.list_doc_with_retries(params.clone(), 0, span).await {
-                        Ok(results) => {
-                            if let Some(next_page_token) = results.page_token.clone() {
-                                Some((Ok(results), Some(params.with_page_token(next_page_token))))
-                            } else {
-                                Some((Ok(results), None))
-                            }
-                        }
-                        Err(err) => {
-                            error!(%err, "Error occurred while consuming documents.");
-                            Some((Err(err), None))
-                        }
-                    }
-                } else {
-                    None
-                }
-            })
-            .flat_map(|doc_res| {
-                futures::stream::iter(match doc_res {
-                    Ok(results) => results
-                        .documents
-                        .into_iter()
-                        .map(Ok::<Document, FirestoreError>)
-                        .collect(),
-                    Err(err) => vec![Err(err)],
-                })
-            }),
-        );
-
-        Ok(stream)
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
+        self.stream_list_doc_with_retries(params).await
     }
 
-    async fn stream_list_doc(
+    async fn stream_list_doc<'b>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<Document>> {
+    ) -> FirestoreResult<BoxStream<'b, Document>> {
         let doc_stream = self.stream_list_doc_with_errors(params).await?;
         Ok(Box::pin(doc_stream.filter_map(|doc_res| {
             future::ready(match doc_res {
@@ -185,12 +136,12 @@ impl FirestoreListingSupport for FirestoreDb {
         })))
     }
 
-    async fn stream_list_obj<T>(
+    async fn stream_list_obj<'b, T>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<T>>
+    ) -> FirestoreResult<BoxStream<'b, T>>
     where
-        for<'de> T: Deserialize<'de>,
+        for<'de> T: Deserialize<'de> + 'b,
     {
         let doc_stream = self.stream_list_doc(params).await?;
 
@@ -208,12 +159,12 @@ impl FirestoreListingSupport for FirestoreDb {
         })))
     }
 
-    async fn stream_list_obj_with_errors<T>(
+    async fn stream_list_obj_with_errors<'b, T>(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<T>>>
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
     where
-        for<'de> T: Deserialize<'de>,
+        for<'de> T: Deserialize<'de> + 'b,
     {
         let doc_stream = self.stream_list_doc_with_errors(params).await?;
 
@@ -338,7 +289,7 @@ impl FirestoreDb {
         })
     }
 
-    fn list_doc_with_retries<'a, 'b>(
+    fn list_doc_with_retries<'b>(
         &self,
         params: FirestoreListDocParams,
         retries: usize,
@@ -353,7 +304,7 @@ impl FirestoreDb {
         }
     }
 
-    fn list_doc_with_retries_inner<'a, 'b>(
+    fn list_doc_with_retries_inner<'b>(
         db_inner: Arc<FirestoreDbInner>,
         list_request: ListDocumentsRequest,
         retries: usize,
@@ -414,6 +365,78 @@ impl FirestoreDb {
             }
         }
         .boxed()
+    }
+
+    async fn stream_list_doc_with_retries<'b>(
+        &self,
+        params: FirestoreListDocParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
+        #[cfg(feature = "caching")]
+        {
+            if let FirestoreCachedValue::UseCached(stream) =
+                self.list_docs_from_cache(&params).await?
+            {
+                return Ok(stream);
+            }
+        }
+        let list_request = self.create_list_doc_request(params.clone())?;
+        Self::stream_list_doc_with_retries_inner(self.inner.clone(), list_request)
+    }
+
+    fn stream_list_doc_with_retries_inner<'b>(
+        db_inner: Arc<FirestoreDbInner>,
+        list_request: ListDocumentsRequest,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
+        let stream: BoxStream<FirestoreResult<Document>> = Box::pin(
+            futures::stream::unfold(
+                (db_inner, Some(list_request)),
+                move |(db_inner, list_request)| async move {
+                    if let Some(mut list_request) = list_request {
+                        let span = span!(
+                            Level::DEBUG,
+                            "Firestore Streaming ListDocs",
+                            "/firestore/collection_name" = list_request.collection_id.as_str(),
+                            "/firestore/response_time" = field::Empty
+                        );
+                        match Self::list_doc_with_retries_inner(
+                            db_inner.clone(),
+                            list_request.clone(),
+                            0,
+                            span,
+                        )
+                        .await
+                        {
+                            Ok(results) => {
+                                if let Some(next_page_token) = results.page_token.clone() {
+                                    list_request.page_token = next_page_token;
+                                    Some((Ok(results), (db_inner, Some(list_request))))
+                                } else {
+                                    Some((Ok(results), (db_inner, None)))
+                                }
+                            }
+                            Err(err) => {
+                                error!(%err, "Error occurred while consuming documents.");
+                                Some((Err(err), (db_inner, None)))
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                },
+            )
+            .flat_map(|doc_res| {
+                futures::stream::iter(match doc_res {
+                    Ok(results) => results
+                        .documents
+                        .into_iter()
+                        .map(Ok::<Document, FirestoreError>)
+                        .collect(),
+                    Err(err) => vec![Err(err)],
+                })
+            }),
+        );
+
+        Ok(stream)
     }
 
     fn create_list_collection_ids_request(
@@ -501,10 +524,10 @@ impl FirestoreDb {
 
     #[cfg(feature = "caching")]
     #[inline]
-    pub async fn list_docs_from_cache<'a>(
-        &'a self,
+    pub async fn list_docs_from_cache<'b>(
+        &self,
         params: &FirestoreListDocParams,
-    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'a, FirestoreResult<FirestoreDocument>>>>
+    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
         if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) =
             self.session_params.cache_mode
