@@ -1,3 +1,4 @@
+use crate::db::FirestoreDbInner;
 use crate::*;
 use async_trait::async_trait;
 use chrono::prelude::*;
@@ -11,6 +12,7 @@ use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
 use serde::Deserialize;
 use std::future;
+use std::sync::Arc;
 use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
@@ -108,7 +110,7 @@ impl FirestoreListingSupport for FirestoreDb {
             "/firestore/response_time" = field::Empty
         );
 
-        self.list_doc_with_retries(params, 0, &span).await
+        self.list_doc_with_retries(params, 0, span).await
     }
 
     async fn stream_list_doc_with_errors(
@@ -135,7 +137,7 @@ impl FirestoreListingSupport for FirestoreDb {
                         "/firestore/response_time" = field::Empty
                     );
 
-                    match self.list_doc_with_retries(params.clone(), 0, &span).await {
+                    match self.list_doc_with_retries(params.clone(), 0, span).await {
                         Ok(results) => {
                             if let Some(next_page_token) = results.page_token.clone() {
                                 Some((Ok(results), Some(params.with_page_token(next_page_token))))
@@ -303,8 +305,8 @@ impl FirestoreDb {
     fn create_list_doc_request(
         &self,
         params: FirestoreListDocParams,
-    ) -> FirestoreResult<gcloud_sdk::tonic::Request<ListDocumentsRequest>> {
-        Ok(gcloud_sdk::tonic::Request::new(ListDocumentsRequest {
+    ) -> FirestoreResult<ListDocumentsRequest> {
+        Ok(ListDocumentsRequest {
             parent: params
                 .parent
                 .as_ref()
@@ -333,23 +335,37 @@ impl FirestoreDb {
                 .map(|selector| selector.try_into())
                 .transpose()?,
             show_missing: false,
-        }))
+        })
     }
 
-    fn list_doc_with_retries<'a>(
-        &'a self,
+    fn list_doc_with_retries<'a, 'b>(
+        &self,
         params: FirestoreListDocParams,
         retries: usize,
-        span: &'a Span,
-    ) -> BoxFuture<'a, FirestoreResult<FirestoreListDocResult>> {
+        span: Span,
+    ) -> BoxFuture<'b, FirestoreResult<FirestoreListDocResult>> {
+        match self.create_list_doc_request(params) {
+            Ok(list_request) => {
+                Self::list_doc_with_retries_inner(self.inner.clone(), list_request, retries, span)
+                    .boxed()
+            }
+            Err(err) => futures::future::err(err).boxed(),
+        }
+    }
+
+    fn list_doc_with_retries_inner<'a, 'b>(
+        db_inner: Arc<FirestoreDbInner>,
+        list_request: ListDocumentsRequest,
+        retries: usize,
+        span: Span,
+    ) -> BoxFuture<'b, FirestoreResult<FirestoreListDocResult>> {
         async move {
-            let list_request = self.create_list_doc_request(params.clone())?;
             let begin_utc: DateTime<Utc> = Utc::now();
 
-            match self
-                .client()
-                .get()
-                .list_documents(list_request)
+            match db_inner.client.get()
+                .list_documents(
+                    gcloud_sdk::tonic::Request::new(list_request.clone())
+                )
                 .map_err(|e| e.into())
                 .await
             {
@@ -371,7 +387,7 @@ impl FirestoreDb {
                     );
                     span.in_scope(|| {
                         debug!(
-                            collection_id = params.collection_id,
+                            collection_id = list_request.collection_id.as_str(),
                             duration_milliseconds = listing_duration.num_milliseconds(),
                             num_documents = result.documents.len(),
                             "Listed documents.",
@@ -382,16 +398,16 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
+                        if db_err.retry_possible && retries < db_inner.options.max_retries =>
                     {
                         warn!(
                             err = %db_err,
                             current_retry = retries + 1,
-                            max_retries = self.inner.options.max_retries,
+                            max_retries = db_inner.options.max_retries,
                             "Failed to list documents. Retrying up to the specified number of times.",
                         );
 
-                        self.list_doc_with_retries(params, retries + 1, span).await
+                        Self::list_doc_with_retries_inner(db_inner, list_request, retries + 1, span).await
                     }
                     _ => Err(err),
                 },
