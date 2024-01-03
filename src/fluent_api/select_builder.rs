@@ -229,13 +229,13 @@ where
         self.db.query_doc(self.params).await
     }
 
-    pub async fn stream_query(self) -> FirestoreResult<BoxStream<'a, Document>> {
+    pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, Document>> {
         self.db.stream_query_doc(self.params).await
     }
 
-    pub async fn stream_query_with_errors(
+    pub async fn stream_query_with_errors<'b>(
         self,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<Document>>> {
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         self.db.stream_query_doc_with_errors(self.params).await
     }
 }
