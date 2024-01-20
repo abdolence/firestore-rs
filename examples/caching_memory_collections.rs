@@ -119,35 +119,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("{:?}", my_struct2);
 
     println!("Getting batch by ids");
+    let cached_db = db.read_through_cache(&cache);
 
-    let my_struct1_stream: BoxStream<FirestoreResult<(String, Option<MyTestStructure>)>> = db
-        .read_through_cache(&cache)
-        .fluent()
-        .select()
-        .by_id_in(TEST_COLLECTION_NAME)
-        .obj()
-        .batch_with_errors(["test-1", "test-2"])
-        .await?;
+    let my_struct1_stream: BoxStream<FirestoreResult<(String, Option<MyTestStructure>)>> =
+        cached_db
+            .fluent()
+            .select()
+            .by_id_in(TEST_COLLECTION_NAME)
+            .obj()
+            .batch_with_errors(["test-1", "test-2"])
+            .await?;
 
     let my_structs1 = my_struct1_stream.try_collect::<Vec<_>>().await?;
     println!("{:?}", my_structs1);
 
     // Now from cache
-    let my_struct2_stream: BoxStream<FirestoreResult<(String, Option<MyTestStructure>)>> = db
-        .read_through_cache(&cache)
-        .fluent()
-        .select()
-        .by_id_in(TEST_COLLECTION_NAME)
-        .obj()
-        .batch_with_errors(["test-1", "test-2"])
-        .await?;
+    let my_struct2_stream: BoxStream<FirestoreResult<(String, Option<MyTestStructure>)>> =
+        cached_db
+            .fluent()
+            .select()
+            .by_id_in(TEST_COLLECTION_NAME)
+            .obj()
+            .batch_with_errors(["test-1", "test-2"])
+            .await?;
 
     let my_structs2 = my_struct2_stream.try_collect::<Vec<_>>().await?;
     println!("{:?}", my_structs2);
 
     // List from cache
-    let all_items_stream = db
-        .read_cached_only(&cache)
+    let cached_db = db.read_cached_only(&cache);
+    let all_items_stream = cached_db
         .fluent()
         .list()
         .from(TEST_COLLECTION_NAME)
@@ -159,8 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("{:?}", listed_items.len());
 
     // Query from cache
-    let all_items_stream = db
-        .read_cached_only(&cache)
+    let all_items_stream = cached_db
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
