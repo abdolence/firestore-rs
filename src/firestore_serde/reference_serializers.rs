@@ -1,13 +1,47 @@
 use gcloud_sdk::google::firestore::v1::value;
 use serde::{Deserialize, Serialize, Serializer};
 
+use crate::db::split_document_path;
 use crate::errors::*;
-use crate::FirestoreValue;
+use crate::{FirestoreDb, FirestoreValue};
 
 pub(crate) const FIRESTORE_REFERENCE_TYPE_TAG_TYPE: &str = "FirestoreReference";
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash, Default)]
 pub struct FirestoreReference(pub String);
+
+impl FirestoreReference {
+    /// Creates a new reference
+    pub fn new(reference: String) -> Self {
+        FirestoreReference(reference)
+    }
+
+    /// Returns the reference as a string
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Splits the reference into parent path, collection name and document id
+    /// Returns (parent_path, collection_name, document_id)
+    pub fn split(&self, db: &FirestoreDb) -> (Option<String>, String, String) {
+        let (parent_raw_path, document_id) = split_document_path(self.as_str());
+
+        let parent_path = parent_raw_path
+            .replace(db.get_database_path(), "")
+            .replace("/documents/", "");
+
+        let split_pos = parent_path.rfind('/').map(|pos| pos + 1).unwrap_or(0);
+        if split_pos == 0 {
+            (None, parent_path, document_id.to_string())
+        } else {
+            (
+                Some(parent_path[..split_pos].to_string()),
+                parent_path[split_pos..].to_string(),
+                document_id.to_string(),
+            )
+        }
+    }
+}
 
 pub mod serialize_as_reference {
     use serde::{Deserialize, Deserializer, Serializer};

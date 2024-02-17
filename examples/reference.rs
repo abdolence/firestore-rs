@@ -60,5 +60,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Now in the list: {:?}", objects1);
 
+    let (parent_path, collection_name, document_id) = objects1.first().unwrap().some_ref.split(&db);
+
+    println!("Document ID: {}", document_id);
+    println!("Collection name: {:?}", collection_name);
+    println!("Parent Path: {:?}", parent_path);
+
     Ok(())
 }
