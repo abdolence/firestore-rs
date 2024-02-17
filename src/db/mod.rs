@@ -356,7 +356,6 @@ where
     }
 }
 
-#[cfg(feature = "caching")]
 pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
     // Return string range the last part after '/'
     let split_pos = path.rfind('/').map(|pos| pos + 1).unwrap_or(0);
