@@ -60,7 +60,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Now in the list: {:?}", objects1);
 
-    let (parent_path, collection_name, document_id) = objects1.first().unwrap().some_ref.split(&db);
+    let (parent_path, collection_name, document_id) = objects1
+        .first()
+        .unwrap()
+        .some_ref
+        .split(db.get_documents_path());
 
     println!("Document ID: {}", document_id);
     println!("Collection name: {:?}", collection_name);

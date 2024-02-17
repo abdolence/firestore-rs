@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::db::split_document_path;
 use crate::errors::*;
-use crate::{FirestoreDb, FirestoreValue};
+use crate::FirestoreValue;
 
 pub(crate) const FIRESTORE_REFERENCE_TYPE_TAG_TYPE: &str = "FirestoreReference";
 
@@ -23,19 +23,17 @@ impl FirestoreReference {
 
     /// Splits the reference into parent path, collection name and document id
     /// Returns (parent_path, collection_name, document_id)
-    pub fn split(&self, db: &FirestoreDb) -> (Option<String>, String, String) {
+    pub fn split(&self, document_path: &str) -> (Option<String>, String, String) {
         let (parent_raw_path, document_id) = split_document_path(self.as_str());
 
-        let parent_path = parent_raw_path
-            .replace(db.get_database_path(), "")
-            .replace("/documents/", "");
+        let parent_path = parent_raw_path.replace(format!("{}/", document_path).as_str(), "");
 
         let split_pos = parent_path.rfind('/').map(|pos| pos + 1).unwrap_or(0);
         if split_pos == 0 {
             (None, parent_path, document_id.to_string())
         } else {
             (
-                Some(parent_path[..split_pos].to_string()),
+                Some(parent_path[..split_pos - 1].to_string()),
                 parent_path[split_pos..].to_string(),
                 document_id.to_string(),
             )
@@ -341,4 +339,26 @@ pub fn serialize_reference_for_firestore<T: ?Sized + Serialize>(
     }
 
     value.serialize(ReferenceSerializer { none_as_null })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reference_split() {
+        let reference = FirestoreReference::new(
+            "projects/test-project/databases/(default)/documents/test-collection/test-document-id/child-collection/child-document-id"
+                .to_string(),
+        );
+        let (parent_path, collection_name, document_id) =
+            reference.split("projects/test-project/databases/(default)/documents");
+
+        assert_eq!(
+            parent_path,
+            Some("test-collection/test-document-id".to_string())
+        );
+        assert_eq!(collection_name, "child-collection");
+        assert_eq!(document_id, "child-document-id");
+    }
 }

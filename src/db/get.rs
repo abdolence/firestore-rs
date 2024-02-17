@@ -800,7 +800,7 @@ impl FirestoreDb {
     pub(crate) async fn get_docs_by_ids_from_cache(
         &self,
         collection_id: &str,
-        full_doc_ids: &Vec<String>,
+        full_doc_ids: &[String],
         _return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<(String, Option<Document>)>>>>
     {
