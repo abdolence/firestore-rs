@@ -70,5 +70,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Collection name: {:?}", collection_name);
     println!("Parent Path: {:?}", parent_path);
 
+    // Read by reference
+    let object_returned: Option<FirestoreDocument> = db
+        .fluent()
+        .select()
+        .by_id_in(&collection_name)
+        .one(document_id)
+        .await?;
+
+    println!("Object by reference: {:?}", object_returned);
+
     Ok(())
 }
