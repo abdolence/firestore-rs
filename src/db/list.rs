@@ -151,7 +151,8 @@ impl FirestoreListingSupport for FirestoreDb {
                 Err(err) => {
                     error!(
                         %err,
-                        "Error occurred while consuming list document as a stream.",
+                        "Error occurred while deserializing a document inside a stream. Document: {}",
+                        doc.name
                     );
                     None
                 }
@@ -349,22 +350,22 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < db_inner.options.max_retries =>
-                    {
-                        warn!(
+                    if db_err.retry_possible && retries < db_inner.options.max_retries =>
+                        {
+                            warn!(
                             err = %db_err,
                             current_retry = retries + 1,
                             max_retries = db_inner.options.max_retries,
                             "Failed to list documents. Retrying up to the specified number of times.",
                         );
 
-                        Self::list_doc_with_retries_inner(db_inner, list_request, retries + 1, span).await
-                    }
+                            Self::list_doc_with_retries_inner(db_inner, list_request, retries + 1, span).await
+                        }
                     _ => Err(err),
                 },
             }
         }
-        .boxed()
+            .boxed()
     }
 
     async fn stream_list_doc_with_retries<'b>(
@@ -503,23 +504,23 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
-                    {
-                        warn!(
+                    if db_err.retry_possible && retries < self.inner.options.max_retries =>
+                        {
+                            warn!(
                             err = %db_err,
                             current_retry = retries + 1,
                             max_retries = self.inner.options.max_retries,
                             "Failed to list collection IDs. Retrying up to the specified number of times.",
                         );
 
-                        self.list_collection_ids_with_retries(params, retries + 1, span)
-                            .await
-                    }
+                            self.list_collection_ids_with_retries(params, retries + 1, span)
+                                .await
+                        }
                     _ => Err(err),
                 },
             }
         }
-        .boxed()
+            .boxed()
     }
 
     #[cfg(feature = "caching")]

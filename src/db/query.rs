@@ -317,7 +317,8 @@ impl FirestoreQuerySupport for FirestoreDb {
                 Err(err) => {
                     error!(
                         %err,
-                        "Error occurred while converting query document in a stream.",
+                        "Error occurred while converting query document in a stream. Document: {}",
+                        doc.name
                     );
                     None
                 }

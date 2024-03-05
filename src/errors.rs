@@ -59,6 +59,12 @@ pub struct FirestoreErrorPublicGenericDetails {
     pub code: String,
 }
 
+impl Display for FirestoreErrorPublicGenericDetails {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "Error code: {}", self.code)
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreSystemError {
     pub public: FirestoreErrorPublicGenericDetails,
@@ -67,7 +73,11 @@ pub struct FirestoreSystemError {
 
 impl Display for FirestoreSystemError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Firestore system/internal error: {}", self.message)
+        write!(
+            f,
+            "Firestore system/internal error: {}. {}",
+            self.public, self.message
+        )
     }
 }
 
@@ -82,7 +92,11 @@ pub struct FirestoreDatabaseError {
 
 impl Display for FirestoreDatabaseError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Database general error occurred: {}", self.details)
+        write!(
+            f,
+            "Database general error occurred: {}. {}. Retry possibility: {}",
+            self.public, self.details, self.retry_possible
+        )
     }
 }
 
@@ -96,7 +110,11 @@ pub struct FirestoreDataConflictError {
 
 impl Display for FirestoreDataConflictError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Database conflict error occurred: {}", self.details)
+        write!(
+            f,
+            "Database conflict error occurred: {}. {}",
+            self.public, self.details
+        )
     }
 }
 
@@ -110,7 +128,11 @@ pub struct FirestoreDataNotFoundError {
 
 impl Display for FirestoreDataNotFoundError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Data not found error occurred: {:?}", self.public)
+        write!(
+            f,
+            "Data not found error occurred: {}. {}",
+            self.public, self.data_detail_message
+        )
     }
 }
 
@@ -122,6 +144,16 @@ pub struct FirestoreInvalidParametersPublicDetails {
     pub error: String,
 }
 
+impl Display for FirestoreInvalidParametersPublicDetails {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "Invalid parameters error: {}. {}",
+            self.field, self.error
+        )
+    }
+}
+
 #[derive(Debug, Clone, Builder)]
 pub struct FirestoreInvalidParametersError {
     pub public: FirestoreInvalidParametersPublicDetails,
@@ -129,7 +161,7 @@ pub struct FirestoreInvalidParametersError {
 
 impl Display for FirestoreInvalidParametersError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Data not found error occurred: {:?}", self.public)
+        write!(f, "Data not found error occurred: {}", self.public)
     }
 }
 
@@ -148,7 +180,7 @@ pub struct FirestoreNetworkError {
 
 impl Display for FirestoreNetworkError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Network error: {}", self.message)
+        write!(f, "Network error: {}. {}", self.public, self.message)
     }
 }
 
@@ -270,7 +302,11 @@ impl FirestoreSerializationError {
 
 impl Display for FirestoreSerializationError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Invalid serialization: {:?}", self.public)
+        write!(
+            f,
+            "Invalid serialization: {}. {}",
+            self.public, self.message
+        )
     }
 }
 
@@ -284,7 +320,7 @@ pub struct FirestoreCacheError {
 
 impl Display for FirestoreCacheError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Cache error: {}", self.message)
+        write!(f, "Cache error: {}. {}", self.public, self.message)
     }
 }
 
