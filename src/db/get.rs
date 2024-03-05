@@ -471,7 +471,8 @@ impl FirestoreGetByIdSupport for FirestoreDb {
                         Err(err) => {
                             error!(
                                 %err,
-                                "Error occurred while consuming batch documents as a stream.",
+                                "Error occurred while consuming batch documents as a stream. Document: {}",
+                                doc_id
                             );
                             None
                         }
@@ -627,24 +628,24 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.get_options().max_retries =>
-                    {
-                        span.in_scope(|| {
-                            warn!(
+                    if db_err.retry_possible && retries < self.get_options().max_retries =>
+                        {
+                            span.in_scope(|| {
+                                warn!(
                                 err = %db_err,
                                 current_retry = retries + 1,
                                 max_retries = self.get_options().max_retries,
                                 "Failed to get document. Retrying up to the specified number of times.",
                             );
-                        });
-                        self.get_doc_by_path(collection_id, document_path, None, retries + 1)
-                            .await
-                    }
+                            });
+                            self.get_doc_by_path(collection_id, document_path, None, retries + 1)
+                                .await
+                        }
                     _ => Err(err),
                 },
             }
         }
-        .boxed()
+            .boxed()
     }
 
     pub(crate) async fn get_docs_by_ids(
