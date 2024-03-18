@@ -390,7 +390,11 @@ where
                 }
                 Ok(mut listen_stream) => loop {
                     tokio::select! {
-                        _ = shutdown_receiver.recv() => {
+                        shutdown_trigger = shutdown_receiver.recv() => {
+                            if shutdown_trigger.is_none() {
+                                debug!("Listener dropped. Exiting...");
+                                shutdown_flag.store(true, Ordering::Relaxed);
+                            }
                             debug!(num_targets = targets_state.len(), "Exiting from listener on targets...");
                             shutdown_receiver.close();
                             break;
