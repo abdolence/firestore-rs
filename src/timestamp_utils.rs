@@ -3,8 +3,8 @@ use crate::FirestoreResult;
 use chrono::prelude::*;
 
 pub fn from_timestamp(ts: gcloud_sdk::prost_types::Timestamp) -> FirestoreResult<DateTime<Utc>> {
-    if let Some(dt) = chrono::NaiveDateTime::from_timestamp_opt(ts.seconds, ts.nanos as u32) {
-        Ok(DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+    if let Some(dt) = chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32) {
+        Ok(dt)
     } else {
         Err(FirestoreError::DeserializeError(
             FirestoreSerializationError::from_message(format!(
