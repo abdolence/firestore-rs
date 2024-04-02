@@ -28,6 +28,11 @@ pub trait FirestoreQuerySupport {
         params: FirestoreQueryParams,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>>;
 
+    async fn stream_query_doc_with_metadata<'b>(
+        &self,
+        params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<FirestoreDocument>>>>;
+
     async fn query_obj<T>(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
     where
         for<'de> T: Deserialize<'de>;
@@ -43,6 +48,14 @@ pub trait FirestoreQuerySupport {
         &self,
         params: FirestoreQueryParams,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b;
+
+    async fn stream_query_obj_with_metadata<'b, T>(
+        &self,
+        params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<T>>>>
     where
         for<'de> T: Deserialize<'de>,
         T: Send + 'b;
@@ -99,7 +112,8 @@ impl FirestoreDb {
         params: FirestoreQueryParams,
         retries: usize,
         span: Span,
-    ) -> BoxFuture<FirestoreResult<BoxStream<'b, FirestoreResult<RunQueryResponse>>>> {
+    ) -> BoxFuture<FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<Document>>>>>
+    {
         async move {
             let query_request = self.create_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
@@ -112,7 +126,11 @@ impl FirestoreDb {
                 .await
             {
                 Ok(query_response) => {
-                    let query_stream = query_response.into_inner().map_err(|e| e.into()).boxed();
+                    let query_stream = query_response
+                        .into_inner()
+                        .map_err(|e| e.into())
+                        .map(|r| r.and_then(|r| r.try_into()))
+                        .boxed();
 
                     let end_query_utc: DateTime<Utc> = Utc::now();
                     let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
@@ -291,6 +309,22 @@ impl FirestoreQuerySupport for FirestoreDb {
         })))
     }
 
+    async fn stream_query_doc_with_metadata<'b>(
+        &self,
+        params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<Document>>>> {
+        let collection_str = params.collection_id.to_string();
+
+        let span = span!(
+            Level::DEBUG,
+            "Firestore Streaming Query with Metadata",
+            "/firestore/collection_name" = collection_str.as_str(),
+            "/firestore/response_time" = field::Empty
+        );
+
+        self.stream_query_doc_with_retries(params, 0, span).await
+    }
+
     async fn query_obj<T>(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
     where
         for<'de> T: Deserialize<'de>,
@@ -337,6 +371,28 @@ impl FirestoreQuerySupport for FirestoreDb {
         let doc_stream = self.stream_query_doc_with_errors(params).await?;
         Ok(Box::pin(doc_stream.and_then(|doc| {
             future::ready(Self::deserialize_doc_to::<T>(&doc))
+        })))
+    }
+
+    async fn stream_query_obj_with_metadata<'b, T>(
+        &self,
+        params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<T>>>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b,
+    {
+        let res_stream = self.stream_query_doc_with_metadata(params).await?;
+        Ok(Box::pin(res_stream.map(|res| {
+            res.and_then(|with_meta| {
+                Ok(FirestoreWithMetadata {
+                    document: with_meta
+                        .document
+                        .map(|document| Self::deserialize_doc_to::<T>(&document))
+                        .transpose()?,
+                    metadata: with_meta.metadata,
+                })
+            })
         })))
     }
 

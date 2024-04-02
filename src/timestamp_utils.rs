@@ -20,3 +20,8 @@ pub fn to_timestamp(dt: DateTime<Utc>) -> gcloud_sdk::prost_types::Timestamp {
         nanos: dt.nanosecond() as i32,
     }
 }
+
+pub fn from_duration(duration: gcloud_sdk::prost_types::Duration) -> chrono::Duration {
+    chrono::Duration::seconds(duration.seconds)
+        + chrono::Duration::nanoseconds(duration.nanos.into())
+}

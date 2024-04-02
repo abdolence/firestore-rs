@@ -126,12 +126,15 @@
 
 pub mod errors;
 mod firestore_value;
+
 pub use firestore_value::*;
 
 mod db;
+
 pub use db::*;
 
 mod firestore_serde;
+
 pub use firestore_serde::*;
 
 mod struct_path_macro;
@@ -147,10 +150,16 @@ pub type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
 
 pub type FirestoreDocument = gcloud_sdk::google::firestore::v1::Document;
 
+mod firestore_meta_doc;
+
+pub use firestore_meta_doc::*;
+
 mod firestore_document_functions;
+
 pub use firestore_document_functions::*;
 
 mod fluent_api;
+
 pub use fluent_api::*;
 
 pub extern crate struct_path;
