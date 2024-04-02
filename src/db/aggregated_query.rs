@@ -292,6 +292,7 @@ impl FirestoreDb {
                     query_type: Some(gcloud_sdk::google::firestore::v1::structured_aggregation_query::QueryType::StructuredQuery(params.query_params.into())),
                 }
             )),
+            explain_options: None,
         }))
     }
 
@@ -338,23 +339,23 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
-                    {
-                        warn!(
+                    if db_err.retry_possible && retries < self.inner.options.max_retries =>
+                        {
+                            warn!(
                             err = %db_err,
                             current_retry = retries + 1,
                             max_retries = self.inner.options.max_retries,
                             "Failed to run aggregation query. Retrying up to the specified number of times.",
                         );
 
-                        self.stream_aggregated_query_doc_with_retries(params, retries + 1, span)
-                            .await
-                    }
+                            self.stream_aggregated_query_doc_with_retries(params, retries + 1, span)
+                                .await
+                        }
                     _ => Err(err),
                 },
             }
         }
-        .boxed()
+            .boxed()
     }
 
     fn aggregated_query_doc_with_retries<'a>(
@@ -402,23 +403,23 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retry_possible && retries < self.inner.options.max_retries =>
-                    {
-                        warn!(
+                    if db_err.retry_possible && retries < self.inner.options.max_retries =>
+                        {
+                            warn!(
                             err = %db_err,
                             current_retry = retries + 1,
                             max_retries = self.inner.options.max_retries,
                             "Failed to run aggregation query. Retrying up to the specified number of times.",
                         );
 
-                        self.aggregated_query_doc_with_retries(params, retries + 1, span)
-                            .await
-                    }
+                            self.aggregated_query_doc_with_retries(params, retries + 1, span)
+                                .await
+                        }
                     _ => Err(err),
                 },
             }
         }
-        .boxed()
+            .boxed()
     }
 
     fn aggregated_response_to_doc(mut agg_res: RunAggregationQueryResponse) -> Option<Document> {
