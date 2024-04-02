@@ -287,7 +287,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                     "Invalidating collection and draining the corresponding table.",
                 );
                 let mut table = write_txn.open_table(td)?;
-                table.drain::<&str>(..)?;
+                table.retain(|_, _| false)?;
             }
             write_txn.commit()?;
         }
