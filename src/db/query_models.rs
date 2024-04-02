@@ -1,5 +1,6 @@
 #![allow(clippy::derive_partial_eq_without_eq)] // Since we may not be able to implement Eq for the changes coming from Firestore protos
 
+use crate::errors::FirestoreError;
 use crate::FirestoreValue;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::Builder;
@@ -37,6 +38,7 @@ pub struct FirestoreQueryParams {
     pub return_only_fields: Option<Vec<String>>,
     pub start_at: Option<FirestoreQueryCursor>,
     pub end_at: Option<FirestoreQueryCursor>,
+    pub explain_options: Option<FirestoreExplainOptions>,
 }
 
 impl From<FirestoreQueryParams> for StructuredQuery {
@@ -408,4 +410,18 @@ pub struct FirestorePartitionQueryParams {
 pub struct FirestorePartition {
     pub start_at: Option<FirestoreQueryCursor>,
     pub end_at: Option<FirestoreQueryCursor>,
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreExplainOptions {
+    pub analyze: Option<bool>,
+}
+
+impl TryFrom<&FirestoreExplainOptions> for gcloud_sdk::google::firestore::v1::ExplainOptions {
+    type Error = FirestoreError;
+    fn try_from(explain_options: &FirestoreExplainOptions) -> Result<Self, Self::Error> {
+        Ok(ExplainOptions {
+            analyze: explain_options.analyze.unwrap_or(false),
+        })
+    }
 }
