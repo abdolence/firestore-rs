@@ -10,7 +10,7 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 struct MyAggTestStructure {
     counter: usize,
     calc_sum: Option<usize>,
-    calc_avg: Option<usize>,
+    calc_avg: Option<f64>,
 }
 
 #[tokio::main]
@@ -35,8 +35,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .aggregate(|a| {
             a.fields([
                 a.field(path!(MyAggTestStructure::counter)).count(),
-                //a.field(path!(MyAggTestStructure::calc_sum)).sum("some_num"), // Not supported/enabled yet by Firestore, exists only on proto level
-                //a.field(path!(MyAggTestStructure::calc_avg)).avg("some_num"),
+                a.field(path!(MyAggTestStructure::calc_sum)).sum("some_num"),
+                a.field(path!(MyAggTestStructure::calc_avg)).avg("some_num"),
             ])
         })
         .obj()
