@@ -29,6 +29,14 @@ impl FirestoreQuerySupport for MockDatabase {
         unreachable!()
     }
 
+    async fn stream_query_doc_with_metadata<'b>(
+        &self,
+        params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<FirestoreDocument>>>>
+    {
+        unreachable!()
+    }
+
     async fn query_obj<T>(&self, _params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
     where
         for<'de> T: Deserialize<'de>,
@@ -51,6 +59,17 @@ impl FirestoreQuerySupport for MockDatabase {
         &self,
         _params: FirestoreQueryParams,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b,
+    {
+        unreachable!()
+    }
+
+    async fn stream_query_obj_with_metadata<'b, T>(
+        &self,
+        params: FirestoreQueryParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<T>>>>
     where
         for<'de> T: Deserialize<'de>,
         T: Send + 'b,
