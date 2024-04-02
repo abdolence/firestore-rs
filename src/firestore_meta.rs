@@ -48,7 +48,11 @@ impl TryFrom<RunQueryResponse> for FirestoreWithMetadata<Document> {
         Ok(FirestoreWithMetadata {
             document: value.document,
             metadata: FirestoreDocumentMetadata {
-                transaction_id: Some(value.transaction),
+                transaction_id: if !value.transaction.is_empty() {
+                    Some(value.transaction)
+                } else {
+                    None
+                },
                 read_time: value.read_time.map(from_timestamp).transpose()?,
                 skipped_results: value.skipped_results as usize,
                 explain_metrics: value.explain_metrics.map(|v| v.try_into()).transpose()?,

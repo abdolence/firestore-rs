@@ -3,12 +3,12 @@ use crate::select_aggregation_builder::FirestoreAggregationBuilder;
 use crate::select_filter_builder::FirestoreQueryFilterBuilder;
 use crate::{
     FirestoreAggregatedQueryParams, FirestoreAggregatedQuerySupport, FirestoreAggregation,
-    FirestoreCollectionDocuments, FirestoreGetByIdSupport, FirestoreListenSupport,
-    FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
+    FirestoreCollectionDocuments, FirestoreExplainOptions, FirestoreGetByIdSupport,
+    FirestoreListenSupport, FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
     FirestoreListenerTargetParams, FirestorePartition, FirestorePartitionQueryParams,
     FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
     FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult, FirestoreResumeStateStorage,
-    FirestoreTargetType,
+    FirestoreTargetType, FirestoreWithMetadata,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -189,6 +189,25 @@ where
         }
     }
 
+    pub fn explain(self) -> FirestoreSelectDocBuilder<'a, D> {
+        Self {
+            params: self
+                .params
+                .with_explain_options(FirestoreExplainOptions::new()),
+            ..self
+        }
+    }
+
+    pub fn explain_options(
+        self,
+        options: FirestoreExplainOptions,
+    ) -> FirestoreSelectDocBuilder<'a, D> {
+        Self {
+            params: self.params.with_explain_options(options),
+            ..self
+        }
+    }
+
     #[inline]
     pub fn obj<T>(self) -> FirestoreSelectObjBuilder<'a, D, T>
     where
@@ -237,6 +256,12 @@ where
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         self.db.stream_query_doc_with_errors(self.params).await
+    }
+
+    pub async fn stream_query_with_metadata<'b>(
+        self,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<Document>>>> {
+        self.db.stream_query_doc_with_metadata(self.params).await
     }
 }
 
@@ -287,6 +312,15 @@ where
         T: 'b,
     {
         self.db.stream_query_obj_with_errors(self.params).await
+    }
+
+    pub async fn stream_query_with_metadata<'b>(
+        self,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<T>>>>
+    where
+        T: 'b,
+    {
+        self.db.stream_query_obj_with_metadata(self.params).await
     }
 
     pub fn partition_query(self) -> FirestorePartitionQueryObjBuilder<'a, D, T>
