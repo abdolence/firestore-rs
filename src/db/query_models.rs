@@ -79,8 +79,8 @@ impl From<FirestoreQueryParams> for StructuredQuery {
                     })
                     .collect(),
             },
-            r#where: query_filter,
             find_nearest: None,
+            r#where: query_filter,
         }
     }
 }
