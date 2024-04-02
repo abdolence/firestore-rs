@@ -99,7 +99,7 @@ impl FirestoreDb {
         params: FirestoreQueryParams,
         retries: usize,
         span: Span,
-    ) -> BoxFuture<FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
+    ) -> BoxFuture<FirestoreResult<BoxStream<'b, FirestoreResult<RunQueryResponse>>>> {
         async move {
             let query_request = self.create_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
@@ -112,11 +112,7 @@ impl FirestoreDb {
                 .await
             {
                 Ok(query_response) => {
-                    let query_stream = query_response
-                        .into_inner()
-                        .map_ok(|r| r.document)
-                        .map_err(|e| e.into())
-                        .boxed();
+                    let query_stream = query_response.into_inner().map_err(|e| e.into()).boxed();
 
                     let end_query_utc: DateTime<Utc> = Utc::now();
                     let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
@@ -286,8 +282,7 @@ impl FirestoreQuerySupport for FirestoreDb {
 
         Ok(Box::pin(doc_stream.filter_map(|doc_res| {
             future::ready(match doc_res {
-                Ok(Some(doc)) => Some(Ok(doc)),
-                Ok(None) => None,
+                Ok(resp) => resp.document.map(Ok),
                 Err(err) => {
                     error!(%err, "Error occurred while consuming query.");
                     Some(Err(err))
