@@ -198,7 +198,7 @@ where
         }
     }
 
-    pub fn explain_options(
+    pub fn explain_with_options(
         self,
         options: FirestoreExplainOptions,
     ) -> FirestoreSelectDocBuilder<'a, D> {

@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             FirestoreQueryDirection::Descending,
         )])
         .explain()
-        //.explain_options(FirestoreExplainOptions::new().with_analyze(true)) or with analyze
+        //.explain_with_options(FirestoreExplainOptions::new().with_analyze(true)) or with analyze
         .obj()
         .stream_query_with_metadata()
         .await?;
