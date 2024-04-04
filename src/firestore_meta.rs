@@ -3,6 +3,8 @@ use crate::timestamp_utils::{from_duration, from_timestamp};
 use crate::FirestoreTransactionId;
 use chrono::{DateTime, Duration, Utc};
 use gcloud_sdk::google::firestore::v1::{Document, ExplainMetrics, RunQueryResponse};
+use gcloud_sdk::prost_types::value::Kind;
+use gcloud_sdk::prost_types::Value;
 use rsb_derive::Builder;
 use std::collections::BTreeMap;
 
@@ -26,7 +28,45 @@ pub struct FirestoreExplainMetrics {
     pub execution_stats: Option<FirestoreExecutionStats>,
 }
 
-pub type FirestoreDynamicStruct = BTreeMap<String, gcloud_sdk::prost_types::Value>;
+#[derive(PartialEq, Clone, Builder)]
+pub struct FirestoreDynamicStruct {
+    pub fields: BTreeMap<String, gcloud_sdk::prost_types::Value>,
+}
+
+impl std::fmt::Debug for FirestoreDynamicStruct {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn pretty_print(v: &Value) -> String {
+            match v.kind.as_ref() {
+                Some(Kind::NullValue(_)) => "null".to_string(),
+                Some(Kind::BoolValue(v)) => v.to_string(),
+                Some(Kind::NumberValue(v)) => v.to_string(),
+                Some(Kind::StringValue(v)) => format!("'{}'", v),
+                Some(Kind::StructValue(v)) => v
+                    .fields
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, pretty_print(v)))
+                    .collect::<Vec<String>>()
+                    .join(", "),
+                Some(Kind::ListValue(v)) => v
+                    .values
+                    .iter()
+                    .map(pretty_print)
+                    .collect::<Vec<String>>()
+                    .join(", "),
+                None => "".to_string(),
+            }
+        }
+        let pretty_print_fields = self
+            .fields
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k, pretty_print(v)))
+            .collect::<Vec<String>>()
+            .join(", ");
+        f.debug_struct("FirestoreDynamicStruct")
+            .field("fields", &pretty_print_fields)
+            .finish()
+    }
+}
 
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestorePlanSummary {
@@ -79,7 +119,11 @@ impl TryFrom<gcloud_sdk::google::firestore::v1::PlanSummary> for FirestorePlanSu
         value: gcloud_sdk::google::firestore::v1::PlanSummary,
     ) -> Result<Self, Self::Error> {
         Ok(FirestorePlanSummary {
-            indexes_used: value.indexes_used.into_iter().map(|v| v.fields).collect(),
+            indexes_used: value
+                .indexes_used
+                .into_iter()
+                .map(|v| FirestoreDynamicStruct::new(v.fields))
+                .collect(),
         })
     }
 }
@@ -94,7 +138,9 @@ impl TryFrom<gcloud_sdk::google::firestore::v1::ExecutionStats> for FirestoreExe
             results_returned: value.results_returned as usize,
             execution_duration: value.execution_duration.map(from_duration),
             read_operations: value.read_operations as usize,
-            debug_stats: value.debug_stats.map(|v| v.fields),
+            debug_stats: value
+                .debug_stats
+                .map(|v| FirestoreDynamicStruct::new(v.fields)),
         })
     }
 }
