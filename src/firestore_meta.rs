@@ -4,7 +4,6 @@ use crate::FirestoreTransactionId;
 use chrono::{DateTime, Duration, Utc};
 use gcloud_sdk::google::firestore::v1::{Document, ExplainMetrics, RunQueryResponse};
 use gcloud_sdk::prost_types::value::Kind;
-use gcloud_sdk::prost_types::Value;
 use rsb_derive::Builder;
 use std::collections::BTreeMap;
 
@@ -35,7 +34,7 @@ pub struct FirestoreDynamicStruct {
 
 impl std::fmt::Debug for FirestoreDynamicStruct {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fn pretty_print(v: &Value) -> String {
+        fn pretty_print(v: &gcloud_sdk::prost_types::Value) -> String {
             match v.kind.as_ref() {
                 Some(Kind::NullValue(_)) => "null".to_string(),
                 Some(Kind::BoolValue(v)) => v.to_string(),
