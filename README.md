@@ -14,6 +14,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
     - Transactions;
     - Aggregated Queries;
     - Streaming batch writes with automatic throttling to avoid time limits from Firestore;
+    - K-nearest neighbor (KNN) vector search;
     - Explaining queries;
 - Fluent high-level and strongly typed API;
 - Full async based on Tokio runtime;
@@ -36,7 +37,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-firestore = "0.40"
+firestore = "0.41"
 ```
 
 ## Examples

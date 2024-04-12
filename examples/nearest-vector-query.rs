@@ -1,7 +1,4 @@
-use chrono::{DateTime, Utc};
 use firestore::*;
-use futures::stream::BoxStream;
-use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
@@ -13,9 +10,7 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 struct MyTestStructure {
     some_id: String,
     some_string: String,
-    one_more_string: String,
-    some_num: u64,
-    created_at: DateTime<Utc>,
+    some_vec: FirestoreVector,
 }
 
 #[tokio::main]
@@ -29,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "test-query";
+    const TEST_COLLECTION_NAME: &'static str = "test-query-vec";
 
     if db
         .fluent()
@@ -47,9 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let my_struct = MyTestStructure {
                 some_id: format!("test-{}", i),
                 some_string: "Test".to_string(),
-                one_more_string: "Test2".to_string(),
-                some_num: i,
-                created_at: Utc::now(),
+                some_vec: vec![i as f64, (i * 10) as f64, (i * 20) as f64].into(),
             };
 
             // Let's insert some data
@@ -63,46 +56,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         current_batch.write().await?;
     }
 
-    println!("Querying a test collection as a stream using Fluent API");
-
-    // Simple query into vector
-    // Query as a stream our data
+    println!("Show sample documents in the test collection");
     let as_vec: Vec<MyTestStructure> = db
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
+        .limit(3)
         .obj()
         .query()
         .await?;
 
-    println!("{:?}", as_vec);
+    println!("Examples: {:?}", as_vec);
 
-    // Query as a stream our data with filters and ordering
-    let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db
+    println!("Search for a test collection with a vector closest");
+
+    let as_vec: Vec<MyTestStructure> = db
         .fluent()
         .select()
-        .fields(
-            paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at}),
-        )
         .from(TEST_COLLECTION_NAME)
-        .filter(|q| {
-            q.for_all([
-                q.field(path!(MyTestStructure::some_num)).is_not_null(),
-                q.field(path!(MyTestStructure::some_string)).eq("Test"),
-                Some("Test2")
-                    .and_then(|value| q.field(path!(MyTestStructure::one_more_string)).eq(value)),
-            ])
-        })
-        .order_by([(
-            path!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Descending,
-        )])
+        .find_nearest(
+            path!(MyTestStructure::some_vec),
+            vec![0.0_f64, 0.0_f64, 0.0_f64].into(),
+            FirestoreFindNearestDistanceMeasure::Euclidean,
+            5,
+        )
         .obj()
-        .stream_query_with_errors()
+        .query()
         .await?;
 
-    let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
-    println!("{:?}", as_vec);
+    println!("Found: {:?}", as_vec);
 
     Ok(())
 }

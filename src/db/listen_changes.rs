@@ -191,7 +191,7 @@ impl FirestoreDb {
                                 .unwrap_or_else(|| self.get_documents_path())
                                 .clone(),
                             query_type: Some(target::query_target::QueryType::StructuredQuery(
-                                query_params.into(),
+                                query_params.try_into()?,
                             )),
                         })
                     }

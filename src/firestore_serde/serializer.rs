@@ -17,8 +17,8 @@ impl FirestoreValueSerializer {
 }
 
 pub struct SerializeVec {
-    none_as_null: bool,
-    vec: Vec<gcloud_sdk::google::firestore::v1::Value>,
+    pub none_as_null: bool,
+    pub vec: Vec<gcloud_sdk::google::firestore::v1::Value>,
 }
 
 pub struct SerializeTupleVariant {
@@ -231,6 +231,9 @@ impl serde::Serializer for FirestoreValueSerializer {
                 crate::firestore_serde::reference_serializers::serialize_reference_for_firestore(
                     value, false,
                 )
+            }
+            crate::firestore_serde::vector_serializers::FIRESTORE_VECTOR_TYPE_TAG_TYPE => {
+                crate::firestore_serde::vector_serializers::serialize_vector_for_firestore(value)
             }
             _ => value.serialize(self),
         }

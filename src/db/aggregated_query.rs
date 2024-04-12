@@ -289,7 +289,7 @@ impl FirestoreDb {
             query_type: Some(run_aggregation_query_request::QueryType::StructuredAggregationQuery(
                 StructuredAggregationQuery {
                     aggregations: params.aggregations.iter().map(|agg| agg.into()).collect(),
-                    query_type: Some(gcloud_sdk::google::firestore::v1::structured_aggregation_query::QueryType::StructuredQuery(params.query_params.into())),
+                    query_type: Some(gcloud_sdk::google::firestore::v1::structured_aggregation_query::QueryType::StructuredQuery(params.query_params.try_into()?)),
                 }
             )),
             explain_options: None,
