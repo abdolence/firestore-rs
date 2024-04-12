@@ -233,7 +233,9 @@ impl serde::Serializer for FirestoreValueSerializer {
                 )
             }
             crate::firestore_serde::vector_serializers::FIRESTORE_VECTOR_TYPE_TAG_TYPE => {
-                crate::firestore_serde::vector_serializers::serialize_vector_for_firestore(value)
+                crate::firestore_serde::vector_serializers::serialize_vector_for_firestore(
+                    self, value,
+                )
             }
             _ => value.serialize(self),
         }
