@@ -3,12 +3,13 @@ use crate::select_aggregation_builder::FirestoreAggregationBuilder;
 use crate::select_filter_builder::FirestoreQueryFilterBuilder;
 use crate::{
     FirestoreAggregatedQueryParams, FirestoreAggregatedQuerySupport, FirestoreAggregation,
-    FirestoreCollectionDocuments, FirestoreExplainOptions, FirestoreGetByIdSupport,
-    FirestoreListenSupport, FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
+    FirestoreCollectionDocuments, FirestoreExplainOptions, FirestoreFindNearestDistanceMeasure,
+    FirestoreFindNearestOptions, FirestoreGetByIdSupport, FirestoreListenSupport,
+    FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
     FirestoreListenerTargetParams, FirestorePartition, FirestorePartitionQueryParams,
     FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
     FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult, FirestoreResumeStateStorage,
-    FirestoreTargetType, FirestoreWithMetadata,
+    FirestoreTargetType, FirestoreVector, FirestoreWithMetadata,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -189,6 +190,7 @@ where
         }
     }
 
+    #[inline]
     pub fn explain(self) -> FirestoreSelectDocBuilder<'a, D> {
         Self {
             params: self
@@ -198,6 +200,40 @@ where
         }
     }
 
+    #[inline]
+    pub fn find_nearest<F>(
+        self,
+        field_name: F,
+        vector: FirestoreVector,
+        measure: FirestoreFindNearestDistanceMeasure,
+        neighbors_limit: u32,
+    ) -> FirestoreSelectDocBuilder<'a, D>
+    where
+        F: AsRef<str>,
+    {
+        self.find_nearest_with_options::<F>(FirestoreFindNearestOptions::new(
+            field_name.as_ref().to_string(),
+            vector,
+            measure,
+            neighbors_limit,
+        ))
+    }
+
+    #[inline]
+    pub fn find_nearest_with_options<F>(
+        self,
+        options: FirestoreFindNearestOptions,
+    ) -> FirestoreSelectDocBuilder<'a, D>
+    where
+        F: AsRef<str>,
+    {
+        Self {
+            params: self.params.with_find_nearest(options),
+            ..self
+        }
+    }
+
+    #[inline]
     pub fn explain_with_options(
         self,
         options: FirestoreExplainOptions,

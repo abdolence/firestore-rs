@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let my_struct = MyTestStructure {
                 some_id: format!("test-{}", i),
                 some_string: "Test".to_string(),
-                some_vec: FirestoreVector::new(vec![i as f64, (i * 1000) as f64]),
+                some_vec: vec![i as f64, (i * 10) as f64, (i * 20) as f64].into(),
             };
 
             // Let's insert some data
@@ -56,12 +56,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         current_batch.write().await?;
     }
 
-    println!("Search for a test collection with a vector closest to [100.0, 100000.0]");
+    println!("Show sample documents in the test collection");
+    let as_vec: Vec<MyTestStructure> = db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .limit(3)
+        .obj()
+        .query()
+        .await?;
+
+    println!("Examples: {:?}", as_vec);
+
+    println!("Search for a test collection with a vector closest");
 
     let as_vec: Vec<MyTestStructure> = db
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
+        .find_nearest(
+            path!(MyTestStructure::some_vec),
+            vec![0.0_f64, 0.0_f64, 0.0_f64].into(),
+            FirestoreFindNearestDistanceMeasure::Euclidean,
+            5,
+        )
         .obj()
         .query()
         .await?;
