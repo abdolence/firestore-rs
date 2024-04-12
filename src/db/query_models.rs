@@ -1,7 +1,9 @@
 #![allow(clippy::derive_partial_eq_without_eq)] // Since we may not be able to implement Eq for the changes coming from Firestore protos
 
-use crate::errors::FirestoreError;
-use crate::FirestoreValue;
+use crate::errors::{
+    FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
+};
+use crate::{FirestoreValue, FirestoreVector};
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::Builder;
 
@@ -39,13 +41,16 @@ pub struct FirestoreQueryParams {
     pub start_at: Option<FirestoreQueryCursor>,
     pub end_at: Option<FirestoreQueryCursor>,
     pub explain_options: Option<FirestoreExplainOptions>,
+    pub find_nearest: Option<FirestoreFindNearestOptions>,
 }
 
-impl From<FirestoreQueryParams> for StructuredQuery {
-    fn from(params: FirestoreQueryParams) -> Self {
+impl TryFrom<FirestoreQueryParams> for StructuredQuery {
+    type Error = FirestoreError;
+
+    fn try_from(params: FirestoreQueryParams) -> Result<Self, Self::Error> {
         let query_filter = params.filter.map(|f| f.into());
 
-        StructuredQuery {
+        Ok(StructuredQuery {
             select: params.return_only_fields.map(|select_only_fields| {
                 structured_query::Projection {
                     fields: select_only_fields
@@ -79,9 +84,12 @@ impl From<FirestoreQueryParams> for StructuredQuery {
                     })
                     .collect(),
             },
-            find_nearest: None,
+            find_nearest: params
+                .find_nearest
+                .map(|find_nearest| find_nearest.try_into())
+                .transpose()?,
             r#where: query_filter,
-        }
+        })
     }
 }
 
@@ -423,5 +431,70 @@ impl TryFrom<&FirestoreExplainOptions> for gcloud_sdk::google::firestore::v1::Ex
         Ok(ExplainOptions {
             analyze: explain_options.analyze.unwrap_or(false),
         })
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreFindNearestOptions {
+    pub field_name: String,
+    pub query_vector: FirestoreVector,
+    pub distance_measure: FirestoreFindNearestDistanceMeasure,
+    pub neighbors_limit: u32,
+}
+
+impl TryFrom<FirestoreFindNearestOptions>
+    for gcloud_sdk::google::firestore::v1::structured_query::FindNearest
+{
+    type Error = FirestoreError;
+
+    fn try_from(options: FirestoreFindNearestOptions) -> Result<Self, Self::Error> {
+        Ok(structured_query::FindNearest {
+            vector_field: Some(structured_query::FieldReference {
+                field_path: options.field_name,
+            }),
+            query_vector: Some(Into::<FirestoreValue>::into(options.query_vector).value),
+            distance_measure: {
+                let distance_measure: structured_query::find_nearest::DistanceMeasure = options.distance_measure.try_into()?;
+                distance_measure.into()
+            },
+            limit: Some(options.neighbors_limit.try_into().map_err(|e| FirestoreError::InvalidParametersError(
+                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
+                    "neighbors_limit".to_string(),
+                    format!(
+                        "Invalid value for neighbors_limit: {}. Maximum allowed value is {}. Error: {}",
+                        options.neighbors_limit,
+                        i32::MAX,
+                        e
+                    ),
+                )))
+            )?),
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum FirestoreFindNearestDistanceMeasure {
+    Euclidean,
+    Cosine,
+    DotProduct,
+}
+
+impl TryFrom<FirestoreFindNearestDistanceMeasure>
+    for structured_query::find_nearest::DistanceMeasure
+{
+    type Error = FirestoreError;
+
+    fn try_from(measure: FirestoreFindNearestDistanceMeasure) -> Result<Self, Self::Error> {
+        match measure {
+            FirestoreFindNearestDistanceMeasure::Euclidean => {
+                Ok(structured_query::find_nearest::DistanceMeasure::Euclidean)
+            }
+            FirestoreFindNearestDistanceMeasure::Cosine => {
+                Ok(structured_query::find_nearest::DistanceMeasure::Cosine)
+            }
+            FirestoreFindNearestDistanceMeasure::DotProduct => {
+                Ok(structured_query::find_nearest::DistanceMeasure::DotProduct)
+            }
+        }
     }
 }

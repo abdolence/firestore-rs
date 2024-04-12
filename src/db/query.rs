@@ -103,7 +103,9 @@ impl FirestoreDb {
                 .as_ref()
                 .map(|eo| eo.try_into())
                 .transpose()?,
-            query_type: Some(run_query_request::QueryType::StructuredQuery(params.into())),
+            query_type: Some(run_query_request::QueryType::StructuredQuery(
+                params.try_into()?,
+            )),
         }))
     }
 
@@ -415,49 +417,59 @@ impl FirestoreQuerySupport for FirestoreDb {
                     Some((params, consistency_selector)),
                     move |maybe_params| async move {
                         if let Some((params, maybe_consistency_selector)) = maybe_params {
-                            let request = gcloud_sdk::tonic::Request::new(PartitionQueryRequest {
-                                page_size: params.page_size as i32,
-                                partition_count: params.partition_count as i64,
-                                parent: params
-                                    .query_params
-                                    .parent
-                                    .as_ref()
-                                    .unwrap_or_else(|| self.get_documents_path())
-                                    .clone(),
-                                consistency_selector: maybe_consistency_selector.clone(),
-                                query_type: Some(
-                                    partition_query_request::QueryType::StructuredQuery(
-                                        params.query_params.clone().into(),
-                                    ),
-                                ),
-                                page_token: params.page_token.clone().unwrap_or_default(),
-                            });
-
-                            match self.client().get().partition_query(request).await {
-                                Ok(response) => {
-                                    let partition_response = response.into_inner();
-                                    let firestore_cursors: Vec<FirestoreQueryCursor> =
-                                        partition_response
-                                            .partitions
-                                            .into_iter()
-                                            .map(|e| e.into())
-                                            .collect();
-
-                                    if !partition_response.next_page_token.is_empty() {
-                                        Some((
-                                            Ok(firestore_cursors),
-                                            Some((
-                                                params.with_page_token(
-                                                    partition_response.next_page_token,
+                            match params.query_params.clone().try_into() {
+                                Ok(query_params) => {
+                                    let request =
+                                        gcloud_sdk::tonic::Request::new(PartitionQueryRequest {
+                                            page_size: params.page_size as i32,
+                                            partition_count: params.partition_count as i64,
+                                            parent: params
+                                                .query_params
+                                                .parent
+                                                .as_ref()
+                                                .unwrap_or_else(|| self.get_documents_path())
+                                                .clone(),
+                                            consistency_selector: maybe_consistency_selector
+                                                .clone(),
+                                            query_type: Some(
+                                                partition_query_request::QueryType::StructuredQuery(
+                                                    query_params,
                                                 ),
-                                                maybe_consistency_selector,
-                                            )),
-                                        ))
-                                    } else {
-                                        Some((Ok(firestore_cursors), None))
+                                            ),
+                                            page_token: params
+                                                .page_token
+                                                .clone()
+                                                .unwrap_or_default(),
+                                        });
+
+                                    match self.client().get().partition_query(request).await {
+                                        Ok(response) => {
+                                            let partition_response = response.into_inner();
+                                            let firestore_cursors: Vec<FirestoreQueryCursor> =
+                                                partition_response
+                                                    .partitions
+                                                    .into_iter()
+                                                    .map(|e| e.into())
+                                                    .collect();
+
+                                            if !partition_response.next_page_token.is_empty() {
+                                                Some((
+                                                    Ok(firestore_cursors),
+                                                    Some((
+                                                        params.with_page_token(
+                                                            partition_response.next_page_token,
+                                                        ),
+                                                        maybe_consistency_selector,
+                                                    )),
+                                                ))
+                                            } else {
+                                                Some((Ok(firestore_cursors), None))
+                                            }
+                                        }
+                                        Err(err) => Some((Err(FirestoreError::from(err)), None)),
                                     }
                                 }
-                                Err(err) => Some((Err(FirestoreError::from(err)), None)),
+                                Err(err) => Some((Err(err), None)),
                             }
                         } else {
                             None

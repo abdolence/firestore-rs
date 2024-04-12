@@ -65,7 +65,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Querying a test collection as a stream using Fluent API");
 
+    // Simple query into vector
     // Query as a stream our data
+    let as_vec: Vec<MyTestStructure> = db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .obj()
+        .query()
+        .await?;
+
+    println!("{:?}", as_vec);
+
+    // Query as a stream our data with filters and ordering
     let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db
         .fluent()
         .select()
