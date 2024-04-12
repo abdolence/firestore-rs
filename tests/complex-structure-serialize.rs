@@ -4,6 +4,7 @@ use firestore::*;
 use serde::{Deserialize, Serialize};
 
 mod common;
+
 use crate::common::setup;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -61,6 +62,11 @@ struct MyTestStructure {
 struct MyFloatStructure {
     some_f32: f32,
     some_f64: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+struct MyVectorStructure {
+    some_vec: FirestoreVector,
 }
 
 #[tokio::test]
@@ -173,6 +179,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         my_float_structure_returned.some_f64,
         my_float_structure.some_f64
     ));
+
+    let my_vector_structure = MyVectorStructure {
+        some_vec: FirestoreVector::new(vec![1.0, 2.0, 3.0]),
+    };
+    let my_vector_structure_returned: MyVectorStructure = db
+        .fluent()
+        .update()
+        .in_col(TEST_COLLECTION_NAME)
+        .document_id("test-vectors")
+        .object(&my_vector_structure)
+        .execute()
+        .await?;
+
+    assert_eq!(
+        my_vector_structure.some_vec,
+        my_vector_structure_returned.some_vec
+    );
 
     Ok(())
 }
