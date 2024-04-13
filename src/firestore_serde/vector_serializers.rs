@@ -13,6 +13,20 @@ impl FirestoreVector {
     pub fn new(vec: Vec<f64>) -> Self {
         FirestoreVector(vec)
     }
+
+    pub fn into_vec(self) -> Vec<f64> {
+        self.0
+    }
+
+    pub fn as_vec(&self) -> &Vec<f64> {
+        &self.0
+    }
+}
+
+impl From<FirestoreVector> for Vec<f64> {
+    fn from(val: FirestoreVector) -> Self {
+        val.into_vec()
+    }
 }
 
 impl<I> From<I> for FirestoreVector
