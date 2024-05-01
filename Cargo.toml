@@ -43,7 +43,7 @@ async-trait = "0.1"
 hex = "0.4"
 backoff = { version = "0.4", features = ["tokio"] }
 redb = { version = "2.1", optional = true }
-moka = { version = "0.12", features = ["future"], optional = true } # Caching library
+moka = { version = "0.12.7", features = ["future"], optional = true } # Caching library
 
 [dev-dependencies]
 cargo-husky = { version = "1.5", default-features = false, features = ["run-for-all", "prepush-hook", "run-cargo-fmt"] }
