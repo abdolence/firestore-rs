@@ -40,7 +40,7 @@ tokio-stream = "0.1"
 futures = "0.3"
 chrono = { version = "0.4", features = ["serde", "clock"], default-features = false }
 async-trait = "0.1"
-hex = "0.4"
+hex = "0.4.3"
 backoff = { version = "0.4", features = ["tokio"] }
 redb = { version = "2.1", optional = true }
 moka = { version = "0.12", features = ["future"], optional = true } # Caching library
