@@ -259,8 +259,7 @@ to JSON (so you can reuse the same model for JSON and Firestore).
 In your queries you need to use the wrapping class `firestore::FirestoreTimestamp`, for example:
 
 ```rust
-   q.field(path!(MyTestStructure::created_at))
-.less_than_or_equal(firestore::FirestoreTimestamp(Utc::now()))
+   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(firestore::FirestoreTimestamp(Utc::now()))
 ```
 
 ## Nested collections
@@ -498,7 +497,7 @@ storage if needed:
 ```rust
 
 let mut listener = db.create_listener(
-FirestoreTempFilesListenStateStorage::new() // or FirestoreMemListenStateStorage or your own implementation 
+    FirestoreTempFilesListenStateStorage::new() // or FirestoreMemListenStateStorage or your own implementation 
 ).await?;
 
 // Adding query listener
@@ -517,21 +516,21 @@ db.fluent()
 
 listener
 .start( | event| async move {
-match event {
-FirestoreListenEvent::DocumentChange( ref doc_change) => {
-println ! ("Doc changed: {:?}", doc_change);
-
-if let Some(doc) = & doc_change.document {
-  let obj: MyTestStructure =
-  FirestoreDb::deserialize_doc_to::<MyTestStructure > (doc)
-  .expect("Deserialized object");
-  println ! ("As object: {:?}", obj);
-}
-}
-_ => {
-  println ! ("Received a listen response event to handle: {:?}", event);
-}
-}
+    match event {
+        FirestoreListenEvent::DocumentChange( ref doc_change) => {
+            println ! ("Doc changed: {:?}", doc_change);
+            
+            if let Some(doc) = & doc_change.document {
+              let obj: MyTestStructure =
+              FirestoreDb::deserialize_doc_to::<MyTestStructure > (doc)
+              .expect("Deserialized object");
+              println ! ("As object: {:?}", obj);
+            }
+        }
+        _ => {
+          println ! ("Received a listen response event to handle: {:?}", event);
+        }
+    }
 
   Ok(())
 })
