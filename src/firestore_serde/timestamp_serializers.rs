@@ -231,10 +231,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
             }
         }
 
-        fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
-        where
-            T: Serialize,
-        {
+        fn serialize_some<T: ?Sized + Serialize>(self, value: &T) -> Result<Self::Ok, Self::Error> {
             value.serialize(self)
         }
 
@@ -257,27 +254,21 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
             self.serialize_str(variant)
         }
 
-        fn serialize_newtype_struct<T: ?Sized>(
+        fn serialize_newtype_struct<T: ?Sized + Serialize>(
             self,
             _name: &'static str,
             value: &T,
-        ) -> Result<Self::Ok, Self::Error>
-        where
-            T: Serialize,
-        {
+        ) -> Result<Self::Ok, Self::Error> {
             value.serialize(self)
         }
 
-        fn serialize_newtype_variant<T: ?Sized>(
+        fn serialize_newtype_variant<T: ?Sized + Serialize>(
             self,
             _name: &'static str,
             _variant_index: u32,
             _variant: &'static str,
             _value: &T,
-        ) -> Result<Self::Ok, Self::Error>
-        where
-            T: Serialize,
-        {
+        ) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
                     "Timestamp serializer doesn't support this type",

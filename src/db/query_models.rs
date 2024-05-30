@@ -13,6 +13,7 @@ pub enum FirestoreQueryCollection {
     Group(Vec<String>),
 }
 
+#[allow(clippy::to_string_trait_impl)]
 impl ToString for FirestoreQueryCollection {
     fn to_string(&self) -> String {
         match self {
@@ -312,6 +313,7 @@ pub enum FirestoreQueryDirection {
     Descending,
 }
 
+#[allow(clippy::to_string_trait_impl)]
 impl ToString for FirestoreQueryDirection {
     fn to_string(&self) -> String {
         match self {
