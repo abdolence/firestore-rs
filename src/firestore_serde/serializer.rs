@@ -176,10 +176,7 @@ impl serde::Serializer for FirestoreValueSerializer {
         }
     }
 
-    fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: Serialize,
-    {
+    fn serialize_some<T: ?Sized + Serialize>(self, value: &T) -> Result<Self::Ok, Self::Error> {
         value.serialize(self)
     }
 
@@ -202,14 +199,11 @@ impl serde::Serializer for FirestoreValueSerializer {
         self.serialize_str(variant)
     }
 
-    fn serialize_newtype_struct<T: ?Sized>(
+    fn serialize_newtype_struct<T: ?Sized + Serialize>(
         self,
         name: &'static str,
         value: &T,
-    ) -> Result<Self::Ok, Self::Error>
-    where
-        T: Serialize,
-    {
+    ) -> Result<Self::Ok, Self::Error> {
         match name {
             crate::firestore_serde::timestamp_serializers::FIRESTORE_TS_TYPE_TAG_TYPE => {
                 crate::firestore_serde::timestamp_serializers::serialize_timestamp_for_firestore(
@@ -241,16 +235,13 @@ impl serde::Serializer for FirestoreValueSerializer {
         }
     }
 
-    fn serialize_newtype_variant<T: ?Sized>(
+    fn serialize_newtype_variant<T: ?Sized + Serialize>(
         self,
         _name: &'static str,
         _variant_index: u32,
         variant: &'static str,
         value: &T,
-    ) -> Result<Self::Ok, Self::Error>
-    where
-        T: Serialize,
-    {
+    ) -> Result<Self::Ok, Self::Error> {
         let mut fields = HashMap::new();
         fields.insert(String::from(variant), value.serialize(self)?.value);
         Ok(FirestoreValue::from(
@@ -330,10 +321,7 @@ impl serde::ser::SerializeSeq for SerializeVec {
     type Ok = FirestoreValue;
     type Error = FirestoreError;
 
-    fn serialize_element<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
         let serialized_value = value
             .serialize(FirestoreValueSerializer {
                 none_as_null: self.none_as_null,
@@ -360,10 +348,7 @@ impl serde::ser::SerializeTuple for SerializeVec {
     type Ok = FirestoreValue;
     type Error = FirestoreError;
 
-    fn serialize_element<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
         serde::ser::SerializeSeq::serialize_element(self, value)
     }
 
@@ -376,10 +361,7 @@ impl serde::ser::SerializeTupleStruct for SerializeVec {
     type Ok = FirestoreValue;
     type Error = FirestoreError;
 
-    fn serialize_field<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    fn serialize_field<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
         serde::ser::SerializeSeq::serialize_element(self, value)
     }
 
@@ -392,10 +374,7 @@ impl serde::ser::SerializeTupleVariant for SerializeTupleVariant {
     type Ok = FirestoreValue;
     type Error = FirestoreError;
 
-    fn serialize_field<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    fn serialize_field<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
         let serialized_value = value
             .serialize(FirestoreValueSerializer {
                 none_as_null: self.none_as_null,
@@ -432,10 +411,7 @@ impl serde::ser::SerializeMap for SerializeMap {
     type Ok = FirestoreValue;
     type Error = FirestoreError;
 
-    fn serialize_key<T: ?Sized>(&mut self, key: &T) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), Self::Error> {
         let serializer = FirestoreValueSerializer {
             none_as_null: self.none_as_null,
         };
@@ -454,10 +430,7 @@ impl serde::ser::SerializeMap for SerializeMap {
         }
     }
 
-    fn serialize_value<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
         match self.next_key.take() {
             Some(key) => {
                 let serializer = FirestoreValueSerializer {
