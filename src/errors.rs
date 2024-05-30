@@ -252,6 +252,15 @@ fn check_hyper_errors(status: gcloud_sdk::tonic::Status) -> FirestoreError {
                 format!("Hyper error: {err}"),
                 false,
             )),
+            _ if status.code() == gcloud_sdk::tonic::Code::Unknown
+                && status.message().contains("transport error") =>
+            {
+                FirestoreError::DatabaseError(FirestoreDatabaseError::new(
+                    FirestoreErrorPublicGenericDetails::new("CONNECTION_ERROR".into()),
+                    format!("{status}"),
+                    true,
+                ))
+            }
             _ => FirestoreError::DatabaseError(FirestoreDatabaseError::new(
                 FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
                 format!("{status}"),
@@ -260,7 +269,7 @@ fn check_hyper_errors(status: gcloud_sdk::tonic::Status) -> FirestoreError {
         },
         _ => FirestoreError::DatabaseError(FirestoreDatabaseError::new(
             FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-            format!("{status}"),
+            format!("{status} without root cause"),
             false,
         )),
     }
