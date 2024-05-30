@@ -465,14 +465,11 @@ impl serde::ser::SerializeStruct for SerializeMap {
     type Ok = FirestoreValue;
     type Error = FirestoreError;
 
-    fn serialize_field<T: ?Sized>(
+    fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
         key: &'static str,
         value: &T,
-    ) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    ) -> Result<(), Self::Error> {
         let serializer = FirestoreValueSerializer {
             none_as_null: self.none_as_null,
         };
@@ -500,14 +497,11 @@ impl serde::ser::SerializeStructVariant for SerializeStructVariant {
     type Ok = FirestoreValue;
     type Error = FirestoreError;
 
-    fn serialize_field<T: ?Sized>(
+    fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
         key: &'static str,
         value: &T,
-    ) -> Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    ) -> Result<(), Self::Error> {
         let serializer = FirestoreValueSerializer {
             none_as_null: self.none_as_null,
         };

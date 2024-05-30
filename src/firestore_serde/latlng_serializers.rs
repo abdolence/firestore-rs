@@ -30,14 +30,11 @@ pub fn serialize_latlng_for_firestore<T: ?Sized + Serialize>(
         type Ok = FirestoreValue;
         type Error = FirestoreError;
 
-        fn serialize_field<T: ?Sized>(
+        fn serialize_field<T: ?Sized + Serialize>(
             &mut self,
             key: &'static str,
             value: &T,
-        ) -> Result<(), Self::Error>
-        where
-            T: Serialize,
-        {
+        ) -> Result<(), Self::Error> {
             let serializer = FirestoreValueSerializer {
                 none_as_null: false,
             };
@@ -63,7 +60,7 @@ pub fn serialize_latlng_for_firestore<T: ?Sized + Serialize>(
                         FirestoreSerializationError::from_message(
                             "LatLng serializer doesn't recognize the structure of the object",
                         ),
-                    ))
+                    ));
                 }
             };
 
@@ -209,10 +206,7 @@ pub fn serialize_latlng_for_firestore<T: ?Sized + Serialize>(
             ))
         }
 
-        fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
-        where
-            T: Serialize,
-        {
+        fn serialize_some<T: ?Sized + Serialize>(self, value: &T) -> Result<Self::Ok, Self::Error> {
             value.serialize(self)
         }
 
@@ -235,27 +229,21 @@ pub fn serialize_latlng_for_firestore<T: ?Sized + Serialize>(
             self.serialize_str(variant)
         }
 
-        fn serialize_newtype_struct<T: ?Sized>(
+        fn serialize_newtype_struct<T: ?Sized + Serialize>(
             self,
             _name: &'static str,
             value: &T,
-        ) -> Result<Self::Ok, Self::Error>
-        where
-            T: Serialize,
-        {
+        ) -> Result<Self::Ok, Self::Error> {
             value.serialize(self)
         }
 
-        fn serialize_newtype_variant<T: ?Sized>(
+        fn serialize_newtype_variant<T: ?Sized + Serialize>(
             self,
             _name: &'static str,
             _variant_index: u32,
             _variant: &'static str,
             _value: &T,
-        ) -> Result<Self::Ok, Self::Error>
-        where
-            T: Serialize,
-        {
+        ) -> Result<Self::Ok, Self::Error> {
             Err(FirestoreError::SerializeError(
                 FirestoreSerializationError::from_message(
                     "LatLng serializer doesn't support this type",

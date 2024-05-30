@@ -188,7 +188,7 @@ impl FirestorePersistentCacheBackend {
     fn write_document(&self, doc: &Document) -> FirestoreResult<()> {
         let (collection_path, document_id) = split_document_path(&doc.name);
 
-        if self.config.collections.get(collection_path).is_some() {
+        if self.config.collections.contains_key(collection_path) {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
             let write_txn = self.redb.begin_write()?;
@@ -338,7 +338,7 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
         let (collection_path, document_id) = split_document_path(document_path);
-        if self.config.collections.get(collection_path).is_some() {
+        if self.config.collections.contains_key(collection_path) {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
             let read_tx = self.redb.begin_read()?;
             let table = read_tx.open_table(td)?;
@@ -359,7 +359,7 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         collection_path: &str,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if self.config.collections.get(collection_path).is_some() {
+        if self.config.collections.contains_key(collection_path) {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
             let read_tx = self.redb.begin_read()?;
@@ -388,7 +388,7 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if self.config.collections.get(collection_path).is_some() {
+        if self.config.collections.contains_key(collection_path) {
             // For now only basic/simple query all supported
             let simple_query_engine = FirestoreCacheQueryEngine::new(query);
             if simple_query_engine.params_supported() {
