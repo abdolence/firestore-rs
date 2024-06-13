@@ -369,8 +369,8 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
                              value_type: Some(gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(v.longitude))
                          }),
                     ]
-                    .into_iter()
-                    .collect();
+                        .into_iter()
+                        .collect();
                 visitor.visit_map(FirestoreValueMapAccess::new(lat_lng_fields))
             }
             Some(value::ValueType::TimestampValue(ts)) => {
@@ -643,7 +643,7 @@ where
     fields.insert(
         "_firestore_full_id".to_string(),
         gcloud_sdk::google::firestore::v1::Value {
-            value_type: Some(value::ValueType::StringValue(doc_name)),
+            value_type: Some(value::ValueType::StringValue(doc_name.clone())),
         },
     );
 
@@ -671,5 +671,10 @@ where
         )),
     });
 
-    T::deserialize(firestore_value)
+    T::deserialize(firestore_value).map_err(|err| match err {
+        FirestoreError::DeserializeError(e) => {
+            FirestoreError::DeserializeError(e.with_document_path(doc_name))
+        }
+        _ => err,
+    })
 }

@@ -546,7 +546,12 @@ where
     let serializer = crate::firestore_serde::serializer::FirestoreValueSerializer {
         none_as_null: false,
     };
-    let document_value = object.serialize(serializer)?;
+    let document_value = object.serialize(serializer).map_err(|err| match err {
+        FirestoreError::SerializeError(e) => {
+            FirestoreError::SerializeError(e.with_document_path(document_path.as_ref().to_string()))
+        }
+        _ => err,
+    })?;
 
     match document_value.value.value_type {
         Some(value::ValueType::MapValue(mv)) => Ok(gcloud_sdk::google::firestore::v1::Document {
