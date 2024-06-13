@@ -297,6 +297,7 @@ impl serde::de::Error for FirestoreError {
 pub struct FirestoreSerializationError {
     pub public: FirestoreErrorPublicGenericDetails,
     pub message: String,
+    pub document_path: Option<String>,
 }
 
 impl FirestoreSerializationError {
@@ -313,8 +314,10 @@ impl Display for FirestoreSerializationError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(
             f,
-            "Invalid serialization: {}. {}",
-            self.public, self.message
+            "Invalid serialization: {}. {}. Document path: {}",
+            self.public,
+            self.message,
+            self.document_path.as_deref().unwrap_or("-")
         )
     }
 }
