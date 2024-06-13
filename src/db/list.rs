@@ -9,6 +9,7 @@ use futures::StreamExt;
 use futures::TryFutureExt;
 use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
+use rand::Rng;
 use rsb_derive::*;
 use serde::Deserialize;
 use std::future;
@@ -352,12 +353,19 @@ impl FirestoreDb {
                     FirestoreError::DatabaseError(ref db_err)
                     if db_err.retry_possible && retries < db_inner.options.max_retries =>
                         {
+                            let sleep_duration = tokio::time::Duration::from_millis(
+                                rand::thread_rng().gen_range(0..2u64.pow(retries as u32) * 1000 + 1),
+                            );
+
                             warn!(
-                            err = %db_err,
-                            current_retry = retries + 1,
-                            max_retries = db_inner.options.max_retries,
-                            "Failed to list documents. Retrying up to the specified number of times.",
-                        );
+                                err = %db_err,
+                                current_retry = retries + 1,
+                                max_retries = db_inner.options.max_retries,
+                                delay = sleep_duration.as_millis(),
+                                "Failed to list documents. Retrying up to the specified number of times.",
+                            );
+
+                            tokio::time::sleep(sleep_duration).await;
 
                             Self::list_doc_with_retries_inner(db_inner, list_request, retries + 1, span).await
                         }
@@ -506,12 +514,18 @@ impl FirestoreDb {
                     FirestoreError::DatabaseError(ref db_err)
                     if db_err.retry_possible && retries < self.inner.options.max_retries =>
                         {
+                            let sleep_duration = tokio::time::Duration::from_millis(
+                                rand::thread_rng().gen_range(0..2u64.pow(retries as u32) * 1000 + 1),
+                            );
                             warn!(
-                            err = %db_err,
-                            current_retry = retries + 1,
-                            max_retries = self.inner.options.max_retries,
-                            "Failed to list collection IDs. Retrying up to the specified number of times.",
-                        );
+                                err = %db_err,
+                                current_retry = retries + 1,
+                                max_retries = self.inner.options.max_retries,
+                                delay = sleep_duration.as_millis(),
+                                "Failed to list collection IDs. Retrying up to the specified number of times.",
+                            );
+
+                            tokio::time::sleep(sleep_duration).await;
 
                             self.list_collection_ids_with_retries(params, retries + 1, span)
                                 .await

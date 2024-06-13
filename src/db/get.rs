@@ -9,6 +9,7 @@ use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
+use rand::Rng;
 use serde::Deserialize;
 use tracing::*;
 
@@ -630,14 +631,21 @@ impl FirestoreDb {
                     FirestoreError::DatabaseError(ref db_err)
                     if db_err.retry_possible && retries < self.get_options().max_retries =>
                         {
+                            let sleep_duration = tokio::time::Duration::from_millis(
+                                rand::thread_rng().gen_range(0..2u64.pow(retries as u32) * 1000 + 1),
+                            );
                             span.in_scope(|| {
                                 warn!(
-                                err = %db_err,
-                                current_retry = retries + 1,
-                                max_retries = self.get_options().max_retries,
-                                "Failed to get document. Retrying up to the specified number of times.",
-                            );
+                                    err = %db_err,
+                                    current_retry = retries + 1,
+                                    max_retries = self.get_options().max_retries,
+                                    delay = sleep_duration.as_millis(),
+                                    "Failed to get document. Retrying up to the specified number of times.",
+                                );
                             });
+
+                            tokio::time::sleep(sleep_duration).await;
+
                             self.get_doc_by_path(collection_id, document_path, None, retries + 1)
                                 .await
                         }
