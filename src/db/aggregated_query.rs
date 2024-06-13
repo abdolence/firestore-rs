@@ -10,6 +10,7 @@ use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
+use rand::Rng;
 use rsb_derive::*;
 use serde::Deserialize;
 use tracing::*;
@@ -341,12 +342,18 @@ impl FirestoreDb {
                     FirestoreError::DatabaseError(ref db_err)
                     if db_err.retry_possible && retries < self.inner.options.max_retries =>
                         {
+                            let sleep_duration = tokio::time::Duration::from_millis(
+                                rand::thread_rng().gen_range(0..2u64.pow(retries as u32) * 1000 + 1),
+                            );
                             warn!(
-                            err = %db_err,
-                            current_retry = retries + 1,
-                            max_retries = self.inner.options.max_retries,
-                            "Failed to run aggregation query. Retrying up to the specified number of times.",
-                        );
+                                err = %db_err,
+                                current_retry = retries + 1,
+                                max_retries = self.inner.options.max_retries,
+                                delay = sleep_duration.as_millis(),
+                                "Failed to run aggregation query. Retrying up to the specified number of times.",
+                            );
+
+                            tokio::time::sleep(sleep_duration).await;
 
                             self.stream_aggregated_query_doc_with_retries(params, retries + 1, span)
                                 .await
@@ -405,12 +412,18 @@ impl FirestoreDb {
                     FirestoreError::DatabaseError(ref db_err)
                     if db_err.retry_possible && retries < self.inner.options.max_retries =>
                         {
+                            let sleep_duration = tokio::time::Duration::from_millis(
+                                rand::thread_rng().gen_range(0..2u64.pow(retries as u32) * 1000 + 1),
+                            );
                             warn!(
-                            err = %db_err,
-                            current_retry = retries + 1,
-                            max_retries = self.inner.options.max_retries,
-                            "Failed to run aggregation query. Retrying up to the specified number of times.",
-                        );
+                                err = %db_err,
+                                current_retry = retries + 1,
+                                max_retries = self.inner.options.max_retries,
+                                delay = sleep_duration.as_millis(),
+                                "Failed to run aggregation query. Retrying up to the specified number of times.",
+                            );
+
+                            tokio::time::sleep(sleep_duration).await;
 
                             self.aggregated_query_doc_with_retries(params, retries + 1, span)
                                 .await
