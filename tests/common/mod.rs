@@ -15,7 +15,8 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 #[allow(dead_code)]
 pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + Sync>> {
     // Logging with debug enabled
-    let filter = tracing_subscriber::EnvFilter::builder().parse("info,firestore=debug")?;
+    let filter =
+        tracing_subscriber::EnvFilter::builder().parse("info,firestore=debug,gcloud_sdk=debug")?;
 
     let subscriber = tracing_subscriber::fmt().with_env_filter(filter).finish();
     tracing::subscriber::set_global_default(subscriber)?;

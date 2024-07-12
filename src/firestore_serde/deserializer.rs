@@ -651,7 +651,7 @@ where
         fields.insert(
             "_firestore_created".to_string(),
             gcloud_sdk::google::firestore::v1::Value {
-                value_type: Some(value::ValueType::TimestampValue(created_time.clone())),
+                value_type: Some(value::ValueType::TimestampValue(*created_time)),
             },
         );
     }
@@ -660,7 +660,7 @@ where
         fields.insert(
             "_firestore_updated".to_string(),
             gcloud_sdk::google::firestore::v1::Value {
-                value_type: Some(value::ValueType::TimestampValue(updated_time.clone())),
+                value_type: Some(value::ValueType::TimestampValue(*updated_time)),
             },
         );
     }

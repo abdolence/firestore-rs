@@ -37,7 +37,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-firestore = "0.42"
+firestore = "0.43"
 ```
 
 ## Examples
@@ -177,8 +177,8 @@ let object_stream: BoxStream<FirestoreResult<MyTestStructure> > = db.fluent()
   .from(TEST_COLLECTION_NAME)
   .filter( | q| { // Fluent filter API example
       q.for_all([
-        q.field(path! (MyTestStructure::some_num)).is_not_null(),
-        q.field(path ! (MyTestStructure::some_string)).eq("Test"),
+        q.field(path!(MyTestStructure::some_num)).is_not_null(),
+        q.field(path!(MyTestStructure::some_string)).eq("Test"),
         // Sometimes you have optional filters
         Some("Test2")
           .and_then( | value | q.field(path ! (MyTestStructure::one_more_string)).eq(value)),        
@@ -272,21 +272,21 @@ You can work with nested collections specifying path/location to a parent for do
 db.fluent()
   .insert()
   .into(TEST_PARENT_COLLECTION_NAME)
-  .document_id( & parent_struct.some_id)
-  .object( & parent_struct)
+  .document_id(&parent_struct.some_id)
+  .object(&parent_struct)
   .execute()
   .await?;
 
 // The doc path where we store our children
-let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id) ?;
+let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id)?;
 
 // Create a child doc
 db.fluent()
   .insert()
   .into(TEST_CHILD_COLLECTION_NAME)
-  .document_id( & child_struct.some_id)
-  .parent( & parent_path)
-  .object( & child_struct)
+  .document_id(&child_struct.some_id)
+  .parent(&parent_path)
+  .object(&child_struct)
   .execute()
   .await?;
 
@@ -309,9 +309,9 @@ You can nest multiple levels of collections using `at()`:
 
 ```rust
 let parent_path =
-db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id") ?
-  .at(TEST_CHILD_COLLECTION_NAME, "child-id") ?
-  .at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id") ?;
+db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
+  .at(TEST_CHILD_COLLECTION_NAME, "child-id")?
+  .at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id")?;
 ```
 
 ## Transactions
@@ -355,7 +355,7 @@ You may also execute transactions that automatically retry with exponential back
         .by_id_in(TEST_COLLECTION_NAME)
         .obj()
         .one(TEST_DOCUMENT_ID)
-        .await ?
+        .await?
         .expect("Missing document");
 
       // Perform some kind of operation that depends on the state of the document
@@ -363,12 +363,12 @@ You may also execute transactions that automatically retry with exponential back
 
       db.fluent()
         .update()
-        .fields(paths ! (MyTestStructure::{
+        .fields(paths!(MyTestStructure::{
           test_string
          }))
         .in_col(TEST_COLLECTION_NAME)
         .document_id(TEST_DOCUMENT_ID)
-        .object( & test_structure)
+        .object(&test_structure)
         .add_to_transaction(transaction) ?;
 
         Ok(())
@@ -455,11 +455,11 @@ db.fluent()
 .update()
 .in_col(TEST_COLLECTION_NAME)
 .document_id("test-4")
-.transforms( | t| { // Transformations
+.transforms(|t| { // Transformations
     t.fields([
-      t.field(path! (MyTestStructure::some_num)).increment(10),
-      t.field(path ! (MyTestStructure::some_array)).append_missing_elements([4, 5]),
-      t.field(path! (MyTestStructure::some_array)).remove_all_from_array([3]),
+      t.field(path!(MyTestStructure::some_num)).increment(10),
+      t.field(path!(MyTestStructure::some_array)).append_missing_elements([4, 5]),
+      t.field(path!(MyTestStructure::some_array)).remove_all_from_array([3]),
     ])
 })
 .only_transform()
@@ -470,13 +470,13 @@ db.fluent()
 .update()
 .in_col(TEST_COLLECTION_NAME)
 .document_id("test-5")
-.object( & my_obj) // Updating the objects with the fields here
-.transforms( | t| { // Transformations after the update
+.object(&my_obj) // Updating the objects with the fields here
+.transforms(|t| { // Transformations after the update
     t.fields([
-      t.field(path! (MyTestStructure::some_num)).increment(10),
+      t.field(path!(MyTestStructure::some_num)).increment(10),
     ])
 })
-.add_to_transaction( & mut transaction) ?; // or add_to_batch
+.add_to_transaction(&mut transaction) ?; // or add_to_batch
 ```
 
 ## Listening the document changes on Firestore
@@ -505,14 +505,14 @@ db.fluent()
 .select()
 .from(TEST_COLLECTION_NAME)
 .listen()
-.add_target(TEST_TARGET_ID_BY_QUERY, & mut listener) ?;
+.add_target(TEST_TARGET_ID_BY_QUERY, &mut listener) ?;
 
 // Adding docs listener by IDs
 db.fluent()
 .select()
 .by_id_in(TEST_COLLECTION_NAME)
 .batch_listen([doc_id1, doc_id2])
-.add_target(TEST_TARGET_ID_BY_DOC_IDS, & mut listener) ?;
+.add_target(TEST_TARGET_ID_BY_DOC_IDS, &mut listener) ?;
 
 listener
 .start( | event| async move {
@@ -577,7 +577,7 @@ The library supports the aggregation functions for the queries:
 db.fluent()
   .select()
   .from(TEST_COLLECTION_NAME)
-  .aggregate( | a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
+  .aggregate(|a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
   .obj()
   .query()
   .await?;
@@ -710,24 +710,24 @@ Update cache is done in the following cases:
 
 ```rust
 // Create an instance
-let db = FirestoreDb::new( & config_env_var("PROJECT_ID") ? ).await?;
+let db = FirestoreDb::new( &config_env_var("PROJECT_ID") ? ).await?;
 
 const TEST_COLLECTION_NAME: &'static str = "test-caching";
 
 // Create a cache instance that also creates an internal Firestore listener
 let mut cache = FirestoreCache::new(
 "example-mem-cache".into(),
-& db,
+&db,
 FirestoreMemoryCacheBackend::new(
   FirestoreCacheConfiguration::new().add_collection_config(
-    & db,
+    &db,
     FirestoreCacheCollectionConfiguration::new(
       TEST_COLLECTION_NAME,
       FirestoreListenerTarget::new(1000),
       FirestoreCacheCollectionLoadMode::PreloadNone,
     )
   ),
-) ?,
+)?,
   FirestoreMemListenStateStorage::new(),
 )
 .await?;
@@ -736,27 +736,32 @@ FirestoreMemoryCacheBackend::new(
 cache.load().await?; // Required even if you don't preload anything
 
 // Read a document through the cache. If it is not found in the cache, it will be loaded from Firestore and cached.
-let my_struct0: Option<MyTestStructure> = db.read_through_cache( & cache)
-.fluent()
-.select()
-.by_id_in(TEST_COLLECTION_NAME)
-.obj()
-.one("test-1")
-.await?;
+let my_struct0: Option<MyTestStructure> = db.read_through_cache(&cache)
+  .fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .one("test-1")
+  .await?;
 
 // Read a document only from the cache. If it is not found in the cache, it will return None.
-let my_struct0: Option<MyTestStructure> = db.read_cached_only( & cache)
-.fluent()
-.select()
-.by_id_in(TEST_COLLECTION_NAME)
-.obj()
-.one("test-1")
-.await?;
+let my_struct0: Option<MyTestStructure> = db.read_cached_only(&cache)
+  .fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .one("test-1")
+  .await?;
 
 ```
 
 Full examples available [here](examples/caching_memory_collections.rs)
 and [here](examples/caching_persistent_collections.rs).
+
+## TLS related features
+Cargo provides support for different TLS features for dependencies:
+- `tls-roots`: default feature to support native TLS roots
+- `tls-webpki-roots`: feature to switch to webpki crate roots
 
 ## How this library is tested
 
