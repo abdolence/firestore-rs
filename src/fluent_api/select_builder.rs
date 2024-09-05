@@ -211,7 +211,7 @@ where
     where
         F: AsRef<str>,
     {
-        self.find_nearest_with_options::<F>(FirestoreFindNearestOptions::new(
+        self.find_nearest_with_options(FirestoreFindNearestOptions::new(
             field_name.as_ref().to_string(),
             vector,
             measure,
@@ -220,13 +220,10 @@ where
     }
 
     #[inline]
-    pub fn find_nearest_with_options<F>(
+    pub fn find_nearest_with_options(
         self,
         options: FirestoreFindNearestOptions,
-    ) -> FirestoreSelectDocBuilder<'a, D>
-    where
-        F: AsRef<str>,
-    {
+    ) -> FirestoreSelectDocBuilder<'a, D> {
         Self {
             params: self.params.with_find_nearest(options),
             ..self
