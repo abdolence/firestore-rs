@@ -442,6 +442,8 @@ pub struct FirestoreFindNearestOptions {
     pub query_vector: FirestoreVector,
     pub distance_measure: FirestoreFindNearestDistanceMeasure,
     pub neighbors_limit: u32,
+    pub distance_result_field: Option<String>,
+    pub distance_threshold: Option<f64>,
 }
 
 impl TryFrom<FirestoreFindNearestOptions>
@@ -470,6 +472,8 @@ impl TryFrom<FirestoreFindNearestOptions>
                     ),
                 )))
             )?),
+            distance_result_field: options.distance_result_field.unwrap_or("".into()),
+            distance_threshold: options.distance_threshold,
         })
     }
 }

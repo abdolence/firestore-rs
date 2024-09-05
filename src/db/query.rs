@@ -436,8 +436,7 @@ impl FirestoreQuerySupport for FirestoreDb {
                                                 .as_ref()
                                                 .unwrap_or_else(|| self.get_documents_path())
                                                 .clone(),
-                                            consistency_selector: maybe_consistency_selector
-                                                .clone(),
+                                            consistency_selector: maybe_consistency_selector,
                                             query_type: Some(
                                                 partition_query_request::QueryType::StructuredQuery(
                                                     query_params,

@@ -11,6 +11,7 @@ struct MyTestStructure {
     some_id: String,
     some_string: String,
     some_vec: FirestoreVector,
+    distance: Option<f64>,
 }
 
 #[tokio::main]
@@ -43,6 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 some_id: format!("test-{}", i),
                 some_string: "Test".to_string(),
                 some_vec: vec![i as f64, (i * 10) as f64, (i * 20) as f64].into(),
+                distance: None,
             };
 
             // Let's insert some data
@@ -74,11 +76,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
-        .find_nearest(
-            path!(MyTestStructure::some_vec),
-            vec![0.0_f64, 0.0_f64, 0.0_f64].into(),
-            FirestoreFindNearestDistanceMeasure::Euclidean,
-            5,
+        .find_nearest_with_options(
+            FirestoreFindNearestOptions::new(
+                path!(MyTestStructure::some_vec),
+                vec![0.0_f64, 0.0_f64, 0.0_f64].into(),
+                FirestoreFindNearestDistanceMeasure::Euclidean,
+                5,
+            )
+            .with_distance_result_field(path!(MyTestStructure::distance)),
         )
         .obj()
         .query()
