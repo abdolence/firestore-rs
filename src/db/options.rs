@@ -18,7 +18,7 @@ impl FirestoreDbOptions {
     pub async fn for_default_project_id() -> Option<FirestoreDbOptions> {
         let google_project_id = GoogleEnvironment::detect_google_project_id().await;
 
-        google_project_id.map(|project_id| FirestoreDbOptions::new(project_id))
+        google_project_id.map(FirestoreDbOptions::new)
     }
 }
 

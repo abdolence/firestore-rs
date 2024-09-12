@@ -124,7 +124,7 @@ impl FirestoreDb {
         Err(FirestoreError::InvalidParametersError(
             FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
                 "google_project_id".to_string(),
-                format!("Unable to retrieve google_project_id"),
+                "Unable to retrieve google_project_id".to_string(),
             )),
         ))
     }
