@@ -114,6 +114,18 @@ impl FirestoreDb {
         .await
     }
 
+    pub async fn for_default_project_id() -> FirestoreResult<Self> {
+        match FirestoreDbOptions::for_default_project_id().await {
+            Some(options) => Self::with_options(options).await,
+            _ => Err(FirestoreError::InvalidParametersError(
+                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
+                    "google_project_id".to_string(),
+                    "Unable to retrieve google_project_id".to_string(),
+                )),
+            )),
+        }
+    }
+
     pub async fn with_options_service_account_key_file(
         options: FirestoreDbOptions,
         service_account_key_path: std::path::PathBuf,
