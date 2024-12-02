@@ -57,7 +57,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .into(TEST_COLLECTION_NAME)
         .document_id(&my_struct1.some_id)
         .object(&my_struct1)
-        .execute()
+        .execute::<()>()
         .await?;
 
     db.fluent()
@@ -65,7 +65,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .into(TEST_COLLECTION_NAME)
         .document_id(&my_struct2.some_id)
         .object(&my_struct2)
-        .execute()
+        .execute::<()>()
         .await?;
 
     let object_stream: BoxStream<MyTestStructure> = db

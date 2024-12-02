@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .into(TEST_COLLECTION_NAME)
         .document_id(TEST_DOCUMENT_ID)
         .object(&my_struct)
-        .execute()
+        .execute::<()>()
         .await?;
 
     println!("Running transactions...");

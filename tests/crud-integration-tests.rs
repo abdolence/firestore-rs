@@ -66,7 +66,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .into(TEST_COLLECTION_NAME)
         .document_id(&my_struct2.some_id)
         .object(&my_struct2)
-        .execute()
+        .execute::<()>()
         .await?;
 
     assert_eq!(object_returned, my_struct1);

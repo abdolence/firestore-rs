@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .into(TEST_COLLECTION_NAME)
             .document_id(&my_struct.some_id)
             .object(&my_struct)
-            .execute()
+            .execute::<()>()
             .await?;
     }
 

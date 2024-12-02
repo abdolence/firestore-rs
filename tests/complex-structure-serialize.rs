@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     // Let's insert some data
-    db.create_obj(
+    db.create_obj::<_, (), _>(
         TEST_COLLECTION_NAME,
         Some(&my_struct.some_id),
         &my_struct,
