@@ -122,6 +122,7 @@
 //!
 
 #![allow(clippy::new_without_default)]
+#![allow(clippy::needless_lifetimes)]
 #![forbid(unsafe_code)]
 
 pub mod errors;
