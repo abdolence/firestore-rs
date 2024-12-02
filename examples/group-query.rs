@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .into(TEST_PARENT_COLLECTION_NAME)
             .document_id(&parent_struct.some_id)
             .object(&parent_struct)
-            .execute()
+            .execute::<()>()
             .await?;
 
         for child_idx in 0..3 {
@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .document_id(&child_struct.some_id)
                 .parent(&parent_path)
                 .object(&child_struct)
-                .execute()
+                .execute::<()>()
                 .await?;
         }
     }

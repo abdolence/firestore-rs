@@ -42,6 +42,7 @@ pub struct FirestoreCollectionDocuments {
     pub documents: Vec<String>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum FirestoreTargetType {
     Query(FirestoreQueryParams),
