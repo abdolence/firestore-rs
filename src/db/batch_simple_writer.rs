@@ -22,7 +22,7 @@ pub struct FirestoreSimpleBatchWriter {
 }
 
 impl FirestoreSimpleBatchWriter {
-    pub async fn new<'b>(
+    pub async fn new(
         db: FirestoreDb,
         options: FirestoreSimpleBatchWriteOptions,
     ) -> FirestoreResult<FirestoreSimpleBatchWriter> {
