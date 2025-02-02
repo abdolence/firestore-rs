@@ -343,7 +343,7 @@ impl FirestoreDb {
                     if db_err.retry_possible && retries < self.inner.options.max_retries =>
                         {
                             let sleep_duration = tokio::time::Duration::from_millis(
-                                rand::thread_rng().gen_range(0..2u64.pow(retries as u32) * 1000 + 1),
+                                rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1),
                             );
                             warn!(
                                 err = %db_err,
@@ -413,7 +413,7 @@ impl FirestoreDb {
                     if db_err.retry_possible && retries < self.inner.options.max_retries =>
                         {
                             let sleep_duration = tokio::time::Duration::from_millis(
-                                rand::thread_rng().gen_range(0..2u64.pow(retries as u32) * 1000 + 1),
+                                rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1),
                             );
                             warn!(
                                 err = %db_err,
