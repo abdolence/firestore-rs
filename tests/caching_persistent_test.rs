@@ -158,7 +158,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
             some_num: 2,
             some_string: "updated".to_string(),
         })
-        .execute()
+        .execute::<()>()
         .await?;
 
     let cached_db = db.read_cached_only(&cache);
