@@ -37,7 +37,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-firestore = "0.44"
+firestore = "0.45"
 ```
 
 ## Examples
