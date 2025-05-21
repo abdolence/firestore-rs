@@ -124,29 +124,6 @@ impl FirestoreDb {
     /// Provides access to the fluent API for building Firestore operations.
     ///
     /// This is the main entry point for using the chainable builder pattern.
-    ///
-    /// # Example
-    /// ```rust,no_run
-    /// # use firestore::*;
-    /// # use serde::Serialize;
-    /// # #[derive(Serialize)]
-    /// # struct MyData { id: String }
-    /// # pub fn config_env_var(name: &str) -> Result<String, String> {
-    /// #     std::env::var(name).map_err(|e| format!("{}: {}", name, e))
-    /// # }
-    /// # #[tokio::main]
-    /// # async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    /// # let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
-    /// # let my_object = MyData { id: "123".to_string() };
-    /// db.fluent()
-    ///   .insert()
-    ///   .into("my_collection")
-    ///   .object(&my_object)
-    ///   .execute()
-    ///   .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     #[inline]
     pub fn fluent(&self) -> FirestoreExprBuilder<FirestoreDb> {
         FirestoreExprBuilder::new(self)
