@@ -83,7 +83,7 @@ where
 {
     fn from(value: T) -> Self {
         let serializer = crate::firestore_serde::serializer::FirestoreValueSerializer::new();
-        value.serialize(serializer).unwrap_or_else(|err| {
+        value.serialize(serializer).unwrap_or_else(|_err| {
             // It's generally better to panic or return a Result here if serialization
             // is critical and failure indicates a programming error.
             // However, matching existing behavior of defaulting to None/Null.
