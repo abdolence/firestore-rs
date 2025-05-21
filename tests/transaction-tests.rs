@@ -16,7 +16,7 @@ struct MyTestStructure {
 async fn transaction_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = setup().await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "integration-test-transactions";
+    const TEST_COLLECTION_NAME: &str = "integration-test-transactions";
 
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),

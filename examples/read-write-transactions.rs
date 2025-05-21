@@ -14,7 +14,7 @@ struct MyTestStructure {
     test_string: String,
 }
 
-const TEST_COLLECTION_NAME: &'static str = "test-rw-trans";
+const TEST_COLLECTION_NAME: &str = "test-rw-trans";
 const TEST_DOCUMENT_ID: &str = "test_doc_id";
 
 /// Creates a document with a counter set to 0 and then concurrently executes futures for `COUNT_ITERATIONS` iterations.

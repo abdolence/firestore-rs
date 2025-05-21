@@ -125,48 +125,117 @@
 #![allow(clippy::needless_lifetimes)]
 #![forbid(unsafe_code)]
 
+/// Defines the error types used throughout the `firestore-rs` crate.
+///
+/// This module contains the primary [`FirestoreError`](errors::FirestoreError) enum
+/// and various specific error structs that provide detailed information about
+/// issues encountered during Firestore operations.
 pub mod errors;
+
 mod firestore_value;
 
+/// Re-exports all public items from the `firestore_value` module.
+///
+/// The `firestore_value` module provides representations and utilities for
+/// working with Firestore's native data types (e.g., `Map`, `Array`, `Timestamp`).
 pub use firestore_value::*;
 
 mod db;
 
+/// Re-exports all public items from the `db` module.
+///
+/// The `db` module contains the core [`FirestoreDb`](db::FirestoreDb) client and
+/// functionalities for interacting with the Firestore database, such as CRUD operations,
+/// queries, and transactions.
 pub use db::*;
 
 mod firestore_serde;
 
+/// Re-exports all public items from the `firestore_serde` module.
+///
+/// This module provides custom Serde serializers and deserializers for converting
+/// Rust types to and from Firestore's data format. It enables seamless integration
+/// of user-defined structs with Firestore.
 pub use firestore_serde::*;
 
 mod struct_path_macro;
 
+/// Re-exports macros for creating type-safe paths to struct fields.
+///
+/// These macros, like `path!` and `paths!`, are used to refer to document fields
+/// in a way that can be checked at compile time, reducing runtime errors when
+/// specifying fields for queries, updates, or projections.
+/// The `#[allow(unused_imports)]` is present because these are macro re-exports
+/// and their usage pattern might trigger the lint incorrectly.
 #[allow(unused_imports)]
 pub use struct_path_macro::*;
 
+/// Provides utility functions for working with Firestore timestamps.
+///
+/// This module includes helpers for converting between `chrono::DateTime<Utc>`
+/// and Google's `Timestamp` protobuf type, often used with `#[serde(with)]`
+/// attributes for automatic conversion.
 pub mod timestamp_utils;
 
 use crate::errors::FirestoreError;
 
+/// A type alias for `std::result::Result<T, FirestoreError>`.
+///
+/// This is the standard result type used throughout the `firestore-rs` crate
+/// for operations that can fail, encapsulating either a successful value `T`
+/// or a [`FirestoreError`].
 pub type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
 
+/// A type alias for the raw Firestore document representation.
+///
+/// This refers to `gcloud_sdk::google::firestore::v1::Document`, which is the
+/// underlying gRPC/protobuf structure for a Firestore document.
 pub type FirestoreDocument = gcloud_sdk::google::firestore::v1::Document;
 
 mod firestore_meta;
 
+/// Re-exports all public items from the `firestore_meta` module.
+///
+/// This module provides metadata associated with Firestore documents, such as
+/// `create_time`, `update_time`, and `read_time`. These are often included
+/// in responses from Firestore.
 pub use firestore_meta::*;
 
 mod firestore_document_functions;
 
+/// Re-exports helper functions for working with [`FirestoreDocument`]s.
+///
+/// These functions provide conveniences for extracting data or metadata
+/// from raw Firestore documents.
 pub use firestore_document_functions::*;
 
 mod fluent_api;
 
+/// Re-exports all public items from the `fluent_api` module.
+///
+/// This module provides a high-level, fluent interface for building and executing
+/// Firestore operations (select, insert, update, delete, list). It aims to make
+/// common database interactions more ergonomic and type-safe.
 pub use fluent_api::*;
 
+/// Re-exports the `struct_path` crate.
+///
+/// The `struct_path` crate is a dependency that provides the core functionality
+/// for the `path!` and `paths!` macros used for type-safe field path generation.
 pub extern crate struct_path;
 
 #[cfg(feature = "caching")]
+/// Provides caching capabilities for Firestore operations.
+///
+/// This module is only available if the `caching` feature is enabled.
+/// It allows for caching Firestore documents and query results to reduce latency
+/// and read costs.
 mod cache;
 
 #[cfg(feature = "caching")]
+/// Re-exports all public items from the `cache` module.
+///
+/// This is only available if the `caching` feature is enabled.
+/// It includes types like [`FirestoreCache`](cache::FirestoreCache) and various
+/// caching backends and configurations.
 pub use cache::*;

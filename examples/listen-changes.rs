@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "Waiting any other changes. Try firebase console to change in {} now yourself. New doc created id: {:?}",
         TEST_COLLECTION_NAME,new_doc.doc_id
     );
-    std::io::stdin().read(&mut [1])?;
+    std::io::stdin().read_exact(&mut [0u8; 1])?;
 
     listener.shutdown().await?;
 

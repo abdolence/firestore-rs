@@ -18,12 +18,12 @@ struct MyTestStructure {
 
 #[tokio::test]
 async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    const TEST_COLLECTION_NAME: &'static str = "integration-test-query";
+    const TEST_COLLECTION_NAME: &str = "integration-test-query";
 
     let db = setup().await?;
 
     let my_struct1 = MyTestStructure {
-        some_id: format!("test-0"),
+        some_id: "test-0".to_string(),
         some_string: "some_string".to_string(),
         one_more_string: "one_more_string".to_string(),
         some_num: 42,
@@ -31,7 +31,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     let my_struct2 = MyTestStructure {
-        some_id: format!("test-1"),
+        some_id: "test-1".to_string(),
         some_string: "some_string-1".to_string(),
         one_more_string: "one_more_string-1".to_string(),
         some_num: 17,

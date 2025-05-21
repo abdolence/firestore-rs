@@ -4,7 +4,7 @@ use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::ops::Mul;
-use tokio::time::{sleep, Duration};
+use tokio::time::sleep;
 use tracing::*;
 
 #[allow(dead_code)]
@@ -28,9 +28,9 @@ pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + S
 }
 
 #[allow(dead_code)]
-pub async fn populate_collection<'a, T, DF>(
+pub async fn populate_collection<T, DF>(
     db: &FirestoreDb,
-    collection_name: &'a str,
+    collection_name: &str,
     max_items: usize,
     sf: fn(usize) -> T,
     df: DF,
@@ -79,7 +79,7 @@ where
             if retries > max_retries {
                 return Ok(false);
             }
-            sleep(Duration::from(sleep_duration.mul(retries * retries))).await;
+            sleep(sleep_duration.mul(retries * retries)).await;
         }
     }
     .boxed()
