@@ -14,7 +14,7 @@ struct MyTestStructure {
 async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = setup().await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "integration-test-precondition";
+    const TEST_COLLECTION_NAME: &str = "integration-test-precondition";
 
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),

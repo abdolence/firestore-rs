@@ -12,12 +12,12 @@ struct MyTestStructure {
 
 #[tokio::test]
 async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    const TEST_COLLECTION_NAME: &'static str = "integration-test-options";
+    const TEST_COLLECTION_NAME: &str = "integration-test-options";
 
     let db = setup().await?;
 
     let my_struct1 = MyTestStructure {
-        some_id: format!("test-0"),
+        some_id: "test-0".to_string(),
         some_string: Some("some_string".to_string()),
     };
 

@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )
     .await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "test-query";
+    const TEST_COLLECTION_NAME: &str = "test-query";
 
     // Query as a stream our data
     let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db

@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "test-partitions";
+    const TEST_COLLECTION_NAME: &str = "test-partitions";
 
     //println!("Populating a test collection");
     // for i in 0..40000 {

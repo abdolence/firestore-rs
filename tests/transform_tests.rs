@@ -5,7 +5,7 @@ mod common;
 
 #[tokio::test]
 async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    const TEST_COLLECTION_NAME: &'static str = "integration-test-transform";
+    const TEST_COLLECTION_NAME: &str = "integration-test-transform";
 
     let db = setup().await?;
 

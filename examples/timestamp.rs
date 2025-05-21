@@ -40,14 +40,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "test-ts1";
+    const TEST_COLLECTION_NAME: &str = "test-ts1";
 
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),
         created_at: Utc::now(),
         updated_at: Some(Utc::now().into()),
         updated_at_always_none: None,
-        updated_at_attr: Some(Utc::now().into()),
+        updated_at_attr: Some(Utc::now()),
         updated_at_attr_always_none: None,
     };
 

@@ -17,8 +17,8 @@ struct MyChildStructure {
 
 #[tokio::test]
 async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    const TEST_PARENT_COLLECTION_NAME: &'static str = "integration-nested-test";
-    const TEST_CHILD_COLLECTION_NAME: &'static str = "integration-test-childs";
+    const TEST_PARENT_COLLECTION_NAME: &str = "integration-nested-test";
+    const TEST_CHILD_COLLECTION_NAME: &str = "integration-test-childs";
 
     let db = setup().await?;
 

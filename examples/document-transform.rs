@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "test-transforms";
+    const TEST_COLLECTION_NAME: &str = "test-transforms";
 
     println!("Populating a test collection");
     for i in 0..10 {
@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .in_col(TEST_COLLECTION_NAME)
         .document_id("test-5")
         .object(&MyTestStructure {
-            some_id: format!("test-5"),
+            some_id: "test-5".to_string(),
             some_num: 0,
             some_string: "UpdatedTest".to_string(),
             some_array: vec![1, 2, 3],

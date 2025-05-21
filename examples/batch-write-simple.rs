@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "test-batch-write";
+    const TEST_COLLECTION_NAME: &str = "test-batch-write";
 
     println!("Populating a test collection");
     let batch_writer = db.create_simple_batch_writer().await?;
