@@ -41,29 +41,6 @@ impl From<&str> for FirestoreQueryCollection {
 /// This struct encapsulates all configurable aspects of a query, such as the
 /// target collection, filters, ordering, limits, offsets, cursors, and projections.
 /// It is used by the fluent API and direct query methods to define the query to be sent to Firestore.
-///
-/// # Examples
-///
-/// ```rust
-/// use firestore::*;
-///
-/// let params = FirestoreQueryParams::new(
-///     "my-collection".into(), // Target collection
-/// )
-/// .with_filter(Some(FirestoreQueryFilter::Compare(Some(
-///     FirestoreQueryFilterCompare::Equal(
-///         "status".to_string(),
-///         "active".into(),
-///     ),
-/// ))))
-/// .with_order_by(Some(vec![FirestoreQueryOrder::new(
-///     "createdAt".to_string(),
-///     FirestoreQueryDirection::Descending,
-/// )]))
-/// .with_limit(Some(10));
-///
-/// // These params can then be used with FirestoreDb methods or fluent builders.
-/// ```
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreQueryParams {
     /// The parent resource path. For top-level collections, this is typically

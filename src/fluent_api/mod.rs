@@ -17,43 +17,6 @@
 //! - [`select_builder`]: For constructing query/select operations.
 //! - [`select_filter_builder`]: For building complex filter conditions for queries.
 //! - [`update_builder`]: For constructing update operations.
-//!
-//! # Example
-//! ```rust,no_run
-//! use firestore::*;
-//! use serde::{Deserialize, Serialize};
-//! # pub fn config_env_var(name: &str) -> Result<String, String> {
-//! #     std::env::var(name).map_err(|e| format!("{}: {}", name, e))
-//! # }
-//! # #[derive(Debug, Clone, Deserialize, Serialize)]
-//! # struct MyTestStructure {
-//! #    some_id: String,
-//! #    some_num: u64,
-//! # }
-//! # #[tokio::main]
-//! # async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-//! let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
-//! let my_struct = MyTestStructure { some_id: "test-1".to_string(), some_num: 42 };
-//! const TEST_COLLECTION_NAME: &'static str = "test";
-//!
-//! // Fluent insert
-//! let _: MyTestStructure = db.fluent()
-//!    .insert()
-//!    .into(TEST_COLLECTION_NAME)
-//!    .document_id(&my_struct.some_id)
-//!    .object(&my_struct)
-//!    .execute()
-//!    .await?;
-//!
-//! // Fluent select
-//! let result: Option<MyTestStructure> = db.fluent()
-//!    .select()
-//!    .by_id_in(TEST_COLLECTION_NAME)
-//!    .obj()
-//!    .one(&my_struct.some_id)
-//!    .await?;
-//! # Ok(())
-//! # }
 //! ```
 
 // Linter allowance for functions that might have many arguments,

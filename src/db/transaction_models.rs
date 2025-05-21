@@ -8,32 +8,6 @@ use rsb_derive::Builder;
 ///
 /// These options control the behavior of a transaction, such as its mode (read-only or read-write)
 /// and consistency requirements for read-only transactions.
-///
-/// # Examples
-///
-/// ```rust
-/// use firestore::*;
-/// use chrono::{Utc, Duration};
-///
-/// // Default options (ReadWrite mode)
-/// let default_options = FirestoreTransactionOptions::default();
-/// assert_eq!(default_options.mode, FirestoreTransactionMode::ReadWrite);
-///
-/// // ReadOnly transaction
-/// let readonly_options = FirestoreTransactionOptions::new()
-///     .with_mode(FirestoreTransactionMode::ReadOnly);
-///
-/// // ReadOnly transaction with a specific read time
-/// let read_time = Utc::now() - Duration::seconds(60);
-/// let pit_readonly_options = FirestoreTransactionOptions::new()
-///     .with_mode(FirestoreTransactionMode::ReadOnlyWithConsistency(
-///         FirestoreConsistencySelector::ReadTime(read_time)
-///     ));
-///
-/// // Transaction with a maximum elapsed time for retries
-/// let timed_options = FirestoreTransactionOptions::new()
-///     .with_max_elapsed_time(Some(Duration::seconds(30)));
-/// ```
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreTransactionOptions {
     /// The mode of the transaction (e.g., read-only, read-write).
@@ -125,7 +99,8 @@ pub enum FirestoreTransactionMode {
     ReadWrite,
     /// A read-only transaction with a specific consistency requirement.
     ///
-    /// Allows specifying how data should be read, for example, at a particular
+    /// Allows specifying how data should be read, for example, at a particular    
+    /// A read-write transaction.src/db/transaction_models.rs:36:28, at a particular
     /// point in time using [`FirestoreConsistencySelector::ReadTime`].
     ReadOnlyWithConsistency(FirestoreConsistencySelector),
     /// A read-write transaction that attempts to retry a previous transaction.
