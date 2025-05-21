@@ -711,7 +711,7 @@ impl FirestoreDb {
                                     let doc_id = document
                                         .name
                                         .split('/')
-                                        .next_back()
+                                        .last()
                                         .map(|s| s.to_string())
                                         .unwrap_or_else(|| document.name.clone());
                                     #[cfg(feature = "caching")]
@@ -730,7 +730,7 @@ impl FirestoreDb {
                                 )) => {
                                     let doc_id = full_doc_id
                                         .split('/')
-                                        .next_back()
+                                        .last()
                                         .map(|s| s.to_string())
                                         .unwrap_or_else(|| full_doc_id);
                                     Some(Ok((doc_id, None)))

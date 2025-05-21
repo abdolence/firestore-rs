@@ -629,7 +629,7 @@ where
 
     let doc_id = doc_name
         .split('/')
-        .next_back()
+        .last()
         .map(|s| s.to_string())
         .unwrap_or_else(|| doc_name.clone());
 

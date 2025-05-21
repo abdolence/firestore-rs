@@ -1,4 +1,6 @@
-#![allow(clippy::derive_partial_eq_without_eq)] // Since we may not be able to implement Eq for the changes coming from Firestore protos
+// Allow derive_partial_eq_without_eq because some of these types wrap generated gRPC types
+// that might not implement Eq, or their Eq implementation might change.
+#![allow(clippy::derive_partial_eq_without_eq)]
 
 use crate::errors::{
     FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
@@ -7,9 +9,14 @@ use crate::{FirestoreValue, FirestoreVector};
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::Builder;
 
+/// Specifies the target collection(s) for a Firestore query.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreQueryCollection {
+    /// Queries a single collection identified by its ID.
     Single(String),
+    /// Performs a collection group query across all collections with the specified ID(s).
+    /// While Firestore gRPC supports multiple collection IDs here, typically a collection group query
+    /// targets all collections with *one* specific ID.
     Group(Vec<String>),
 }
 
@@ -29,19 +36,78 @@ impl From<&str> for FirestoreQueryCollection {
     }
 }
 
+/// Parameters for constructing and executing a Firestore query.
+///
+/// This struct encapsulates all configurable aspects of a query, such as the
+/// target collection, filters, ordering, limits, offsets, cursors, and projections.
+/// It is used by the fluent API and direct query methods to define the query to be sent to Firestore.
+///
+/// # Examples
+///
+/// ```rust
+/// use firestore::*;
+///
+/// let params = FirestoreQueryParams::new(
+///     "my-collection".into(), // Target collection
+/// )
+/// .with_filter(Some(FirestoreQueryFilter::Compare(Some(
+///     FirestoreQueryFilterCompare::Equal(
+///         "status".to_string(),
+///         "active".into(),
+///     ),
+/// ))))
+/// .with_order_by(Some(vec![FirestoreQueryOrder::new(
+///     "createdAt".to_string(),
+///     FirestoreQueryDirection::Descending,
+/// )]))
+/// .with_limit(Some(10));
+///
+/// // These params can then be used with FirestoreDb methods or fluent builders.
+/// ```
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreQueryParams {
+    /// The parent resource path. For top-level collections, this is typically
+    /// the database path (e.g., "projects/my-project/databases/(default)/documents").
+    /// For sub-collections, it's the path to the parent document.
+    /// If `None`, the query is assumed to be on a top-level collection relative to the
+    /// `FirestoreDb`'s document path.
     pub parent: Option<String>,
+
+    /// The ID of the collection or collection group to query.
     pub collection_id: FirestoreQueryCollection,
+
+    /// The maximum number of results to return.
     pub limit: Option<u32>,
+
+    /// The number of results to skip.
     pub offset: Option<u32>,
+
+    /// A list of fields and directions to order the results by.
     pub order_by: Option<Vec<FirestoreQueryOrder>>,
+
+    /// The filter to apply to the query.
     pub filter: Option<FirestoreQueryFilter>,
+
+    /// If `true`, the query will search all collections located anywhere in the
+    /// database under the `parent` path (if specified) that have the given
+    /// `collection_id`. This is used for collection group queries.
+    /// Defaults to `false` if not set, meaning only direct children collections are queried.
     pub all_descendants: Option<bool>,
+
+    /// If set, only these fields will be returned in the query results (projection).
+    /// If `None`, all fields are returned.
     pub return_only_fields: Option<Vec<String>>,
+
+    /// A cursor to define the starting point of the query.
     pub start_at: Option<FirestoreQueryCursor>,
+
+    /// A cursor to define the ending point of the query.
     pub end_at: Option<FirestoreQueryCursor>,
+
+    /// Options for requesting an explanation of the query execution plan.
     pub explain_options: Option<FirestoreExplainOptions>,
+
+    /// Options for performing a vector similarity search (find nearest neighbors).
     pub find_nearest: Option<FirestoreFindNearestOptions>,
 }
 
@@ -94,10 +160,19 @@ impl TryFrom<FirestoreQueryParams> for StructuredQuery {
     }
 }
 
+/// Represents a filter condition for a Firestore query.
+///
+/// Filters are used to narrow down the documents returned by a query based on
+/// conditions applied to their fields.
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreQueryFilter {
+    /// A composite filter that combines multiple sub-filters using an operator (AND/OR).
     Composite(FirestoreQueryFilterComposite),
+    /// A unary filter that applies an operation to a single field (e.g., IS NULL, IS NAN).
     Unary(FirestoreQueryFilterUnary),
+    /// A field filter that compares a field to a value (e.g., equality, greater than).
+    /// The `Option` allows for representing an effectively empty or no-op filter,
+    /// which can be useful in dynamic filter construction.
     Compare(Option<FirestoreQueryFilterCompare>),
 }
 
@@ -270,13 +345,17 @@ impl From<FirestoreQueryFilter> for structured_query::Filter {
     }
 }
 
+/// Specifies an ordering for query results based on a field.
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreQueryOrder {
+    /// The path to the field to order by (e.g., "name", "address.city").
     pub field_name: String,
+    /// The direction of the ordering (ascending or descending).
     pub direction: FirestoreQueryDirection,
 }
 
 impl FirestoreQueryOrder {
+    /// Returns a string representation of the order, e.g., "fieldName asc".
     pub fn to_string_format(&self) -> String {
         format!("{} {}", self.field_name, self.direction.to_string())
     }
@@ -307,9 +386,12 @@ impl From<FirestoreQueryOrder> for structured_query::Order {
     }
 }
 
+/// The direction for ordering query results.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreQueryDirection {
+    /// Sort results in ascending order.
     Ascending,
+    /// Sort results in descending order.
     Descending,
 }
 
@@ -323,15 +405,21 @@ impl ToString for FirestoreQueryDirection {
     }
 }
 
+/// A composite filter that combines multiple [`FirestoreQueryFilter`]s.
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreQueryFilterComposite {
+    /// The list of sub-filters to combine.
     pub for_all_filters: Vec<FirestoreQueryFilter>,
+    /// The operator used to combine the sub-filters (AND/OR).
     pub operator: FirestoreQueryFilterCompositeOperator,
 }
 
+/// The operator for combining filters in a [`FirestoreQueryFilterComposite`].
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreQueryFilterCompositeOperator {
+    /// Logical AND: all sub-filters must be true.
     And,
+    /// Logical OR: at least one sub-filter must be true.
     Or,
 }
 
@@ -348,31 +436,62 @@ impl From<FirestoreQueryFilterCompositeOperator> for structured_query::composite
     }
 }
 
+/// A unary filter that applies an operation to a single field.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreQueryFilterUnary {
+    /// Checks if a field's value is NaN (Not a Number).
+    /// The string argument is the field path.
     IsNan(String),
+    /// Checks if a field's value is NULL.
+    /// The string argument is the field path.
     IsNull(String),
+    /// Checks if a field's value is not NaN.
+    /// The string argument is the field path.
     IsNotNan(String),
+    /// Checks if a field's value is not NULL.
+    /// The string argument is the field path.
     IsNotNull(String),
 }
 
+/// A field filter that compares a field to a value using a specific operator.
+/// The first `String` argument in each variant is the field path.
+/// The `FirestoreValue` is the value to compare against.
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreQueryFilterCompare {
+    /// Field is less than the value.
     LessThan(String, FirestoreValue),
+    /// Field is less than or equal to the value.
     LessThanOrEqual(String, FirestoreValue),
+    /// Field is greater than the value.
     GreaterThan(String, FirestoreValue),
+    /// Field is greater than or equal to the value.
     GreaterThanOrEqual(String, FirestoreValue),
+    /// Field is equal to the value.
     Equal(String, FirestoreValue),
+    /// Field is not equal to the value.
     NotEqual(String, FirestoreValue),
+    /// Field (which must be an array) contains the value.
     ArrayContains(String, FirestoreValue),
+    /// Field's value is IN the given array value. The `FirestoreValue` should be an array.
     In(String, FirestoreValue),
+    /// Field (which must be an array) contains any of the values in the given array value.
+    /// The `FirestoreValue` should be an array.
     ArrayContainsAny(String, FirestoreValue),
+    /// Field's value is NOT IN the given array value. The `FirestoreValue` should be an array.
     NotIn(String, FirestoreValue),
 }
 
+/// Represents a cursor for paginating query results.
+///
+/// Cursors define a starting or ending point for a query based on the values
+/// of the fields being ordered by.
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreQueryCursor {
+    /// Starts the query results before the document that has these field values.
+    /// The `Vec<FirestoreValue>` corresponds to the values of the ordered fields.
     BeforeValue(Vec<FirestoreValue>),
+    /// Starts the query results after the document that has these field values.
+    /// The `Vec<FirestoreValue>` corresponds to the values of the ordered fields.
     AfterValue(Vec<FirestoreValue>),
 }
 
@@ -408,22 +527,43 @@ impl From<gcloud_sdk::google::firestore::v1::Cursor> for FirestoreQueryCursor {
     }
 }
 
+/// Parameters for a partitioned query.
+///
+/// Partitioned queries allow you to divide a large query into smaller, parallelizable chunks.
+/// This is useful for exporting data or performing large-scale data processing.
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestorePartitionQueryParams {
+    /// The base query parameters to partition.
     pub query_params: FirestoreQueryParams,
+    /// The desired number of partitions to return. Must be a positive integer.
     pub partition_count: u32,
+    /// The maximum number of partitions to return in this call, used for paging.
+    /// Must be a positive integer.
     pub page_size: u32,
+    /// A page token from a previous `PartitionQuery` response to retrieve the next set of partitions.
     pub page_token: Option<String>,
 }
 
+/// Represents a single partition of a query.
+///
+/// Each partition defines a range of the original query using `start_at` and `end_at` cursors.
+/// Executing a query with these cursors will yield the documents for that specific partition.
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestorePartition {
+    /// The cursor indicating the start of this partition.
     pub start_at: Option<FirestoreQueryCursor>,
+    /// The cursor indicating the end of this partition.
     pub end_at: Option<FirestoreQueryCursor>,
 }
 
+/// Options for requesting query execution analysis from Firestore.
+///
+/// When `analyze` is true, Firestore will return detailed information about
+/// how the query was executed, including index usage and performance metrics.
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreExplainOptions {
+    /// If `true`, Firestore will analyze the query and return execution details.
+    /// Defaults to `false` if not specified.
     pub analyze: Option<bool>,
 }
 
@@ -436,13 +576,24 @@ impl TryFrom<&FirestoreExplainOptions> for gcloud_sdk::google::firestore::v1::Ex
     }
 }
 
+/// Options for performing a vector similarity search (find nearest neighbors).
+///
+/// This is used to find documents whose vector field is closest to a given query vector.
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreFindNearestOptions {
+    /// The path to the vector field in your documents to search against.
     pub field_name: String,
+    /// The query vector to find nearest neighbors for.
     pub query_vector: FirestoreVector,
+    /// The distance measure to use for comparing vectors.
     pub distance_measure: FirestoreFindNearestDistanceMeasure,
+    /// The maximum number of nearest neighbors to return.
     pub neighbors_limit: u32,
+    /// An optional field name to store the calculated distance in the query results.
+    /// If provided, each returned document will include this field with the distance value.
     pub distance_result_field: Option<String>,
+    /// An optional threshold for the distance. Only neighbors within this distance
+    /// will be returned.
     pub distance_threshold: Option<f64>,
 }
 
@@ -458,30 +609,37 @@ impl TryFrom<FirestoreFindNearestOptions>
             }),
             query_vector: Some(Into::<FirestoreValue>::into(options.query_vector).value),
             distance_measure: {
-                let distance_measure: structured_query::find_nearest::DistanceMeasure = options.distance_measure.try_into()?;
+                let distance_measure: structured_query::find_nearest::DistanceMeasure =
+                    options.distance_measure.try_into()?;
                 distance_measure.into()
             },
-            limit: Some(options.neighbors_limit.try_into().map_err(|e| FirestoreError::InvalidParametersError(
-                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                    "neighbors_limit".to_string(),
-                    format!(
-                        "Invalid value for neighbors_limit: {}. Maximum allowed value is {}. Error: {}",
-                        options.neighbors_limit,
-                        i32::MAX,
-                        e
+            limit: Some(options.neighbors_limit.try_into().map_err(|e| {
+                FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+                    FirestoreInvalidParametersPublicDetails::new(
+                        "neighbors_limit".to_string(),
+                        format!(
+                            "Invalid value for neighbors_limit: {}. Maximum allowed value is {}. Error: {}",
+                            options.neighbors_limit,
+                            i32::MAX,
+                            e
+                        ),
                     ),
-                )))
-            )?),
-            distance_result_field: options.distance_result_field.unwrap_or("".into()),
+                ))
+            })?),
+            distance_result_field: options.distance_result_field.unwrap_or_default(),
             distance_threshold: options.distance_threshold,
         })
     }
 }
 
+/// Specifies the distance measure for vector similarity searches.
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreFindNearestDistanceMeasure {
+    /// Euclidean distance.
     Euclidean,
+    /// Cosine similarity (measures the cosine of the angle between two vectors).
     Cosine,
+    /// Dot product distance.
     DotProduct,
 }
 
