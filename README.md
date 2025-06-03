@@ -40,6 +40,28 @@ Cargo.toml:
 firestore = "0.45"
 ```
 
+### Crypto provider error
+
+Depends on your other dependencies you may see the error like:
+
+```
+no process-level CryptoProvider available -- call CryptoProvider::install_default() before this point 
+```
+
+This is because the TLS providers are not installed by default and you can choose different.
+The easiest way to fix is just to include one of the provider, for example:
+
+```toml
+[dependencies]
+rustls = "0.23"
+```
+
+If you have multiple you may need to call `CryptoProvider::install_default()` before using the Firestore client.
+
+```rust
+rustls::crypto::ring::default_provider().install_default().expect("Failed to install rustls crypto provider");
+```
+
 ## Examples
 
 All examples available in the [examples](examples) directory.
@@ -74,8 +96,8 @@ In cases if you need to create a new instance explicitly specifying a key file, 
 
 ```rust
 FirestoreDb::with_options_service_account_key_file(
-  FirestoreDbOptions::new(config_env_var("PROJECT_ID") ?.to_string()),
-  "/tmp/key.json".into()
+FirestoreDbOptions::new(config_env_var("PROJECT_ID") ?.to_string()),
+"/tmp/key.json".into()
 ).await?
 ```
 
@@ -83,9 +105,9 @@ or if you need even more flexibility you can use a preconfigured token source an
 
 ```rust
 FirestoreDb::with_options_token_source(
-  FirestoreDbOptions::new(config_env_var("PROJECT_ID") ?.to_string()),
-  gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
-  gcloud_sdk::TokenSourceType::File("/tmp/key.json".into())
+FirestoreDbOptions::new(config_env_var("PROJECT_ID") ?.to_string()),
+gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
+gcloud_sdk::TokenSourceType::File("/tmp/key.json".into())
 ).await?
 ```
 
@@ -94,9 +116,9 @@ so you can specify the database ID in the options:
 
 ```rust
 FirestoreDb::with_options(
-  FirestoreDbOptions::new("your-project-id".to_string())
-    .with_database_id("your-database-id".to_string())
-  )
+FirestoreDbOptions::new("your-project-id".to_string())
+.with_database_id("your-database-id".to_string())
+)
 .await?
 ```
 
@@ -117,51 +139,51 @@ use firestore::*;
 const TEST_COLLECTION_NAME: &'static str = "test";
 
 let my_struct = MyTestStructure {
-  some_id: "test-1".to_string(),
-  some_string: "Test".to_string(),
-  one_more_string: "Test2".to_string(),
-  some_num: 42,
+some_id: "test-1".to_string(),
+some_string: "Test".to_string(),
+one_more_string: "Test2".to_string(),
+some_num: 42,
 };
 
 // Create
 let object_returned: MyTestStructure = db.fluent()
-  .insert()
-  .into(TEST_COLLECTION_NAME)
-  .document_id( & my_struct.some_id)
-  .object( & my_struct)
-  .execute()
-  .await?;
+.insert()
+.into(TEST_COLLECTION_NAME)
+.document_id( & my_struct.some_id)
+.object( & my_struct)
+.execute()
+.await?;
 
 // Update or Create 
 // (Firestore supports creating documents with update if you provide the document ID).
 let object_updated: MyTestStructure = db.fluent()
-  .update()
-  .fields(paths!(MyTestStructure::{some_num, one_more_string}))
-  .in_col(TEST_COLLECTION_NAME)
-  .document_id( & my_struct.some_id)
-  .object( & MyTestStructure {
-      some_num: my_struct.some_num + 1,
-      one_more_string: "updated-value".to_string(),
-        ..my_struct.clone()
-   })
-  .execute()
-  .await?;
+.update()
+.fields(paths!(MyTestStructure::{some_num, one_more_string}))
+.in_col(TEST_COLLECTION_NAME)
+.document_id( & my_struct.some_id)
+.object( & MyTestStructure {
+some_num: my_struct.some_num + 1,
+one_more_string: "updated-value".to_string(),
+..my_struct.clone()
+})
+.execute()
+.await?;
 
 // Get object by id
 let find_it_again: Option<MyTestStructure> = db.fluent()
-  .select()
-  .by_id_in(TEST_COLLECTION_NAME)
-  .obj()
-  .one( & my_struct.some_id)
-  .await?;
+.select()
+.by_id_in(TEST_COLLECTION_NAME)
+.obj()
+.one( & my_struct.some_id)
+.await?;
 
 // Delete data
 db.fluent()
-  .delete()
-  .from(TEST_COLLECTION_NAME)
-  .document_id( & my_struct.some_id)
-  .execute()
-  .await?;
+.delete()
+.from(TEST_COLLECTION_NAME)
+.document_id( & my_struct.some_id)
+.execute()
+.await?;
 
 ```
 
@@ -172,25 +194,25 @@ The library supports rich querying API with filters, ordering, pagination, etc.
 ```rust
 // Query as a stream our data
 let object_stream: BoxStream<FirestoreResult<MyTestStructure> > = db.fluent()
-  .select()
-  .fields(paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at})) // Optionally select the fields needed
-  .from(TEST_COLLECTION_NAME)
-  .filter( | q| { // Fluent filter API example
-      q.for_all([
-        q.field(path!(MyTestStructure::some_num)).is_not_null(),
-        q.field(path!(MyTestStructure::some_string)).eq("Test"),
-        // Sometimes you have optional filters
-        Some("Test2")
-          .and_then( | value | q.field(path ! (MyTestStructure::one_more_string)).eq(value)),        
-      ])
-  })
-  .order_by([(
-    path!(MyTestStructure::some_num),
-    FirestoreQueryDirection::Descending,
-  )])
-  .obj() // Reading documents as structures using Serde gRPC deserializer
-  .stream_query_with_errors()
-  .await?;
+.select()
+.fields(paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at})) // Optionally select the fields needed
+.from(TEST_COLLECTION_NAME)
+.filter( | q| { // Fluent filter API example
+q.for_all([
+q.field(path! (MyTestStructure::some_num)).is_not_null(),
+q.field(path ! (MyTestStructure::some_string)).eq("Test"),
+// Sometimes you have optional filters
+Some("Test2")
+.and_then( | value | q.field(path ! (MyTestStructure::one_more_string)).eq(value)),
+])
+})
+.order_by([(
+path!(MyTestStructure::some_num),
+FirestoreQueryDirection::Descending,
+)])
+.obj() // Reading documents as structures using Serde gRPC deserializer
+.stream_query_with_errors()
+.await?;
 
 let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
 println!("{:?}", as_vec);
@@ -208,18 +230,18 @@ You can nest `q.for_all`/`q.for_any`.
 ```rust
 
 let find_it_again: Option<MyTestStructure> = db.fluent()
-  .select()
-  .by_id_in(TEST_COLLECTION_NAME)
-  .obj()
-  .one( & my_struct.some_id)
-  .await?;
+.select()
+.by_id_in(TEST_COLLECTION_NAME)
+.obj()
+.one( & my_struct.some_id)
+.await?;
 
 let object_stream: BoxStream<(String, Option<MyTestStructure>) > = db.fluent()
-  .select()
-  .by_id_in(TEST_COLLECTION_NAME)
-  .obj()
-  .batch(vec!["test-0", "test-5"])
-  .await?;
+.select()
+.by_id_in(TEST_COLLECTION_NAME)
+.obj()
+.batch(vec!["test-0", "test-5"])
+.await?;
 ```
 
 ## Timestamps support
@@ -270,36 +292,36 @@ You can work with nested collections specifying path/location to a parent for do
 
 // Creating a parent doc
 db.fluent()
-  .insert()
-  .into(TEST_PARENT_COLLECTION_NAME)
-  .document_id(&parent_struct.some_id)
-  .object(&parent_struct)
-  .execute()
-  .await?;
+.insert()
+.into(TEST_PARENT_COLLECTION_NAME)
+.document_id( & parent_struct.some_id)
+.object( & parent_struct)
+.execute()
+.await?;
 
 // The doc path where we store our children
-let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id)?;
+let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id) ?;
 
 // Create a child doc
 db.fluent()
-  .insert()
-  .into(TEST_CHILD_COLLECTION_NAME)
-  .document_id(&child_struct.some_id)
-  .parent(&parent_path)
-  .object(&child_struct)
-  .execute()
-  .await?;
+.insert()
+.into(TEST_CHILD_COLLECTION_NAME)
+.document_id( & child_struct.some_id)
+.parent( & parent_path)
+.object( & child_struct)
+.execute()
+.await?;
 
 // Listing children
 println!("Listing all children");
 
 let objs_stream: BoxStream<MyChildStructure> = db.fluent()
-  .list()
-  .from(TEST_CHILD_COLLECTION_NAME)
-  .parent( & parent_path)
-  .obj()
-  .stream_all()
-  .await?;
+.list()
+.from(TEST_CHILD_COLLECTION_NAME)
+.parent( & parent_path)
+.obj()
+.stream_all()
+.await?;
 
 ```
 
@@ -309,9 +331,9 @@ You can nest multiple levels of collections using `at()`:
 
 ```rust
 let parent_path =
-db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
-  .at(TEST_CHILD_COLLECTION_NAME, "child-id")?
-  .at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id")?;
+db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id") ?
+.at(TEST_CHILD_COLLECTION_NAME, "child-id") ?
+.at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id") ?;
 ```
 
 ## Transactions
@@ -323,23 +345,23 @@ then the Fluent API to add the operations needed in the transaction.
 let mut transaction = db.begin_transaction().await?;
 
 db.fluent()
-  .update()
-  .fields(paths!(MyTestStructure::{
+.update()
+.fields(paths!(MyTestStructure::{
        some_string
      }))
-  .in_col(TEST_COLLECTION_NAME)
-  .document_id("test-0")
-  .object( & MyTestStructure {
-    some_id: format!("test-0"),
-    some_string: "UpdatedTest".to_string(),
-  })
-  .add_to_transaction( & mut transaction) ?;
+.in_col(TEST_COLLECTION_NAME)
+.document_id("test-0")
+.object( & MyTestStructure {
+some_id: format!("test-0"),
+some_string: "UpdatedTest".to_string(),
+})
+.add_to_transaction( & mut transaction) ?;
 
 db.fluent()
-  .delete()
-  .from(TEST_COLLECTION_NAME)
-  .document_id("test-5")
-  .add_to_transaction( & mut transaction) ?;
+.delete()
+.from(TEST_COLLECTION_NAME)
+.document_id("test-5")
+.add_to_transaction( & mut transaction) ?;
 
 transaction.commit().await?;
 ```
@@ -348,33 +370,33 @@ You may also execute transactions that automatically retry with exponential back
 
 ```rust
     db.run_transaction( | db, transaction| {
-      Box::pin(async move {
-      let mut test_structure: MyTestStructure = db
-        .fluent()
-        .select()
-        .by_id_in(TEST_COLLECTION_NAME)
-        .obj()
-        .one(TEST_DOCUMENT_ID)
-        .await?
-        .expect("Missing document");
+Box::pin(async move {
+let mut test_structure: MyTestStructure = db
+.fluent()
+.select()
+.by_id_in(TEST_COLLECTION_NAME)
+.obj()
+.one(TEST_DOCUMENT_ID)
+.await ?
+.expect("Missing document");
 
-      // Perform some kind of operation that depends on the state of the document
-      test_structure.test_string += "a";
+// Perform some kind of operation that depends on the state of the document
+test_structure.test_string += "a";
 
-      db.fluent()
-        .update()
-        .fields(paths!(MyTestStructure::{
-          test_string
-         }))
-        .in_col(TEST_COLLECTION_NAME)
-        .document_id(TEST_DOCUMENT_ID)
-        .object(&test_structure)
-        .add_to_transaction(transaction) ?;
+db.fluent()
+.update()
+.fields(paths ! (MyTestStructure::{
+test_string
+}))
+.in_col(TEST_COLLECTION_NAME)
+.document_id(TEST_DOCUMENT_ID)
+.object( & test_structure)
+.add_to_transaction(transaction) ?;
 
-        Ok(())
-      })
+Ok(())
 })
-  .await?;
+})
+.await?;
 ```
 
 See the complete example available [here](examples/read-write-transactions.rs).
@@ -423,19 +445,19 @@ let object_returned = db
 .into(TEST_COLLECTION_NAME)
 .document_id("test-1")
 .document(FirestoreDb::serialize_map_to_doc("",
-    [
-      ("some_id", "test-id".into()),
-      ("some_string", "test-value".into()),
-      ("some_num", 42.into()),
-      (
-      "embedded_obj",
-        FirestoreValue::from_map([
-          ("inner_some_id", "inner-id-value".into()),
-          ("inner_some_string", "inner-some-value".into()),
-        ]),
-      ),
-      ("created_at", FirestoreTimestamp(Utc::now()).into()),
-    ])?
+[
+("some_id", "test-id".into()),
+("some_string", "test-value".into()),
+("some_num", 42.into()),
+(
+"embedded_obj",
+FirestoreValue::from_map([
+("inner_some_id", "inner-id-value".into()),
+("inner_some_string", "inner-some-value".into()),
+]),
+),
+("created_at", FirestoreTimestamp(Utc::now()).into()),
+]) ?
 )
 .execute()
 .await?;
@@ -455,12 +477,12 @@ db.fluent()
 .update()
 .in_col(TEST_COLLECTION_NAME)
 .document_id("test-4")
-.transforms(|t| { // Transformations
-    t.fields([
-      t.field(path!(MyTestStructure::some_num)).increment(10),
-      t.field(path!(MyTestStructure::some_array)).append_missing_elements([4, 5]),
-      t.field(path!(MyTestStructure::some_array)).remove_all_from_array([3]),
-    ])
+.transforms( | t| { // Transformations
+t.fields([
+t.field(path! (MyTestStructure::some_num)).increment(10),
+t.field(path ! (MyTestStructure::some_array)).append_missing_elements([4, 5]),
+t.field(path! (MyTestStructure::some_array)).remove_all_from_array([3]),
+])
 })
 .only_transform()
 .add_to_transaction( & mut transaction) ?; // or add_to_batch
@@ -470,13 +492,13 @@ db.fluent()
 .update()
 .in_col(TEST_COLLECTION_NAME)
 .document_id("test-5")
-.object(&my_obj) // Updating the objects with the fields here
-.transforms(|t| { // Transformations after the update
-    t.fields([
-      t.field(path!(MyTestStructure::some_num)).increment(10),
-    ])
+.object( & my_obj) // Updating the objects with the fields here
+.transforms( | t| { // Transformations after the update
+t.fields([
+t.field(path! (MyTestStructure::some_num)).increment(10),
+])
 })
-.add_to_transaction(&mut transaction) ?; // or add_to_batch
+.add_to_transaction( & mut transaction) ?; // or add_to_batch
 ```
 
 ## Listening the document changes on Firestore
@@ -497,7 +519,7 @@ storage if needed:
 ```rust
 
 let mut listener = db.create_listener(
-    FirestoreTempFilesListenStateStorage::new() // or FirestoreMemListenStateStorage or your own implementation 
+FirestoreTempFilesListenStateStorage::new() // or FirestoreMemListenStateStorage or your own implementation 
 ).await?;
 
 // Adding query listener
@@ -505,34 +527,34 @@ db.fluent()
 .select()
 .from(TEST_COLLECTION_NAME)
 .listen()
-.add_target(TEST_TARGET_ID_BY_QUERY, &mut listener) ?;
+.add_target(TEST_TARGET_ID_BY_QUERY, & mut listener) ?;
 
 // Adding docs listener by IDs
 db.fluent()
 .select()
 .by_id_in(TEST_COLLECTION_NAME)
 .batch_listen([doc_id1, doc_id2])
-.add_target(TEST_TARGET_ID_BY_DOC_IDS, &mut listener) ?;
+.add_target(TEST_TARGET_ID_BY_DOC_IDS, & mut listener) ?;
 
 listener
 .start( | event| async move {
-    match event {
-        FirestoreListenEvent::DocumentChange( ref doc_change) => {
-            println ! ("Doc changed: {:?}", doc_change);
-            
-            if let Some(doc) = & doc_change.document {
-              let obj: MyTestStructure =
-              FirestoreDb::deserialize_doc_to::<MyTestStructure > (doc)
-              .expect("Deserialized object");
-              println ! ("As object: {:?}", obj);
-            }
-        }
-        _ => {
-          println ! ("Received a listen response event to handle: {:?}", event);
-        }
-    }
+match event {
+FirestoreListenEvent::DocumentChange( ref doc_change) => {
+println ! ("Doc changed: {:?}", doc_change);
 
-  Ok(())
+if let Some(doc) = & doc_change.document {
+let obj: MyTestStructure =
+FirestoreDb::deserialize_doc_to::<MyTestStructure > (doc)
+.expect("Deserialized object");
+println ! ("As object: {:?}", obj);
+}
+}
+_ => {
+println ! ("Received a listen response event to handle: {:?}", event);
+}
+}
+
+Ok(())
 })
 .await?;
 
@@ -575,12 +597,12 @@ The library supports the aggregation functions for the queries:
 
 ```rust
 db.fluent()
-  .select()
-  .from(TEST_COLLECTION_NAME)
-  .aggregate(|a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
-  .obj()
-  .query()
-  .await?;
+.select()
+.from(TEST_COLLECTION_NAME)
+.aggregate( | a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
+.obj()
+.query()
+.await?;
 ```
 
 ## Update/delete preconditions
@@ -597,13 +619,13 @@ The library supports the query explanation:
 
 ```rust
 db.fluent()
-  .select()
-  .from(TEST_COLLECTION_NAME)
-  .explain()
-  // or use explain_with_options if you want to provide additional options like analyze which run query to gather additional statistics 
-  // .explain_with_options(FirestoreExplainOptions::new().with_analyze(true))
-  .stream_query_with_metadata()
-  .await?;
+.select()
+.from(TEST_COLLECTION_NAME)
+.explain()
+// or use explain_with_options if you want to provide additional options like analyze which run query to gather additional statistics 
+// .explain_with_options(FirestoreExplainOptions::new().with_analyze(true))
+.stream_query_with_metadata()
+.await?;
 ```
 
 ## Google authentication
@@ -710,25 +732,25 @@ Update cache is done in the following cases:
 
 ```rust
 // Create an instance
-let db = FirestoreDb::new( &config_env_var("PROJECT_ID") ? ).await?;
+let db = FirestoreDb::new( & config_env_var("PROJECT_ID") ? ).await?;
 
 const TEST_COLLECTION_NAME: &'static str = "test-caching";
 
 // Create a cache instance that also creates an internal Firestore listener
 let mut cache = FirestoreCache::new(
 "example-mem-cache".into(),
-&db,
+& db,
 FirestoreMemoryCacheBackend::new(
-  FirestoreCacheConfiguration::new().add_collection_config(
-    &db,
-    FirestoreCacheCollectionConfiguration::new(
-      TEST_COLLECTION_NAME,
-      FirestoreListenerTarget::new(1000),
-      FirestoreCacheCollectionLoadMode::PreloadNone,
-    )
-  ),
-)?,
-  FirestoreMemListenStateStorage::new(),
+FirestoreCacheConfiguration::new().add_collection_config(
+& db,
+FirestoreCacheCollectionConfiguration::new(
+TEST_COLLECTION_NAME,
+FirestoreListenerTarget::new(1000),
+FirestoreCacheCollectionLoadMode::PreloadNone,
+)
+),
+) ?,
+FirestoreMemListenStateStorage::new(),
 )
 .await?;
 
@@ -736,22 +758,22 @@ FirestoreMemoryCacheBackend::new(
 cache.load().await?; // Required even if you don't preload anything
 
 // Read a document through the cache. If it is not found in the cache, it will be loaded from Firestore and cached.
-let my_struct0: Option<MyTestStructure> = db.read_through_cache(&cache)
-  .fluent()
-  .select()
-  .by_id_in(TEST_COLLECTION_NAME)
-  .obj()
-  .one("test-1")
-  .await?;
+let my_struct0: Option<MyTestStructure> = db.read_through_cache( & cache)
+.fluent()
+.select()
+.by_id_in(TEST_COLLECTION_NAME)
+.obj()
+.one("test-1")
+.await?;
 
 // Read a document only from the cache. If it is not found in the cache, it will return None.
-let my_struct0: Option<MyTestStructure> = db.read_cached_only(&cache)
-  .fluent()
-  .select()
-  .by_id_in(TEST_COLLECTION_NAME)
-  .obj()
-  .one("test-1")
-  .await?;
+let my_struct0: Option<MyTestStructure> = db.read_cached_only( & cache)
+.fluent()
+.select()
+.by_id_in(TEST_COLLECTION_NAME)
+.obj()
+.one("test-1")
+.await?;
 
 ```
 
@@ -759,7 +781,9 @@ Full examples available [here](examples/caching_memory_collections.rs)
 and [here](examples/caching_persistent_collections.rs).
 
 ## TLS related features
+
 Cargo provides support for different TLS features for dependencies:
+
 - `tls-roots`: default feature to support native TLS roots
 - `tls-webpki-roots`: feature to switch to webpki crate roots
 
