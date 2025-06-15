@@ -7,7 +7,8 @@
 use crate::document_transform_builder::FirestoreTransformBuilder;
 use crate::{
     FirestoreBatch, FirestoreBatchWriter, FirestoreFieldTransform, FirestoreResult,
-    FirestoreTransaction, FirestoreUpdateSupport, FirestoreWritePrecondition,
+    FirestoreTransaction, FirestoreTransactionOps, FirestoreUpdateSupport,
+    FirestoreWritePrecondition,
 };
 use gcloud_sdk::google::firestore::v1::Document;
 use serde::{Deserialize, Serialize};
@@ -546,10 +547,10 @@ where
     /// # Returns
     /// A `FirestoreResult` containing the mutable reference to the transaction.
     #[inline]
-    pub fn add_to_transaction<'t>(
-        self,
-        transaction: &'a mut FirestoreTransaction<'t>,
-    ) -> FirestoreResult<&'a mut FirestoreTransaction<'t>> {
+    pub fn add_to_transaction<'t, TO>(self, transaction: &'t mut TO) -> FirestoreResult<&'t mut TO>
+    where
+        TO: FirestoreTransactionOps,
+    {
         if let Some(parent) = self.parent {
             transaction.update_object_at(
                 parent.as_str(),

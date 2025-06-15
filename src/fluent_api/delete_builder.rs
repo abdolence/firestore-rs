@@ -6,7 +6,7 @@
 
 use crate::{
     FirestoreBatch, FirestoreBatchWriter, FirestoreDeleteSupport, FirestoreResult,
-    FirestoreTransaction, FirestoreWritePrecondition,
+    FirestoreTransactionOps, FirestoreWritePrecondition,
 };
 
 /// The initial builder for a Firestore delete operation.
@@ -218,10 +218,10 @@ where
     /// # Returns
     /// A `FirestoreResult` containing the mutable reference to the transaction, allowing for chaining.
     #[inline]
-    pub fn add_to_transaction<'t>(
-        self,
-        transaction: &'a mut FirestoreTransaction<'t>,
-    ) -> FirestoreResult<&'a mut FirestoreTransaction<'t>> {
+    pub fn add_to_transaction<'t, TO>(self, transaction: &'t mut TO) -> FirestoreResult<&'t mut TO>
+    where
+        TO: FirestoreTransactionOps,
+    {
         if let Some(parent) = self.parent {
             transaction.delete_by_id_at(
                 parent.as_str(),

@@ -45,7 +45,7 @@ async fn transaction_tests() -> Result<(), Box<dyn std::error::Error + Send + Sy
     {
         let transaction = db.begin_transaction().await?;
         let db = db.clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
-            transaction.transaction_id.clone(),
+            transaction.transaction_id().clone(),
         ));
         db.fluent()
             .select()
@@ -59,7 +59,7 @@ async fn transaction_tests() -> Result<(), Box<dyn std::error::Error + Send + Sy
     {
         let transaction = db.begin_transaction().await?;
         let db = db.clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
-            transaction.transaction_id.clone(),
+            transaction.transaction_id().clone(),
         ));
         let object_updated: MyTestStructure = db
             .fluent()

@@ -476,7 +476,7 @@ impl FirestoreErrorInTransaction {
     ) -> BackoffError<FirestoreError> {
         BackoffError::permanent(FirestoreError::ErrorInTransaction(
             FirestoreErrorInTransaction {
-                transaction_id: transaction.transaction_id.clone(),
+                transaction_id: transaction.transaction_id().clone(),
                 source: Box::new(source),
             },
         ))
@@ -492,7 +492,7 @@ impl FirestoreErrorInTransaction {
     ) -> BackoffError<FirestoreError> {
         BackoffError::transient(FirestoreError::ErrorInTransaction(
             FirestoreErrorInTransaction {
-                transaction_id: transaction.transaction_id.clone(),
+                transaction_id: transaction.transaction_id().clone(),
                 source: Box::new(source),
             },
         ))
@@ -506,7 +506,7 @@ impl FirestoreErrorInTransaction {
     ) -> BackoffError<FirestoreError> {
         BackoffError::retry_after(
             FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction {
-                transaction_id: transaction.transaction_id.clone(),
+                transaction_id: transaction.transaction_id().clone(),
                 source: Box::new(source),
             }),
             std::time::Duration::from_millis(retry_after.num_milliseconds() as u64),

@@ -1,3 +1,4 @@
+pub use crate::db::transaction_ops::FirestoreTransactionOps;
 use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;
 use crate::{
@@ -12,11 +13,80 @@ use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, 
 use std::time::Duration;
 use tracing::*;
 
-pub struct FirestoreTransaction<'a> {
-    pub db: &'a FirestoreDb,
-    pub transaction_id: FirestoreTransactionId,
-    pub transaction_span: Span,
+#[derive(Debug, Clone)]
+pub struct FirestoreTransactionData {
+    transaction_id: FirestoreTransactionId,
+    document_path: String,
+    transaction_span: Span,
     writes: Vec<gcloud_sdk::google::firestore::v1::Write>,
+}
+
+impl FirestoreTransactionData {
+    pub fn new(
+        transaction_id: FirestoreTransactionId,
+        document_path: String,
+        transaction_span: Span,
+        writes: Vec<gcloud_sdk::google::firestore::v1::Write>,
+    ) -> Self {
+        Self {
+            transaction_id,
+            document_path,
+            transaction_span,
+            writes,
+        }
+    }
+
+    #[inline]
+    pub fn transaction_id(&self) -> &FirestoreTransactionId {
+        &self.transaction_id
+    }
+
+    #[inline]
+    pub fn documents_path(&self) -> &String {
+        &self.document_path
+    }
+
+    #[inline]
+    pub fn transaction_span(&self) -> &Span {
+        &self.transaction_span
+    }
+
+    #[inline]
+    pub fn writes(&self) -> &Vec<gcloud_sdk::google::firestore::v1::Write> {
+        &self.writes
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.writes.is_empty()
+    }
+}
+
+impl From<FirestoreTransaction<'_>> for FirestoreTransactionData {
+    fn from(transaction: FirestoreTransaction) -> Self {
+        transaction.into_data()
+    }
+}
+
+impl FirestoreTransactionOps for FirestoreTransactionData {
+    fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
+    where
+        I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
+    {
+        let write = write.try_into()?;
+        self.writes.push(write);
+        Ok(self)
+    }
+
+    fn get_documents_path(&self) -> &String {
+        &self.document_path
+    }
+}
+
+#[derive(Debug)]
+pub struct FirestoreTransaction<'a> {
+    db: &'a FirestoreDb,
+    data: FirestoreTransactionData,
     finished: bool,
 }
 
@@ -53,42 +123,43 @@ impl<'a> FirestoreTransaction<'a> {
             debug!(mode = ?options.mode, "Created a new transaction.");
         });
 
-        Ok(Self {
-            db,
+        let data = FirestoreTransactionData {
             transaction_id: response.transaction,
+            document_path: db.get_documents_path().clone(),
             transaction_span,
             writes: Vec::new(),
+        };
+
+        Ok(Self {
+            db,
+            data,
             finished: false,
         })
     }
 
     #[inline]
     pub fn transaction_id(&self) -> &FirestoreTransactionId {
-        &self.transaction_id
+        &self.data.transaction_id
     }
 
     #[inline]
-    pub fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
-    where
-        I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
-    {
-        self.writes.push(write.try_into()?);
-        Ok(self)
+    pub fn db(&self) -> &'a FirestoreDb {
+        self.db
     }
 
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
 
-        if self.writes.is_empty() {
-            self.transaction_span.in_scope(|| {
+        if self.data.writes.is_empty() {
+            self.data.transaction_span.in_scope(|| {
                 debug!("Transaction has been committed without any writes.");
             });
         }
 
         let request = gcloud_sdk::tonic::Request::new(CommitRequest {
             database: self.db.get_database_path().clone(),
-            writes: self.writes.drain(..).collect(),
-            transaction: self.transaction_id.clone(),
+            writes: self.data.writes.drain(..).collect(),
+            transaction: self.data.transaction_id.clone(),
         });
 
         let response = self.db.client().get().commit(request).await?.into_inner();
@@ -103,11 +174,12 @@ impl<'a> FirestoreTransaction<'a> {
         .opt_commit_time(response.commit_time.map(from_timestamp).transpose()?);
 
         if let Some(ref commit_time) = result.commit_time {
-            self.transaction_span
+            self.data
+                .transaction_span
                 .record("/firestore/commit_time", commit_time.to_rfc3339());
         }
 
-        self.transaction_span.in_scope(|| {
+        self.data.transaction_span.in_scope(|| {
             debug!("Transaction has been committed.");
         });
 
@@ -118,12 +190,12 @@ impl<'a> FirestoreTransaction<'a> {
         self.finished = true;
         let request = gcloud_sdk::tonic::Request::new(RollbackRequest {
             database: self.db.get_database_path().clone(),
-            transaction: self.transaction_id.clone(),
+            transaction: self.data.transaction_id.clone(),
         });
 
         self.db.client().get().rollback(request).await?;
 
-        self.transaction_span.in_scope(|| {
+        self.data.transaction_span.in_scope(|| {
             debug!("Transaction has been rolled back.");
         });
 
@@ -132,21 +204,59 @@ impl<'a> FirestoreTransaction<'a> {
 
     pub fn finish(&mut self) -> FirestoreResult<()> {
         self.finished = true;
-        self.transaction_span.in_scope(|| {
+        self.data.transaction_span.in_scope(|| {
             debug!("Transaction has been finished locally without rolling back to be able to retry it again.");
         });
         Ok(())
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty()
+        self.data.is_empty()
+    }
+
+    pub fn from_data(
+        db: &'a FirestoreDb,
+        data: FirestoreTransactionData,
+    ) -> FirestoreTransaction<'a> {
+        Self {
+            db,
+            data,
+            finished: false,
+        }
+    }
+
+    #[inline]
+    pub fn into_data(mut self) -> FirestoreTransactionData {
+        self.finished = true;
+        FirestoreTransactionData::new(
+            self.data.transaction_id.clone(),
+            self.data.document_path.clone(),
+            self.data.transaction_span.clone(),
+            self.data.writes.drain(..).collect(),
+        )
+    }
+}
+
+impl FirestoreTransactionOps for FirestoreTransaction<'_> {
+    fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
+    where
+        I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
+    {
+        self.data.add(write)?;
+        Ok(self)
+    }
+
+    fn get_documents_path(&self) -> &String {
+        self.data.get_documents_path()
     }
 }
 
 impl<'a> Drop for FirestoreTransaction<'a> {
     fn drop(&mut self) {
         if !self.finished {
-            self.transaction_span
+            self.data
+                .transaction_span
                 .in_scope(|| warn!("Transaction was neither committed nor rolled back."));
         }
     }
@@ -193,7 +303,7 @@ impl FirestoreDb {
         let (transaction_id, transaction_span, initial_backoff_duration) = {
             let mut transaction = self.begin_transaction_with_options(options.clone()).await?;
             let transaction_id = transaction.transaction_id().clone();
-            let transaction_span = transaction.transaction_span.clone();
+            let transaction_span = transaction.data.transaction_span.clone();
             let mut initial_backoff_duration: Option<Duration> = None;
 
             let cdb = self.clone_with_consistency_selector(
