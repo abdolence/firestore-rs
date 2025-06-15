@@ -1,6 +1,6 @@
 use crate::db::safe_document_path;
 use crate::{
-    FirestoreDb, FirestoreError, FirestoreFieldTransform, FirestoreResult, FirestoreTransaction,
+    FirestoreDb, FirestoreError, FirestoreFieldTransform, FirestoreResult,
     FirestoreWritePrecondition,
 };
 use gcloud_sdk::google::firestore::v1::Write;
@@ -130,8 +130,14 @@ where
     }
 }
 
-impl<'a> FirestoreTransaction<'a> {
-    pub fn update_object<T, S>(
+pub trait FirestoreTransactionOps {
+    fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
+    where
+        I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>;
+
+    fn get_documents_path(&self) -> &String;
+
+    fn update_object<T, S>(
         &mut self,
         collection_id: &str,
         document_id: S,
@@ -145,7 +151,7 @@ impl<'a> FirestoreTransaction<'a> {
         S: AsRef<str>,
     {
         self.update_object_at(
-            self.db().get_documents_path(),
+            &self.get_documents_path().clone(),
             collection_id,
             document_id,
             obj,
@@ -155,7 +161,7 @@ impl<'a> FirestoreTransaction<'a> {
         )
     }
 
-    pub fn update_object_at<T, S>(
+    fn update_object_at<T, S>(
         &mut self,
         parent: &str,
         collection_id: &str,
@@ -180,7 +186,7 @@ impl<'a> FirestoreTransaction<'a> {
         })
     }
 
-    pub fn delete_by_id<S>(
+    fn delete_by_id<S>(
         &mut self,
         collection_id: &str,
         document_id: S,
@@ -190,14 +196,14 @@ impl<'a> FirestoreTransaction<'a> {
         S: AsRef<str>,
     {
         self.delete_by_id_at(
-            self.db().get_documents_path(),
+            &self.get_documents_path().clone(),
             collection_id,
             document_id,
             precondition,
         )
     }
 
-    pub fn delete_by_id_at<S>(
+    fn delete_by_id_at<S>(
         &mut self,
         parent: &str,
         collection_id: &str,
@@ -215,7 +221,7 @@ impl<'a> FirestoreTransaction<'a> {
         })
     }
 
-    pub fn transform<S>(
+    fn transform<S>(
         &mut self,
         collection_id: &str,
         document_id: S,
@@ -226,7 +232,7 @@ impl<'a> FirestoreTransaction<'a> {
         S: AsRef<str>,
     {
         self.transform_at(
-            self.db().get_documents_path(),
+            &self.get_documents_path().clone(),
             collection_id,
             document_id,
             precondition,
@@ -234,7 +240,7 @@ impl<'a> FirestoreTransaction<'a> {
         )
     }
 
-    pub fn transform_at<S>(
+    fn transform_at<S>(
         &mut self,
         parent: &str,
         collection_id: &str,

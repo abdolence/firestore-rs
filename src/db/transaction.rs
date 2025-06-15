@@ -1,3 +1,4 @@
+pub use crate::db::transaction_ops::FirestoreTransactionOps;
 use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;
 use crate::{
@@ -14,11 +15,75 @@ use tracing::*;
 
 #[derive(Debug, Clone)]
 pub struct FirestoreTransactionData {
-    pub transaction_id: FirestoreTransactionId,
-    pub transaction_span: Span,
-    pub writes: Vec<gcloud_sdk::google::firestore::v1::Write>,
+    transaction_id: FirestoreTransactionId,
+    document_path: String,
+    transaction_span: Span,
+    writes: Vec<gcloud_sdk::google::firestore::v1::Write>,
 }
 
+impl FirestoreTransactionData {
+    pub fn new(
+        transaction_id: FirestoreTransactionId,
+        document_path: String,
+        transaction_span: Span,
+        writes: Vec<gcloud_sdk::google::firestore::v1::Write>,
+    ) -> Self {
+        Self {
+            transaction_id,
+            document_path,
+            transaction_span,
+            writes,
+        }
+    }
+
+    #[inline]
+    pub fn transaction_id(&self) -> &FirestoreTransactionId {
+        &self.transaction_id
+    }
+
+    #[inline]
+    pub fn documents_path(&self) -> &String {
+        &self.document_path
+    }
+
+    #[inline]
+    pub fn transaction_span(&self) -> &Span {
+        &self.transaction_span
+    }
+
+    #[inline]
+    pub fn writes(&self) -> &Vec<gcloud_sdk::google::firestore::v1::Write> {
+        &self.writes
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.writes.is_empty()
+    }
+}
+
+impl From<FirestoreTransaction<'_>> for FirestoreTransactionData {
+    fn from(transaction: FirestoreTransaction) -> Self {
+        transaction.into_data()
+    }
+}
+
+impl FirestoreTransactionOps for FirestoreTransactionData {
+    fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
+    where
+        I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
+    {
+        let write = write.try_into()?;
+        self.writes.push(write);
+        Ok(self)
+    }
+
+    fn get_documents_path(&self) -> &String {
+        &self.document_path
+    }
+}
+
+#[derive(Debug)]
 pub struct FirestoreTransaction<'a> {
     db: &'a FirestoreDb,
     data: FirestoreTransactionData,
@@ -60,6 +125,7 @@ impl<'a> FirestoreTransaction<'a> {
 
         let data = FirestoreTransactionData {
             transaction_id: response.transaction,
+            document_path: db.get_documents_path().clone(),
             transaction_span,
             writes: Vec::new(),
         };
@@ -79,15 +145,6 @@ impl<'a> FirestoreTransaction<'a> {
     #[inline]
     pub fn db(&self) -> &'a FirestoreDb {
         self.db
-    }
-
-    #[inline]
-    pub fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
-    where
-        I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
-    {
-        self.data.writes.push(write.try_into()?);
-        Ok(self)
     }
 
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
@@ -153,8 +210,9 @@ impl<'a> FirestoreTransaction<'a> {
         Ok(())
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
-        self.data.writes.is_empty()
+        self.data.is_empty()
     }
 
     pub fn from_data(
@@ -171,7 +229,26 @@ impl<'a> FirestoreTransaction<'a> {
     #[inline]
     pub fn into_data(mut self) -> FirestoreTransactionData {
         self.finished = true;
-        self.data.clone()
+        FirestoreTransactionData::new(
+            self.data.transaction_id.clone(),
+            self.data.document_path.clone(),
+            self.data.transaction_span.clone(),
+            self.data.writes.drain(..).collect(),
+        )
+    }
+}
+
+impl FirestoreTransactionOps for FirestoreTransaction<'_> {
+    fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
+    where
+        I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
+    {
+        self.data.add(write)?;
+        Ok(self)
+    }
+
+    fn get_documents_path(&self) -> &String {
+        self.data.get_documents_path()
     }
 }
 

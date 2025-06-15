@@ -1,7 +1,5 @@
 use firestore::*;
-use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
-use tokio_stream::StreamExt;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|e| format!("{}: {}", name, e))
@@ -28,29 +26,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const TEST_COLLECTION_NAME: &str = "test";
 
     println!("Populating a test collection");
+    let batch_writer = db.create_simple_batch_writer().await?;
+    let mut current_batch = batch_writer.new_batch();
+
     for i in 0..10 {
         let my_struct = MyTestStructure {
             some_id: format!("test-{}", i),
             some_string: "Test".to_string(),
         };
 
-        // Remove if it already exist
-        db.fluent()
-            .delete()
-            .from(TEST_COLLECTION_NAME)
-            .document_id(&my_struct.some_id)
-            .execute()
-            .await?;
-
         // Let's insert some data
         db.fluent()
-            .insert()
-            .into(TEST_COLLECTION_NAME)
+            .update()
+            .in_col(TEST_COLLECTION_NAME)
             .document_id(&my_struct.some_id)
             .object(&my_struct)
-            .execute::<()>()
-            .await?;
+            .add_to_batch(&mut current_batch)?;
     }
+    current_batch.write().await?;
 
     println!("Transaction update/delete on collection");
 
@@ -79,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Listing objects as a stream with updated test-0 and removed test-5");
     // Query as a stream our data
-    let mut objs_stream: BoxStream<MyTestStructure> = db
+    let objs: Vec<MyTestStructure> = db
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
@@ -88,12 +81,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             FirestoreQueryDirection::Descending,
         )])
         .obj()
-        .stream_query()
+        .query()
         .await?;
 
-    while let Some(object) = objs_stream.next().await {
-        println!("Object in stream: {:?}", object);
-    }
+    objs.iter().for_each(|obj| {
+        println!("Object in stream: {:?}", obj);
+    });
 
     Ok(())
 }
