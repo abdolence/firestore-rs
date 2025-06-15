@@ -215,6 +215,11 @@ impl<'a> FirestoreTransaction<'a> {
         self.data.is_empty()
     }
 
+    #[inline]
+    pub fn transaction_data(&self) -> &FirestoreTransactionData {
+        &self.data
+    }
+
     pub fn from_data(
         db: &'a FirestoreDb,
         data: FirestoreTransactionData,
