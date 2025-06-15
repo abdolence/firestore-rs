@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Working with consistency selector for reading when necessary
     let cdb = db.clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
-        transaction.transaction_id.clone(),
+        transaction.transaction_id().clone(),
     ));
 
     let consistency_read_test: Option<MyTestStructure> = cdb
