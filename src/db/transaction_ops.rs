@@ -145,7 +145,7 @@ impl<'a> FirestoreTransaction<'a> {
         S: AsRef<str>,
     {
         self.update_object_at(
-            self.db.get_documents_path(),
+            self.db().get_documents_path(),
             collection_id,
             document_id,
             obj,
@@ -190,7 +190,7 @@ impl<'a> FirestoreTransaction<'a> {
         S: AsRef<str>,
     {
         self.delete_by_id_at(
-            self.db.get_documents_path(),
+            self.db().get_documents_path(),
             collection_id,
             document_id,
             precondition,
@@ -226,7 +226,7 @@ impl<'a> FirestoreTransaction<'a> {
         S: AsRef<str>,
     {
         self.transform_at(
-            self.db.get_documents_path(),
+            self.db().get_documents_path(),
             collection_id,
             document_id,
             precondition,
