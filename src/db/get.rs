@@ -811,8 +811,9 @@ impl FirestoreDb {
         collection_id: &str,
         full_doc_ids: &[String],
         _return_only_fields: &Option<Vec<String>>,
-    ) -> FirestoreResult<FirestoreCachedValue<BoxStream<FirestoreResult<(String, Option<Document>)>>>>
-    {
+    ) -> FirestoreResult<
+        FirestoreCachedValue<BoxStream<'_, FirestoreResult<(String, Option<Document>)>>>,
+    > {
         if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache)
         | FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) = self.session_params.cache_mode
         {

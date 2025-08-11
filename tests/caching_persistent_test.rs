@@ -74,9 +74,9 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
                         FirestoreCacheCollectionLoadMode::PreloadAllDocs,
                     ),
                 ),
-            temp_db_dir.into_path().join("redb"),
+            temp_db_dir.keep().join("redb"),
         )?,
-        FirestoreTempFilesListenStateStorage::with_temp_dir(temp_state_dir.into_path()),
+        FirestoreTempFilesListenStateStorage::with_temp_dir(temp_state_dir.keep()),
     )
     .await?;
 
