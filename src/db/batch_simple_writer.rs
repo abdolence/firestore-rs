@@ -35,7 +35,7 @@ impl FirestoreSimpleBatchWriter {
         })
     }
 
-    pub fn new_batch(&self) -> FirestoreBatch<FirestoreSimpleBatchWriter> {
+    pub fn new_batch(&self) -> FirestoreBatch<'_, FirestoreSimpleBatchWriter> {
         FirestoreBatch::new(&self.db, self)
     }
 }

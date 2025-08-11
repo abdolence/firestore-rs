@@ -410,7 +410,7 @@ impl FirestoreQuerySupport for FirestoreDb {
     fn stream_partition_cursors_with_errors(
         &self,
         params: FirestorePartitionQueryParams,
-    ) -> BoxFuture<'_, FirestoreResult<PeekableBoxStream<FirestoreResult<FirestoreQueryCursor>>>>
+    ) -> BoxFuture<'_, FirestoreResult<PeekableBoxStream<'_, FirestoreResult<FirestoreQueryCursor>>>>
     {
         Box::pin(async move {
             let consistency_selector: Option<
