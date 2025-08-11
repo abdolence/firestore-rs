@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     for parent_idx in 0..5 {
         let parent_struct = MyParentStructure {
-            some_id: format!("test-parent-{}", parent_idx),
+            some_id: format!("test-parent-{parent_idx}"),
             some_string: "Test".to_string(),
         };
 
@@ -60,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         for child_idx in 0..3 {
             // Creating a child doc
             let child_struct = MyChildStructure {
-                some_id: format!("test-parent{}-child-{}", parent_idx, child_idx),
+                some_id: format!("test-parent{parent_idx}-child-{child_idx}"),
                 another_string: "TestChild".to_string(),
             };
 
@@ -106,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     while let Some(object) = objs_stream.next().await {
-        println!("Object in stream: {:?}", object);
+        println!("Object in stream: {object:?}");
     }
 
     Ok(())

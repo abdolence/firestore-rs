@@ -2,7 +2,7 @@ use firestore::*;
 use futures::TryStreamExt;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 #[tokio::main]
@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     let collections: Vec<String> = collections_stream.try_collect().await?;
-    println!("Collections: {:?}", collections);
+    println!("Collections: {collections:?}");
 
     Ok(())
 }

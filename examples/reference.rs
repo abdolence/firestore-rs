@@ -2,7 +2,7 @@ use firestore::*;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 // Example structure to play with
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    println!("Created: {:?}", object_returned);
+    println!("Created: {object_returned:?}");
 
     // Query our data
     let objects1: Vec<MyTestStructure> = db
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .query()
         .await?;
 
-    println!("Now in the list: {:?}", objects1);
+    println!("Now in the list: {objects1:?}");
 
     let (parent_path, collection_name, document_id) = objects1
         .first()
@@ -66,9 +66,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .some_ref
         .split(db.get_documents_path());
 
-    println!("Document ID: {}", document_id);
-    println!("Collection name: {:?}", collection_name);
-    println!("Parent Path: {:?}", parent_path);
+    println!("Document ID: {document_id}");
+    println!("Collection name: {collection_name:?}");
+    println!("Parent Path: {parent_path:?}");
 
     // Read by reference
     let object_returned: Option<FirestoreDocument> = db
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .one(document_id)
         .await?;
 
-    println!("Object by reference: {:?}", object_returned);
+    println!("Object by reference: {object_returned:?}");
 
     Ok(())
 }

@@ -2,7 +2,7 @@ use firestore::*;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 // Example structure to play with
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         for i in 0..500 {
             let my_struct = MyTestStructure {
-                some_id: format!("test-{}", i),
+                some_id: format!("test-{i}"),
                 some_string: "Test".to_string(),
                 some_vec: vec![i as f64, (i * 10) as f64, (i * 20) as f64].into(),
                 distance: None,
@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .query()
         .await?;
 
-    println!("Examples: {:?}", as_vec);
+    println!("Examples: {as_vec:?}");
 
     println!("Search for a test collection with a vector closest");
 
@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .query()
         .await?;
 
-    println!("Found: {:?}", as_vec);
+    println!("Found: {as_vec:?}");
 
     Ok(())
 }

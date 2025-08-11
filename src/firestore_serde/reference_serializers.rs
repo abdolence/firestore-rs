@@ -26,7 +26,7 @@ impl FirestoreReference {
     pub fn split(&self, document_path: &str) -> (Option<String>, String, String) {
         let (parent_raw_path, document_id) = split_document_path(self.as_str());
 
-        let parent_path = parent_raw_path.replace(format!("{}/", document_path).as_str(), "");
+        let parent_path = parent_raw_path.replace(format!("{document_path}/").as_str(), "");
 
         let split_pos = parent_path.rfind('/').map(|pos| pos + 1).unwrap_or(0);
         if split_pos == 0 {

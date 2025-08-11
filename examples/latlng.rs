@@ -2,7 +2,7 @@ use firestore::*;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 // Example structure to play with
@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    println!("Created: {:?}", object_returned);
+    println!("Created: {object_returned:?}");
 
     // Query our data
     let objects1: Vec<MyTestStructure> = db
@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .query()
         .await?;
 
-    println!("Now in the list: {:?}", objects1);
+    println!("Now in the list: {objects1:?}");
 
     Ok(())
 }

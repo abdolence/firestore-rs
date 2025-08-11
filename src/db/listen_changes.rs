@@ -139,7 +139,7 @@ impl TryFrom<i32> for FirestoreListenerTarget {
                 FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
                     FirestoreInvalidParametersPublicDetails::new(
                         "target_id".to_string(),
-                        format!("Invalid target ID: {} {}", value, e),
+                        format!("Invalid target ID: {value} {e}"),
                     ),
                 ))
             })

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     let as_vec: Vec<MyChildStructure> = list_stream.collect().await;
-    println!("{:?}", as_vec);
+    println!("{as_vec:?}");
 
     println!("Querying in children");
     let query_stream: BoxStream<MyChildStructure> = db
@@ -114,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     let as_vec: Vec<MyChildStructure> = query_stream.collect().await;
-    println!("{:?}", as_vec);
+    println!("{as_vec:?}");
 
     Ok(())
 }

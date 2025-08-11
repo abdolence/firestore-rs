@@ -3,7 +3,7 @@ use firestore::*;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 // Example structure to play with
@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    println!("Created {:?}", object_returned);
+    println!("Created {object_returned:?}");
 
     let generated_id = object_returned.id.unwrap();
 
@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .one(generated_id)
         .await?;
 
-    println!("Read {:?}", object_read);
+    println!("Read {object_read:?}");
 
     Ok(())
 }

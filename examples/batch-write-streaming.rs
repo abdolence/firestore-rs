@@ -4,7 +4,7 @@ use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -32,14 +32,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let response_thread = tokio::spawn(async move {
         while let Ok(Some(response)) = batch_results_reader.try_next().await {
-            println!("{:?}", response);
+            println!("{response:?}");
         }
     });
 
     let mut current_batch = batch_writer.new_batch();
     for idx in 0..10000 {
         let my_struct = MyTestStructure {
-            some_id: format!("test-{}", idx),
+            some_id: format!("test-{idx}"),
             some_string: "Test".to_string(),
             created_at: Utc::now(),
         };

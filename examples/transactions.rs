@@ -2,7 +2,7 @@ use firestore::*;
 use serde::{Deserialize, Serialize};
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 // Example structure to play with
@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     for i in 0..10 {
         let my_struct = MyTestStructure {
-            some_id: format!("test-{}", i),
+            some_id: format!("test-{i}"),
             some_string: "Test".to_string(),
         };
 
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     objs.iter().for_each(|obj| {
-        println!("Object in stream: {:?}", obj);
+        println!("Object in stream: {obj:?}");
     });
 
     Ok(())

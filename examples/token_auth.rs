@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::ops::Add;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 // Example structure to play with
@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
-    println!("{:?}", as_vec);
+    println!("{as_vec:?}");
 
     Ok(())
 }

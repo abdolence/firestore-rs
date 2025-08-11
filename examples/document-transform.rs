@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
-    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
+    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
 // Example structure to play with
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Populating a test collection");
     for i in 0..10 {
         let my_struct = MyTestStructure {
-            some_id: format!("test-{}", i),
+            some_id: format!("test-{i}"),
             some_num: i,
             some_string: "Test".to_string(),
             some_array: vec![1, 2, 3],
@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
 
     while let Some(object) = objs_stream.next().await {
-        println!("Object in stream: {:?}", object);
+        println!("Object in stream: {object:?}");
     }
 
     Ok(())

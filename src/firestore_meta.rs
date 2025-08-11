@@ -70,7 +70,7 @@ impl std::fmt::Debug for FirestoreDynamicStruct {
                 Some(Kind::NullValue(_)) => "null".to_string(),
                 Some(Kind::BoolValue(v)) => v.to_string(),
                 Some(Kind::NumberValue(v)) => v.to_string(),
-                Some(Kind::StringValue(v)) => format!("'{}'", v),
+                Some(Kind::StringValue(v)) => format!("'{v}'"),
                 Some(Kind::StructValue(v)) => v
                     .fields
                     .iter()
