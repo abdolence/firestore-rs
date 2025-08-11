@@ -553,7 +553,7 @@ impl FirestoreDb {
         document_path: String,
         return_only_fields: Option<Vec<String>>,
         retries: usize,
-    ) -> BoxFuture<FirestoreResult<Document>> {
+    ) -> BoxFuture<'_, FirestoreResult<Document>> {
         async move {
             #[cfg(feature = "caching")]
             {
@@ -661,7 +661,7 @@ impl FirestoreDb {
         collection_id: String,
         full_doc_ids: Vec<String>,
         return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<(String, Option<Document>)>>> {
+    ) -> FirestoreResult<BoxStream<'_, FirestoreResult<(String, Option<Document>)>>> {
         #[cfg(feature = "caching")]
         {
             if let FirestoreCachedValue::UseCached(stream) = self

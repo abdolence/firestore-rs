@@ -268,14 +268,14 @@ impl<'a> Drop for FirestoreTransaction<'a> {
 }
 
 impl FirestoreDb {
-    pub async fn begin_transaction(&self) -> FirestoreResult<FirestoreTransaction> {
+    pub async fn begin_transaction(&self) -> FirestoreResult<FirestoreTransaction<'_>> {
         Self::begin_transaction_with_options(self, FirestoreTransactionOptions::new()).await
     }
 
     pub async fn begin_transaction_with_options(
         &self,
         options: FirestoreTransactionOptions,
-    ) -> FirestoreResult<FirestoreTransaction> {
+    ) -> FirestoreResult<FirestoreTransaction<'_>> {
         FirestoreTransaction::new(self, options).await
     }
 

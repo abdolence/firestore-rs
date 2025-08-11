@@ -64,13 +64,13 @@ pub trait FirestoreQuerySupport {
     fn stream_partition_cursors_with_errors(
         &self,
         params: FirestorePartitionQueryParams,
-    ) -> BoxFuture<FirestoreResult<PeekableBoxStream<FirestoreResult<FirestoreQueryCursor>>>>;
+    ) -> BoxFuture<'_, FirestoreResult<PeekableBoxStream<FirestoreResult<FirestoreQueryCursor>>>>;
 
     async fn stream_partition_query_doc_with_errors(
         &self,
         parallelism: usize,
         partition_params: FirestorePartitionQueryParams,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<(FirestorePartition, Document)>>>;
+    ) -> FirestoreResult<BoxStream<'_, FirestoreResult<(FirestorePartition, Document)>>>;
 
     async fn stream_partition_query_obj_with_errors<'a, T>(
         &'a self,
@@ -408,7 +408,8 @@ impl FirestoreQuerySupport for FirestoreDb {
     fn stream_partition_cursors_with_errors(
         &self,
         params: FirestorePartitionQueryParams,
-    ) -> BoxFuture<FirestoreResult<PeekableBoxStream<FirestoreResult<FirestoreQueryCursor>>>> {
+    ) -> BoxFuture<'_, FirestoreResult<PeekableBoxStream<FirestoreResult<FirestoreQueryCursor>>>>
+    {
         Box::pin(async move {
             let consistency_selector: Option<
                 gcloud_sdk::google::firestore::v1::partition_query_request::ConsistencySelector,
@@ -502,7 +503,7 @@ impl FirestoreQuerySupport for FirestoreDb {
         &self,
         parallelism: usize,
         partition_params: FirestorePartitionQueryParams,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<(FirestorePartition, Document)>>> {
+    ) -> FirestoreResult<BoxStream<'_, FirestoreResult<(FirestorePartition, Document)>>> {
         let collection_str = partition_params.query_params.collection_id.to_string();
 
         let span = span!(
