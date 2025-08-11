@@ -280,7 +280,7 @@ impl FirestoreStreamingBatchWriter {
         })?)
     }
 
-    pub fn new_batch(&self) -> FirestoreBatch<FirestoreStreamingBatchWriter> {
+    pub fn new_batch(&self) -> FirestoreBatch<'_, FirestoreStreamingBatchWriter> {
         FirestoreBatch::new(&self.db, self)
     }
 }

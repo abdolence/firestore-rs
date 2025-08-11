@@ -125,7 +125,7 @@ impl FirestoreDb {
     ///
     /// This is the main entry point for using the chainable builder pattern.
     #[inline]
-    pub fn fluent(&self) -> FirestoreExprBuilder<FirestoreDb> {
+    pub fn fluent(&self) -> FirestoreExprBuilder<'_, FirestoreDb> {
         FirestoreExprBuilder::new(self)
     }
 }

@@ -64,7 +64,7 @@ pub trait FirestoreQuerySupport {
     fn stream_partition_cursors_with_errors(
         &self,
         params: FirestorePartitionQueryParams,
-    ) -> BoxFuture<'_, FirestoreResult<PeekableBoxStream<FirestoreResult<FirestoreQueryCursor>>>>;
+    ) -> BoxFuture<'_, FirestoreResult<PeekableBoxStream<'_, FirestoreResult<FirestoreQueryCursor>>>>;
 
     async fn stream_partition_query_doc_with_errors(
         &self,
@@ -115,8 +115,10 @@ impl FirestoreDb {
         params: FirestoreQueryParams,
         retries: usize,
         span: Span,
-    ) -> BoxFuture<FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<Document>>>>>
-    {
+    ) -> BoxFuture<
+        '_,
+        FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<Document>>>>,
+    > {
         async move {
             let query_request = self.create_query_request(params.clone())?;
             let begin_query_utc: DateTime<Utc> = Utc::now();
