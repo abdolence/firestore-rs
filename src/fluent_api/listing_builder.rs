@@ -159,6 +159,21 @@ where
         }
     }
 
+    /// Sets the page token for pagination.
+    ///
+    /// # Arguments
+    /// * `value`: The page token from a previous listing operation.
+    ///
+    /// # Returns
+    /// The builder instance with the page token set.
+    #[inline]
+    fn page_token(self, value: String) -> Self {
+        Self {
+            params: self.params.with_page_token(value),
+            ..self
+        }
+    }
+
     /// Specifies the order in which to sort the documents.
     ///
     /// # Arguments
