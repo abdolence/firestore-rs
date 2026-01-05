@@ -376,6 +376,94 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
             Some(value::ValueType::TimestampValue(ts)) => {
                 visitor.visit_string(from_timestamp(ts)?.to_rfc3339())
             }
+            Some(value::ValueType::FieldReferenceValue(fr)) => visitor.visit_string(fr),
+            Some(value::ValueType::FunctionValue(func)) => {
+                let func_fields: HashMap<String, gcloud_sdk::google::firestore::v1::Value> = vec![
+                    (
+                        "name".to_string(),
+                        gcloud_sdk::google::firestore::v1::Value {
+                            value_type: Some(value::ValueType::StringValue(func.name)),
+                        },
+                    ),
+                    (
+                        "args".to_string(),
+                        gcloud_sdk::google::firestore::v1::Value {
+                            value_type: Some(value::ValueType::ArrayValue(
+                                gcloud_sdk::google::firestore::v1::ArrayValue { values: func.args },
+                            )),
+                        },
+                    ),
+                    (
+                        "options".to_string(),
+                        gcloud_sdk::google::firestore::v1::Value {
+                            value_type: Some(value::ValueType::MapValue(
+                                gcloud_sdk::google::firestore::v1::MapValue {
+                                    fields: func.options,
+                                },
+                            )),
+                        },
+                    ),
+                ]
+                .into_iter()
+                .collect();
+                visitor.visit_map(FirestoreValueMapAccess::new(func_fields))
+            }
+            Some(value::ValueType::PipelineValue(pipeline)) => {
+                let pipeline_fields: HashMap<String, gcloud_sdk::google::firestore::v1::Value> =
+                    vec![(
+                        "stages".to_string(),
+                        gcloud_sdk::google::firestore::v1::Value {
+                            value_type: Some(value::ValueType::ArrayValue(
+                                gcloud_sdk::google::firestore::v1::ArrayValue {
+                                    values: pipeline
+                                        .stages
+                                        .into_iter()
+                                        .map(|stage| gcloud_sdk::google::firestore::v1::Value {
+                                            value_type: Some(value::ValueType::MapValue(
+                                                gcloud_sdk::google::firestore::v1::MapValue {
+                                                    fields: vec![
+                                                        (
+                                                        "name".to_string(),
+                                                        gcloud_sdk::google::firestore::v1::Value {
+                                                            value_type: Some(
+                                                                value::ValueType::StringValue(
+                                                                    stage.name,
+                                                                ),
+                                                            ),
+                                                        }),
+                                                        (
+                                                            "args".to_string(),
+                                                            gcloud_sdk::google::firestore::v1::Value {
+                                                                value_type: Some(value::ValueType::ArrayValue(
+                                                                    gcloud_sdk::google::firestore::v1::ArrayValue { values: stage.args },
+                                                                )),
+                                                            },
+                                                        ),
+                                                        (
+                                                            "options".to_string(),
+                                                            gcloud_sdk::google::firestore::v1::Value {
+                                                                value_type: Some(value::ValueType::MapValue(
+                                                                    gcloud_sdk::google::firestore::v1::MapValue {
+                                                                        fields: stage.options,
+                                                                    },
+                                                                )),
+                                                            },
+                                                        )
+                                                    ]
+                                                    .into_iter()
+                                                    .collect(),
+                                                },
+                                            )),
+                                        })
+                                        .collect(),
+                                },
+                            )),
+                        },
+                    )]
+                    .into_iter()
+                    .collect();
+                visitor.visit_map(FirestoreValueMapAccess::new(pipeline_fields))
+            }
             None => visitor.visit_unit(),
         }
     }

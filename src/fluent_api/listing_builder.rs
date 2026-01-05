@@ -167,7 +167,7 @@ where
     /// # Returns
     /// The builder instance with the page token set.
     #[inline]
-    fn page_token(self, value: String) -> Self {
+    pub fn page_token(self, value: String) -> Self {
         Self {
             params: self.params.with_page_token(value),
             ..self
