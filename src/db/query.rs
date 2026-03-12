@@ -8,7 +8,7 @@ use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
-use rand::Rng;
+use rand::RngExt;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::*;
