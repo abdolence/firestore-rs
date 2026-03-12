@@ -9,7 +9,7 @@ use futures::StreamExt;
 use futures::TryFutureExt;
 use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
-use rand::Rng;
+use rand::RngExt;
 use rsb_derive::*;
 use serde::Deserialize;
 use std::future;
