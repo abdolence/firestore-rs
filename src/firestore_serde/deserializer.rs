@@ -464,6 +464,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
                     .collect();
                 visitor.visit_map(FirestoreValueMapAccess::new(pipeline_fields))
             }
+            Some(value::ValueType::VariableReferenceValue(v)) => visitor.visit_string(v),
             None => visitor.visit_unit(),
         }
     }
