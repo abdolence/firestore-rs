@@ -64,6 +64,7 @@ impl TryFrom<FirestoreTransactionOptions>
                         gcloud_sdk::google::firestore::v1::transaction_options::Mode::ReadWrite(
                             gcloud_sdk::google::firestore::v1::transaction_options::ReadWrite {
                                 retry_transaction: vec![],
+                                concurrency_mode: gcloud_sdk::google::firestore::v1::transaction_options::ConcurrencyMode::Unspecified as i32,
                             },
                         ),
                     ),
@@ -75,6 +76,7 @@ impl TryFrom<FirestoreTransactionOptions>
                         gcloud_sdk::google::firestore::v1::transaction_options::Mode::ReadWrite(
                             gcloud_sdk::google::firestore::v1::transaction_options::ReadWrite {
                                 retry_transaction: tid,
+                                concurrency_mode: gcloud_sdk::google::firestore::v1::transaction_options::ConcurrencyMode::Unspecified as i32,
                             },
                         ),
                     ),
