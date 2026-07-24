@@ -316,7 +316,7 @@ pub trait FirestoreCacheDocsByPathSupport {
                         let doc_id = document
                             .name
                             .split('/')
-                            .last()
+                            .next_back()
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| document.name.clone());
                         Ok((doc_id, Some(document)))

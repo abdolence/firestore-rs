@@ -18,6 +18,10 @@ pub struct FirestoreTransactionOptions {
     /// If set, the transaction will attempt to complete within this duration.
     /// If `None`, default retry policies of the underlying gRPC client or Firestore service apply.
     pub max_elapsed_time: Option<Duration>,
+
+    /// Concurrent transaction mode
+    pub concurrent_mode:
+        Option<gcloud_sdk::google::firestore::v1::transaction_options::ConcurrencyMode>,
 }
 
 impl Default for FirestoreTransactionOptions {
@@ -25,6 +29,7 @@ impl Default for FirestoreTransactionOptions {
         Self {
             mode: FirestoreTransactionMode::ReadWrite,
             max_elapsed_time: None,
+            concurrent_mode: None,
         }
     }
 }
@@ -64,7 +69,10 @@ impl TryFrom<FirestoreTransactionOptions>
                         gcloud_sdk::google::firestore::v1::transaction_options::Mode::ReadWrite(
                             gcloud_sdk::google::firestore::v1::transaction_options::ReadWrite {
                                 retry_transaction: vec![],
-                                concurrency_mode: gcloud_sdk::google::firestore::v1::transaction_options::ConcurrencyMode::Unspecified as i32,
+                                concurrency_mode: options.concurrent_mode.map_or_else(
+                                    || gcloud_sdk::google::firestore::v1::transaction_options::ConcurrencyMode::Unspecified.into(),
+                                    |m| m.into(),
+                                ),
                             },
                         ),
                     ),
@@ -76,7 +84,10 @@ impl TryFrom<FirestoreTransactionOptions>
                         gcloud_sdk::google::firestore::v1::transaction_options::Mode::ReadWrite(
                             gcloud_sdk::google::firestore::v1::transaction_options::ReadWrite {
                                 retry_transaction: tid,
-                                concurrency_mode: gcloud_sdk::google::firestore::v1::transaction_options::ConcurrencyMode::Unspecified as i32,
+                                concurrency_mode: options.concurrent_mode.map_or_else(
+                                    || gcloud_sdk::google::firestore::v1::transaction_options::ConcurrencyMode::Unspecified.into(),
+                                    |m| m.into(),
+                                ),
                             },
                         ),
                     ),
@@ -101,7 +112,7 @@ pub enum FirestoreTransactionMode {
     ReadWrite,
     /// A read-only transaction with a specific consistency requirement.
     ///
-    /// Allows specifying how data should be read, for example, at a particular    
+    /// Allows specifying how data should be read, for example, at a particular
     /// A read-write transaction.src/db/transaction_models.rs:36:28, at a particular
     /// point in time using [`FirestoreConsistencySelector::ReadTime`].
     ReadOnlyWithConsistency(FirestoreConsistencySelector),
