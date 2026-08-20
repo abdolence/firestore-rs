@@ -21,10 +21,48 @@ use crate::{
 pub struct FirestoreTimestamp(pub FirestoreInstant);
 
 impl FirestoreTimestamp {
-    /// Returns the current instant.
+    /// Returns the current instant, with the precision Firestore stores.
     #[inline]
     pub fn now() -> Self {
-        FirestoreTimestamp(FirestoreInstant::now())
+        FirestoreTimestamp(FirestoreInstant::now()).truncated_to_firestore_precision()
+    }
+
+    /// Truncates the value to the microsecond precision Firestore stores.
+    ///
+    /// Firestore keeps the timestamps with microsecond precision and discards
+    /// the nanoseconds on write, so a value that carries them never comes back
+    /// unchanged. Every constructor and conversion of this type truncates for
+    /// you, and this method is here for the values built directly through the
+    /// public field.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use firestore::*;
+    ///
+    /// let exact = FirestoreTimestamp(
+    ///     "2022-12-02T16:53:20.123456789Z".parse::<FirestoreInstant>().unwrap(),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     exact.truncated_to_firestore_precision().to_string(),
+    ///     "2022-12-02T16:53:20.123456Z"
+    /// );
+    /// ```
+    #[inline]
+    pub fn truncated_to_firestore_precision(self) -> Self {
+        // Going through the protobuf representation keeps this correct for the
+        // instants before the Unix epoch: it always carries a non negative
+        // subsecond part, so dropping the sub microseconds rounds the value
+        // down, the same way Firestore does.
+        let ts = crate::timestamp_utils::to_timestamp(self.0);
+
+        crate::timestamp_utils::from_timestamp(gcloud_sdk::prost_types::Timestamp {
+            seconds: ts.seconds,
+            nanos: (ts.nanos / 1_000) * 1_000,
+        })
+        .map(FirestoreTimestamp)
+        .unwrap_or(self)
     }
 }
 
@@ -38,7 +76,7 @@ impl std::str::FromStr for FirestoreTimestamp {
     type Err = crate::errors::FirestoreError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(FirestoreTimestamp(s.parse::<FirestoreInstant>()?))
+        Ok(FirestoreTimestamp(s.parse::<FirestoreInstant>()?).truncated_to_firestore_precision())
     }
 }
 
@@ -62,7 +100,8 @@ impl TryFrom<std::time::SystemTime> for FirestoreTimestamp {
     type Error = crate::errors::FirestoreError;
 
     fn try_from(system_time: std::time::SystemTime) -> Result<Self, Self::Error> {
-        Ok(FirestoreTimestamp(FirestoreInstant::try_from(system_time)?))
+        Ok(FirestoreTimestamp(FirestoreInstant::try_from(system_time)?)
+            .truncated_to_firestore_precision())
     }
 }
 
@@ -71,9 +110,10 @@ impl TryFrom<gcloud_sdk::prost_types::Timestamp> for FirestoreTimestamp {
     type Error = crate::errors::FirestoreError;
 
     fn try_from(ts: gcloud_sdk::prost_types::Timestamp) -> Result<Self, Self::Error> {
-        Ok(FirestoreTimestamp(crate::timestamp_utils::from_timestamp(
-            ts,
-        )?))
+        Ok(
+            FirestoreTimestamp(crate::timestamp_utils::from_timestamp(ts)?)
+                .truncated_to_firestore_precision(),
+        )
     }
 }
 
@@ -469,11 +509,67 @@ mod tests {
     }
 
     #[test]
+    fn test_firestore_precision_truncation() {
+        use std::str::FromStr;
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        // Firestore keeps microseconds, so the nanoseconds are dropped
+        assert_eq!(
+            FirestoreTimestamp::from_str("2022-12-02T16:53:20.123456789Z")
+                .unwrap()
+                .to_string(),
+            "2022-12-02T16:53:20.123456Z"
+        );
+
+        // Rounding down, not towards zero, so that the instants before the Unix
+        // epoch truncate the same way Firestore does
+        assert_eq!(
+            FirestoreTimestamp::from_str("1969-12-31T23:59:59.542758875Z")
+                .unwrap()
+                .to_string(),
+            "1969-12-31T23:59:59.542758Z"
+        );
+
+        // Every constructor and conversion applies it
+        let from_system_time: FirestoreTimestamp = (UNIX_EPOCH + Duration::new(1, 542_758_875))
+            .try_into()
+            .unwrap();
+        assert_eq!(from_system_time.to_string(), "1970-01-01T00:00:01.542758Z");
+
+        let from_proto: FirestoreTimestamp = gcloud_sdk::prost_types::Timestamp {
+            seconds: 1,
+            nanos: 542_758_875,
+        }
+        .try_into()
+        .unwrap();
+        assert_eq!(from_proto.to_string(), "1970-01-01T00:00:01.542758Z");
+
+        assert_eq!(FirestoreTimestamp::now().0.subsec_nanosecond() % 1_000, 0);
+
+        // Truncating is idempotent, and a value already at that precision is left alone
+        let already_truncated =
+            FirestoreTimestamp::from_str("2022-12-02T16:53:20.123456Z").unwrap();
+        assert_eq!(
+            already_truncated.truncated_to_firestore_precision(),
+            already_truncated
+        );
+
+        // The public field stays an exact escape hatch
+        let exact = FirestoreTimestamp(
+            FirestoreInstant::from_str("2022-12-02T16:53:20.123456789Z").unwrap(),
+        );
+        assert_eq!(exact.0.subsec_nanosecond(), 123_456_789);
+
+        let _ = SystemTime::from(exact);
+    }
+
+    #[test]
     fn test_timestamp_conversions() {
         use std::str::FromStr;
         use std::time::SystemTime;
 
-        let ts = FirestoreTimestamp::from_str("2022-12-02T16:53:20.123456789Z").unwrap();
+        // Already at the precision Firestore stores, so nothing is truncated here
+        let ts = FirestoreTimestamp::from_str("2022-12-02T16:53:20.123456Z").unwrap();
 
         // Display round trips through FromStr
         assert_eq!(FirestoreTimestamp::from_str(&ts.to_string()).unwrap(), ts);
@@ -485,7 +581,7 @@ mod tests {
         // Google protobuf timestamps
         let proto: gcloud_sdk::prost_types::Timestamp = ts.into();
         assert_eq!(proto.seconds, 1670000000);
-        assert_eq!(proto.nanos, 123_456_789);
+        assert_eq!(proto.nanos, 123_456_000);
         assert_eq!(FirestoreTimestamp::try_from(proto).unwrap(), ts);
 
         // The inner instant, both ways
