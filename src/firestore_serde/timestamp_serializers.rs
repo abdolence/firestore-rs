@@ -499,7 +499,7 @@ mod tests {
         );
     }
 
-    /// Mirrors the structure used by `examples/timestamp.rs`, so that all three
+    /// Mirrors the structure used by `examples/timestamp.rs`, so that all the
     /// documented ways of writing a Firestore timestamp stay verified.
     #[test]
     fn test_all_documented_timestamp_forms() {
@@ -509,6 +509,7 @@ mod tests {
         #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
         struct ExampleStructure {
             some_id: String,
+            created_at_system_time: std::time::SystemTime,
             created_at: FirestoreTimestamp,
             updated_at: Option<FirestoreTimestamp>,
             updated_at_always_none: Option<FirestoreTimestamp>,
@@ -526,6 +527,7 @@ mod tests {
 
         let example = ExampleStructure {
             some_id: "test-1".to_string(),
+            created_at_system_time: std::time::SystemTime::now(),
             created_at: FirestoreTimestamp::now(),
             updated_at: Some(from_system_time),
             updated_at_always_none: None,

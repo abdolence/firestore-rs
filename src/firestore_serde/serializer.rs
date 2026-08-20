@@ -31,6 +31,11 @@ pub struct SerializeMap {
     none_as_null: bool,
     fields: HashMap<String, gcloud_sdk::google::firestore::v1::Value>,
     next_key: Option<String>,
+    /// The structure name given to `serialize_struct`, or `None` when this came
+    /// from `serialize_map`. Used to recognise the well known structure shapes,
+    /// such as `std::time::SystemTime`, and to fold them into the native
+    /// Firestore values.
+    struct_name: Option<&'static str>,
 }
 
 pub struct SerializeStructVariant {
@@ -291,15 +296,21 @@ impl serde::Serializer for FirestoreValueSerializer {
             none_as_null: self.none_as_null,
             fields: HashMap::with_capacity(len.unwrap_or(0)),
             next_key: None,
+            struct_name: None,
         })
     }
 
     fn serialize_struct(
         self,
-        _name: &'static str,
+        name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        self.serialize_map(Some(len))
+        Ok(SerializeMap {
+            none_as_null: self.none_as_null,
+            fields: HashMap::with_capacity(len),
+            next_key: None,
+            struct_name: Some(name),
+        })
     }
 
     fn serialize_struct_variant(
@@ -481,6 +492,22 @@ impl serde::ser::SerializeStruct for SerializeMap {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
+        // Serde models `std::time::SystemTime` as a structure, so recognise it
+        // here and store it as a native Firestore timestamp instead of a map.
+        if self.struct_name
+            == Some(
+                crate::firestore_serde::system_time_serializers::FIRESTORE_SYSTEM_TIME_TYPE_TAG_TYPE,
+            )
+        {
+            if let Some(timestamp_value) =
+                crate::firestore_serde::system_time_serializers::system_time_fields_to_timestamp_value(
+                    &self.fields,
+                )?
+            {
+                return Ok(FirestoreValue::from(timestamp_value));
+            }
+        }
+
         Ok(FirestoreValue::from(
             gcloud_sdk::google::firestore::v1::Value {
                 value_type: Some(value::ValueType::MapValue(
