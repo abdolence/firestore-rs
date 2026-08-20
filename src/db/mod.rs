@@ -4,19 +4,15 @@
 
 /// Module for document retrieval operations (get).
 mod get;
-pub use get::*;
 
 /// Module for document creation operations.
 mod create;
-pub use create::*;
 
 /// Module for document update operations.
 mod update;
-pub use update::*;
 
 /// Module for document deletion operations.
 mod delete;
-pub use delete::*;
 
 /// Module defining models used in queries (filters, orders, etc.).
 mod query_models;
@@ -28,7 +24,6 @@ pub use precondition_models::*;
 
 /// Module for query execution.
 mod query;
-pub use query::*;
 
 /// Module for aggregated query execution.
 mod aggregated_query;
@@ -67,6 +62,11 @@ mod transaction_models;
 pub use transaction_models::*;
 
 /// Internal module for transaction operations.
+/// Crate-private low-level support traits that the fluent API is built on.
+/// See `support.rs` for why they are `pub trait` inside a private module.
+mod support;
+pub(crate) use support::*;
+
 mod transaction_ops;
 use transaction_ops::*;
 

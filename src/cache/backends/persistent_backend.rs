@@ -314,16 +314,22 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             }
             FirestoreListenEvent::DocumentDelete(doc_deleted) => {
                 let (collection_path, document_id) = split_document_path(&doc_deleted.document);
-                let write_txn = self.redb.begin_write()?;
-                let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-                let mut table = write_txn.open_table(td)?;
 
-                trace!(
-                    deleted_doc = ?doc_deleted.document.as_str(),
-                    "Removing document from cache due to listener event.",
-                );
+                if self.config.collections.contains_key(collection_path) {
+                    trace!(
+                        deleted_doc = ?doc_deleted.document.as_str(),
+                        "Removing document from cache due to listener event.",
+                    );
 
-                table.remove(document_id)?;
+                    let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+
+                    let write_txn = self.redb.begin_write()?;
+                    {
+                        let mut table = write_txn.open_table(td)?;
+                        table.remove(document_id)?;
+                    }
+                    write_txn.commit()?;
+                }
                 Ok(())
             }
             _ => Ok(()),
@@ -359,7 +365,7 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         collection_path: &str,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if self.config.collections.contains_key(collection_path) {
+        if self.config.is_collection_listable(collection_path) {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
             let read_tx = self.redb.begin_read()?;
@@ -388,7 +394,7 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if self.config.collections.contains_key(collection_path) {
+        if self.config.is_collection_listable(collection_path) {
             // For now only basic/simple query all supported
             let simple_query_engine = FirestoreCacheQueryEngine::new(query);
             if simple_query_engine.params_supported() {

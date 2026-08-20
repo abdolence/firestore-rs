@@ -110,17 +110,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     // Remove if it already exist
-    db.delete_by_id(TEST_COLLECTION_NAME, &my_struct.some_id, None)
+    db.fluent()
+        .delete()
+        .from(TEST_COLLECTION_NAME)
+        .document_id(&my_struct.some_id)
+        .execute()
         .await?;
 
     // Let's insert some data
-    db.create_obj::<_, (), _>(
-        TEST_COLLECTION_NAME,
-        Some(&my_struct.some_id),
-        &my_struct,
-        None,
-    )
-    .await?;
+    db.fluent()
+        .insert()
+        .into(TEST_COLLECTION_NAME)
+        .document_id(&my_struct.some_id)
+        .object(&my_struct)
+        .execute::<()>()
+        .await?;
 
     let to_update = MyTestStructure {
         some_num: my_struct.some_num + 1,
@@ -130,22 +134,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Update some field in it
     let updated_obj: MyTestStructure = db
-        .update_obj(
-            TEST_COLLECTION_NAME,
-            &my_struct.some_id,
-            &to_update,
-            Some(paths!(MyTestStructure::{
-                some_num,
-                some_string
-            })),
-            None,
-            None,
-        )
+        .fluent()
+        .update()
+        .fields(paths!(MyTestStructure::{
+            some_num,
+            some_string
+        }))
+        .in_col(TEST_COLLECTION_NAME)
+        .document_id(&my_struct.some_id)
+        .object(&to_update)
+        .execute()
         .await?;
 
     // Get object by id
-    let find_it_again: MyTestStructure =
-        db.get_obj(TEST_COLLECTION_NAME, &my_struct.some_id).await?;
+    let find_it_again: MyTestStructure = db
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .one(&my_struct.some_id)
+        .await?
+        .expect("Document must exist after being created");
 
     assert_eq!(updated_obj.some_num, to_update.some_num);
     println!("updated_obj.some_num: {:?}", to_update.some_num);

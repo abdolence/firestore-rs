@@ -13,75 +13,6 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::*;
 
-pub type PeekableBoxStream<'a, T> = futures::stream::Peekable<BoxStream<'a, T>>;
-
-#[async_trait]
-pub trait FirestoreQuerySupport {
-    async fn query_doc(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<Document>>;
-
-    async fn stream_query_doc<'b>(
-        &self,
-        params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, Document>>;
-
-    async fn stream_query_doc_with_errors<'b>(
-        &self,
-        params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>>;
-
-    async fn stream_query_doc_with_metadata<'b>(
-        &self,
-        params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<FirestoreDocument>>>>;
-
-    async fn query_obj<T>(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>
-    where
-        for<'de> T: Deserialize<'de>;
-    async fn stream_query_obj<'b, T>(
-        &self,
-        params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, T>>
-    where
-        for<'de> T: Deserialize<'de>,
-        T: Send + 'b;
-
-    async fn stream_query_obj_with_errors<'b, T>(
-        &self,
-        params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
-    where
-        for<'de> T: Deserialize<'de>,
-        T: Send + 'b;
-
-    async fn stream_query_obj_with_metadata<'b, T>(
-        &self,
-        params: FirestoreQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<T>>>>
-    where
-        for<'de> T: Deserialize<'de>,
-        T: Send + 'b;
-
-    fn stream_partition_cursors_with_errors(
-        &self,
-        params: FirestorePartitionQueryParams,
-    ) -> BoxFuture<'_, FirestoreResult<PeekableBoxStream<'_, FirestoreResult<FirestoreQueryCursor>>>>;
-
-    async fn stream_partition_query_doc_with_errors(
-        &self,
-        parallelism: usize,
-        partition_params: FirestorePartitionQueryParams,
-    ) -> FirestoreResult<BoxStream<'_, FirestoreResult<(FirestorePartition, Document)>>>;
-
-    async fn stream_partition_query_obj_with_errors<'a, T>(
-        &'a self,
-        parallelism: usize,
-        partition_params: FirestorePartitionQueryParams,
-    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(FirestorePartition, T)>>>
-    where
-        for<'de> T: Deserialize<'de>,
-        T: Send + 'a;
-}
-
 impl FirestoreDb {
     fn create_query_request(
         &self,
@@ -187,9 +118,25 @@ impl FirestoreDb {
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
         match &params.collection_id {
-            FirestoreQueryCollection::Group(_) => Ok(FirestoreCachedValue::SkipCache),
+            FirestoreQueryCollection::Group(group_id) => {
+                // Collection group queries span collections the cache does not model, so they can
+                // never be served from it. Under ReadCachedOnly we must say so rather than
+                // quietly falling through to Firestore.
+                if matches!(
+                    self.session_params.cache_mode,
+                    FirestoreDbSessionCacheMode::ReadCachedOnly(_)
+                ) {
+                    Err(crate::cache_incomplete_collection_error(
+                        &group_id.join(","),
+                        "collection group queries cannot be served from a cache",
+                    ))
+                } else {
+                    Ok(FirestoreCachedValue::SkipCache)
+                }
+            }
             FirestoreQueryCollection::Single(collection_id) => {
-                if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) =
+                if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache)
+                | FirestoreDbSessionCacheMode::ReadThroughCache(ref cache) =
                     self.session_params.cache_mode
                 {
                     let span = span!(
@@ -231,12 +178,15 @@ impl FirestoreDb {
                             ) {
                                 span.in_scope(|| {
                                     debug!(collection_id,
-                                "Cache doesn't have suitable documents, but cache mode is ReadCachedOnly so returning empty stream.",
+                                "Cache cannot serve this query completely and cache mode is ReadCachedOnly, so returning an error.",
                             );
                                 });
-                                Ok(FirestoreCachedValue::UseCached(Box::pin(
-                                    futures::stream::empty(),
-                                )))
+                                Err(crate::cache_incomplete_collection_error(
+                                    collection_id,
+                                    "either the collection is not configured to be preloaded, or \
+                                     the query uses features the cached query engine does not \
+                                     support",
+                                ))
                             } else {
                                 span.in_scope(|| {
                                     debug!(

@@ -29,8 +29,31 @@
 //! The cache automatically updates in the background as changes occur in Firestore,
 //! based on the targets added to its internal listener (often configured by the backend's `load` method).
 
+use crate::errors::{FirestoreCacheError, FirestoreErrorPublicGenericDetails};
 use crate::*;
 use std::sync::Arc;
+
+/// Builds the error returned when a `read_cached_only` session asks for a `list`/`query` that the
+/// cache cannot answer completely.
+///
+/// Returning an error rather than a partial result is deliberate: a silently incomplete
+/// collection is far more damaging than a loud failure.
+pub(crate) fn cache_incomplete_collection_error(
+    collection_id: &str,
+    reason: &str,
+) -> FirestoreError {
+    FirestoreError::CacheError(FirestoreCacheError::new(
+        FirestoreErrorPublicGenericDetails::new("CacheIncompleteCollection".into()),
+        format!(
+            "The cache cannot serve this request for collection `{collection_id}` completely: \
+             {reason}. Reading it from the cache would silently return partial results. \
+             Either configure the collection with FirestoreCacheCollectionLoadMode::PreloadAllDocs \
+             (or PreloadAllIfEmpty), or use `db.read_through_cache(&cache)` to fall back to \
+             Firestore. To opt back into the previous partial-result behaviour, set \
+             FirestoreCacheIncompleteCollectionPolicy::PartialResults on the cache configuration."
+        ),
+    ))
+}
 
 mod options;
 pub use options::*;

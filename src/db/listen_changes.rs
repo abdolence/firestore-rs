@@ -1,4 +1,5 @@
 use crate::db::safe_document_path;
+use crate::db::support::FirestoreListenSupport;
 use crate::errors::*;
 use crate::timestamp_utils::to_timestamp;
 use crate::FirestoreInstant;
@@ -6,14 +7,14 @@ use crate::{
     FirestoreDb, FirestoreQueryParams, FirestoreRequestOptions, FirestoreResult,
     FirestoreResumeStateStorage,
 };
-pub use async_trait::async_trait;
+use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use futures::TryFutureExt;
 use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
-pub use rvstruct::ValueStruct;
+use rvstruct::ValueStruct;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -59,14 +60,6 @@ pub enum FirestoreTargetType {
 pub enum FirestoreListenerTargetResumeType {
     Token(FirestoreListenerToken),
     ReadTime(FirestoreInstant),
-}
-
-#[async_trait]
-pub trait FirestoreListenSupport {
-    async fn listen_doc_changes<'a, 'b>(
-        &'a self,
-        targets: Vec<FirestoreListenerTargetParams>,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>>;
 }
 
 #[async_trait]

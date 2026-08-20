@@ -1,4 +1,4 @@
-pub use crate::db::transaction_ops::FirestoreTransactionOps;
+pub(crate) use crate::db::transaction_ops::FirestoreTransactionOps;
 use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;
 use crate::{

@@ -1,31 +1,10 @@
 use crate::db::safe_document_path;
+use crate::db::support::FirestoreDeleteSupport;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
 use tracing::*;
-
-#[async_trait]
-pub trait FirestoreDeleteSupport {
-    async fn delete_by_id<S>(
-        &self,
-        collection_id: &str,
-        document_id: S,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<()>
-    where
-        S: AsRef<str> + Send;
-
-    async fn delete_by_id_at<S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<()>
-    where
-        S: AsRef<str> + Send;
-}
 
 #[async_trait]
 impl FirestoreDeleteSupport for FirestoreDb {

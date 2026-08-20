@@ -244,6 +244,10 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
         collection_path: &str,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
+        if !self.config.is_collection_listable(collection_path) {
+            return Ok(FirestoreCachedValue::SkipCache);
+        }
+
         match self.collection_caches.get(collection_path) {
             Some(mem_cache) => {
                 let all_docs: Vec<FirestoreResult<FirestoreDocument>> =
@@ -262,6 +266,10 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
+        if !self.config.is_collection_listable(collection_path) {
+            return Ok(FirestoreCachedValue::SkipCache);
+        }
+
         let simple_query_engine = FirestoreCacheQueryEngine::new(query);
         if simple_query_engine.params_supported() {
             Ok(FirestoreCachedValue::UseCached(

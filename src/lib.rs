@@ -171,6 +171,20 @@ mod struct_path_macro;
 #[allow(unused_imports)]
 pub use struct_path_macro::*;
 
+/// Re-export of the [`async_trait`] macro.
+///
+/// It is needed to implement the public async traits of this crate - such as
+/// [`FirestoreResumeStateStorage`] and [`FirestoreCacheBackend`] - without having to depend on
+/// `async-trait` directly.
+pub use async_trait::async_trait;
+
+/// Re-export of [`rvstruct::ValueStruct`].
+///
+/// This trait provides the `.value()` accessor on the newtypes of this crate, such as
+/// [`FirestoreListenerTarget`] and [`FirestoreListenerToken`], whose inner fields are private.
+/// Implementations of [`FirestoreResumeStateStorage`] need it to read those values.
+pub use rvstruct::ValueStruct;
+
 /// Re-export of the [`jiff`] crate, so that the date/time API used by this
 /// library is available without depending on `jiff` explicitly.
 pub use jiff;
