@@ -51,6 +51,10 @@ pub use reference_serializers::*;
 mod vector_serializers;
 pub use vector_serializers::*;
 
+/// Provides automatic Firestore timestamp support for `std::time::SystemTime`,
+/// without attributes or wrapping types.
+mod system_time_serializers;
+
 use crate::FirestoreValue;
 use gcloud_sdk::google::firestore::v1::Value;
 
