@@ -313,6 +313,12 @@ struct MyTestStructure {
 }
 ```
 
+Firestore stores the timestamps with microsecond precision and discards the
+nanoseconds on write. `FirestoreTimestamp` truncates to that precision in all of
+its constructors and conversions, so its values survive a round trip unchanged.
+A `FirestoreInstant` or a `SystemTime` carrying nanoseconds does not, since those
+are the standard types this library cannot change.
+
 All of them change the representation only for Firestore serialization.
 `FirestoreTimestamp` and `FirestoreInstant` still serialize as a string to JSON,
 so the same model can be reused for JSON and Firestore, while a plain `SystemTime`
