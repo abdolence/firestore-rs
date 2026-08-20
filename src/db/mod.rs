@@ -134,6 +134,27 @@ pub struct FirestoreDb {
 const GOOGLE_FIREBASE_API_URL: &str = "https://firestore.googleapis.com";
 const GOOGLE_FIRESTORE_EMULATOR_HOST_ENV: &str = "FIRESTORE_EMULATOR_HOST";
 
+/// The token the Firebase tools conventionally send to the local emulators,
+/// which do not authenticate the requests.
+const GOOGLE_FIRESTORE_EMULATOR_TOKEN: &str = "owner";
+
+/// A stub token source used when talking to the Firestore emulator.
+///
+/// The emulator does not verify the credentials, and looking up the real ones
+/// would only fail on a development machine that has none configured.
+struct FirestoreEmulatorTokenSource;
+
+#[async_trait::async_trait]
+impl gcloud_sdk::Source for FirestoreEmulatorTokenSource {
+    async fn token(&self) -> gcloud_sdk::error::Result<gcloud_sdk::Token> {
+        Ok(gcloud_sdk::Token::new(
+            "Bearer".to_string(),
+            GOOGLE_FIRESTORE_EMULATOR_TOKEN.to_string().into(),
+            jiff::Timestamp::MAX,
+        ))
+    }
+}
+
 impl FirestoreDb {
     /// Creates a new `FirestoreDb` instance with the specified Google Project ID.
     ///
@@ -239,15 +260,26 @@ impl FirestoreDb {
         );
         let firestore_database_doc_path = format!("{firestore_database_path}/documents");
 
+        let emulator_host = std::env::var(GOOGLE_FIRESTORE_EMULATOR_HOST_ENV).ok();
+
         let effective_firebase_api_url = options
             .firebase_api_url
             .clone()
-            .or_else(|| {
-                std::env::var(GOOGLE_FIRESTORE_EMULATOR_HOST_ENV)
-                    .ok()
-                    .map(ensure_url_scheme)
-            })
+            .or_else(|| emulator_host.clone().map(ensure_url_scheme))
             .unwrap_or_else(|| GOOGLE_FIREBASE_API_URL.to_string());
+
+        // The emulator does not authenticate the requests, and there are usually no
+        // credentials available when developing against it, so looking them up would
+        // only fail. An explicitly specified token source is still respected.
+        let effective_token_source_type =
+            if emulator_host.is_some() && matches!(token_source_type, TokenSourceType::Default) {
+                debug!(
+                "Firestore emulator detected, skipping the token source and using a stub token.",
+            );
+                TokenSourceType::ExternalSource(Box::new(FirestoreEmulatorTokenSource))
+            } else {
+                token_source_type
+            };
 
         info!(
             database_path = firestore_database_path,
@@ -261,7 +293,7 @@ impl FirestoreDb {
             effective_firebase_api_url,
             Some(firestore_database_path.clone()),
             token_scopes,
-            token_source_type,
+            effective_token_source_type,
         )
         .await?;
 
@@ -694,6 +726,22 @@ pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_emulator_token_source() {
+        use gcloud_sdk::Source;
+
+        let token = FirestoreEmulatorTokenSource
+            .token()
+            .await
+            .expect("The emulator token source must never fail");
+
+        assert_eq!(token.token_type, "Bearer");
+        assert_eq!(
+            token.token.as_sensitive_str(),
+            GOOGLE_FIRESTORE_EMULATOR_TOKEN
+        );
+    }
 
     #[test]
     fn test_safe_document_path() {
