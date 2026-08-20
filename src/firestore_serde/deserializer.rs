@@ -374,7 +374,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
                 visitor.visit_map(FirestoreValueMapAccess::new(lat_lng_fields))
             }
             Some(value::ValueType::TimestampValue(ts)) => {
-                visitor.visit_string(from_timestamp(ts)?.to_rfc3339())
+                visitor.visit_string(from_timestamp(ts)?.to_string())
             }
             Some(value::ValueType::FieldReferenceValue(fr)) => visitor.visit_string(fr),
             Some(value::ValueType::FunctionValue(func)) => {

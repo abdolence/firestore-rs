@@ -1,6 +1,6 @@
+use crate::FirestoreInstant;
 use crate::*;
 use async_trait::async_trait;
-use chrono::prelude::*;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::FutureExt;
@@ -122,7 +122,7 @@ impl FirestoreDb {
     > {
         async move {
             let query_request = self.create_query_request(params.clone())?;
-            let begin_query_utc: DateTime<Utc> = Utc::now();
+            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
             match self
                 .client()
@@ -138,17 +138,14 @@ impl FirestoreDb {
                         .map(|r| r.and_then(|r| r.try_into()))
                         .boxed();
 
-                    let end_query_utc: DateTime<Utc> = Utc::now();
-                    let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+                    let query_duration = end_query_utc.duration_since(begin_query_utc);
 
-                    span.record(
-                        "/firestore/response_time",
-                        query_duration.num_milliseconds(),
-                    );
+                    span.record("/firestore/response_time", query_duration.as_millis());
                     span.in_scope(|| {
                         debug!(
                             collection_id = ?params.collection_id,
-                            duration_milliseconds = query_duration.num_milliseconds(),
+                            duration_milliseconds = query_duration.as_millis(),
                             "Queried stream of documents.",
                         );
                     });
@@ -203,7 +200,7 @@ impl FirestoreDb {
                         "/firestore/response_time" = field::Empty
                     );
 
-                    let begin_query_utc: DateTime<Utc> = Utc::now();
+                    let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
                     let collection_path = if let Some(parent) = params.parent.as_ref() {
                         format!("{}/{}", parent, collection_id)
@@ -213,13 +210,10 @@ impl FirestoreDb {
 
                     let result = cache.query_docs(&collection_path, params).await?;
 
-                    let end_query_utc: DateTime<Utc> = Utc::now();
-                    let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+                    let query_duration = end_query_utc.duration_since(begin_query_utc);
 
-                    span.record(
-                        "/firestore/response_time",
-                        query_duration.num_milliseconds(),
-                    );
+                    span.record("/firestore/response_time", query_duration.as_millis());
 
                     match result {
                         FirestoreCachedValue::UseCached(stream) => {

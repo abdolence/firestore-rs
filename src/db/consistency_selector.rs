@@ -1,7 +1,7 @@
 use crate::errors::*;
 use crate::timestamp_utils::to_timestamp;
+use crate::FirestoreInstant;
 use crate::{FirestoreError, FirestoreTransactionId};
-use chrono::prelude::*;
 
 /// Specifies the consistency guarantee for Firestore read operations.
 ///
@@ -29,7 +29,7 @@ pub enum FirestoreConsistencySelector {
     /// data or ensuring that a sequence of reads sees a consistent snapshot without
     /// the overhead of a full transaction. The timestamp must not be older than
     /// one hour, with some exceptions for Point-in-Time Recovery enabled databases.
-    ReadTime(DateTime<Utc>),
+    ReadTime(FirestoreInstant),
 }
 
 impl TryFrom<&FirestoreConsistencySelector>

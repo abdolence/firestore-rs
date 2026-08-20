@@ -2,7 +2,7 @@ use crate::errors::*;
 use crate::FirestoreValue;
 
 use crate::timestamp_utils::from_timestamp;
-use chrono::prelude::*;
+use crate::FirestoreInstant;
 use rsb_derive::Builder;
 
 /// The result of a Firestore write operation (create, update, delete).
@@ -15,7 +15,7 @@ pub struct FirestoreWriteResult {
     ///
     /// This is `None` if the write operation did not result in a changed document
     /// (e.g., deleting a non-existent document, or an update that didn't change any values).
-    pub update_time: Option<DateTime<Utc>>,
+    pub update_time: Option<FirestoreInstant>,
     /// A list of values that are the result of applying field transformations.
     ///
     /// Each [`FirestoreValue`] in this list corresponds to a

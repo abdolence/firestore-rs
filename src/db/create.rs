@@ -1,6 +1,6 @@
+use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use gcloud_sdk::google::firestore::v1::*;
 use serde::{Deserialize, Serialize};
 use tracing::*;
@@ -109,7 +109,7 @@ impl FirestoreCreateSupport for FirestoreDb {
             request_options: self.resolve_request_options(None),
         });
 
-        let begin_query_utc: DateTime<Utc> = Utc::now();
+        let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
         let create_response = self
             .client()
@@ -117,13 +117,10 @@ impl FirestoreCreateSupport for FirestoreDb {
             .create_document(create_document_request)
             .await?;
 
-        let end_query_utc: DateTime<Utc> = Utc::now();
-        let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+        let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+        let query_duration = end_query_utc.duration_since(begin_query_utc);
 
-        span.record(
-            "/firestore/response_time",
-            query_duration.num_milliseconds(),
-        );
+        span.record("/firestore/response_time", query_duration.as_millis());
 
         let response_inner = create_response.into_inner();
 

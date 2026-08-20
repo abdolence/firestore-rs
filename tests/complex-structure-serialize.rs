@@ -1,5 +1,4 @@
 use approx::relative_eq;
-use chrono::{DateTime, Utc};
 use firestore::*;
 use serde::{Deserialize, Serialize};
 
@@ -34,13 +33,13 @@ struct MyTestStructure {
     some_string: String,
     some_num: u64,
     #[serde(with = "firestore::serialize_as_timestamp")]
-    created_at: DateTime<Utc>,
+    created_at: FirestoreInstant,
     #[serde(default)]
     #[serde(with = "firestore::serialize_as_optional_timestamp")]
-    updated_at: Option<DateTime<Utc>>,
+    updated_at: Option<FirestoreInstant>,
     #[serde(default)]
     #[serde(with = "firestore::serialize_as_null_timestamp")]
-    updated_at_as_null: Option<DateTime<Utc>>,
+    updated_at_as_null: Option<FirestoreInstant>,
     test1: Test1,
     test1i: Test1i,
     test11: Option<Test1>,
@@ -79,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_id: "test-1".to_string(),
         some_string: "Test".to_string(),
         some_num: 41,
-        created_at: Utc::now(),
+        created_at: FirestoreInstant::now(),
         updated_at: None,
         updated_at_as_null: None,
         test1: Test1(1),

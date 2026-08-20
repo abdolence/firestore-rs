@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use firestore::*;
 use futures::stream::BoxStream;
 use futures::StreamExt;
@@ -16,7 +15,7 @@ struct MyTestStructure {
     some_string: String,
     one_more_string: String,
     some_num: u64,
-    created_at: DateTime<Utc>,
+    created_at: FirestoreTimestamp,
 }
 
 #[tokio::main]
@@ -39,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             some_string: "Test".to_string(),
             one_more_string: "Test2".to_string(),
             some_num: 42 - i,
-            created_at: Utc::now(),
+            created_at: FirestoreTimestamp::now(),
         };
 
         // Remove if it already exist

@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use firestore::*;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
@@ -15,7 +14,7 @@ struct MyTestStructure {
     some_string: String,
     one_more_string: String,
     some_num: u64,
-    created_at: DateTime<Utc>,
+    created_at: FirestoreTimestamp,
 }
 
 #[tokio::main]
@@ -29,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &'static str = "test-caching";
+    const TEST_COLLECTION_NAME: &str = "test-caching";
 
     let mut cache = FirestoreCache::new(
         "example-mem-cache".into(),
@@ -68,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 some_string: "Test".to_string(),
                 one_more_string: "Test2".to_string(),
                 some_num: i,
-                created_at: Utc::now(),
+                created_at: FirestoreTimestamp::now(),
             };
 
             // Let's insert some data

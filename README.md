@@ -23,7 +23,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 - Implements own Serde serializer to Firestore protobuf values;
 - Support for multiple database IDs
 - Supports for extended datatypes:
-    - Firestore timestamp with `#[serde(with)]` and a specialized structure
+    - Firestore timestamp as a `FirestoreTimestamp` type or with `#[serde(with)]` attributes (based on [jiff](https://github.com/BurntSushi/jiff))
     - Lat/Lng
     - References
 - Caching support for collections and documents:
@@ -248,43 +248,54 @@ let object_stream: BoxStream<(String, Option<MyTestStructure>) > = db.fluent()
 
 ## Timestamps support
 
-By default, the types such as DateTime<Utc> serializes as a string
-to Firestore (while deserialization works from Timestamps and Strings).
+By default, date/time values serialize as a string to Firestore (while
+deserialization works from Timestamps and Strings). To store them as native
+Firestore timestamps there are two options.
 
-To change this behaviour and support Firestore timestamps on database level there are two options:
+- Using the type `FirestoreTimestamp`, which needs no attributes:
 
-- `#[serde(with)]` and attributes:
+```rust
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {
+    created_at: FirestoreTimestamp,
+    updated_at: Option<FirestoreTimestamp>
+}
+```
+
+It can be created with `FirestoreTimestamp::now()`, parsed from a string, and
+converted from/to `std::time::SystemTime`:
+
+```rust
+let now = FirestoreTimestamp::now();
+let from_system_time: FirestoreTimestamp = SystemTime::now().try_into()?;
+let back_to_system_time: SystemTime = now.into();
+```
+
+Use it in your queries as well, for example:
+
+```rust
+   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(FirestoreTimestamp::now())
+```
+
+- Or, if you prefer to keep a plain instant in your model, use
+  `FirestoreInstant` (an alias for `jiff::Timestamp`) with `#[serde(with)]`
+  attributes:
 
 ```rust
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
     #[serde(with = "firestore::serialize_as_timestamp")]
-    created_at: DateTime<Utc>,
+    created_at: FirestoreInstant,
 
     #[serde(default)]
     #[serde(with = "firestore::serialize_as_optional_timestamp")]
-    updated_at: Option<DateTime<Utc>>,
+    updated_at: Option<FirestoreInstant>,
 }
 ```
 
-- using a type `FirestoreTimestamp`:
-
-```rust
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct MyTestStructure {
-    created_at: firestore::FirestoreTimestamp,
-    updated_at: Option<firestore::FirestoreTimestamp>
-}
-```
-
-This will change it only for firestore serialization, but it still serializes as string
-to JSON (so you can reuse the same model for JSON and Firestore).
-
-In your queries you need to use the wrapping class `firestore::FirestoreTimestamp`, for example:
-
-```rust
-   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(firestore::FirestoreTimestamp(Utc::now()))
-```
+Both change the representation only for Firestore serialization, and still
+serialize as a string to JSON, so the same model can be reused for JSON and
+Firestore.
 
 ## Nested collections
 
@@ -424,9 +435,9 @@ struct MyTestStructure {
     #[serde(alias = "_firestore_id")]
     id: Option<String>,
     #[serde(alias = "_firestore_created")]
-    created_at: Option<DateTime<Utc>>,
+    created_at: Option<FirestoreTimestamp>,
     #[serde(alias = "_firestore_updated")]
-    updated_at: Option<DateTime<Utc>>,
+    updated_at: Option<FirestoreTimestamp>,
     some_string: String,
     one_more_string: String,
     some_num: u64,
@@ -458,7 +469,7 @@ let object_returned = db
           ("inner_some_string", "inner-some-value".into()),
         ]),
       ),
-      ("created_at", FirestoreTimestamp(Utc::now()).into()),
+      ("created_at", FirestoreTimestamp::now().into()),
     ])?
 )
 .execute()
@@ -590,7 +601,7 @@ test_null: Option<String>,
 ```rust
 #[serde(default)]
 #[serde(with = "firestore::serialize_as_null_timestamp")]
-test_null: Option<DateTime<Utc> >,
+test_null: Option<FirestoreInstant>,
 ```
 
 ## Select aggregate functions

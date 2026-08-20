@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use firestore::*;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -11,7 +10,7 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 struct MyTestStructure {
     some_id: String,
     some_string: String,
-    created_at: DateTime<Utc>,
+    created_at: FirestoreTimestamp,
 }
 
 #[tokio::main]
@@ -41,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let my_struct = MyTestStructure {
             some_id: format!("test-{idx}"),
             some_string: "Test".to_string(),
-            created_at: Utc::now(),
+            created_at: FirestoreTimestamp::now(),
         };
 
         db.fluent()

@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use firestore::*;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -13,7 +12,7 @@ struct MyTestStructure {
     some_id: String,
     some_string: String,
     some_num: u64,
-    created_at: DateTime<Utc>,
+    created_at: FirestoreTimestamp,
 }
 
 #[tokio::main]
@@ -33,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_id: "test-1".to_string(),
         some_string: "Test".to_string(),
         some_num: 42,
-        created_at: Utc::now(),
+        created_at: FirestoreTimestamp::now(),
     };
 
     // Request tags are attached to every request issued through this instance.

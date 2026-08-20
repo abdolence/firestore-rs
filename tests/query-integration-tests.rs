@@ -1,5 +1,4 @@
 use crate::common::setup;
-use chrono::prelude::*;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -13,7 +12,7 @@ struct MyTestStructure {
     some_string: String,
     one_more_string: String,
     some_num: u64,
-    created_at: DateTime<Utc>,
+    created_at: FirestoreTimestamp,
 }
 
 #[tokio::test]
@@ -27,7 +26,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_string: "some_string".to_string(),
         one_more_string: "one_more_string".to_string(),
         some_num: 42,
-        created_at: Utc::now(),
+        created_at: FirestoreTimestamp::now(),
     };
 
     let my_struct2 = MyTestStructure {
@@ -35,7 +34,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_string: "some_string-1".to_string(),
         one_more_string: "one_more_string-1".to_string(),
         some_num: 17,
-        created_at: Utc::now(),
+        created_at: FirestoreTimestamp::now(),
     };
 
     db.fluent()

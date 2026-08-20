@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use firestore::*;
 use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|e| format!("{name}: {e}"))
@@ -10,23 +10,26 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
     some_id: String,
-    // Using a special attribute to indicate timestamp serialization for Firestore
-    // (for serde_json it will be still the same, usually String serialization, so you can reuse the models)
-    #[serde(with = "firestore::serialize_as_timestamp")]
-    created_at: DateTime<Utc>,
 
-    // Or you can use a wrapping type
+    // The simplest option: the wrapping type serializes as a Firestore timestamp
+    // without any attribute. For serde_json it is still a string, so the same
+    // model can be reused for both JSON and Firestore.
+    created_at: FirestoreTimestamp,
     updated_at: Option<FirestoreTimestamp>,
     updated_at_always_none: Option<FirestoreTimestamp>,
 
-    // Or one more attribute for optionals
+    // Or keep a plain instant in your model and use an attribute instead
+    #[serde(with = "firestore::serialize_as_timestamp")]
+    created_at_attr: FirestoreInstant,
+
+    // And one more attribute for optionals
     #[serde(default)]
     #[serde(with = "firestore::serialize_as_optional_timestamp")]
-    updated_at_attr: Option<DateTime<Utc>>,
+    updated_at_attr: Option<FirestoreInstant>,
 
     #[serde(default)]
     #[serde(with = "firestore::serialize_as_optional_timestamp")]
-    updated_at_attr_always_none: Option<DateTime<Utc>>,
+    updated_at_attr_always_none: Option<FirestoreInstant>,
 }
 
 #[tokio::main]
@@ -42,14 +45,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     const TEST_COLLECTION_NAME: &str = "test-ts1";
 
+    // Timestamps can be created from the library types, or converted from
+    // the standard `SystemTime`
+    let now_from_system_time: FirestoreTimestamp = SystemTime::now().try_into()?;
+
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),
-        created_at: Utc::now(),
-        updated_at: Some(Utc::now().into()),
+        created_at: FirestoreTimestamp::now(),
+        updated_at: Some(now_from_system_time),
         updated_at_always_none: None,
-        updated_at_attr: Some(Utc::now()),
+        created_at_attr: FirestoreInstant::now(),
+        updated_at_attr: Some(FirestoreInstant::now()),
         updated_at_attr_always_none: None,
     };
+
+    // And converted back to a `SystemTime` when you need to hand them over to
+    // other libraries
+    let created_at_system_time: SystemTime = my_struct.created_at.into();
+    println!("Created at, as a SystemTime: {created_at_system_time:?}");
 
     db.fluent()
         .delete()
@@ -79,7 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             q.for_all([q
                 .field(path!(MyTestStructure::created_at))
                 .less_than_or_equal(
-                    firestore::FirestoreTimestamp(Utc::now()), // Using the wrapping type to indicate serialization without attribute
+                    FirestoreTimestamp::now(), // The wrapping type works in queries as well
                 )])
         })
         .obj()

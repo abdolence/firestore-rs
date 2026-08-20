@@ -1,7 +1,7 @@
 use crate::db::FirestoreDbInner;
+use crate::FirestoreInstant;
 use crate::*;
 use async_trait::async_trait;
-use chrono::prelude::*;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::FutureExt;
@@ -320,7 +320,7 @@ impl FirestoreDb {
         span: Span,
     ) -> BoxFuture<'b, FirestoreResult<FirestoreListDocResult>> {
         async move {
-            let begin_utc: DateTime<Utc> = Utc::now();
+            let begin_utc: FirestoreInstant = FirestoreInstant::now();
 
             match db_inner.client.get()
                 .list_documents(
@@ -338,17 +338,17 @@ impl FirestoreDb {
                             None
                         },
                     );
-                    let end_query_utc: DateTime<Utc> = Utc::now();
-                    let listing_duration = end_query_utc.signed_duration_since(begin_utc);
+                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+                    let listing_duration = end_query_utc.duration_since(begin_utc);
 
                     span.record(
                         "/firestore/response_time",
-                        listing_duration.num_milliseconds(),
+                        listing_duration.as_millis(),
                     );
                     span.in_scope(|| {
                         debug!(
                             collection_id = list_request.collection_id.as_str(),
-                            duration_milliseconds = listing_duration.num_milliseconds(),
+                            duration_milliseconds = listing_duration.as_millis(),
                             num_documents = result.documents.len(),
                             "Listed documents.",
                         );
@@ -485,7 +485,7 @@ impl FirestoreDb {
     ) -> BoxFuture<'a, FirestoreResult<FirestoreListCollectionIdsResult>> {
         async move {
             let list_request = self.create_list_collection_ids_request(&params)?;
-            let begin_utc: DateTime<Utc> = Utc::now();
+            let begin_utc: FirestoreInstant = FirestoreInstant::now();
 
             match self
                 .client()
@@ -502,16 +502,16 @@ impl FirestoreDb {
                         } else {
                             None
                         });
-                    let end_query_utc: DateTime<Utc> = Utc::now();
-                    let listing_duration = end_query_utc.signed_duration_since(begin_utc);
+                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+                    let listing_duration = end_query_utc.duration_since(begin_utc);
 
                     span.record(
                         "/firestore/response_time",
-                        listing_duration.num_milliseconds(),
+                        listing_duration.as_millis(),
                     );
                     span.in_scope(|| {
                         debug!(
-                            duration_milliseconds = listing_duration.num_milliseconds(),
+                            duration_milliseconds = listing_duration.as_millis(),
                             "Listed collections.",
                         );
                     });
@@ -563,7 +563,7 @@ impl FirestoreDb {
                 "/firestore/response_time" = field::Empty
             );
 
-            let begin_query_utc: DateTime<Utc> = Utc::now();
+            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
             let collection_path = if let Some(parent) = params.parent.as_ref() {
                 format!("{}/{}", parent, params.collection_id.as_str())
@@ -577,13 +577,10 @@ impl FirestoreDb {
 
             let cached_result = cache.list_all_docs(&collection_path).await?;
 
-            let end_query_utc: DateTime<Utc> = Utc::now();
-            let query_duration = end_query_utc.signed_duration_since(begin_query_utc);
+            let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+            let query_duration = end_query_utc.duration_since(begin_query_utc);
 
-            span.record(
-                "/firestore/response_time",
-                query_duration.num_milliseconds(),
-            );
+            span.record("/firestore/response_time", query_duration.as_millis());
 
             match cached_result {
                 FirestoreCachedValue::UseCached(stream) => {
