@@ -35,7 +35,11 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
         if: github.ref == 'refs/heads/master'
       - name: 'Checking formatting and clippy'
-        run: cargo fmt -- --check && cargo clippy -- -Dwarnings
+        run: |
+          cargo fmt -- --check
+          cargo clippy --all-targets --features "caching-memory,caching-persistent" -- -Dwarnings
+      - name: 'Checking documentation'
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features "caching-memory,caching-persistent"
       - name: 'Run lib tests'
         run: cargo test --lib --features "caching-memory,caching-persistent"
         if: github.ref != 'refs/heads/master'
