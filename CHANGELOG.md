@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `read_through_cache` now uses the cache for `list` and `query` on preloaded collections. It
   previously ignored the cache for both operations entirely.
 
+### Changed (continued)
+
+- **BREAKING**: `rust-version` is now 1.90. It claimed 1.64, which had not been true for a long
+  time. It is declared as the maximum across all features so that enabling a feature never raises
+  the requirement: the default feature set builds on 1.88, and `caching-persistent` needs 1.90
+  via `redb`.
+
 ### Added
 
 - A builder for the cache: `FirestoreCache::memory(&db)` and `FirestoreCache::persistent(&db)`.

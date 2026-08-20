@@ -3,7 +3,10 @@ name = "firestore"
 version = "0.52.0"
 authors = ["Abdulla Abdurakhmanov <me@abdolence.dev>"]
 edition = "2021"
-rust-version = "1.64"
+# Minimum supported Rust version, taken as the maximum across all features so that enabling a
+# feature can never raise it. The default feature set builds on 1.88; `caching-persistent` pulls
+# in redb, which requires 1.90.
+rust-version = "1.90"
 license = "Apache-2.0"
 description = "Library provides a simple API for Google Firestore and own Serde serializer based on efficient gRPC API"
 homepage = "https://github.com/abdolence/firestore-rs"
