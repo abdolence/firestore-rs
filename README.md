@@ -250,7 +250,24 @@ let object_stream: BoxStream<(String, Option<MyTestStructure>) > = db.fluent()
 
 By default, date/time values serialize as a string to Firestore (while
 deserialization works from Timestamps and Strings). To store them as native
-Firestore timestamps there are two options.
+Firestore timestamps there are three options.
+
+- Using `std::time::SystemTime` directly, with no attribute and no wrapping type,
+  since it is recognised automatically:
+
+```rust
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {
+    created_at: SystemTime,
+    updated_at: Option<SystemTime>
+}
+```
+
+  Reading accepts both the native timestamps and the two field
+  `{ secs_since_epoch, nanos_since_epoch }` maps written by the earlier versions,
+  so the existing documents keep working without a migration. Note that
+  `SystemTime` cannot carry the instants before the Unix epoch, since serde itself
+  refuses them.
 
 - Using the type `FirestoreTimestamp`, which needs no attributes:
 
@@ -293,9 +310,10 @@ struct MyTestStructure {
 }
 ```
 
-Both change the representation only for Firestore serialization, and still
-serialize as a string to JSON, so the same model can be reused for JSON and
-Firestore.
+All of them change the representation only for Firestore serialization.
+`FirestoreTimestamp` and `FirestoreInstant` still serialize as a string to JSON,
+so the same model can be reused for JSON and Firestore, while a plain `SystemTime`
+keeps the default serde representation.
 
 ## Nested collections
 

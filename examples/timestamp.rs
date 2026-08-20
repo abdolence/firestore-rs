@@ -11,6 +11,10 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 struct MyTestStructure {
     some_id: String,
 
+    // The zero effort option: a plain `SystemTime` is stored as a native
+    // Firestore timestamp, with no attribute and no wrapping type.
+    created_at_system_time: SystemTime,
+
     // The simplest option: the wrapping type serializes as a Firestore timestamp
     // without any attribute. For serde_json it is still a string, so the same
     // model can be reused for both JSON and Firestore.
@@ -51,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),
+        created_at_system_time: SystemTime::now(),
         created_at: FirestoreTimestamp::now(),
         updated_at: Some(now_from_system_time),
         updated_at_always_none: None,

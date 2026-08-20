@@ -664,13 +664,29 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
 
     fn deserialize_struct<V>(
         self,
-        _name: &'static str,
+        name: &'static str,
         _fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
+        // Serde models `std::time::SystemTime` as a two field structure, so a
+        // native Firestore timestamp has to be expanded back into it. Everything
+        // else, including the two field map written by the earlier versions of
+        // this library, keeps going through `deserialize_any`.
+        if name
+            == crate::firestore_serde::system_time_serializers::FIRESTORE_SYSTEM_TIME_TYPE_TAG_TYPE
+        {
+            if let Some(value::ValueType::TimestampValue(ts)) = &self.value.value_type {
+                let parts =
+                    crate::firestore_serde::system_time_serializers::timestamp_to_system_time_parts(
+                        *ts,
+                    )?;
+                return visitor.visit_seq(FirestoreValueSeqAccess::new(parts));
+            }
+        }
+
         self.deserialize_any(visitor)
     }
 
