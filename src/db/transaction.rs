@@ -161,7 +161,7 @@ impl<'a> FirestoreTransaction<'a> {
 
         let request = gcloud_sdk::tonic::Request::new(CommitRequest {
             database: self.db.get_database_path().clone(),
-            writes: self.data.writes.drain(..).collect(),
+            writes: std::mem::take(&mut self.data.writes),
             transaction: self.data.transaction_id.clone(),
             request_options: self
                 .db
@@ -248,7 +248,7 @@ impl<'a> FirestoreTransaction<'a> {
             self.data.transaction_id.clone(),
             self.data.document_path.clone(),
             self.data.transaction_span.clone(),
-            self.data.writes.drain(..).collect(),
+            std::mem::take(&mut self.data.writes),
         )
     }
 }

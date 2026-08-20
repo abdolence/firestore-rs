@@ -80,7 +80,8 @@ impl FirestoreQuerySupport for MockDatabase {
     fn stream_partition_cursors_with_errors(
         &self,
         params: FirestorePartitionQueryParams,
-    ) -> BoxFuture<FirestoreResult<PeekableBoxStream<FirestoreResult<FirestoreQueryCursor>>>> {
+    ) -> BoxFuture<'_, FirestoreResult<PeekableBoxStream<'_, FirestoreResult<FirestoreQueryCursor>>>>
+    {
         unreachable!()
     }
 

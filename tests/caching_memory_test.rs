@@ -16,8 +16,8 @@ struct MyTestStructure {
 async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = setup().await?;
 
-    const TEST_COLLECTION_NAME_NO_PRELOAD: &'static str = "integration-test-caching-mem-no-preload";
-    const TEST_COLLECTION_NAME_PRELOAD: &'static str = "integration-test-caching-mem-preload";
+    const TEST_COLLECTION_NAME_NO_PRELOAD: &str = "integration-test-caching-mem-no-preload";
+    const TEST_COLLECTION_NAME_PRELOAD: &str = "integration-test-caching-mem-preload";
 
     populate_collection(
         &db,

@@ -130,7 +130,7 @@ mod tests {
                 seconds,
                 nanos: 123_456_789,
             };
-            let ts = from_timestamp(proto.clone()).unwrap();
+            let ts = from_timestamp(proto).unwrap();
             let back = to_timestamp(ts);
             assert_eq!(back.seconds, proto.seconds, "seconds for {seconds}");
             assert_eq!(back.nanos, proto.nanos, "nanos for {seconds}");
