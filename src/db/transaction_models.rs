@@ -1,7 +1,7 @@
 use crate::errors::FirestoreError;
+use crate::FirestoreDateTime;
+use crate::FirestoreDuration;
 use crate::{FirestoreConsistencySelector, FirestoreRequestOptions, FirestoreWriteResult};
-use chrono::prelude::*;
-use chrono::Duration;
 use rsb_derive::Builder;
 
 /// Options for configuring a Firestore transaction.
@@ -17,7 +17,7 @@ pub struct FirestoreTransactionOptions {
     /// An optional maximum duration for the entire transaction, including retries.
     /// If set, the transaction will attempt to complete within this duration.
     /// If `None`, default retry policies of the underlying gRPC client or Firestore service apply.
-    pub max_elapsed_time: Option<Duration>,
+    pub max_elapsed_time: Option<FirestoreDuration>,
 
     /// Concurrent transaction mode
     pub concurrent_mode:
@@ -142,7 +142,7 @@ pub struct FirestoreTransactionResponse {
     pub write_results: Vec<FirestoreWriteResult>,
     /// The time at which the transaction was committed.
     /// This is `None` if the transaction was read-only or did not involve writes.
-    pub commit_time: Option<DateTime<Utc>>,
+    pub commit_time: Option<FirestoreDateTime>,
 }
 
 #[cfg(test)]

@@ -423,22 +423,11 @@ impl Display for FirestoreCacheError {
 
 impl std::error::Error for FirestoreCacheError {}
 
-impl From<chrono::ParseError> for FirestoreError {
-    fn from(parse_err: chrono::ParseError) -> Self {
+impl From<jiff::Error> for FirestoreError {
+    fn from(err: jiff::Error) -> Self {
         FirestoreError::DeserializeError(FirestoreSerializationError::from_message(format!(
-            "Parse error: {parse_err}"
+            "Date/time error: {err}"
         )))
-    }
-}
-
-impl From<chrono::OutOfRangeError> for FirestoreError {
-    fn from(out_of_range: chrono::OutOfRangeError) -> Self {
-        FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
-            FirestoreInvalidParametersPublicDetails::new(
-                format!("Out of range: {out_of_range}"),
-                "duration".to_string(),
-            ),
-        ))
     }
 }
 
@@ -502,14 +491,14 @@ impl FirestoreErrorInTransaction {
     pub fn retry_after<E: std::error::Error + Send + Sync + 'static>(
         transaction: &FirestoreTransaction,
         source: E,
-        retry_after: chrono::Duration,
+        retry_after: crate::FirestoreDuration,
     ) -> BackoffError<FirestoreError> {
         BackoffError::retry_after(
             FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction {
                 transaction_id: transaction.transaction_id().clone(),
                 source: Box::new(source),
             }),
-            std::time::Duration::from_millis(retry_after.num_milliseconds() as u64),
+            std::time::Duration::from_millis(retry_after.as_millis().unsigned_abs() as u64),
         )
     }
 }

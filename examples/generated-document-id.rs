@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use firestore::*;
 use serde::{Deserialize, Serialize};
 
@@ -12,9 +11,9 @@ struct MyTestStructure {
     #[serde(alias = "_firestore_id")]
     id: Option<String>,
     #[serde(alias = "_firestore_created")]
-    created_at: Option<DateTime<Utc>>,
+    created_at: Option<FirestoreDateTime>,
     #[serde(alias = "_firestore_updated")]
-    updated_at: Option<DateTime<Utc>>,
+    updated_at: Option<FirestoreDateTime>,
     test: Option<String>,
     some_string: String,
     one_more_string: String,

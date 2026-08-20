@@ -182,7 +182,7 @@ impl<'a> FirestoreTransaction<'a> {
         if let Some(ref commit_time) = result.commit_time {
             self.data
                 .transaction_span
-                .record("/firestore/commit_time", commit_time.to_rfc3339());
+                .record("/firestore/commit_time", commit_time.to_string());
         }
 
         self.data.transaction_span.in_scope(|| {
@@ -369,7 +369,7 @@ impl FirestoreDb {
                 options
                     .max_elapsed_time
                     // Convert to a std `Duration` and clamp any negative durations
-                    .map(|v| v.to_std())
+                    .map(std::time::Duration::try_from)
                     .transpose()?,
             )
             .with_initial_interval(initial_backoff_duration.unwrap_or(Duration::from_millis(

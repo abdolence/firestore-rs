@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use firestore::*;
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +12,7 @@ struct MyTestStructure {
     // Using a special attribute to indicate timestamp serialization for Firestore
     // (for serde_json it will be still the same, usually String serialization, so you can reuse the models)
     #[serde(with = "firestore::serialize_as_timestamp")]
-    created_at: DateTime<Utc>,
+    created_at: FirestoreDateTime,
 
     // Or you can use a wrapping type
     updated_at: Option<FirestoreTimestamp>,
@@ -22,11 +21,11 @@ struct MyTestStructure {
     // Or one more attribute for optionals
     #[serde(default)]
     #[serde(with = "firestore::serialize_as_optional_timestamp")]
-    updated_at_attr: Option<DateTime<Utc>>,
+    updated_at_attr: Option<FirestoreDateTime>,
 
     #[serde(default)]
     #[serde(with = "firestore::serialize_as_optional_timestamp")]
-    updated_at_attr_always_none: Option<DateTime<Utc>>,
+    updated_at_attr_always_none: Option<FirestoreDateTime>,
 }
 
 #[tokio::main]
@@ -44,10 +43,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let my_struct = MyTestStructure {
         some_id: "test-1".to_string(),
-        created_at: Utc::now(),
-        updated_at: Some(Utc::now().into()),
+        created_at: FirestoreDateTime::now(),
+        updated_at: Some(FirestoreDateTime::now().into()),
         updated_at_always_none: None,
-        updated_at_attr: Some(Utc::now()),
+        updated_at_attr: Some(FirestoreDateTime::now()),
         updated_at_attr_always_none: None,
     };
 
@@ -79,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             q.for_all([q
                 .field(path!(MyTestStructure::created_at))
                 .less_than_or_equal(
-                    firestore::FirestoreTimestamp(Utc::now()), // Using the wrapping type to indicate serialization without attribute
+                    firestore::FirestoreTimestamp(FirestoreDateTime::now()), // Using the wrapping type to indicate serialization without attribute
                 )])
         })
         .obj()

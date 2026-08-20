@@ -1,4 +1,3 @@
-use chrono::prelude::*;
 use firestore::*;
 
 pub fn config_env_var(name: &str) -> Result<String, String> {
@@ -44,7 +43,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         ("inner_some_string", "inner-value".into()),
                     ]),
                 ),
-                ("created_at", FirestoreTimestamp(Utc::now()).into()),
+                (
+                    "created_at",
+                    FirestoreTimestamp(FirestoreDateTime::now()).into(),
+                ),
             ],
         )?)
         .execute()

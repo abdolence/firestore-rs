@@ -1,12 +1,12 @@
 use crate::db::safe_document_path;
 use crate::errors::*;
 use crate::timestamp_utils::to_timestamp;
+use crate::FirestoreDateTime;
 use crate::{
     FirestoreDb, FirestoreQueryParams, FirestoreRequestOptions, FirestoreResult,
     FirestoreResumeStateStorage,
 };
 pub use async_trait::async_trait;
-use chrono::prelude::*;
 use futures::stream::BoxStream;
 use futures::StreamExt;
 use futures::TryFutureExt;
@@ -58,7 +58,7 @@ pub enum FirestoreTargetType {
 #[derive(Debug, Clone)]
 pub enum FirestoreListenerTargetResumeType {
     Token(FirestoreListenerToken),
-    ReadTime(DateTime<Utc>),
+    ReadTime(FirestoreDateTime),
 }
 
 #[async_trait]

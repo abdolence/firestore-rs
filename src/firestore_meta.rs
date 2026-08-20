@@ -1,7 +1,7 @@
 use crate::errors::FirestoreError;
 use crate::timestamp_utils::{from_duration, from_timestamp};
 use crate::FirestoreTransactionId;
-use chrono::{DateTime, Duration, Utc};
+use crate::{FirestoreDateTime, FirestoreDuration};
 use gcloud_sdk::google::firestore::v1::{Document, ExplainMetrics, RunQueryResponse};
 use gcloud_sdk::prost_types::value::Kind;
 use rsb_derive::Builder;
@@ -33,7 +33,7 @@ pub struct FirestoreDocumentMetadata {
     /// Present if the request initiated a transaction.
     pub transaction_id: Option<FirestoreTransactionId>,
     /// The time at which the document was read. This may be monotically increasing.
-    pub read_time: Option<DateTime<Utc>>,
+    pub read_time: Option<FirestoreDateTime>,
     /// The number of results that were skipped before returning the first result.
     /// This is relevant for paginated queries or queries with an offset.
     pub skipped_results: usize,
@@ -118,7 +118,7 @@ pub struct FirestoreExecutionStats {
     /// The number of results returned by the query.
     pub results_returned: usize,
     /// The duration it took to execute the query on the server.
-    pub execution_duration: Option<Duration>,
+    pub execution_duration: Option<FirestoreDuration>,
     /// The number of read operations performed by the query.
     pub read_operations: usize,
     /// Additional debugging statistics, represented as a [`FirestoreDynamicStruct`].

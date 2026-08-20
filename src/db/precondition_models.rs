@@ -1,6 +1,6 @@
 use crate::errors::FirestoreError;
 use crate::timestamp_utils::to_timestamp;
-use chrono::prelude::*;
+use crate::FirestoreDateTime;
 use gcloud_sdk::google::firestore::v1::Precondition;
 
 /// A precondition on a document, used for conditional write operations in Firestore.
@@ -23,9 +23,9 @@ pub enum FirestoreWritePrecondition {
     ///
     /// This is used for optimistic concurrency control. The operation will only succeed
     /// if the document has not been modified since the specified `update_time`.
-    /// The `DateTime<Utc>` must be microsecond-aligned, as Firestore timestamps have
+    /// The `Timestamp` must be microsecond-aligned, as Firestore timestamps have
     /// microsecond precision.
-    UpdateTime(DateTime<Utc>),
+    UpdateTime(FirestoreDateTime),
 }
 
 impl TryInto<gcloud_sdk::google::firestore::v1::Precondition> for FirestoreWritePrecondition {

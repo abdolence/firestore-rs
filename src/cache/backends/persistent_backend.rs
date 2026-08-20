@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 
 use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
-use chrono::Utc;
+use crate::FirestoreDateTime;
 use futures::StreamExt;
 use gcloud_sdk::google::firestore::v1::Document;
 use gcloud_sdk::prost::Message;
@@ -246,7 +246,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        let read_from_time = Utc::now();
+        let read_from_time = FirestoreDateTime::now();
 
         self.preload_collections(db).await?;
 

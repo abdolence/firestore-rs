@@ -1,4 +1,5 @@
 use crate::errors::*;
+use crate::FirestoreDuration;
 use crate::{
     FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb,
     FirestoreRequestOptions, FirestoreResult, FirestoreWriteResult,
@@ -12,7 +13,7 @@ use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreSimpleBatchWriteOptions {
-    retry_max_elapsed_time: Option<chrono::Duration>,
+    retry_max_elapsed_time: Option<FirestoreDuration>,
 
     /// Request options (e.g. request tags) for the batch write requests.
     pub request_options: Option<FirestoreRequestOptions>,
@@ -52,7 +53,7 @@ impl FirestoreBatchWriter for FirestoreSimpleBatchWriter {
             .with_max_elapsed_time(
                 self.options
                     .retry_max_elapsed_time
-                    .map(|v| v.to_std())
+                    .map(std::time::Duration::try_from)
                     .transpose()?,
             )
             .build();

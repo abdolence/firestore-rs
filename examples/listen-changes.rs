@@ -1,4 +1,3 @@
-use chrono::prelude::*;
 use firestore::*;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
@@ -17,7 +16,7 @@ struct MyTestStructure {
     some_num: u64,
 
     #[serde(with = "firestore::serialize_as_timestamp")]
-    created_at: DateTime<Utc>,
+    created_at: FirestoreDateTime,
 }
 
 const TEST_COLLECTION_NAME: &str = "test-listen";
@@ -49,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_id: "test-1".to_string(),
         some_string: "test-str".to_string(),
         some_num: 42,
-        created_at: Utc::now(),
+        created_at: FirestoreDateTime::now(),
     };
 
     let new_doc: MyTestStructure = db

@@ -171,9 +171,45 @@ mod struct_path_macro;
 #[allow(unused_imports)]
 pub use struct_path_macro::*;
 
+/// Re-export of the [`jiff`] crate, so that the date/time API used by this
+/// library is available without depending on `jiff` explicitly.
+pub use jiff;
+
+/// The date/time type used by this library for Firestore timestamps.
+///
+/// This is an alias for [`jiff::Timestamp`], an exact instant in time in UTC.
+/// Prefer this alias over naming `jiff::Timestamp` directly, so that your code
+/// does not need an explicit `jiff` dependency and stays insulated from changes
+/// of the underlying implementation.
+///
+/// # Examples
+///
+/// ```rust
+/// use firestore::*;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Debug, Clone, Deserialize, Serialize)]
+/// struct MyTestStructure {
+///     #[serde(with = "firestore::serialize_as_timestamp")]
+///     created_at: FirestoreDateTime,
+///
+///     #[serde(default)]
+///     #[serde(with = "firestore::serialize_as_optional_timestamp")]
+///     updated_at: Option<FirestoreDateTime>,
+/// }
+/// ```
+pub type FirestoreDateTime = jiff::Timestamp;
+
+/// The duration type used by this library.
+///
+/// This is an alias for [`jiff::SignedDuration`], used for values such as
+/// [`FirestoreTransactionOptions::max_elapsed_time`] and the query execution
+/// statistics.
+pub type FirestoreDuration = jiff::SignedDuration;
+
 /// Provides utility functions for working with Firestore timestamps.
 ///
-/// This module includes helpers for converting between `chrono::DateTime<Utc>`
+/// This module includes helpers for converting between [`FirestoreDateTime`]
 /// and Google's `Timestamp` protobuf type, often used with `#[serde(with)]`
 /// attributes for automatic conversion.
 pub mod timestamp_utils;
