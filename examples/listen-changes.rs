@@ -15,8 +15,7 @@ struct MyTestStructure {
     some_string: String,
     some_num: u64,
 
-    #[serde(with = "firestore::serialize_as_timestamp")]
-    created_at: FirestoreInstant,
+    created_at: FirestoreTimestamp,
 }
 
 const TEST_COLLECTION_NAME: &str = "test-listen";
@@ -48,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_id: "test-1".to_string(),
         some_string: "test-str".to_string(),
         some_num: 42,
-        created_at: FirestoreInstant::now(),
+        created_at: FirestoreTimestamp::now(),
     };
 
     let new_doc: MyTestStructure = db

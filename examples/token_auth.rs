@@ -15,7 +15,7 @@ struct MyTestStructure {
     some_string: String,
     one_more_string: String,
     some_num: u64,
-    created_at: FirestoreInstant,
+    created_at: FirestoreTimestamp,
 }
 
 async fn my_token() -> gcloud_sdk::error::Result<gcloud_sdk::Token> {

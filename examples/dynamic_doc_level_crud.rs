@@ -43,10 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         ("inner_some_string", "inner-value".into()),
                     ]),
                 ),
-                (
-                    "created_at",
-                    FirestoreTimestamp(FirestoreInstant::now()).into(),
-                ),
+                ("created_at", FirestoreTimestamp::now().into()),
             ],
         )?)
         .execute()
