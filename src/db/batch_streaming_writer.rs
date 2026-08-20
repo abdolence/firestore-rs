@@ -1,6 +1,6 @@
 use crate::{
     FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb,
-    FirestoreResult, FirestoreWriteResult,
+    FirestoreRequestOptions, FirestoreResult, FirestoreWriteResult,
 };
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -22,6 +22,9 @@ use tracing::*;
 pub struct FirestoreStreamingBatchWriteOptions {
     #[default = "Duration::from_millis(500)"]
     pub throttle_batch_duration: Duration,
+
+    /// Request options (e.g. request tags) for the streaming write requests.
+    pub request_options: Option<FirestoreRequestOptions>,
 }
 
 pub struct FirestoreStreamingBatchWriter {
@@ -200,6 +203,7 @@ impl FirestoreStreamingBatchWriter {
             writes: vec![],
             stream_token: vec![],
             labels: HashMap::new(),
+            request_options: db.resolve_request_options(options.request_options.as_ref()),
         })?;
 
         init_wait_reader.recv().await;
@@ -250,6 +254,9 @@ impl FirestoreStreamingBatchWriter {
                         locked.clone()
                     },
                     labels: HashMap::new(),
+                    request_options: self
+                        .db
+                        .resolve_request_options(self.options.request_options.as_ref()),
                 })
                 .ok();
         } else {
@@ -277,6 +284,9 @@ impl FirestoreStreamingBatchWriter {
                 locked.clone()
             },
             labels: HashMap::new(),
+            request_options: self
+                .db
+                .resolve_request_options(self.options.request_options.as_ref()),
         })?)
     }
 

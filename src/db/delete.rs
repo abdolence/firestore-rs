@@ -70,6 +70,7 @@ impl FirestoreDeleteSupport for FirestoreDb {
         let request = gcloud_sdk::tonic::Request::new(DeleteDocumentRequest {
             name: document_path,
             current_document: precondition.map(|cond| cond.try_into()).transpose()?,
+            request_options: self.resolve_request_options(None),
         });
 
         let begin_query_utc: DateTime<Utc> = Utc::now();

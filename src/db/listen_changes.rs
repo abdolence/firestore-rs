@@ -1,7 +1,10 @@
 use crate::db::safe_document_path;
 use crate::errors::*;
 use crate::timestamp_utils::to_timestamp;
-use crate::{FirestoreDb, FirestoreQueryParams, FirestoreResult, FirestoreResumeStateStorage};
+use crate::{
+    FirestoreDb, FirestoreQueryParams, FirestoreRequestOptions, FirestoreResult,
+    FirestoreResumeStateStorage,
+};
 pub use async_trait::async_trait;
 use chrono::prelude::*;
 use futures::stream::BoxStream;
@@ -26,6 +29,9 @@ pub struct FirestoreListenerTargetParams {
     pub resume_type: Option<FirestoreListenerTargetResumeType>,
     pub add_target_once: Option<bool>,
     pub labels: HashMap<String, String>,
+
+    /// Request options (e.g. request tags) for the listen requests of this target.
+    pub request_options: Option<FirestoreRequestOptions>,
 }
 
 impl FirestoreListenerTargetParams {
@@ -180,6 +186,7 @@ impl FirestoreDb {
         Ok(ListenRequest {
             database: self.get_database_path().to_string(),
             labels: target_params.labels,
+            request_options: self.resolve_request_options(target_params.request_options.as_ref()),
             target_change: Some(listen_request::TargetChange::AddTarget(Target {
                 target_id: target_params.target.try_into()?,
                 once: target_params.add_target_once.unwrap_or(false),

@@ -106,6 +106,7 @@ impl FirestoreCreateSupport for FirestoreDb {
             }),
             collection_id: collection_id.into(),
             document: Some(input_doc),
+            request_options: self.resolve_request_options(None),
         });
 
         let begin_query_utc: DateTime<Utc> = Utc::now();

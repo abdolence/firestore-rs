@@ -6,7 +6,8 @@
 
 use crate::{
     FirestoreListCollectionIdsParams, FirestoreListCollectionIdsResult, FirestoreListDocParams,
-    FirestoreListDocResult, FirestoreListingSupport, FirestoreQueryOrder, FirestoreResult,
+    FirestoreListDocResult, FirestoreListingSupport, FirestoreQueryOrder, FirestoreRequestOptions,
+    FirestoreRequestTag, FirestoreResult,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -195,6 +196,40 @@ where
         }
     }
 
+    /// Attaches request tags to this listing operation.
+    ///
+    /// They override any session wide default configured with
+    /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
+    ///
+    /// # Arguments
+    /// * `request_tags`: An iterator of tags to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request tags set.
+    #[inline]
+    pub fn request_tags<I>(self, request_tags: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<FirestoreRequestTag>,
+    {
+        self.request_options(FirestoreRequestOptions::from_tags(request_tags))
+    }
+
+    /// Attaches request options to this listing operation.
+    ///
+    /// # Arguments
+    /// * `options`: The [`FirestoreRequestOptions`] to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request options set.
+    #[inline]
+    pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
+        Self {
+            params: self.params.with_request_options(options),
+            ..self
+        }
+    }
+
     /// Retrieves a single page of documents.
     ///
     /// # Returns
@@ -256,6 +291,40 @@ where
             db,
             params,
             _pd: PhantomData,
+        }
+    }
+
+    /// Attaches request tags to this listing operation.
+    ///
+    /// They override any session wide default configured with
+    /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
+    ///
+    /// # Arguments
+    /// * `request_tags`: An iterator of tags to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request tags set.
+    #[inline]
+    pub fn request_tags<I>(self, request_tags: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<FirestoreRequestTag>,
+    {
+        self.request_options(FirestoreRequestOptions::from_tags(request_tags))
+    }
+
+    /// Attaches request options to this listing operation.
+    ///
+    /// # Arguments
+    /// * `options`: The [`FirestoreRequestOptions`] to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request options set.
+    #[inline]
+    pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
+        Self {
+            params: self.params.with_request_options(options),
+            ..self
         }
     }
 
@@ -349,6 +418,40 @@ where
         }
     }
 
+    /// Attaches request tags to this listing operation.
+    ///
+    /// They override any session wide default configured with
+    /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
+    ///
+    /// # Arguments
+    /// * `request_tags`: An iterator of tags to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request tags set.
+    #[inline]
+    pub fn request_tags<I>(self, request_tags: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<FirestoreRequestTag>,
+    {
+        self.request_options(FirestoreRequestOptions::from_tags(request_tags))
+    }
+
+    /// Attaches request options to this listing operation.
+    ///
+    /// # Arguments
+    /// * `options`: The [`FirestoreRequestOptions`] to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request options set.
+    #[inline]
+    pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
+        Self {
+            params: self.params.with_request_options(options),
+            ..self
+        }
+    }
+
     /// Retrieves a single page of collection IDs.
     ///
     /// # Returns
@@ -380,5 +483,38 @@ where
         self.db
             .stream_list_collection_ids_with_errors(self.params)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::fluent_api::tests::*;
+    use crate::fluent_api::FirestoreExprBuilder;
+    use crate::FirestoreRequestOptions;
+
+    #[test]
+    fn list_doc_builder_request_tags() {
+        let builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .list()
+            .from("test")
+            .request_tags(["tag-1", "tag-2"]);
+
+        assert_eq!(
+            builder.params.request_options,
+            Some(FirestoreRequestOptions::from_tags(["tag-1", "tag-2"]))
+        )
+    }
+
+    #[test]
+    fn list_collection_ids_builder_request_tags() {
+        let builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .list()
+            .collections()
+            .request_tags(["tag-1"]);
+
+        assert_eq!(
+            builder.params.request_options,
+            Some(FirestoreRequestOptions::from_tags(["tag-1"]))
+        )
     }
 }

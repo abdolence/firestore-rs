@@ -1,4 +1,4 @@
-use crate::FirestoreConsistencySelector;
+use crate::{FirestoreConsistencySelector, FirestoreRequestOptions};
 use rsb_derive::*;
 
 /// Parameters that define the behavior of a Firestore session or a specific set of operations.
@@ -27,6 +27,13 @@ pub struct FirestoreDbSessionParams {
     /// This field is only effective if the `caching` feature is enabled.
     #[default = "FirestoreDbSessionCacheMode::None"]
     pub cache_mode: FirestoreDbSessionCacheMode,
+
+    /// Default [`FirestoreRequestOptions`] (e.g. request tags) applied to every
+    /// request issued with this session.
+    ///
+    /// Individual operations may override this value. If `None` (the default),
+    /// no request options are attached to the requests.
+    pub request_options: Option<FirestoreRequestOptions>,
 }
 
 /// Defines the caching mode for Firestore operations within a session.

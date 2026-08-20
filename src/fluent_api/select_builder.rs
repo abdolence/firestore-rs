@@ -15,8 +15,9 @@ use crate::{
     FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
     FirestoreListenerTargetParams, FirestorePartition, FirestorePartitionQueryParams,
     FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
-    FirestoreQueryParams, FirestoreQuerySupport, FirestoreResult, FirestoreResumeStateStorage,
-    FirestoreTargetType, FirestoreVector, FirestoreWithMetadata,
+    FirestoreQueryParams, FirestoreQuerySupport, FirestoreRequestOptions, FirestoreRequestTag,
+    FirestoreResult, FirestoreResumeStateStorage, FirestoreTargetType, FirestoreVector,
+    FirestoreWithMetadata,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -372,6 +373,42 @@ where
         }
     }
 
+    /// Attaches request tags to this query.
+    ///
+    /// Request tags are reported by Firestore in its monitoring and billing
+    /// breakdowns, which makes them useful to attribute cost to a specific feature
+    /// or tenant. They override any session wide default configured with
+    /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
+    ///
+    /// # Arguments
+    /// * `request_tags`: An iterator of tags to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request tags set.
+    #[inline]
+    pub fn request_tags<I>(self, request_tags: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<FirestoreRequestTag>,
+    {
+        self.request_options(FirestoreRequestOptions::from_tags(request_tags))
+    }
+
+    /// Attaches request options to this query.
+    ///
+    /// # Arguments
+    /// * `options`: The [`FirestoreRequestOptions`] to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request options set.
+    #[inline]
+    pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
+        Self {
+            params: self.params.with_request_options(options),
+            ..self
+        }
+    }
+
     /// Specifies that the query results should be deserialized into a specific Rust type `T`.
     ///
     /// # Type Parameters
@@ -406,10 +443,16 @@ where
     /// A [`FirestoreDocChangesListenerInitBuilder`] to configure and start the listener.
     #[inline]
     pub fn listen(self) -> FirestoreDocChangesListenerInitBuilder<'a, D> {
-        FirestoreDocChangesListenerInitBuilder::new(
+        let request_options = self.params.request_options.clone();
+        let builder = FirestoreDocChangesListenerInitBuilder::new(
             self.db,
             FirestoreTargetType::Query(self.params),
-        )
+        );
+
+        match request_options {
+            Some(options) => builder.request_options(options),
+            None => builder,
+        }
     }
 
     /// Specifies aggregations to be performed over the documents matching this query.
@@ -507,6 +550,40 @@ where
             db,
             params,
             _pd: PhantomData,
+        }
+    }
+
+    /// Attaches request tags to this query.
+    ///
+    /// They override any session wide default configured with
+    /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
+    ///
+    /// # Arguments
+    /// * `request_tags`: An iterator of tags to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request tags set.
+    #[inline]
+    pub fn request_tags<I>(self, request_tags: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<FirestoreRequestTag>,
+    {
+        self.request_options(FirestoreRequestOptions::from_tags(request_tags))
+    }
+
+    /// Attaches request options to this query.
+    ///
+    /// # Arguments
+    /// * `options`: The [`FirestoreRequestOptions`] to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request options set.
+    #[inline]
+    pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
+        Self {
+            params: self.params.with_request_options(options),
+            ..self
         }
     }
 
@@ -1151,6 +1228,7 @@ where
     listener_params: FirestoreListenerParams,
     target_type: FirestoreTargetType,
     labels: HashMap<String, String>,
+    request_options: Option<FirestoreRequestOptions>,
 }
 
 impl<'a, D> FirestoreDocChangesListenerInitBuilder<'a, D>
@@ -1165,6 +1243,7 @@ where
             listener_params: FirestoreListenerParams::new(),
             target_type,
             labels: HashMap::new(),
+            request_options: None,
         }
     }
 
@@ -1180,6 +1259,37 @@ where
     #[inline]
     pub fn labels(self, labels: HashMap<String, String>) -> Self {
         Self { labels, ..self }
+    }
+
+    /// Attaches request tags to the listen requests of this target.
+    ///
+    /// # Arguments
+    /// * `request_tags`: An iterator of tags to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request tags set.
+    #[inline]
+    pub fn request_tags<I>(self, request_tags: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<FirestoreRequestTag>,
+    {
+        self.request_options(FirestoreRequestOptions::from_tags(request_tags))
+    }
+
+    /// Attaches request options to the listen requests of this target.
+    ///
+    /// # Arguments
+    /// * `options`: The [`FirestoreRequestOptions`] to attach.
+    ///
+    /// # Returns
+    /// The builder instance with the request options set.
+    #[inline]
+    pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
+        Self {
+            request_options: Some(options),
+            ..self
+        }
     }
 
     /// Sets the initial delay for retrying the listener connection on failure.
@@ -1220,11 +1330,10 @@ where
     where
         S: FirestoreResumeStateStorage + Send + Sync + Clone + 'static,
     {
-        listener.add_target(FirestoreListenerTargetParams::new(
-            target,
-            self.target_type,
-            self.labels,
-        ))?;
+        listener.add_target(
+            FirestoreListenerTargetParams::new(target, self.target_type, self.labels)
+                .opt_request_options(self.request_options),
+        )?;
 
         Ok(())
     }
@@ -1373,7 +1482,7 @@ where
 mod tests {
     use crate::fluent_api::tests::*;
     use crate::fluent_api::FirestoreExprBuilder;
-    use crate::{path, paths, FirestoreQueryCollection};
+    use crate::{path, paths, FirestoreQueryCollection, FirestoreRequestOptions};
 
     #[test]
     fn select_query_builder_test_fields() {
@@ -1389,6 +1498,61 @@ mod tests {
                 path!(TestStructure::one_more_string),
                 path!(TestStructure::some_num),
             ])
+        )
+    }
+
+    #[test]
+    fn select_query_builder_request_tags() {
+        let builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .select()
+            .from("test")
+            .request_tags(["tag-1", "tag-2"]);
+
+        assert_eq!(
+            builder.params.request_options,
+            Some(FirestoreRequestOptions::from_tags(["tag-1", "tag-2"]))
+        )
+    }
+
+    #[test]
+    fn select_query_builder_request_tags_inherited_by_partition_query() {
+        let builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .select()
+            .from("test")
+            .request_tags(["tag-1"])
+            .partition_query();
+
+        assert_eq!(
+            builder.params.request_options,
+            Some(FirestoreRequestOptions::from_tags(["tag-1"]))
+        )
+    }
+
+    #[test]
+    fn select_query_builder_request_tags_forwarded_to_listener() {
+        let builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .select()
+            .from("test")
+            .request_tags(["tag-1"])
+            .listen();
+
+        assert_eq!(
+            builder.request_options,
+            Some(FirestoreRequestOptions::from_tags(["tag-1"]))
+        )
+    }
+
+    #[test]
+    fn select_batch_listen_builder_request_tags() {
+        let builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .select()
+            .by_id_in("test")
+            .batch_listen(["test-0"])
+            .request_tags(["tag-1"]);
+
+        assert_eq!(
+            builder.request_options,
+            Some(FirestoreRequestOptions::from_tags(["tag-1"]))
         )
     }
 

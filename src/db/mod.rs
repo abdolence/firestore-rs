@@ -78,6 +78,10 @@ pub use session_params::*;
 mod consistency_selector;
 pub use consistency_selector::*;
 
+/// Module for per-request options (e.g., request tags).
+mod request_options;
+pub use request_options::*;
+
 /// Module for building parent paths for sub-collections.
 mod parent_path_builder;
 pub use parent_path_builder::*;
@@ -428,6 +432,22 @@ impl FirestoreDb {
         &self.session_params
     }
 
+    /// Resolves the effective request options for an operation.
+    ///
+    /// A per operation override takes precedence over the session wide default
+    /// configured with
+    /// [`clone_with_request_options`](FirestoreDb::clone_with_request_options).
+    #[inline]
+    pub(crate) fn resolve_request_options(
+        &self,
+        request_options: Option<&FirestoreRequestOptions>,
+    ) -> Option<gcloud_sdk::google::firestore::v1::RequestOptions> {
+        FirestoreRequestOptions::resolve(
+            request_options,
+            self.session_params.request_options.as_ref(),
+        )
+    }
+
     /// Returns a reference to the underlying gRPC client.
     ///
     /// This provides access to the raw `FirestoreClient` from the `gcloud-sdk`
@@ -485,6 +505,82 @@ impl FirestoreDb {
         self.clone_with_session_params(
             existing_session_params.with_consistency_selector(consistency_selector),
         )
+    }
+
+    /// Clones the `FirestoreDb` instance with default request options.
+    ///
+    /// Every request issued through the returned instance carries these options,
+    /// unless an operation overrides them explicitly.
+    ///
+    /// # Arguments
+    /// * `request_options`: The [`FirestoreRequestOptions`] to apply by default.
+    #[inline]
+    pub fn clone_with_request_options(&self, request_options: FirestoreRequestOptions) -> Self {
+        let existing_session_params = (*self.session_params).clone();
+
+        self.clone_with_session_params(
+            existing_session_params.with_request_options(request_options),
+        )
+    }
+
+    /// Clones the `FirestoreDb` instance with default request tags.
+    ///
+    /// A convenience shortcut for
+    /// [`clone_with_request_options`](FirestoreDb::clone_with_request_options).
+    /// This is also the way to attach request tags to the CRUD operations
+    /// (get/create/update/delete), which have no per operation options.
+    ///
+    /// # Arguments
+    /// * `request_tags`: An iterator of tags to attach to every request.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use firestore::*;
+    /// # async fn run() -> FirestoreResult<()> {
+    /// let db = FirestoreDb::new("my-gcp-project-id").await?;
+    /// let tagged_db = db.clone_with_request_tags(["nightly-report"]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn clone_with_request_tags<I>(&self, request_tags: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<FirestoreRequestTag>,
+    {
+        self.clone_with_request_options(FirestoreRequestOptions::from_tags(request_tags))
+    }
+
+    /// Consumes the `FirestoreDb` instance and returns a new one with default
+    /// request options.
+    ///
+    /// # Arguments
+    /// * `request_options`: The [`FirestoreRequestOptions`] to apply by default.
+    #[inline]
+    pub fn with_request_options(self, request_options: FirestoreRequestOptions) -> Self {
+        let session_params = (*self.session_params)
+            .clone()
+            .with_request_options(request_options);
+
+        self.with_session_params(session_params)
+    }
+
+    /// Consumes the `FirestoreDb` instance and returns a new one with default
+    /// request tags.
+    ///
+    /// A convenience shortcut for
+    /// [`with_request_options`](FirestoreDb::with_request_options).
+    ///
+    /// # Arguments
+    /// * `request_tags`: An iterator of tags to attach to every request.
+    #[inline]
+    pub fn with_request_tags<I>(self, request_tags: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<FirestoreRequestTag>,
+    {
+        self.with_request_options(FirestoreRequestOptions::from_tags(request_tags))
     }
 
     /// Clones the `FirestoreDb` instance with a specific cache mode.

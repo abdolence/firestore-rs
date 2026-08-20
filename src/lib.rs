@@ -11,6 +11,7 @@
 //! - Transactions support;
 //! - Streaming batch writes with automatic throttling to avoid time limits from Firestore;
 //! - Aggregated Queries;
+//! - Request tags (request options) to attribute Firestore usage;
 //! - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
 //!   that automatically detects GKE environment or application default accounts for local development;
 //!
