@@ -704,6 +704,44 @@ mod tests {
     }
 
     #[test]
+    fn supports_many_collections_with_mixed_modes_in_one_cache() {
+        let parent = format!("{DOCS}/tenants/tenant-1");
+        let config = build_configuration(
+            DOCS,
+            1000,
+            &[
+                lazy("users"),
+                lazy("countries").preload_all(),
+                lazy("currencies").preload_all_if_empty(),
+                lazy("sessions").listener_target(2500),
+                lazy("orders").parent(&parent).preload_all(),
+            ],
+            FirestoreCacheIncompleteCollectionPolicy::default(),
+        )
+        .unwrap();
+
+        assert_eq!(config.collections.len(), 5);
+
+        // Every collection gets its own listener target, and they are all distinct.
+        let targets: HashSet<u32> = config
+            .collections
+            .values()
+            .map(|c| *c.listener_target.value())
+            .collect();
+        assert_eq!(targets.len(), 5, "listener targets must be unique");
+        assert!(targets.contains(&2500), "explicit target must be honoured");
+
+        // Load modes are tracked per collection, not per cache.
+        assert!(!config.is_collection_listable(&format!("{DOCS}/users")));
+        assert!(!config.is_collection_listable(&format!("{DOCS}/sessions")));
+        assert!(config.is_collection_listable(&format!("{DOCS}/countries")));
+        assert!(config.is_collection_listable(&format!("{DOCS}/currencies")));
+
+        // Sub-collections live under their parent and work alongside root collections.
+        assert!(config.is_collection_listable(&format!("{parent}/orders")));
+    }
+
+    #[test]
     fn partial_results_policy_allows_listing_lazy_collections() {
         let config = build_configuration(
             DOCS,
