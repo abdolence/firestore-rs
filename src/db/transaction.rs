@@ -1,3 +1,7 @@
+// Deliberately public: `FirestoreTransactionOps` exists so that transaction operations are
+// available on both `FirestoreTransaction` and `FirestoreTransactionData`, which lets callers
+// write transaction-agnostic abstractions over the trait. See
+// https://github.com/abdolence/firestore-rs/issues/206.
 pub use crate::db::transaction_ops::FirestoreTransactionOps;
 use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;

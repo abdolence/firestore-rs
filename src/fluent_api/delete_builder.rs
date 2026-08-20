@@ -210,7 +210,7 @@ where
         }
     }
 
-    /// Adds this delete operation to a [`FirestoreTransaction`].
+    /// Adds this delete operation to a [`FirestoreTransaction`](crate::FirestoreTransaction).
     ///
     /// # Arguments
     /// * `transaction`: A mutable reference to the transaction to add this operation to.

@@ -1,51 +1,11 @@
 use crate::db::safe_document_path;
+use crate::db::support::FirestoreUpdateSupport;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
 use serde::{Deserialize, Serialize};
 use tracing::*;
-
-#[async_trait]
-pub trait FirestoreUpdateSupport {
-    async fn update_obj<I, O, S>(
-        &self,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        update_only: Option<Vec<String>>,
-        return_only_fields: Option<Vec<String>>,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-
-    async fn update_obj_at<I, O, S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        update_only: Option<Vec<String>>,
-        return_only_fields: Option<Vec<String>>,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-
-    async fn update_doc(
-        &self,
-        collection_id: &str,
-        firestore_doc: Document,
-        update_only: Option<Vec<String>>,
-        return_only_fields: Option<Vec<String>>,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<Document>;
-}
 
 #[async_trait]
 impl FirestoreUpdateSupport for FirestoreDb {

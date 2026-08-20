@@ -105,13 +105,13 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     assert_eq!(Some(object_updated.clone()), find_it_again);
 
     let get_both_stream: BoxStream<Option<MyTestStructure>> = Box::pin(
-        db.batch_stream_get_objects(
-            TEST_COLLECTION_NAME,
-            [&my_struct1.some_id, &my_struct2.some_id],
-            None,
-        )
-        .await?
-        .map(|(_, obj)| obj),
+        db.fluent()
+            .select()
+            .by_id_in(TEST_COLLECTION_NAME)
+            .obj::<MyTestStructure>()
+            .batch([&my_struct1.some_id, &my_struct2.some_id])
+            .await?
+            .map(|(_, obj)| obj),
     );
 
     let get_both_stream_vec: Vec<Option<MyTestStructure>> = get_both_stream.collect().await;

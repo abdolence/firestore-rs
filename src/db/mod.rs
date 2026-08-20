@@ -4,19 +4,15 @@
 
 /// Module for document retrieval operations (get).
 mod get;
-pub use get::*;
 
 /// Module for document creation operations.
 mod create;
-pub use create::*;
 
 /// Module for document update operations.
 mod update;
-pub use update::*;
 
 /// Module for document deletion operations.
 mod delete;
-pub use delete::*;
 
 /// Module defining models used in queries (filters, orders, etc.).
 mod query_models;
@@ -28,7 +24,6 @@ pub use precondition_models::*;
 
 /// Module for query execution.
 mod query;
-pub use query::*;
 
 /// Module for aggregated query execution.
 mod aggregated_query;
@@ -67,6 +62,11 @@ mod transaction_models;
 pub use transaction_models::*;
 
 /// Internal module for transaction operations.
+/// Crate-private low-level support traits that the fluent API is built on.
+/// See `support.rs` for why they are `pub trait` inside a private module.
+mod support;
+pub(crate) use support::*;
+
 mod transaction_ops;
 use transaction_ops::*;
 
@@ -480,10 +480,16 @@ impl FirestoreDb {
         )
     }
 
-    /// Returns a reference to the underlying gRPC client.
+    /// Returns a reference to the underlying `gcloud-sdk` gRPC client.
     ///
-    /// This provides access to the raw `FirestoreClient` from the `gcloud-sdk`
-    /// if direct interaction with the gRPC layer is needed.
+    /// **Unsupported escape hatch.** The [Fluent API](Self::fluent) is the supported way to use
+    /// this crate; this method exists only for the rare case where it does not yet cover
+    /// something you need.
+    ///
+    /// It exposes types from `gcloud-sdk`, whose version is *not* part of this crate's semver
+    /// contract: this signature and the types behind it may change in any release, including a
+    /// patch release. You also need to depend on `gcloud-sdk` yourself, at a matching version,
+    /// since this crate does not re-export it.
     #[inline]
     pub fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
         &self.inner.client
@@ -628,11 +634,19 @@ impl FirestoreDb {
         self.clone_with_session_params(existing_session_params.with_cache_mode(cache_mode))
     }
 
-    /// Clones the `FirestoreDb` instance to enable read-through caching with the provided cache.
+    /// Clones this `FirestoreDb` so that reads go through the given cache, falling back to
+    /// Firestore.
     ///
-    /// Operations using the returned `FirestoreDb` instance will first attempt to read
-    /// from the cache. If data is not found, it will be fetched from Firestore and
-    /// then stored in the cache.
+    /// This is the mode to reach for by default: anything the cache can answer is served
+    /// locally, and anything it cannot is fetched from Firestore as usual.
+    ///
+    /// Reads by ID are served from the cache for any cached collection, and populate it on a
+    /// miss. `list` and `query` are served from the cache only for collections configured to be
+    /// preloaded - for others they transparently go to Firestore, because a lazily filled
+    /// collection could only answer them with partial results.
+    ///
+    /// Results are eventually consistent; see [`FirestoreCache`](crate::FirestoreCache) for what
+    /// that means in practice.
     ///
     /// This method is only available if the `caching` feature is enabled.
     ///
@@ -649,10 +663,18 @@ impl FirestoreDb {
         ))
     }
 
-    /// Clones the `FirestoreDb` instance to read exclusively from the cache.
+    /// Clones this `FirestoreDb` so that reads come exclusively from the given cache, never from
+    /// Firestore.
     ///
-    /// Operations using the returned `FirestoreDb` instance will only attempt to read
-    /// from the cache and will not fetch data from Firestore if it's not found in the cache.
+    /// Reads by ID return `None` when the document is not cached. Requests that the cache cannot
+    /// answer *completely* - a `list` or `query` on a collection that is not preloaded, on a
+    /// collection the cache does not know about, or a collection group query - return a
+    /// [`FirestoreError::CacheError`](crate::errors::FirestoreError::CacheError) rather than a
+    /// partial result that would look complete.
+    ///
+    /// Use [`read_through_cache`](Self::read_through_cache) if you would rather fall back to
+    /// Firestore, or [`FirestoreCacheIncompleteCollectionPolicy::PartialResults`](crate::FirestoreCacheIncompleteCollectionPolicy::PartialResults)
+    /// if partial results are genuinely acceptable for your use case.
     ///
     /// This method is only available if the `caching` feature is enabled.
     ///

@@ -1,58 +1,10 @@
+use crate::db::support::FirestoreCreateSupport;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
 use serde::{Deserialize, Serialize};
 use tracing::*;
-
-#[async_trait]
-pub trait FirestoreCreateSupport {
-    async fn create_doc<S>(
-        &self,
-        collection_id: &str,
-        document_id: Option<S>,
-        input_doc: Document,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<Document>
-    where
-        S: AsRef<str> + Send;
-
-    async fn create_doc_at<S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: Option<S>,
-        input_doc: Document,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<Document>
-    where
-        S: AsRef<str> + Send;
-
-    async fn create_obj<I, O, S>(
-        &self,
-        collection_id: &str,
-        document_id: Option<S>,
-        obj: &I,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-
-    async fn create_obj_at<I, O, S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: Option<S>,
-        obj: &I,
-        return_only_fields: Option<Vec<String>>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-}
 
 #[async_trait]
 impl FirestoreCreateSupport for FirestoreDb {

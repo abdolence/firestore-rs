@@ -17,7 +17,6 @@
 //! - [`select_builder`]: For constructing query/select operations.
 //! - [`select_filter_builder`]: For building complex filter conditions for queries.
 //! - [`update_builder`]: For constructing update operations.
-//! ```
 
 // Linter allowance for functions that might have many arguments,
 // often seen in builder patterns or comprehensive configuration methods.
@@ -49,9 +48,8 @@ use crate::{
 /// From this builder, you can chain methods to specify the type of operation
 /// (select, insert, update, delete, list) and then further configure and execute it.
 ///
-/// The type parameter `D` represents the underlying database client type, which
-/// must implement various support traits (like [`FirestoreQuerySupport`], [`FirestoreCreateSupport`], etc.).
-/// This is typically [`FirestoreDb`](crate::FirestoreDb).
+/// The type parameter `D` is an internal implementation detail; in practice it is always
+/// [`FirestoreDb`](crate::FirestoreDb).
 #[derive(Clone, Debug)]
 pub struct FirestoreExprBuilder<'a, D> {
     db: &'a D,

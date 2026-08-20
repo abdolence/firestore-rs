@@ -1,5 +1,6 @@
 #![allow(clippy::derive_partial_eq_without_eq)] // Since we may not be able to implement Eq for the changes coming from Firestore protos
 
+use crate::db::support::FirestoreAggregatedQuerySupport;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreError, FirestoreQueryParams, FirestoreResult};
 use async_trait::async_trait;
@@ -100,46 +101,6 @@ impl From<&FirestoreAggregationOperatorAvg> for structured_aggregation_query::ag
             }),
         }
     }
-}
-
-#[async_trait]
-pub trait FirestoreAggregatedQuerySupport {
-    async fn aggregated_query_doc(
-        &self,
-        params: FirestoreAggregatedQueryParams,
-    ) -> FirestoreResult<Vec<Document>>;
-
-    async fn stream_aggregated_query_doc<'b>(
-        &self,
-        params: FirestoreAggregatedQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, Document>>;
-
-    async fn stream_aggregated_query_doc_with_errors<'b>(
-        &self,
-        params: FirestoreAggregatedQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>>;
-
-    async fn aggregated_query_obj<T>(
-        &self,
-        params: FirestoreAggregatedQueryParams,
-    ) -> FirestoreResult<Vec<T>>
-    where
-        for<'de> T: Deserialize<'de>;
-
-    async fn stream_aggregated_query_obj<'b, T>(
-        &self,
-        params: FirestoreAggregatedQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, T>>
-    where
-        for<'de> T: Deserialize<'de>;
-
-    async fn stream_aggregated_query_obj_with_errors<'b, T>(
-        &self,
-        params: FirestoreAggregatedQueryParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
-    where
-        for<'de> T: Deserialize<'de>,
-        T: Send + 'b;
 }
 
 #[async_trait]

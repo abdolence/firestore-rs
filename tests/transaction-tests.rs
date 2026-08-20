@@ -112,3 +112,35 @@ async fn transaction_tests() -> Result<(), Box<dyn std::error::Error + Send + Sy
 
     Ok(())
 }
+
+/// `FirestoreTransactionOps` is public on purpose: it exists so that transaction operations are
+/// available on both `FirestoreTransaction` and `FirestoreTransactionData`, which lets callers
+/// write transaction-agnostic abstractions over the trait.
+/// See https://github.com/abdolence/firestore-rs/issues/206.
+///
+/// This test only needs to compile; it guards against the trait being made crate private again.
+#[allow(dead_code)]
+fn transaction_ops_is_usable_as_a_generic_bound<T>(
+    ops: &mut T,
+    collection_id: &str,
+    document_id: &str,
+    obj: &MyTestStructure,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    T: FirestoreTransactionOps,
+{
+    ops.update_object(collection_id, document_id, obj, None, None, vec![])?;
+    ops.delete_by_id(collection_id, document_id, None)?;
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn transaction_ops_works_for_both_implementors(
+    transaction: &mut FirestoreTransaction,
+    data: &mut FirestoreTransactionData,
+    obj: &MyTestStructure,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    transaction_ops_is_usable_as_a_generic_bound(transaction, "c", "id", obj)?;
+    transaction_ops_is_usable_as_a_generic_bound(data, "c", "id", obj)?;
+    Ok(())
+}

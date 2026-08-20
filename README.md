@@ -38,7 +38,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-firestore = "0.51"
+firestore = "0.52"
 ```
 
 ### Crypto provider error
@@ -126,14 +126,7 @@ FirestoreDb::with_options(
 
 ## Fluent API
 
-The library provides two APIs:
-
-- Fluent API: To simplify development and developer experience the library provides more high level API starting with
-  v0.12.x. This is the recommended API for all applications to use.
-- Classic and low level API: the API existing before 0.12 is still available and not deprecated, so it is fine to
-  continue to use when needed. Furthermore the Fluent API is based on the same classic API and generally speaking are
-  something like smart and convenient constructors. The API can be changed with introducing incompatible changes so it
-  is not recommended to use in long term.
+The Fluent API is the only public API of this library. Everything starts from `db.fluent()`:
 
 ```rust
 use firestore::*;
@@ -188,6 +181,22 @@ db.fluent()
   .await?;
 
 ```
+
+The low level "support" traits were made crate private in v0.52.0. If you used them, see the
+[migration guide](MIGRATION.md) for the fluent replacement of every removed method.
+
+Alongside it, the library provides core functionality that is public API in its own right:
+
+- Batch writes: `db.create_simple_batch_writer()`, `db.create_streaming_batch_writer()`
+- Transactions: `db.begin_transaction()`, `db.run_transaction()`, and the
+  `FirestoreTransactionOps` trait implemented by both `FirestoreTransaction` and
+  `FirestoreTransactionData`
+- Listeners: `db.create_listener()`, and the `FirestoreResumeStateStorage` trait for custom
+  resume token storage
+- Caching: the `FirestoreCacheBackend` / `FirestoreCacheDocsByPathSupport` traits for custom cache
+  backends
+- Dynamic documents: `FirestoreDb::serialize_map_to_doc()`, `FirestoreDb::serialize_to_doc()` and
+  `FirestoreDb::deserialize_doc_to()`, used together with the fluent `.document(...)` builders
 
 ## Querying
 
@@ -771,112 +780,174 @@ configured to develop against it. Specifying a token source explicitly, with
 
 ## Caching
 
-The library supports caching for collections and documents. Caching is leveraging the Firestore listener to update the
-cache when the document is changed,
-that means the updates will be propagated across distributed instances automatically for you.
+The library supports caching for collections and documents. A Firestore listener keeps the cache
+up to date when documents change, so updates are propagated across distributed instances
+automatically.
 
-This is useful to avoid reading and paying for the same documents from Firestore multiple times.
-Especially for some data such as dictionaries, configuration, and other information
-that is not changed frequently. In fact, this may be really helpful to reduce both costs
-and latency in your applications.
+This avoids reading, and paying for, the same documents repeatedly. It is particularly useful for
+dictionaries, configuration and other data that changes rarely, and can reduce both cost and
+latency noticeably.
 
-Caching works on the document level.
-The cache will be used for the following operations:
+Caching is opt-in through cargo features:
 
-- Reading documents by IDs (get and batch get);
-- Listing all documents in a collection;
-- Partial support for querying documents in a collection:
-    - Filtering;
-    - Ordering;
-    - Paging/Cursors;
-
-(Caching other operations may be extended in the future).
-
-The library provides two implementations of the cache:
-
-- In-memory cache, implemented using [moka cache library](https://github.com/moka-rs/moka);
-- Persistent cache, implemented using [redb](https://github.com/cberner/redb) and protobuf;
-
-Caching is opt-in and you need to enable it when needed using cargo features:
-
-- `caching-memory` for in-memory cache;
-- `caching-persistent` for persistent/disk-backed cache;
-
-### Load modes
-
-Caching supports different init/load modes:
-
-- `PreloadNone`: Don't preload anything, just fill in the cache while working;
-- `PreloadAllDocs`: Preload all documents from the collection to the cache;
-- `PreloadAllIfEmpty`: Preload all documents from the collection to the cache only if the cache is empty (this is only
-  useful for persistent cache, for memory cache it is the same as `PreloadAllDocs`);
-
-### How a cache is updated
-
-Update cache is done in the following cases:
-
-- When you read a document through a cache by ID and it is not found in the cache, it will be loaded from Firestore and
-  cached;
-- Firestore listener will update the cache when it receives a notification about the document change (externally or from
-  your app);
-- Using Preloads at the startup time;
+- `caching-memory` for an in-memory cache, implemented with the
+  [moka cache library](https://github.com/moka-rs/moka);
+- `caching-persistent` for a persistent, disk backed cache, implemented with
+  [redb](https://github.com/cberner/redb) and protobuf.
 
 ### Usage
 
 ```rust
 // Create an instance
-let db = FirestoreDb::new( &config_env_var("PROJECT_ID") ? ).await?;
+let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-const TEST_COLLECTION_NAME: &'static str = "test-caching";
+// Build the cache. This creates an internal Firestore listener, preloads the configured
+// collections and starts listening for changes.
+let cache = FirestoreCache::memory(&db)
+    .preloaded_collection("test-caching")
+    .build()
+    .await?;
 
-// Create a cache instance that also creates an internal Firestore listener
-let mut cache = FirestoreCache::new(
-"example-mem-cache".into(),
-&db,
-FirestoreMemoryCacheBackend::new(
-  FirestoreCacheConfiguration::new().add_collection_config(
-    &db,
-    FirestoreCacheCollectionConfiguration::new(
-      TEST_COLLECTION_NAME,
-      FirestoreListenerTarget::new(1000),
-      FirestoreCacheCollectionLoadMode::PreloadNone,
-    )
-  ),
-)?,
-  FirestoreMemListenStateStorage::new(),
-)
-.await?;
+// Read through the cache: served from the cache when possible, from Firestore otherwise.
+let my_struct: Option<MyTestStructure> = db.read_through_cache(&cache)
+    .fluent()
+    .select()
+    .by_id_in("test-caching")
+    .obj()
+    .one("test-1")
+    .await?;
 
-// Load and init cache
-cache.load().await?; // Required even if you don't preload anything
+// Read only from the cache, never contacting Firestore.
+let my_struct: Option<MyTestStructure> = db.read_cached_only(&cache)
+    .fluent()
+    .select()
+    .by_id_in("test-caching")
+    .obj()
+    .one("test-1")
+    .await?;
 
-// Read a document through the cache. If it is not found in the cache, it will be loaded from Firestore and cached.
-let my_struct0: Option<MyTestStructure> = db.read_through_cache(&cache)
-  .fluent()
-  .select()
-  .by_id_in(TEST_COLLECTION_NAME)
-  .obj()
-  .one("test-1")
-  .await?;
-
-// Read a document only from the cache. If it is not found in the cache, it will return None.
-let my_struct0: Option<MyTestStructure> = db.read_cached_only(&cache)
-  .fluent()
-  .select()
-  .by_id_in(TEST_COLLECTION_NAME)
-  .obj()
-  .one("test-1")
-  .await?;
-
+cache.shutdown().await?;
 ```
 
-Full examples available [here](examples/caching_memory_collections.rs)
+For a persistent cache, use `FirestoreCache::persistent(&db)` and give it a directory with
+`.data_dir("/var/cache/my-app")`, which keeps the cache database and the listener resume tokens
+together.
+
+Listener target IDs are assigned automatically starting at 1000. If your application runs its own
+listeners, move the cache's range with `.listener_target_base(...)` or pin individual collections
+with `.collection_with(name, |c| c.listener_target(...))`.
+
+Because `load` and `shutdown` take `&self`, a built cache can be shared directly as
+`Arc<FirestoreMemoryCache>` in your application state. `FirestoreMemoryCache` and
+`FirestorePersistentCache` are aliases that save you from spelling out the generic parameters.
+
+### Choosing a cache mode
+
+- `db.read_through_cache(&cache)` serves what it can from the cache and goes to Firestore for the
+  rest. This is the mode to reach for by default.
+- `db.read_cached_only(&cache)` never contacts Firestore. Reads by ID return `None` on a miss, and
+  requests the cache cannot answer completely return an error.
+
+Which operations use the cache:
+
+| Operation | Cached |
+|---|---|
+| Read by ID, batch read by IDs | yes, for any cached collection |
+| Listing all documents in a collection | only for **preloaded** collections |
+| Querying a collection (filtering, ordering, cursors) | only for **preloaded** collections, and only for supported queries |
+| Paged listing, queries with metadata, aggregations, transactions, writes | never |
+
+### Load modes, and why listings need preloading
+
+- `PreloadNone` (`.collection(name)`): don't preload anything, just fill the cache while working;
+- `PreloadAllDocs` (`.collection_with(name, |c| c.preload_all())`): preload all documents in the
+  collection;
+- `PreloadAllIfEmpty` (`.collection_with(name, |c| c.preload_all_if_empty())`): preload all
+  documents only if the cache is empty. This is useful for the persistent cache; for the memory
+  cache it is the same as `PreloadAllDocs`, since an in-memory cache always starts empty.
+
+`.preloaded_collection(name)` picks the appropriate preloading mode for the backend.
+
+A lazily filled collection holds only the documents that happened to be read through it.
+Answering a `list` or `query` from it would return a subset that looks like a complete answer, so
+the library refuses to do so: `read_through_cache` quietly falls back to Firestore, and
+`read_cached_only` returns an error naming the collection. If partial results are genuinely
+acceptable, opt in with
+`.incomplete_collection_policy(FirestoreCacheIncompleteCollectionPolicy::PartialResults)`.
+
+### How the cache is updated
+
+- When you read a document by ID through the cache and it is not there, it is fetched from
+  Firestore and cached;
+- The Firestore listener updates the cache when a document changes, whether the change came from
+  your application or from elsewhere;
+- Preloading at startup.
+
+Cached results are eventually consistent: they reflect the last state the listener delivered. A
+write may take a moment to show up, and a stalled or reset listener can leave the cache stale
+without saying so. Do not cache data that must be read at strong consistency.
+
+Full examples are available [here](examples/caching_memory_collections.rs)
 and [here](examples/caching_persistent_collections.rs).
 
 ## TLS related features
 Cargo provides support for different TLS features for dependencies:
 - `tls-roots`: default feature to support native TLS roots
 - `tls-webpki-roots`: feature to switch to webpki crate roots
+
+## Testing your own code
+
+The Fluent API is built on `FirestoreDb` directly, so there is no built-in way to substitute a
+fake database into `db.fluent()`. There are two approaches that work well.
+
+### Abstract at your own boundary
+
+Define a trait for what your code needs and implement it over a type holding a `FirestoreDb`.
+Your business logic then depends on your trait, and tests provide their own implementation. This
+keeps Firestore concerns in one place and needs nothing special from this library:
+
+```rust
+#[async_trait::async_trait]
+trait UserRepository {
+    async fn find_user(&self, id: &str) -> Result<Option<User>, MyError>;
+}
+
+struct FirestoreUserRepository {
+    db: FirestoreDb,
+}
+
+#[async_trait::async_trait]
+impl UserRepository for FirestoreUserRepository {
+    async fn find_user(&self, id: &str) -> Result<Option<User>, MyError> {
+        Ok(self.db
+            .fluent()
+            .select()
+            .by_id_in("users")
+            .obj()
+            .one(id)
+            .await?)
+    }
+}
+
+// In tests, implement `UserRepository` with an in-memory HashMap.
+```
+
+### Run against the Firestore emulator
+
+For tests that should exercise real query, listener and transaction behaviour, point the library
+at the [Firestore emulator](https://firebase.google.com/docs/emulator-suite):
+
+```bash
+export FIRESTORE_EMULATOR_HOST="localhost:8080"
+```
+
+No credentials are needed in that mode. This is how the caching and transaction behaviour of this
+library itself is verified, and it catches things a hand-written fake cannot.
+
+> **Changed in 0.52**: the low level `*Support` traits are no longer public, so code written to be
+> generic over them no longer compiles. Note that they could never be used with the Fluent API
+> from outside the crate anyway, since the builders' constructors are crate private. See the
+> [migration guide](MIGRATION.md).
 
 ## How this library is tested
 

@@ -8,7 +8,7 @@
 //!
 //! The main entry point is [`FirestoreQueryFilterBuilder`], which is typically
 //! accessed within a closure passed to the `.filter()` method of a query builder
-//! (e.g., [`FirestoreSelectDocBuilder::filter()`](crate::FirestoreSelectDocBuilder::filter)).
+//! (e.g., [`FirestoreSelectDocBuilder::filter()`](crate::select_builder::FirestoreSelectDocBuilder::filter)).
 
 use crate::{
     FirestoreQueryFilter, FirestoreQueryFilterCompare, FirestoreQueryFilterComposite,
@@ -232,7 +232,7 @@ impl FirestoreQueryFilterFieldExpr {
     }
 
     /// Creates an "in" filter (e.g., `field IN [value1, value2, ...]`).
-    /// The provided `value` should be a [`FirestoreValue::ArrayValue`].
+    /// The provided `value` should be an array [`FirestoreValue`].
     #[inline]
     pub fn is_in<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
@@ -244,7 +244,7 @@ impl FirestoreQueryFilterFieldExpr {
     }
 
     /// Creates a "not in" filter (e.g., `field NOT IN [value1, value2, ...]`).
-    /// The provided `value` should be a [`FirestoreValue::ArrayValue`].
+    /// The provided `value` should be an array [`FirestoreValue`].
     #[inline]
     pub fn is_not_in<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where
@@ -269,7 +269,7 @@ impl FirestoreQueryFilterFieldExpr {
 
     /// Creates an "array-contains-any" filter (e.g., `field array-contains-any [value1, value2, ...]`).
     /// Checks if an array field contains any of the values in the provided array.
-    /// The provided `value` should be a [`FirestoreValue::ArrayValue`].
+    /// The provided `value` should be an array [`FirestoreValue`].
     #[inline]
     pub fn array_contains_any<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where

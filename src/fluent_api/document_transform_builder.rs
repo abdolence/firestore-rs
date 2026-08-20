@@ -10,7 +10,7 @@
 //! - Adding or removing elements from an array field.
 //!
 //! The main entry point is [`FirestoreTransformBuilder`], which is typically
-//! accessed via a method on an update builder (e.g., [`FirestoreUpdateSetBuilder::transforms()`](crate::FirestoreUpdateSetBuilder::transforms)).
+//! accessed via a method on an update builder (e.g., [`FirestoreUpdateSetBuilder::transforms()`](crate::update_builder::FirestoreUpdateObjExecuteBuilder::transforms)).
 
 use crate::{
     FirestoreFieldTransform, FirestoreFieldTransformType, FirestoreTransformServerValue,

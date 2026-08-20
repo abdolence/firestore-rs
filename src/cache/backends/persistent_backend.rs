@@ -13,12 +13,68 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::*;
 
+/// A disk-backed cache, storing documents as protobuf in a
+/// [redb](https://github.com/cberner/redb) database with one table per collection.
+///
+/// Because the cache survives restarts, a collection configured with
+/// [`PreloadAllIfEmpty`](crate::FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty) is only
+/// downloaded once and then kept current by the listener.
+///
+/// Create one through the builder rather than directly:
+///
+/// ```rust,no_run
+/// # use firestore::*;
+/// # async fn example(db: &FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// let cache = FirestoreCache::persistent(db)
+///     .data_dir("/var/cache/my-app")
+///     .preloaded_collection("countries")
+///     .build()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct FirestorePersistentCacheBackend {
     pub config: FirestoreCacheConfiguration,
     redb: Database,
 }
 
+/// Tuning options for [`FirestorePersistentCacheBackend`].
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct FirestorePersistentCacheOptions {
+    /// Where to store the database file.
+    ///
+    /// When `None`, a file inside the system temporary directory is used, which is **not
+    /// durable** - see [`FirestorePersistentCacheBackend::new`].
+    pub data_file_path: Option<PathBuf>,
+}
+
+impl FirestorePersistentCacheOptions {
+    /// Creates options using the default temporary-directory location.
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            data_file_path: None,
+        }
+    }
+
+    /// Stores the database at the given file path.
+    #[inline]
+    pub fn with_data_file_path(self, data_file_path: PathBuf) -> Self {
+        Self {
+            data_file_path: Some(data_file_path),
+        }
+    }
+}
+
 impl FirestorePersistentCacheBackend {
+    /// Creates a backend storing its database in the system temporary directory.
+    ///
+    /// **The temporary directory is not durable.** Operating systems remove its contents, so a
+    /// cache stored there can vanish between runs, defeating the point of a persistent cache.
+    /// For anything beyond experimentation give it an explicit location with
+    /// [`with_options`](Self::with_options), or use the builder's
+    /// [`data_dir`](crate::FirestoreCacheBuilder::data_dir), which also keeps the listener resume
+    /// tokens alongside the data.
     pub fn new(config: FirestoreCacheConfiguration) -> FirestoreResult<Self> {
         let temp_dir = std::env::temp_dir();
         let firestore_cache_dir = temp_dir.join("firestore_cache");
@@ -39,6 +95,7 @@ impl FirestorePersistentCacheBackend {
         Self::with_options(config, db_dir.join("redb"))
     }
 
+    /// Creates a backend storing its database at the given file path.
     pub fn with_options(
         config: FirestoreCacheConfiguration,
         data_file_path: PathBuf,
@@ -314,16 +371,22 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             }
             FirestoreListenEvent::DocumentDelete(doc_deleted) => {
                 let (collection_path, document_id) = split_document_path(&doc_deleted.document);
-                let write_txn = self.redb.begin_write()?;
-                let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-                let mut table = write_txn.open_table(td)?;
 
-                trace!(
-                    deleted_doc = ?doc_deleted.document.as_str(),
-                    "Removing document from cache due to listener event.",
-                );
+                if self.config.collections.contains_key(collection_path) {
+                    trace!(
+                        deleted_doc = ?doc_deleted.document.as_str(),
+                        "Removing document from cache due to listener event.",
+                    );
 
-                table.remove(document_id)?;
+                    let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+
+                    let write_txn = self.redb.begin_write()?;
+                    {
+                        let mut table = write_txn.open_table(td)?;
+                        table.remove(document_id)?;
+                    }
+                    write_txn.commit()?;
+                }
                 Ok(())
             }
             _ => Ok(()),
@@ -359,7 +422,7 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         collection_path: &str,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if self.config.collections.contains_key(collection_path) {
+        if self.config.is_collection_listable(collection_path) {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
             let read_tx = self.redb.begin_read()?;
@@ -388,7 +451,7 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if self.config.collections.contains_key(collection_path) {
+        if self.config.is_collection_listable(collection_path) {
             // For now only basic/simple query all supported
             let simple_query_engine = FirestoreCacheQueryEngine::new(query);
             if simple_query_engine.params_supported() {

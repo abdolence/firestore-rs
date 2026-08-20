@@ -58,53 +58,6 @@ pub struct FirestoreListCollectionIdsResult {
 }
 
 #[async_trait]
-pub trait FirestoreListingSupport {
-    async fn list_doc(
-        &self,
-        params: FirestoreListDocParams,
-    ) -> FirestoreResult<FirestoreListDocResult>;
-
-    async fn stream_list_doc<'b>(
-        &self,
-        params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<'b, Document>>;
-
-    async fn stream_list_doc_with_errors<'b>(
-        &self,
-        params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>>;
-
-    async fn stream_list_obj<'b, T>(
-        &self,
-        params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<'b, T>>
-    where
-        for<'de> T: Deserialize<'de> + 'b;
-
-    async fn stream_list_obj_with_errors<'b, T>(
-        &self,
-        params: FirestoreListDocParams,
-    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
-    where
-        for<'de> T: Deserialize<'de> + 'b;
-
-    async fn list_collection_ids(
-        &self,
-        params: FirestoreListCollectionIdsParams,
-    ) -> FirestoreResult<FirestoreListCollectionIdsResult>;
-
-    async fn stream_list_collection_ids_with_errors(
-        &self,
-        params: FirestoreListCollectionIdsParams,
-    ) -> FirestoreResult<BoxStream<FirestoreResult<String>>>;
-
-    async fn stream_list_collection_ids(
-        &self,
-        params: FirestoreListCollectionIdsParams,
-    ) -> FirestoreResult<BoxStream<String>>;
-}
-
-#[async_trait]
 impl FirestoreListingSupport for FirestoreDb {
     async fn list_doc(
         &self,
@@ -544,7 +497,19 @@ impl FirestoreDb {
         }
             .boxed()
     }
+}
 
+/// Returns `true` when a listing request can be served from a cache.
+///
+/// The cached listing path returns every document of a collection, unordered and unprojected, so
+/// it can only answer requests that do not ask for ordering, a field projection or a page.
+#[cfg(feature = "caching")]
+#[inline]
+fn list_params_supported(params: &FirestoreListDocParams) -> bool {
+    params.order_by.is_none() && params.return_only_fields.is_none() && params.page_token.is_none()
+}
+
+impl FirestoreDb {
     #[cfg(feature = "caching")]
     #[inline]
     pub async fn list_docs_from_cache<'b>(
@@ -552,7 +517,8 @@ impl FirestoreDb {
         params: &FirestoreListDocParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) =
+        if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache)
+        | FirestoreDbSessionCacheMode::ReadThroughCache(ref cache) =
             self.session_params.cache_mode
         {
             let span = span!(
@@ -575,7 +541,14 @@ impl FirestoreDb {
                 )
             };
 
-            let cached_result = cache.list_all_docs(&collection_path).await?;
+            // The cached listing path ignores ordering, field projection and paging, so it must
+            // not be used when any of them is requested - it would silently return data that does
+            // not match what was asked for.
+            let cached_result = if list_params_supported(params) {
+                cache.list_all_docs(&collection_path).await?
+            } else {
+                FirestoreCachedValue::SkipCache
+            };
 
             let end_query_utc: FirestoreInstant = FirestoreInstant::now();
             let query_duration = end_query_utc.duration_since(begin_query_utc);
@@ -600,15 +573,23 @@ impl FirestoreDb {
                         self.session_params.cache_mode,
                         FirestoreDbSessionCacheMode::ReadCachedOnly(_)
                     ) {
+                        let reason = if list_params_supported(params) {
+                            "the collection is not configured to be preloaded, so the cache only \
+                             holds an arbitrary subset of it"
+                        } else {
+                            "the request uses ordering, field projection or paging, which the \
+                             cached listing path does not support"
+                        };
                         span.in_scope(|| {
                             debug!(
                                 collection_id = params.collection_id,
-                                "Cache doesn't have suitable documents for specified collection, but cache mode is ReadCachedOnly so returning empty stream.",
+                                "Cache cannot serve this listing completely and cache mode is ReadCachedOnly, so returning an error.",
                             );
                         });
-                        Ok(FirestoreCachedValue::UseCached(Box::pin(
-                            futures::stream::empty(),
-                        )))
+                        Err(crate::cache_incomplete_collection_error(
+                            &params.collection_id,
+                            reason,
+                        ))
                     } else {
                         span.in_scope(|| {
                             debug!(
