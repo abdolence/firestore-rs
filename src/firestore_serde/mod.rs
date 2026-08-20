@@ -27,7 +27,7 @@ mod deserializer;
 mod serializer;
 
 /// Provides `#[serde(with = "...")]` serializers and deserializers for Firestore Timestamps
-/// (converting between [`FirestoreDateTime`](crate::FirestoreDateTime) and `google::protobuf::Timestamp`).
+/// (converting between [`FirestoreInstant`](crate::FirestoreInstant) and `google::protobuf::Timestamp`).
 mod timestamp_serializers;
 pub use timestamp_serializers::*;
 

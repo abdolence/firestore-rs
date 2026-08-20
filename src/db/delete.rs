@@ -1,5 +1,5 @@
 use crate::db::safe_document_path;
-use crate::FirestoreDateTime;
+use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
@@ -73,9 +73,9 @@ impl FirestoreDeleteSupport for FirestoreDb {
             request_options: self.resolve_request_options(None),
         });
 
-        let begin_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+        let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
         self.client().get().delete_document(request).await?;
-        let end_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+        let end_query_utc: FirestoreInstant = FirestoreInstant::now();
         let query_duration = end_query_utc.duration_since(begin_query_utc);
 
         span.record("/firestore/response_time", query_duration.as_millis());

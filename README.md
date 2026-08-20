@@ -23,7 +23,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 - Implements own Serde serializer to Firestore protobuf values;
 - Support for multiple database IDs
 - Supports for extended datatypes:
-    - Firestore timestamp with `#[serde(with)]` and a specialized structure (based on [jiff](https://github.com/BurntSushi/jiff), re-exported as `FirestoreDateTime`)
+    - Firestore timestamp with `#[serde(with)]` and a specialized structure (based on [jiff](https://github.com/BurntSushi/jiff), re-exported as `FirestoreInstant`)
     - Lat/Lng
     - References
 - Caching support for collections and documents:
@@ -248,7 +248,7 @@ let object_stream: BoxStream<(String, Option<MyTestStructure>) > = db.fluent()
 
 ## Timestamps support
 
-By default, the types such as `FirestoreDateTime` (an alias for `jiff::Timestamp`) serializes as a string
+By default, the types such as `FirestoreInstant` (an alias for `jiff::Timestamp`) serializes as a string
 to Firestore (while deserialization works from Timestamps and Strings).
 
 To change this behaviour and support Firestore timestamps on database level there are two options:
@@ -259,11 +259,11 @@ To change this behaviour and support Firestore timestamps on database level ther
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
     #[serde(with = "firestore::serialize_as_timestamp")]
-    created_at: FirestoreDateTime,
+    created_at: FirestoreInstant,
 
     #[serde(default)]
     #[serde(with = "firestore::serialize_as_optional_timestamp")]
-    updated_at: Option<FirestoreDateTime>,
+    updated_at: Option<FirestoreInstant>,
 }
 ```
 
@@ -283,7 +283,7 @@ to JSON (so you can reuse the same model for JSON and Firestore).
 In your queries you need to use the wrapping class `firestore::FirestoreTimestamp`, for example:
 
 ```rust
-   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(firestore::FirestoreTimestamp(FirestoreDateTime::now()))
+   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(firestore::FirestoreTimestamp(FirestoreInstant::now()))
 ```
 
 ## Nested collections
@@ -424,9 +424,9 @@ struct MyTestStructure {
     #[serde(alias = "_firestore_id")]
     id: Option<String>,
     #[serde(alias = "_firestore_created")]
-    created_at: Option<FirestoreDateTime>,
+    created_at: Option<FirestoreInstant>,
     #[serde(alias = "_firestore_updated")]
-    updated_at: Option<FirestoreDateTime>,
+    updated_at: Option<FirestoreInstant>,
     some_string: String,
     one_more_string: String,
     some_num: u64,
@@ -458,7 +458,7 @@ let object_returned = db
           ("inner_some_string", "inner-some-value".into()),
         ]),
       ),
-      ("created_at", FirestoreTimestamp(FirestoreDateTime::now()).into()),
+      ("created_at", FirestoreTimestamp(FirestoreInstant::now()).into()),
     ])?
 )
 .execute()
@@ -590,7 +590,7 @@ test_null: Option<String>,
 ```rust
 #[serde(default)]
 #[serde(with = "firestore::serialize_as_null_timestamp")]
-test_null: Option<FirestoreDateTime>,
+test_null: Option<FirestoreInstant>,
 ```
 
 ## Select aggregate functions

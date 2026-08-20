@@ -1,6 +1,6 @@
 use crate::db::safe_document_path;
 use crate::errors::*;
-use crate::FirestoreDateTime;
+use crate::FirestoreInstant;
 use crate::*;
 use async_trait::async_trait;
 use futures::future::{BoxFuture, FutureExt};
@@ -578,7 +578,7 @@ impl FirestoreDb {
                 "/firestore/response_time" = field::Empty,
                 "/firestore/document_name" = document_path.as_str()
             );
-            let begin_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
             let request = gcloud_sdk::tonic::Request::new(GetDocumentRequest {
                 name: document_path.clone(),
@@ -603,7 +603,7 @@ impl FirestoreDb {
                 .map_err(|e| e.into())
                 .await;
 
-            let end_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+            let end_query_utc: FirestoreInstant = FirestoreInstant::now();
             let query_duration = end_query_utc.duration_since(begin_query_utc);
 
             span.record(
@@ -759,11 +759,11 @@ impl FirestoreDb {
         if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache)
         | FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) = self.session_params.cache_mode
         {
-            let begin_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
             let cache_response = cache.get_doc_by_path(document_path).await?;
 
-            let end_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+            let end_query_utc: FirestoreInstant = FirestoreInstant::now();
             let query_duration = end_query_utc.duration_since(begin_query_utc);
 
             let span = span!(
@@ -828,7 +828,7 @@ impl FirestoreDb {
                 "/firestore/response_time" = field::Empty
             );
 
-            let begin_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
             let cached_stream: BoxStream<FirestoreResult<(String, Option<FirestoreDocument>)>> =
                 cache.get_docs_by_paths(full_doc_ids).await?;
@@ -836,7 +836,7 @@ impl FirestoreDb {
             let cached_vec: Vec<(String, Option<FirestoreDocument>)> =
                 cached_stream.try_collect::<Vec<_>>().await?;
 
-            let end_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+            let end_query_utc: FirestoreInstant = FirestoreInstant::now();
             let query_duration = end_query_utc.duration_since(begin_query_utc);
 
             span.record("/firestore/response_time", query_duration.as_millis());

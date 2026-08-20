@@ -1,7 +1,7 @@
 use crate::db::safe_document_path;
 use crate::errors::*;
 use crate::timestamp_utils::to_timestamp;
-use crate::FirestoreDateTime;
+use crate::FirestoreInstant;
 use crate::{
     FirestoreDb, FirestoreQueryParams, FirestoreRequestOptions, FirestoreResult,
     FirestoreResumeStateStorage,
@@ -58,7 +58,7 @@ pub enum FirestoreTargetType {
 #[derive(Debug, Clone)]
 pub enum FirestoreListenerTargetResumeType {
     Token(FirestoreListenerToken),
-    ReadTime(FirestoreDateTime),
+    ReadTime(FirestoreInstant),
 }
 
 #[async_trait]

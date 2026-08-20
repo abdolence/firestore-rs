@@ -12,7 +12,7 @@ struct MyTestStructure {
     some_string: String,
     one_more_string: String,
     some_num: u64,
-    created_at: FirestoreDateTime,
+    created_at: FirestoreInstant,
 }
 
 #[tokio::main]
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         some_string: "Test".to_string(),
         one_more_string: "Test2".to_string(),
         some_num: 41,
-        created_at: FirestoreDateTime::now(),
+        created_at: FirestoreInstant::now(),
     };
 
     let object_updated: MyTestStructure = db

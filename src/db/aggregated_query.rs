@@ -1,6 +1,6 @@
 #![allow(clippy::derive_partial_eq_without_eq)] // Since we may not be able to implement Eq for the changes coming from Firestore protos
 
-use crate::FirestoreDateTime;
+use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreError, FirestoreQueryParams, FirestoreResult};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
@@ -307,7 +307,7 @@ impl FirestoreDb {
     ) -> BoxFuture<'a, FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
         async move {
             let query_request = self.create_aggregated_query_request(params.clone())?;
-            let begin_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
             match self
                 .client()
@@ -323,7 +323,7 @@ impl FirestoreDb {
                         .map_err(|e| e.into())
                         .boxed();
 
-                    let end_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
                     let query_duration = end_query_utc.duration_since(begin_query_utc);
 
                     span.record(
@@ -375,7 +375,7 @@ impl FirestoreDb {
     ) -> BoxFuture<'a, FirestoreResult<Vec<Document>>> {
         async move {
             let query_request = self.create_aggregated_query_request(params.clone())?;
-            let begin_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
             match self
                 .client()
@@ -393,7 +393,7 @@ impl FirestoreDb {
                         .into_iter()
                         .flatten()
                         .collect();
-                    let end_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
                     let query_duration = end_query_utc.duration_since(begin_query_utc);
 
                     span.record(

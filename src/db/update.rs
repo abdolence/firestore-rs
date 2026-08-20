@@ -1,5 +1,5 @@
 use crate::db::safe_document_path;
-use crate::FirestoreDateTime;
+use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
@@ -140,13 +140,13 @@ impl FirestoreUpdateSupport for FirestoreDb {
             request_options: self.resolve_request_options(None),
         });
 
-        let begin_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+        let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
         let update_response = self
             .client()
             .get()
             .update_document(update_document_request)
             .await?;
-        let end_query_utc: FirestoreDateTime = FirestoreDateTime::now();
+        let end_query_utc: FirestoreInstant = FirestoreInstant::now();
         let query_duration = end_query_utc.duration_since(begin_query_utc);
 
         span.record("/firestore/response_time", query_duration.as_millis());

@@ -1,11 +1,11 @@
 use crate::errors::*;
 use crate::FirestoreResult;
-use crate::{FirestoreDateTime, FirestoreDuration};
+use crate::{FirestoreDuration, FirestoreInstant};
 
-/// Converts a Google `prost_types::Timestamp` to a [`FirestoreDateTime`].
+/// Converts a Google `prost_types::Timestamp` to a [`FirestoreInstant`].
 ///
 /// Firestore uses Google's `Timestamp` protobuf message to represent timestamps.
-/// This function facilitates conversion to [`FirestoreDateTime`], the date/time type
+/// This function facilitates conversion to [`FirestoreInstant`], the date/time type
 /// used throughout this library.
 ///
 /// # Arguments
@@ -15,7 +15,7 @@ use crate::{FirestoreDateTime, FirestoreDuration};
 /// A `FirestoreResult` containing the `Timestamp` on success, or a
 /// `FirestoreError::DeserializeError` if the timestamp is invalid or out of range.
 ///
-/// Note that [`FirestoreDateTime`] covers the whole Firestore timestamp range except
+/// Note that [`FirestoreInstant`] covers the whole Firestore timestamp range except
 /// for the last two days of the year 9999, which lie beyond
 /// [`jiff::Timestamp::MAX`]. Such values are reported as an error rather than
 /// being silently truncated.
@@ -29,23 +29,21 @@ use crate::{FirestoreDateTime, FirestoreDuration};
 ///
 /// assert_eq!(timestamp.to_string(), "2022-12-02T16:53:20Z");
 /// ```
-pub fn from_timestamp(
-    ts: gcloud_sdk::prost_types::Timestamp,
-) -> FirestoreResult<FirestoreDateTime> {
-    FirestoreDateTime::new(ts.seconds, ts.nanos).map_err(|err| {
+pub fn from_timestamp(ts: gcloud_sdk::prost_types::Timestamp) -> FirestoreResult<FirestoreInstant> {
+    FirestoreInstant::new(ts.seconds, ts.nanos).map_err(|err| {
         FirestoreError::DeserializeError(FirestoreSerializationError::from_message(format!(
             "Invalid or out-of-range datetime: {ts:?}. {err}"
         )))
     })
 }
 
-/// Converts a [`FirestoreDateTime`] to a Google `prost_types::Timestamp`.
+/// Converts a [`FirestoreInstant`] to a Google `prost_types::Timestamp`.
 ///
 /// This is the reverse of [`from_timestamp`], used when sending timestamp data
 /// to Firestore.
 ///
 /// # Arguments
-/// * `ts`: The [`FirestoreDateTime`] to convert.
+/// * `ts`: The [`FirestoreInstant`] to convert.
 ///
 /// # Returns
 /// The corresponding Google `Timestamp`.
@@ -53,15 +51,15 @@ pub fn from_timestamp(
 /// # Examples
 /// ```rust
 /// use firestore::timestamp_utils::to_timestamp;
-/// use firestore::FirestoreDateTime;
+/// use firestore::FirestoreInstant;
 ///
-/// let timestamp: FirestoreDateTime = "2022-12-02T16:53:20Z".parse().unwrap();
+/// let timestamp: FirestoreInstant = "2022-12-02T16:53:20Z".parse().unwrap();
 /// let prost_timestamp = to_timestamp(timestamp);
 ///
 /// assert_eq!(prost_timestamp.seconds, 1670000000);
 /// assert_eq!(prost_timestamp.nanos, 0);
 /// ```
-pub fn to_timestamp(ts: FirestoreDateTime) -> gcloud_sdk::prost_types::Timestamp {
+pub fn to_timestamp(ts: FirestoreInstant) -> gcloud_sdk::prost_types::Timestamp {
     let seconds = ts.as_second();
     let nanos = ts.subsec_nanosecond();
 
@@ -111,15 +109,15 @@ mod tests {
     fn test_parses_legacy_offset_formats() {
         // Data written by earlier versions used chrono's to_rfc3339(), which emits
         // a numeric +00:00 offset rather than Z.
-        let with_offset: FirestoreDateTime = "2022-12-02T16:53:20+00:00".parse().unwrap();
-        let with_zulu: FirestoreDateTime = "2022-12-02T16:53:20Z".parse().unwrap();
+        let with_offset: FirestoreInstant = "2022-12-02T16:53:20+00:00".parse().unwrap();
+        let with_zulu: FirestoreInstant = "2022-12-02T16:53:20Z".parse().unwrap();
         assert_eq!(with_offset, with_zulu);
 
-        let fractional: FirestoreDateTime = "2022-12-02T16:53:20.123456789+00:00".parse().unwrap();
+        let fractional: FirestoreInstant = "2022-12-02T16:53:20.123456789+00:00".parse().unwrap();
         assert_eq!(fractional.subsec_nanosecond(), 123_456_789);
 
         // Non-UTC offsets must normalise to the same instant
-        let shifted: FirestoreDateTime = "2022-12-02T17:53:20+01:00".parse().unwrap();
+        let shifted: FirestoreInstant = "2022-12-02T17:53:20+01:00".parse().unwrap();
         assert_eq!(shifted, with_zulu);
     }
 
@@ -148,7 +146,7 @@ mod tests {
             nanos: 0,
         };
         let latest_supported = gcloud_sdk::prost_types::Timestamp {
-            seconds: FirestoreDateTime::MAX.as_second(),
+            seconds: FirestoreInstant::MAX.as_second(),
             nanos: 0,
         };
         let out_of_range = gcloud_sdk::prost_types::Timestamp {

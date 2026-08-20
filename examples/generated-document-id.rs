@@ -11,9 +11,9 @@ struct MyTestStructure {
     #[serde(alias = "_firestore_id")]
     id: Option<String>,
     #[serde(alias = "_firestore_created")]
-    created_at: Option<FirestoreDateTime>,
+    created_at: Option<FirestoreInstant>,
     #[serde(alias = "_firestore_updated")]
-    updated_at: Option<FirestoreDateTime>,
+    updated_at: Option<FirestoreInstant>,
     test: Option<String>,
     some_string: String,
     one_more_string: String,

@@ -15,7 +15,7 @@ struct MyTestStructure {
     some_string: String,
     one_more_string: String,
     some_num: u64,
-    created_at: FirestoreDateTime,
+    created_at: FirestoreInstant,
 }
 
 async fn my_token() -> gcloud_sdk::error::Result<gcloud_sdk::Token> {
@@ -24,7 +24,7 @@ async fn my_token() -> gcloud_sdk::error::Result<gcloud_sdk::Token> {
         config_env_var("TOKEN_VALUE")
             .expect("TOKEN_VALUE must be specified")
             .into(),
-        FirestoreDateTime::now().add(std::time::Duration::from_secs(3600)),
+        FirestoreInstant::now().add(std::time::Duration::from_secs(3600)),
     ))
 }
 

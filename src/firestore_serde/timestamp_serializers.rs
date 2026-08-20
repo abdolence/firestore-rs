@@ -1,4 +1,4 @@
-use crate::FirestoreDateTime;
+use crate::FirestoreInstant;
 use gcloud_sdk::google::firestore::v1::value;
 use serde::{Deserialize, Serialize, Serializer};
 
@@ -7,16 +7,18 @@ use crate::{
     FirestoreValue,
 };
 
-/// A wrapper around [`FirestoreDateTime`] that is always serialized as a
+/// A wrapper around [`FirestoreInstant`] that is always serialized as a
 /// Firestore timestamp value, without needing a `#[serde(with)]` attribute.
 ///
-/// It still serializes as a string to JSON, so the same model can be reused for
-/// both JSON and Firestore.
+/// Use [`FirestoreInstant`] directly when you prefer the attributes, and this
+/// wrapper when you would rather carry the behaviour in the type. It still
+/// serializes as a string to JSON, so the same model can be reused for both
+/// JSON and Firestore.
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, PartialOrd, Default)]
-pub struct FirestoreTimestamp(pub FirestoreDateTime);
+pub struct FirestoreTimestamp(pub FirestoreInstant);
 
-impl From<FirestoreDateTime> for FirestoreTimestamp {
-    fn from(ts: FirestoreDateTime) -> Self {
+impl From<FirestoreInstant> for FirestoreTimestamp {
+    fn from(ts: FirestoreInstant) -> Self {
         FirestoreTimestamp(ts)
     }
 }
@@ -26,29 +28,29 @@ pub(crate) const FIRESTORE_TS_TYPE_TAG_TYPE: &str = "FirestoreTimestamp";
 pub(crate) const FIRESTORE_TS_NULL_TYPE_TAG_TYPE: &str = "FirestoreTimestampAsNull";
 
 pub mod serialize_as_timestamp {
-    use crate::FirestoreDateTime;
+    use crate::FirestoreInstant;
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S>(ts: &FirestoreDateTime, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(ts: &FirestoreInstant, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         serializer.serialize_newtype_struct(crate::firestore_serde::FIRESTORE_TS_TYPE_TAG_TYPE, &ts)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<FirestoreDateTime, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<FirestoreInstant, D::Error>
     where
         D: Deserializer<'de>,
     {
-        FirestoreDateTime::deserialize(deserializer)
+        FirestoreInstant::deserialize(deserializer)
     }
 }
 
 pub mod serialize_as_optional_timestamp {
-    use crate::FirestoreDateTime;
+    use crate::FirestoreInstant;
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S>(ts: &Option<FirestoreDateTime>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(ts: &Option<FirestoreInstant>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -59,19 +61,19 @@ pub mod serialize_as_optional_timestamp {
         }
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<FirestoreDateTime>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<FirestoreInstant>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Option::<FirestoreDateTime>::deserialize(deserializer)
+        Option::<FirestoreInstant>::deserialize(deserializer)
     }
 }
 
 pub mod serialize_as_null_timestamp {
-    use crate::FirestoreDateTime;
+    use crate::FirestoreInstant;
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S>(ts: &Option<FirestoreDateTime>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(ts: &Option<FirestoreInstant>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -79,11 +81,11 @@ pub mod serialize_as_null_timestamp {
             .serialize_newtype_struct(crate::firestore_serde::FIRESTORE_TS_NULL_TYPE_TAG_TYPE, ts)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<FirestoreDateTime>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<FirestoreInstant>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        Option::<FirestoreDateTime>::deserialize(deserializer)
+        Option::<FirestoreInstant>::deserialize(deserializer)
     }
 }
 
@@ -203,7 +205,7 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
         }
 
         fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-            let ts = v.parse::<FirestoreDateTime>()?;
+            let ts = v.parse::<FirestoreInstant>()?;
             Ok(FirestoreValue::from(
                 gcloud_sdk::google::firestore::v1::Value {
                     value_type: Some(value::ValueType::TimestampValue(to_timestamp(ts))),
@@ -361,25 +363,25 @@ pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
 #[cfg(test)]
 mod tests {
     use crate::{
-        firestore_document_from_serializable, firestore_document_to_serializable,
-        FirestoreDateTime, FirestoreTimestamp,
+        firestore_document_from_serializable, firestore_document_to_serializable, FirestoreInstant,
+        FirestoreTimestamp,
     };
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     struct TestStructure {
         #[serde(with = "crate::serialize_as_timestamp")]
-        created_at: FirestoreDateTime,
+        created_at: FirestoreInstant,
         #[serde(default)]
         #[serde(with = "crate::serialize_as_optional_timestamp")]
-        updated_at: Option<FirestoreDateTime>,
+        updated_at: Option<FirestoreInstant>,
         wrapped_at: FirestoreTimestamp,
     }
 
     #[test]
     fn test_timestamp_serde_roundtrip() {
-        let created_at: FirestoreDateTime = "2022-12-02T16:53:20.123456789Z".parse().unwrap();
-        let wrapped_at: FirestoreDateTime = "2018-01-01T00:00:00Z".parse().unwrap();
+        let created_at: FirestoreInstant = "2022-12-02T16:53:20.123456789Z".parse().unwrap();
+        let wrapped_at: FirestoreInstant = "2018-01-01T00:00:00Z".parse().unwrap();
 
         let test_structure = TestStructure {
             created_at,
@@ -406,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_optional_timestamp_none_roundtrip() {
-        let created_at: FirestoreDateTime = "2022-12-02T16:53:20Z".parse().unwrap();
+        let created_at: FirestoreInstant = "2022-12-02T16:53:20Z".parse().unwrap();
 
         let test_structure = TestStructure {
             created_at,

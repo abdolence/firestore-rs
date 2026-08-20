@@ -1,7 +1,7 @@
 use crate::db::transaction_ops::{TransformObjectOperation, UpdateObjectOperation};
 use crate::db::DeleteOperation;
 use crate::errors::FirestoreError;
-use crate::FirestoreDateTime;
+use crate::FirestoreInstant;
 use crate::{
     FirestoreDb, FirestoreFieldTransform, FirestoreResult, FirestoreWritePrecondition,
     FirestoreWriteResult,
@@ -24,7 +24,7 @@ pub struct FirestoreBatchWriteResponse {
     pub position: u64,
     pub write_results: Vec<FirestoreWriteResult>,
     pub statuses: Vec<Status>,
-    pub commit_time: Option<FirestoreDateTime>,
+    pub commit_time: Option<FirestoreInstant>,
 }
 
 pub struct FirestoreBatch<'a, W>

@@ -1,6 +1,6 @@
 use crate::errors::FirestoreError;
-use crate::FirestoreDateTime;
 use crate::FirestoreDuration;
+use crate::FirestoreInstant;
 use crate::{FirestoreConsistencySelector, FirestoreRequestOptions, FirestoreWriteResult};
 use rsb_derive::Builder;
 
@@ -142,7 +142,7 @@ pub struct FirestoreTransactionResponse {
     pub write_results: Vec<FirestoreWriteResult>,
     /// The time at which the transaction was committed.
     /// This is `None` if the transaction was read-only or did not involve writes.
-    pub commit_time: Option<FirestoreDateTime>,
+    pub commit_time: Option<FirestoreInstant>,
 }
 
 #[cfg(test)]

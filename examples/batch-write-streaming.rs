@@ -10,7 +10,7 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
 struct MyTestStructure {
     some_id: String,
     some_string: String,
-    created_at: FirestoreDateTime,
+    created_at: FirestoreInstant,
 }
 
 #[tokio::main]
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let my_struct = MyTestStructure {
             some_id: format!("test-{idx}"),
             some_string: "Test".to_string(),
-            created_at: FirestoreDateTime::now(),
+            created_at: FirestoreInstant::now(),
         };
 
         db.fluent()

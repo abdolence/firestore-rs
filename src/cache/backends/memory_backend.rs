@@ -1,5 +1,5 @@
 use crate::errors::*;
-use crate::FirestoreDateTime;
+use crate::FirestoreInstant;
 use crate::*;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -143,7 +143,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        let read_from_time = FirestoreDateTime::now();
+        let read_from_time = FirestoreInstant::now();
 
         self.preload_collections(db).await?;
 

@@ -175,12 +175,17 @@ pub use struct_path_macro::*;
 /// library is available without depending on `jiff` explicitly.
 pub use jiff;
 
-/// The date/time type used by this library for Firestore timestamps.
+/// An exact instant in time, used by this library for Firestore timestamps.
 ///
-/// This is an alias for [`jiff::Timestamp`], an exact instant in time in UTC.
-/// Prefer this alias over naming `jiff::Timestamp` directly, so that your code
-/// does not need an explicit `jiff` dependency and stays insulated from changes
-/// of the underlying implementation.
+/// This is an alias for [`jiff::Timestamp`]. Prefer this alias over naming
+/// `jiff::Timestamp` directly, so that your code does not need an explicit
+/// `jiff` dependency and stays insulated from changes of the underlying
+/// implementation.
+///
+/// Use it for the fields of your structures. To have a field serialized as a
+/// Firestore timestamp, either annotate it with one of the
+/// [`serialize_as_timestamp`] attributes, or wrap it in
+/// [`FirestoreTimestamp`], which does the same without an attribute.
 ///
 /// # Examples
 ///
@@ -191,14 +196,14 @@ pub use jiff;
 /// #[derive(Debug, Clone, Deserialize, Serialize)]
 /// struct MyTestStructure {
 ///     #[serde(with = "firestore::serialize_as_timestamp")]
-///     created_at: FirestoreDateTime,
+///     created_at: FirestoreInstant,
 ///
 ///     #[serde(default)]
 ///     #[serde(with = "firestore::serialize_as_optional_timestamp")]
-///     updated_at: Option<FirestoreDateTime>,
+///     updated_at: Option<FirestoreInstant>,
 /// }
 /// ```
-pub type FirestoreDateTime = jiff::Timestamp;
+pub type FirestoreInstant = jiff::Timestamp;
 
 /// The duration type used by this library.
 ///
@@ -209,7 +214,7 @@ pub type FirestoreDuration = jiff::SignedDuration;
 
 /// Provides utility functions for working with Firestore timestamps.
 ///
-/// This module includes helpers for converting between [`FirestoreDateTime`]
+/// This module includes helpers for converting between [`FirestoreInstant`]
 /// and Google's `Timestamp` protobuf type, often used with `#[serde(with)]`
 /// attributes for automatic conversion.
 pub mod timestamp_utils;
