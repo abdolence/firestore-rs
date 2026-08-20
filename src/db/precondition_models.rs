@@ -8,7 +8,6 @@ use gcloud_sdk::google::firestore::v1::Precondition;
 /// Preconditions allow you to specify conditions that must be met for a write
 /// operation (create, update, delete) to succeed. If the precondition is not met,
 /// the operation will fail, typically with a `DataConflictError` or similar.
-/// ```
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum FirestoreWritePrecondition {
     /// The target document must exist (if `true`) or must not exist (if `false`).

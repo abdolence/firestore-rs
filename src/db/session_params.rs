@@ -11,7 +11,6 @@ use rsb_derive::*;
 /// These parameters can be applied to a `FirestoreDb` instance using methods like
 /// [`FirestoreDb::with_session_params()`](crate::FirestoreDb::with_session_params) or
 /// [`FirestoreDb::clone_with_session_params()`](crate::FirestoreDb::clone_with_session_params).
-/// ```
 #[derive(Clone, Builder)]
 pub struct FirestoreDbSessionParams {
     /// Specifies the consistency guarantee for read operations.

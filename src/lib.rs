@@ -3,7 +3,7 @@
 //! Library provides a simple API for Google Firestore:
 //! - Create or update documents using Rust structures and Serde;
 //! - Support for querying / streaming / listing / listening changes / aggregated queries of documents from Firestore;
-//! - Fluent high-level and strongly typed API;
+//! - Fluent high-level and strongly typed API - the only public API of this library;
 //! - Full async based on Tokio runtime;
 //! - Macro that helps you use JSON paths as references to your structure fields;
 //! - Implements own Serde serializer to Firestore gRPC values;
@@ -12,6 +12,9 @@
 //! - Streaming batch writes with automatic throttling to avoid time limits from Firestore;
 //! - Aggregated Queries;
 //! - Request tags (request options) to attribute Firestore usage;
+//! - Optional in-memory and persistent caching for collections and documents, kept up to date
+//!   automatically with Firestore listeners (`caching-memory` / `caching-persistent` features).
+//!   See [`FirestoreCache`];
 //! - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
 //!   that automatically detects GKE environment or application default accounts for local development;
 //!
@@ -128,7 +131,7 @@
 
 /// Defines the error types used throughout the `firestore-rs` crate.
 ///
-/// This module contains the primary [`FirestoreError`](errors::FirestoreError) enum
+/// This module contains the primary [`FirestoreError`] enum
 /// and various specific error structs that provide detailed information about
 /// issues encountered during Firestore operations.
 pub mod errors;
@@ -145,7 +148,7 @@ mod db;
 
 /// Re-exports all public items from the `db` module.
 ///
-/// The `db` module contains the core [`FirestoreDb`](db::FirestoreDb) client and
+/// The `db` module contains the core [`FirestoreDb`] client and
 /// functionalities for interacting with the Firestore database, such as CRUD operations,
 /// queries, and transactions.
 pub use db::*;
@@ -171,7 +174,7 @@ mod struct_path_macro;
 #[allow(unused_imports)]
 pub use struct_path_macro::*;
 
-/// Re-export of the [`async_trait`] macro.
+/// Re-export of the [`macro@async_trait`] macro.
 ///
 /// It is needed to implement the public async traits of this crate - such as
 /// [`FirestoreResumeStateStorage`] and [`FirestoreCacheBackend`] - without having to depend on
@@ -292,6 +295,6 @@ mod cache;
 /// Re-exports all public items from the `cache` module.
 ///
 /// This is only available if the `caching` feature is enabled.
-/// It includes types like [`FirestoreCache`](cache::FirestoreCache) and various
+/// It includes types like [`FirestoreCache`] and various
 /// caching backends and configurations.
 pub use cache::*;

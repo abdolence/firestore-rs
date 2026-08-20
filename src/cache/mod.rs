@@ -1,33 +1,92 @@
-//! Provides caching capabilities for Firestore data.
+//! Caching for Firestore collections and documents.
 //!
-//! This module allows for caching Firestore documents and query results to reduce
-//! latency and the number of reads to the Firestore database. It defines traits
-//! for cache backends and provides a `FirestoreCache` struct that orchestrates
-//! listening to Firestore changes and updating the cache.
+//! A cache keeps a copy of the documents you read most often, so that repeated reads are served
+//! locally instead of being charged and waited for. A Firestore listener keeps that copy current:
+//! when a document changes - from your application or anywhere else - the change is pushed to the
+//! cache, including across distributed instances.
 //!
-//! # Key Components
-//! - [`FirestoreCache`]: The main struct for managing a cache. It uses a
-//!   [`FirestoreListener`](crate::FirestoreListener) to receive real-time updates
-//!   from Firestore and a [`FirestoreCacheBackend`] to store and retrieve cached data.
-//! - [`FirestoreCacheBackend`]: A trait that defines the interface for different
-//!   cache storage mechanisms (e.g., in-memory, persistent).
-//! - [`FirestoreCacheOptions`]: Configuration options for the cache, such as its name
-//!   and listener parameters.
-//! - [`FirestoreCachedValue`]: An enum indicating whether a value was retrieved from
-//!   the cache or if the cache should be skipped for a particular query.
+//! Caching is opt-in through cargo features:
 //!
-//! # Usage
-//! To use the caching functionality, you typically:
-//! 1. Implement the [`FirestoreCacheBackend`] trait for your chosen storage.
-//! 2. Create a [`FirestoreDb`](crate::FirestoreDb) instance.
-//! 3. Instantiate [`FirestoreCache`] with the database, backend, and a
-//!    [`FirestoreResumeStateStorage`](crate::FirestoreResumeStateStorage) for the listener.
-//! 4. Call [`FirestoreCache::load()`] to initialize the cache and start listening for updates.
-//! 5. Use methods on the cache backend (e.g., `get_doc_by_path`, `query_docs`) to retrieve data.
-//!    These methods might return cached data or indicate that the cache should be bypassed.
+//! - `caching-memory` for an in-memory cache;
+//! - `caching-persistent` for a disk-backed cache.
 //!
-//! The cache automatically updates in the background as changes occur in Firestore,
-//! based on the targets added to its internal listener (often configured by the backend's `load` method).
+//! # Quick start
+//!
+//! ```rust,no_run
+//! use firestore::*;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! let db = FirestoreDb::new("my-project-id").await?;
+//!
+//! // Builds the cache, loads it and starts listening for changes.
+//! let cache = FirestoreCache::memory(&db)
+//!     .preloaded_collection("countries")
+//!     .build()
+//!     .await?;
+//!
+//! // Reads go through the cache and fall back to Firestore.
+//! let country: Option<String> = db
+//!     .read_through_cache(&cache)
+//!     .fluent()
+//!     .select()
+//!     .by_id_in("countries")
+//!     .obj()
+//!     .one("SE")
+//!     .await?;
+//!
+//! cache.shutdown().await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Reading through a cache
+//!
+//! A cache is attached to reads by cloning the database handle:
+//!
+//! - [`FirestoreDb::read_through_cache`] serves what it can from the cache and goes to Firestore
+//!   for the rest. This is the mode to reach for by default.
+//! - [`FirestoreDb::read_cached_only`] never contacts Firestore. Reads by ID return `None` on a
+//!   miss, and requests the cache cannot answer completely return an error.
+//!
+//! Which operations use the cache:
+//!
+//! | Operation | Cached |
+//! | --- | --- |
+//! | Read by ID, batch read by IDs | yes, for any cached collection |
+//! | `list` a collection | only for **preloaded** collections |
+//! | `query` a collection | only for **preloaded** collections, and only for supported filters |
+//! | Paged listing, query with metadata, aggregations, transactions, writes | never |
+//!
+//! # Preloading, and why listings need it
+//!
+//! A collection added with [`FirestoreCacheBuilder::collection`] is filled lazily: it holds only
+//! the documents that happened to be read through it. Answering `list` or `query` from such a
+//! collection would return a subset while looking like a complete answer, so the library refuses
+//! to do it - `read_through_cache` quietly falls back to Firestore, and `read_cached_only`
+//! returns an error naming the collection.
+//!
+//! Use [`FirestoreCacheBuilder::preloaded_collection`] when you need cached listings. See
+//! [`FirestoreCacheCollectionLoadMode`] for the individual modes, and
+//! [`FirestoreCacheIncompleteCollectionPolicy`] if you would rather accept partial results.
+//!
+//! # Consistency
+//!
+//! Cached results are **eventually consistent**. They reflect the last state the listener
+//! delivered, so a write may take a moment to appear, and a stalled or reset listener can leave
+//! the cache stale without saying so. Cached listings are never *partial* by construction, but
+//! they are not guaranteed to be current. Do not cache data that must be read at strong
+//! consistency - read that through Firestore directly, or inside a transaction.
+//!
+//! # Lifecycle
+//!
+//! [`FirestoreCacheBuilder::build`] creates the cache, preloads it and starts the listener. Call
+//! [`FirestoreCache::shutdown`] when you are done. Because `load` and `shutdown` take `&self`, a
+//! built cache can be shared as `Arc<FirestoreMemoryCache>` in your application state.
+//!
+//! # Custom backends
+//!
+//! To store the cache somewhere else, implement [`FirestoreCacheBackend`] and its supertrait
+//! [`FirestoreCacheDocsByPathSupport`], then construct [`FirestoreCache`] with it.
 
 use crate::errors::{FirestoreCacheError, FirestoreErrorPublicGenericDetails};
 use crate::*;

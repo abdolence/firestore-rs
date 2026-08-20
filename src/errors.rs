@@ -520,8 +520,14 @@ impl std::error::Error for FirestoreErrorInTransaction {
     }
 }
 
-/// A type alias for `backoff::Error<E>`, commonly used for operations
-/// that support retry mechanisms with backoff strategies.
+/// A re-export of [`backoff::Error`], used by the retrying transaction API.
+///
+/// You need this type to signal from a [`FirestoreDb::run_transaction`](crate::FirestoreDb::run_transaction)
+/// closure whether a failure should be retried ([`backoff::Error::transient`]) or not
+/// ([`backoff::Error::permanent`]).
+///
+/// Note that the `backoff` version behind this alias is not covered by this crate's semver
+/// contract and may change in a minor release.
 pub type BackoffError<E> = backoff::Error<E>;
 
 pub(crate) fn firestore_err_to_backoff(err: FirestoreError) -> BackoffError<FirestoreError> {

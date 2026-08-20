@@ -4,7 +4,7 @@
 //! to be performed over a set of documents matching a query.
 //!
 //! The main entry point is [`FirestoreAggregationBuilder`], which is typically
-//! accessed via a method on a select/query builder (e.g., [`FirestoreSelectDocQueryBuilder::aggregate()`](crate::FirestoreSelectDocQueryBuilder::aggregate)).
+//! accessed via a method on a select/query builder (e.g., [`FirestoreSelectDocBuilder::aggregate()`](crate::select_builder::FirestoreSelectDocBuilder::aggregate)).
 
 use crate::{
     FirestoreAggregation, FirestoreAggregationOperator, FirestoreAggregationOperatorAvg,

@@ -1,6 +1,6 @@
 [package]
 name = "firestore"
-version = "0.51.1"
+version = "0.52.0"
 authors = ["Abdulla Abdurakhmanov <me@abdolence.dev>"]
 edition = "2021"
 rust-version = "1.64"
@@ -12,10 +12,14 @@ documentation = "https://docs.rs/firestore"
 keywords = ["firestore", "google", "client"]
 categories = ["api-bindings"]
 readme = "README.md"
-include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE"]
+include = ["Cargo.toml", "src/**/*.rs", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [badges]
 maintenance = { status = "actively-developed" }
+
+# Without this docs.rs builds with default features only, which hides the whole caching API.
+[package.metadata.docs.rs]
+all-features = true
 
 [lib]
 name = "firestore"
