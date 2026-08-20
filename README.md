@@ -947,8 +947,7 @@ library itself is verified, and it catches things a hand-written fake cannot.
 > **Changed in 0.52**: the low level `*Support` traits are no longer public, so code written to be
 > generic over them no longer compiles. Note that they could never be used with the Fluent API
 > from outside the crate anyway, since the builders' constructors are crate private. See the
-> [migration guide](MIGRATION.md). If neither approach above covers your case, please open an
-> issue.
+> [migration guide](MIGRATION.md).
 
 ## How this library is tested
 

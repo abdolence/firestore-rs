@@ -490,9 +490,6 @@ impl FirestoreDb {
     /// contract: this signature and the types behind it may change in any release, including a
     /// patch release. You also need to depend on `gcloud-sdk` yourself, at a matching version,
     /// since this crate does not re-export it.
-    ///
-    /// If you find yourself reaching for this, please open an issue - a gap in the Fluent API is
-    /// something we would rather close.
     #[inline]
     pub fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
         &self.inner.client

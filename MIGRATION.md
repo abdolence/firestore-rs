@@ -64,9 +64,7 @@ Unchanged in 0.52: batch writers, transactions, `db.create_listener()`,
 `FirestoreTransactionData`, so you can keep writing transaction-agnostic abstractions over it.
 
 If you implemented the `*Support` traits yourself, for example to stub the database in unit
-tests, that is no longer possible. Please open an issue describing your use case: a supported way
-to do it is something we would rather design than leave to a trait that was never meant to be
-part of the public API.
+tests, that is no longer possible.
 
 ### Caching changes
 
