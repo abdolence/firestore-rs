@@ -185,8 +185,7 @@ db.fluent()
 The low level "support" traits were made crate private in v0.52.0. If you used them, see the
 [migration guide](MIGRATION.md) for the fluent replacement of every removed method.
 
-Some operations have no fluent equivalent yet and remain public in their own right. They are
-supported API, not leftovers:
+Alongside it, the library provides core functionality that is public API in its own right:
 
 - Batch writes: `db.create_simple_batch_writer()`, `db.create_streaming_batch_writer()`
 - Transactions: `db.begin_transaction()`, `db.run_transaction()`, and the
