@@ -199,9 +199,6 @@ supported API, not leftovers:
 - Dynamic documents: `FirestoreDb::serialize_map_to_doc()`, `FirestoreDb::serialize_to_doc()` and
   `FirestoreDb::deserialize_doc_to()`, used together with the fluent `.document(...)` builders
 
-If you hit something with no fluent equivalent, please open an issue: that is a gap we would
-rather close than reopen the low level API for.
-
 ## Querying
 
 The library supports rich querying API with filters, ordering, pagination, etc.
