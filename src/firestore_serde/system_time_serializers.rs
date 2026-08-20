@@ -6,9 +6,8 @@
 //! Firestore timestamp instead, so a plain `SystemTime` field needs neither an
 //! attribute nor a wrapping type.
 //!
-//! Reading is deliberately lenient: a native timestamp is preferred, but the two
-//! field map written by the earlier versions of this library is still accepted,
-//! so the existing documents keep working without a migration.
+//! Only the shape serde produces is recognised, so a user defined structure that
+//! merely shares the name keeps serializing as an ordinary map.
 
 use std::collections::HashMap;
 
@@ -139,9 +138,8 @@ pub(crate) fn timestamp_to_system_time_parts(
 mod tests {
     use crate::{firestore_document_from_serializable, firestore_document_to_serializable};
     use gcloud_sdk::google::firestore::v1::value::ValueType;
-    use gcloud_sdk::google::firestore::v1::{Document, MapValue, Value};
+    use gcloud_sdk::google::firestore::v1::{Document, Value};
     use serde::{Deserialize, Serialize};
-    use std::collections::HashMap;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -217,54 +215,6 @@ mod tests {
         let deserialized: TestStructure =
             firestore_document_to_serializable(&document).expect("Unable to deserialize");
         assert_eq!(deserialized, test_structure);
-    }
-
-    #[test]
-    fn test_legacy_system_time_map_still_deserializes() {
-        // The documents written by the earlier versions carry the two field map
-        // serde produces by default, and must keep working without a migration.
-        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-        struct LegacyStructure {
-            created_at: SystemTime,
-            updated_at: Option<SystemTime>,
-        }
-
-        let legacy_fields: HashMap<String, Value> = vec![
-            (
-                "secs_since_epoch".to_string(),
-                Value {
-                    value_type: Some(ValueType::IntegerValue(1_670_000_000)),
-                },
-            ),
-            (
-                "nanos_since_epoch".to_string(),
-                Value {
-                    value_type: Some(ValueType::IntegerValue(123_456_789)),
-                },
-            ),
-        ]
-        .into_iter()
-        .collect();
-
-        let document = Document {
-            name: "test/doc-id".to_string(),
-            fields: vec![(
-                "created_at".to_string(),
-                Value {
-                    value_type: Some(ValueType::MapValue(MapValue {
-                        fields: legacy_fields,
-                    })),
-                },
-            )]
-            .into_iter()
-            .collect(),
-            ..Default::default()
-        };
-
-        let deserialized: LegacyStructure =
-            firestore_document_to_serializable(&document).expect("Unable to deserialize");
-        assert_eq!(deserialized.created_at, sample_time());
-        assert_eq!(deserialized.updated_at, None);
     }
 
     #[test]

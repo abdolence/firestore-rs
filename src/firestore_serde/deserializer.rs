@@ -673,8 +673,7 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     {
         // Serde models `std::time::SystemTime` as a two field structure, so a
         // native Firestore timestamp has to be expanded back into it. Everything
-        // else, including the two field map written by the earlier versions of
-        // this library, keeps going through `deserialize_any`.
+        // else keeps going through `deserialize_any`.
         if name
             == crate::firestore_serde::system_time_serializers::FIRESTORE_SYSTEM_TIME_TYPE_TAG_TYPE
         {

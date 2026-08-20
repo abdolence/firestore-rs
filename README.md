@@ -263,11 +263,8 @@ struct MyTestStructure {
 }
 ```
 
-  Reading accepts both the native timestamps and the two field
-  `{ secs_since_epoch, nanos_since_epoch }` maps written by the earlier versions,
-  so the existing documents keep working without a migration. Note that
-  `SystemTime` cannot carry the instants before the Unix epoch, since serde itself
-  refuses them.
+  Note that `SystemTime` cannot carry the instants before the Unix epoch, since
+  serde itself refuses them.
 
 - Using the type `FirestoreTimestamp`, which needs no attributes:
 
