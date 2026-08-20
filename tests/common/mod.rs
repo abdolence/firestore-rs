@@ -12,6 +12,20 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
+/// The current time, truncated to the precision Firestore actually stores.
+///
+/// Firestore keeps the timestamps with microsecond precision, so a value that
+/// carries nanoseconds does not survive a round trip unchanged. The tests that
+/// compare the whole structures have to start from a value that does.
+#[allow(dead_code)]
+pub fn now_with_firestore_precision() -> FirestoreTimestamp {
+    let now = FirestoreInstant::now();
+    FirestoreTimestamp(
+        FirestoreInstant::from_microsecond(now.as_microsecond())
+            .expect("The current time is always in range"),
+    )
+}
+
 #[allow(dead_code)]
 pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + Sync>> {
     // Logging with debug enabled

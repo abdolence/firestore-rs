@@ -293,6 +293,10 @@ struct MyTestStructure {
 }
 ```
 
+Firestore stores the timestamps with microsecond precision, so the nanoseconds are
+truncated on the server side. A value that carries them does not come back
+identical, which matters if you compare the structures after reading them again.
+
 Both change the representation only for Firestore serialization, and still
 serialize as a string to JSON, so the same model can be reused for JSON and
 Firestore.
