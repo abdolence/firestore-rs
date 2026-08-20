@@ -64,14 +64,6 @@ rustls::crypto::ring::default_provider().install_default().expect("Failed to ins
 ```
 
 
-### Minimum supported Rust version
-
-Rust **1.90**.
-
-This is the maximum across all features, so that turning a feature on never raises the
-requirement. The default feature set happens to build on 1.88; `caching-persistent` needs 1.90
-because of its `redb` dependency.
-
 ## Examples
 
 All examples available in the [examples](examples) directory.
