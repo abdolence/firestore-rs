@@ -106,5 +106,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Now in the list: {objects1:?}");
 
+    // A plain `SystemTime` works in the queries as well
+    let objects2: Vec<MyTestStructure> = db
+        .fluent()
+        .select()
+        .from(TEST_COLLECTION_NAME)
+        .filter(|q| {
+            q.for_all([q
+                .field(path!(MyTestStructure::created_at_system_time))
+                .less_than_or_equal(SystemTime::now())])
+        })
+        .obj()
+        .query()
+        .await?;
+
+    println!("Found by a SystemTime filter: {objects2:?}");
+
     Ok(())
 }

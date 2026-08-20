@@ -218,6 +218,24 @@ mod tests {
     }
 
     #[test]
+    fn test_system_time_as_a_query_value() {
+        use crate::FirestoreValue;
+
+        // Query filters take anything convertible into a `FirestoreValue`, which
+        // goes through the same serializer, so a `SystemTime` can be compared
+        // against a stored timestamp directly.
+        let value: FirestoreValue = sample_time().into();
+
+        match value.value.value_type {
+            Some(ValueType::TimestampValue(ts)) => {
+                assert_eq!(ts.seconds, 1_670_000_000);
+                assert_eq!(ts.nanos, 123_456_789);
+            }
+            ref other => panic!("a SystemTime query value must be a timestamp, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_user_structure_named_system_time_is_not_intercepted() {
         // Only the shape serde produces is folded, so a structure that merely
         // shares the name keeps serializing as an ordinary map.

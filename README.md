@@ -263,6 +263,12 @@ struct MyTestStructure {
 }
 ```
 
+  It works in the queries as well:
+
+```rust
+   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(SystemTime::now())
+```
+
   Note that `SystemTime` cannot carry the instants before the Unix epoch, since
   serde itself refuses them.
 
