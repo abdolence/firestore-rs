@@ -61,6 +61,9 @@ pub use options::*;
 mod configuration;
 pub use configuration::*;
 
+mod builder;
+pub use builder::*;
+
 mod backends;
 pub use backends::*;
 
@@ -101,9 +104,95 @@ where
     /// The cache backend implementation.
     pub backend: Arc<B>,
     /// The Firestore listener for real-time updates.
-    pub listener: FirestoreListener<FirestoreDb, LS>,
+    ///
+    /// Behind a mutex so that `load`/`shutdown` can take `&self`, which lets a built cache be
+    /// shared directly as `Arc<FirestoreCache<..>>` in application state.
+    pub listener: tokio::sync::Mutex<FirestoreListener<FirestoreDb, LS>>,
     /// A clone of the Firestore database client.
     pub db: FirestoreDb,
+}
+
+/// A ready-to-use in-memory cache.
+///
+/// Use this alias to store a cache in your own types without spelling out its generic
+/// parameters:
+///
+/// ```rust,no_run
+/// # use firestore::*;
+/// struct AppState {
+///     db: FirestoreDb,
+///     cache: std::sync::Arc<FirestoreMemoryCache>,
+/// }
+/// ```
+#[cfg(feature = "caching-memory")]
+pub type FirestoreMemoryCache =
+    FirestoreCache<FirestoreMemoryCacheBackend, FirestoreMemListenStateStorage>;
+
+/// A ready-to-use persistent cache. See [`FirestoreMemoryCache`] for how to use the alias.
+#[cfg(feature = "caching-persistent")]
+pub type FirestorePersistentCache =
+    FirestoreCache<FirestorePersistentCacheBackend, FirestoreTempFilesListenStateStorage>;
+
+#[cfg(feature = "caching-memory")]
+impl FirestoreMemoryCache {
+    /// Starts building an in-memory cache.
+    ///
+    /// ```rust,no_run
+    /// # use firestore::*;
+    /// # async fn example(db: &FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let cache = FirestoreCache::memory(db)
+    ///     .preloaded_collection("countries")
+    ///     .build()
+    ///     .await?;
+    ///
+    /// let country: Option<String> = db
+    ///     .read_through_cache(&cache)
+    ///     .fluent()
+    ///     .select()
+    ///     .by_id_in("countries")
+    ///     .obj()
+    ///     .one("SE")
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn memory(db: &FirestoreDb) -> FirestoreCacheBuilder<FirestoreMemoryCacheKind> {
+        FirestoreCacheBuilder::new(db)
+    }
+
+    /// Starts building an in-memory cache. Equivalent to [`FirestoreCache::memory`].
+    #[inline]
+    pub fn builder(db: &FirestoreDb) -> FirestoreCacheBuilder<FirestoreMemoryCacheKind> {
+        FirestoreCacheBuilder::new(db)
+    }
+}
+
+#[cfg(feature = "caching-persistent")]
+impl FirestorePersistentCache {
+    /// Starts building a persistent, disk-backed cache.
+    ///
+    /// ```rust,no_run
+    /// # use firestore::*;
+    /// # async fn example(db: &FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let cache = FirestoreCache::persistent(db)
+    ///     .data_dir("/var/cache/my-app")
+    ///     .preloaded_collection("countries")
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn persistent(db: &FirestoreDb) -> FirestoreCacheBuilder<FirestorePersistentCacheKind> {
+        FirestoreCacheBuilder::new(db)
+    }
+
+    /// Starts building a persistent cache. Equivalent to [`FirestoreCache::persistent`].
+    #[inline]
+    pub fn builder(db: &FirestoreDb) -> FirestoreCacheBuilder<FirestorePersistentCacheKind> {
+        FirestoreCacheBuilder::new(db)
+    }
 }
 
 /// Represents a value that might be retrieved from the cache.
@@ -129,6 +218,13 @@ where
     ///
     /// # Returns
     /// A `FirestoreResult` containing the new `FirestoreCache`.
+    #[deprecated(
+        since = "0.52.0",
+        note = "Use the cache builder instead: `FirestoreCache::memory(&db)` or \
+                `FirestoreCache::persistent(&db)`. It assigns listener targets automatically, \
+                picks a matching listener state storage and loads the cache for you. \
+                This constructor keeps working and will not be removed in 0.x."
+    )]
     pub async fn new(
         name: FirestoreCacheName,
         db: &FirestoreDb,
@@ -139,7 +235,7 @@ where
         B: FirestoreCacheBackend + Send + Sync + 'static,
     {
         let options = FirestoreCacheOptions::new(name);
-        Self::with_options(options, db, backend, listener_storage).await
+        Self::create(options, db, backend, listener_storage).await
     }
 
     /// Creates a new `FirestoreCache` with the specified options.
@@ -152,7 +248,28 @@ where
     ///
     /// # Returns
     /// A `FirestoreResult` containing the new `FirestoreCache`.
+    #[deprecated(
+        since = "0.52.0",
+        note = "Use the cache builder instead: `FirestoreCache::memory(&db)` or \
+                `FirestoreCache::persistent(&db)`. It assigns listener targets automatically, \
+                picks a matching listener state storage and loads the cache for you. \
+                This constructor keeps working and will not be removed in 0.x."
+    )]
     pub async fn with_options(
+        options: FirestoreCacheOptions,
+        db: &FirestoreDb,
+        backend: B,
+        listener_storage: LS,
+    ) -> FirestoreResult<Self>
+    where
+        B: FirestoreCacheBackend + Send + Sync + 'static,
+    {
+        Self::create(options, db, backend, listener_storage).await
+    }
+
+    /// Creates a cache without loading it. Shared by the builder and the deprecated
+    /// constructors, so that neither of them calls a deprecated item.
+    pub(crate) async fn create(
         options: FirestoreCacheOptions,
         db: &FirestoreDb,
         backend: B,
@@ -172,7 +289,7 @@ where
             inner: FirestoreCacheInner {
                 options,
                 backend: Arc::new(backend),
-                listener,
+                listener: tokio::sync::Mutex::new(listener),
                 db: db.clone(),
             },
         })
@@ -192,20 +309,21 @@ where
     ///
     /// # Returns
     /// A `Result` indicating success or failure.
-    pub async fn load(&mut self) -> Result<(), FirestoreError> {
+    pub async fn load(&self) -> Result<(), FirestoreError> {
         let backend_target_params = self
             .inner
             .backend
             .load(&self.inner.options, &self.inner.db)
             .await?;
 
+        let mut listener = self.inner.listener.lock().await;
+
         for target_params in backend_target_params {
-            self.inner.listener.add_target(target_params)?;
+            listener.add_target(target_params)?;
         }
 
         let backend = self.inner.backend.clone();
-        self.inner
-            .listener
+        listener
             .start(move |event| {
                 let backend = backend.clone();
                 async move {
@@ -223,8 +341,8 @@ where
     ///
     /// # Returns
     /// A `Result` indicating success or failure.
-    pub async fn shutdown(&mut self) -> Result<(), FirestoreError> {
-        self.inner.listener.shutdown().await?;
+    pub async fn shutdown(&self) -> Result<(), FirestoreError> {
+        self.inner.listener.lock().await.shutdown().await?;
         self.inner.backend.shutdown().await?;
         Ok(())
     }

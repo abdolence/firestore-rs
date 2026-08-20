@@ -5,6 +5,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 mod common;
+use firestore::errors::FirestoreError;
 use firestore::*;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -48,37 +49,19 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     .await?;
     sleep(Duration::from_secs(1)).await;
 
-    let temp_state_dir = tempfile::tempdir()?;
     let temp_db_dir = tempfile::tempdir()?;
 
-    let mut cache = FirestoreCache::new(
-        "example-persistent-cache".into(),
-        &db,
-        FirestorePersistentCacheBackend::with_options(
-            FirestoreCacheConfiguration::new()
-                .add_collection_config(
-                    &db,
-                    FirestoreCacheCollectionConfiguration::new(
-                        TEST_COLLECTION_NAME_NO_PRELOAD,
-                        FirestoreListenerTarget::new(1000),
-                        FirestoreCacheCollectionLoadMode::PreloadNone,
-                    ),
-                )
-                .add_collection_config(
-                    &db,
-                    FirestoreCacheCollectionConfiguration::new(
-                        TEST_COLLECTION_NAME_PRELOAD,
-                        FirestoreListenerTarget::new(1001),
-                        FirestoreCacheCollectionLoadMode::PreloadAllDocs,
-                    ),
-                ),
-            temp_db_dir.keep().join("redb"),
-        )?,
-        FirestoreTempFilesListenStateStorage::with_temp_dir(temp_state_dir.keep()),
-    )
-    .await?;
-
-    cache.load().await?;
+    let cache = FirestorePersistentCache::builder(&db)
+        .name("example-persistent-cache")
+        .data_dir(temp_db_dir.keep())
+        .collection_with(TEST_COLLECTION_NAME_NO_PRELOAD, |c| {
+            c.preload_none().listener_target(1000)
+        })
+        .collection_with(TEST_COLLECTION_NAME_PRELOAD, |c| {
+            c.preload_all().listener_target(1001)
+        })
+        .build()
+        .await?;
 
     let my_struct: Option<MyTestStructure> = db
         .read_cached_only(&cache)
@@ -122,27 +105,46 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     assert!(my_struct.is_some());
 
     let cached_db = db.read_cached_only(&cache);
-    let all_items_stream = cached_db
+
+    // The lazily populated collection holds only the documents that happened to be read through
+    // it, so listing it from the cache alone must fail rather than return a partial result.
+    let listing_result = cached_db
         .fluent()
         .list()
         .from(TEST_COLLECTION_NAME_NO_PRELOAD)
         .obj::<MyTestStructure>()
         .stream_all_with_errors()
+        .await;
+
+    assert!(matches!(
+        listing_result.err(),
+        Some(FirestoreError::CacheError(_))
+    ));
+
+    // Reading through the cache falls back to Firestore for the same collection.
+    let all_items = db
+        .read_through_cache(&cache)
+        .fluent()
+        .list()
+        .from(TEST_COLLECTION_NAME_NO_PRELOAD)
+        .obj::<MyTestStructure>()
+        .stream_all_with_errors()
+        .await?
+        .try_collect::<Vec<_>>()
         .await?;
 
-    let all_items = all_items_stream.try_collect::<Vec<_>>().await?;
+    assert_eq!(all_items.len(), 10);
 
-    assert_eq!(all_items.len(), 1);
-
-    let all_items_stream = cached_db
+    // The preloaded collection is complete, so it is served from the cache.
+    let all_items = cached_db
         .fluent()
         .list()
         .from(TEST_COLLECTION_NAME_PRELOAD)
         .obj::<MyTestStructure>()
         .stream_all_with_errors()
+        .await?
+        .try_collect::<Vec<_>>()
         .await?;
-
-    let all_items = all_items_stream.try_collect::<Vec<_>>().await?;
 
     assert_eq!(all_items.len(), 10);
 
@@ -202,6 +204,37 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     let queried_items = queried.try_collect::<Vec<_>>().await?;
     assert_eq!(queried_items.len(), 5);
     assert_eq!(queried_items.first().map(|d| d.some_num), Some(9));
+
+    // Deleting a document must be propagated to the persistent cache. This guards against the
+    // delete transaction being opened but never committed, which used to leave deleted documents
+    // in the cache forever.
+    db.fluent()
+        .delete()
+        .from(TEST_COLLECTION_NAME_PRELOAD)
+        .document_id("test-3")
+        .execute()
+        .await?;
+
+    let cached_db = db.read_cached_only(&cache);
+    assert!(
+        eventually_async(10, Duration::from_millis(500), move || {
+            let cached_db = cached_db.clone();
+            async move {
+                let all_items = cached_db
+                    .fluent()
+                    .list()
+                    .from(TEST_COLLECTION_NAME_PRELOAD)
+                    .obj::<MyTestStructure>()
+                    .stream_all_with_errors()
+                    .await?
+                    .try_collect::<Vec<_>>()
+                    .await?;
+
+                Ok(!all_items.iter().any(|i| i.some_id == "test-3"))
+            }
+        })
+        .await?
+    );
 
     cache.shutdown().await?;
 

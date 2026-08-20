@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 mod common;
+use firestore::errors::FirestoreError;
 use firestore::*;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -43,33 +44,16 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     )
     .await?;
 
-    let mut cache = FirestoreCache::new(
-        "example-mem-cache".into(),
-        &db,
-        FirestoreMemoryCacheBackend::new(
-            FirestoreCacheConfiguration::new()
-                .add_collection_config(
-                    &db,
-                    FirestoreCacheCollectionConfiguration::new(
-                        TEST_COLLECTION_NAME_NO_PRELOAD,
-                        FirestoreListenerTarget::new(1000),
-                        FirestoreCacheCollectionLoadMode::PreloadNone,
-                    ),
-                )
-                .add_collection_config(
-                    &db,
-                    FirestoreCacheCollectionConfiguration::new(
-                        TEST_COLLECTION_NAME_PRELOAD,
-                        FirestoreListenerTarget::new(1001),
-                        FirestoreCacheCollectionLoadMode::PreloadAllDocs,
-                    ),
-                ),
-        )?,
-        FirestoreMemListenStateStorage::new(),
-    )
-    .await?;
-
-    cache.load().await?;
+    let cache = FirestoreCache::memory(&db)
+        .name("example-mem-cache")
+        .collection_with(TEST_COLLECTION_NAME_NO_PRELOAD, |c| {
+            c.preload_none().listener_target(1000)
+        })
+        .collection_with(TEST_COLLECTION_NAME_PRELOAD, |c| {
+            c.preload_all().listener_target(1001)
+        })
+        .build()
+        .await?;
 
     let my_struct: Option<MyTestStructure> = db
         .read_cached_only(&cache)
@@ -113,17 +97,49 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     assert!(my_struct.is_some());
 
     let cached_db = db.read_cached_only(&cache);
-    let all_items_stream = cached_db
+
+    // The lazily populated collection holds only the documents that happened to be read through
+    // it, so listing it from the cache alone must fail rather than return a partial result.
+    let listing_result = cached_db
         .fluent()
         .list()
         .from(TEST_COLLECTION_NAME_NO_PRELOAD)
         .obj::<MyTestStructure>()
         .stream_all_with_errors()
+        .await;
+
+    assert!(matches!(
+        listing_result.err(),
+        Some(FirestoreError::CacheError(_))
+    ));
+
+    // Reading through the cache falls back to Firestore for the same collection.
+    let all_items = db
+        .read_through_cache(&cache)
+        .fluent()
+        .list()
+        .from(TEST_COLLECTION_NAME_NO_PRELOAD)
+        .obj::<MyTestStructure>()
+        .stream_all_with_errors()
+        .await?
+        .try_collect::<Vec<_>>()
         .await?;
 
-    let all_items = all_items_stream.try_collect::<Vec<_>>().await?;
+    assert_eq!(all_items.len(), 10);
 
-    assert_eq!(all_items.len(), 1);
+    // The preloaded collection is complete, so read-through serves it from the cache.
+    let all_items = db
+        .read_through_cache(&cache)
+        .fluent()
+        .list()
+        .from(TEST_COLLECTION_NAME_PRELOAD)
+        .obj::<MyTestStructure>()
+        .stream_all_with_errors()
+        .await?
+        .try_collect::<Vec<_>>()
+        .await?;
+
+    assert_eq!(all_items.len(), 10);
 
     let all_items_stream = cached_db
         .fluent()

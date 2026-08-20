@@ -10,31 +10,140 @@ use futures::StreamExt;
 use std::collections::HashMap;
 use tracing::*;
 
+#[doc(hidden)]
+/// Exposes the underlying `moka` cache type. Not part of the supported API surface: the `moka`
+/// version is not covered by this crate's semver contract.
 pub type FirestoreMemCache = Cache<String, FirestoreDocument>;
 
+#[doc(hidden)]
+/// Exposes the underlying `moka` cache builder. Not part of the supported API surface: the `moka`
+/// version is not covered by this crate's semver contract.
 pub type FirestoreMemCacheOptions = CacheBuilder<String, FirestoreDocument, FirestoreMemCache>;
 
+/// An in-memory cache backend, backed by the [moka](https://github.com/moka-rs/moka) cache.
+///
+/// Documents live only for the lifetime of the process; an in-memory cache always starts empty,
+/// so preloaded collections are downloaded again on every start. Use
+/// [`FirestorePersistentCacheBackend`](crate::FirestorePersistentCacheBackend) if you need the
+/// cache to survive restarts.
+///
+/// Create one through the builder rather than directly:
+///
+/// ```rust,no_run
+/// # use firestore::*;
+/// # async fn example(db: &FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// let cache = FirestoreCache::memory(db)
+///     .preloaded_collection("countries")
+///     .build()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct FirestoreMemoryCacheBackend {
     pub config: FirestoreCacheConfiguration,
     collection_caches: HashMap<String, FirestoreMemCache>,
 }
 
+/// The maximum number of documents kept per collection unless configured otherwise.
 const FIRESTORE_MEMORY_CACHE_DEFAULT_MAX_CAPACITY: u64 = 50000;
 
+/// Tuning options for [`FirestoreMemoryCacheBackend`].
+///
+/// These map onto the underlying cache without exposing its types, so that the backing
+/// implementation can change without breaking your code.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct FirestoreMemoryCacheOptions {
+    /// The maximum number of documents to keep per collection. Defaults to 50 000.
+    pub max_capacity: u64,
+    /// Evict a document this long after it was written, if set.
+    pub time_to_live: Option<std::time::Duration>,
+    /// Evict a document this long after it was last read, if set.
+    pub time_to_idle: Option<std::time::Duration>,
+}
+
+impl FirestoreMemoryCacheOptions {
+    /// Creates options with the default capacity and no expiry.
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            max_capacity: FIRESTORE_MEMORY_CACHE_DEFAULT_MAX_CAPACITY,
+            time_to_live: None,
+            time_to_idle: None,
+        }
+    }
+
+    /// Sets the maximum number of documents kept per collection.
+    #[inline]
+    pub fn with_max_capacity(self, max_capacity: u64) -> Self {
+        Self {
+            max_capacity,
+            ..self
+        }
+    }
+
+    /// Evicts a document this long after it was written.
+    #[inline]
+    pub fn with_time_to_live(self, time_to_live: std::time::Duration) -> Self {
+        Self {
+            time_to_live: Some(time_to_live),
+            ..self
+        }
+    }
+
+    /// Evicts a document this long after it was last read.
+    #[inline]
+    pub fn with_time_to_idle(self, time_to_idle: std::time::Duration) -> Self {
+        Self {
+            time_to_idle: Some(time_to_idle),
+            ..self
+        }
+    }
+}
+
+impl Default for FirestoreMemoryCacheOptions {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FirestoreMemoryCacheBackend {
+    /// Creates a backend with the default maximum capacity of 50 000 documents per collection.
     pub fn new(config: FirestoreCacheConfiguration) -> FirestoreResult<Self> {
         Self::with_max_capacity(config, FIRESTORE_MEMORY_CACHE_DEFAULT_MAX_CAPACITY)
     }
 
+    /// Creates a backend keeping at most `max_capacity` documents per collection.
     pub fn with_max_capacity(
         config: FirestoreCacheConfiguration,
         max_capacity: u64,
     ) -> FirestoreResult<Self> {
-        Self::with_collection_options(config, |_| {
-            FirestoreMemCache::builder().max_capacity(max_capacity)
+        Self::with_options(
+            config,
+            FirestoreMemoryCacheOptions::new().with_max_capacity(max_capacity),
+        )
+    }
+
+    /// Creates a backend with the given tuning options.
+    pub fn with_options(
+        config: FirestoreCacheConfiguration,
+        options: FirestoreMemoryCacheOptions,
+    ) -> FirestoreResult<Self> {
+        Self::with_collection_options(config, move |_| {
+            let mut builder = FirestoreMemCache::builder().max_capacity(options.max_capacity);
+            if let Some(time_to_live) = options.time_to_live {
+                builder = builder.time_to_live(time_to_live);
+            }
+            if let Some(time_to_idle) = options.time_to_idle {
+                builder = builder.time_to_idle(time_to_idle);
+            }
+            builder
         })
     }
 
+    #[doc(hidden)]
+    /// Configures each collection's cache through the underlying `moka` builder. Not part of the
+    /// supported API surface - prefer [`with_options`](Self::with_options).
     pub fn with_collection_options<FN>(
         config: FirestoreCacheConfiguration,
         collection_mem_options: FN,

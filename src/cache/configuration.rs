@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// You normally do not construct this directly — the cache builder
 /// ([`FirestoreCache::memory`](crate::FirestoreCache::memory) /
 /// [`FirestoreCache::persistent`](crate::FirestoreCache::persistent)) builds it for you.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FirestoreCacheConfiguration {
     /// The configured collections, keyed by absolute collection path.
     pub collections: HashMap<String, FirestoreCacheCollectionConfiguration>,
