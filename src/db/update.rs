@@ -137,6 +137,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
                 field_paths: masks.clone(),
             }),
             current_document: precondition.map(|cond| cond.try_into()).transpose()?,
+            request_options: self.resolve_request_options(None),
         });
 
         let begin_query_utc: DateTime<Utc> = Utc::now();

@@ -28,6 +28,9 @@ pub struct FirestoreListDocParams {
     pub page_token: Option<String>,
     pub order_by: Option<Vec<FirestoreQueryOrder>>,
     pub return_only_fields: Option<Vec<String>>,
+
+    /// Request options (e.g. request tags) for this listing operation.
+    pub request_options: Option<FirestoreRequestOptions>,
 }
 
 #[derive(Debug, PartialEq, Clone, Builder)]
@@ -43,6 +46,9 @@ pub struct FirestoreListCollectionIdsParams {
     #[default = "100"]
     pub page_size: usize,
     pub page_token: Option<String>,
+
+    /// Request options (e.g. request tags) for this listing operation.
+    pub request_options: Option<FirestoreRequestOptions>,
 }
 
 #[derive(Debug, PartialEq, Clone, Builder)]
@@ -287,6 +293,7 @@ impl FirestoreDb {
                 .as_ref()
                 .map(|selector| selector.try_into())
                 .transpose()?,
+            request_options: self.resolve_request_options(params.request_options.as_ref()),
             show_missing: false,
         })
     }
@@ -466,6 +473,7 @@ impl FirestoreDb {
                 .as_ref()
                 .map(|selector| selector.try_into())
                 .transpose()?,
+            request_options: self.resolve_request_options(params.request_options.as_ref()),
         }))
     }
 

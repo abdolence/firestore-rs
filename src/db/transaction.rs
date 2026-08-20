@@ -2,8 +2,8 @@ pub use crate::db::transaction_ops::FirestoreTransactionOps;
 use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;
 use crate::{
-    FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreResult,
-    FirestoreTransactionId, FirestoreTransactionMode, FirestoreTransactionOptions,
+    FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreRequestOptions,
+    FirestoreResult, FirestoreTransactionId, FirestoreTransactionMode, FirestoreTransactionOptions,
     FirestoreTransactionResponse, FirestoreWriteResult,
 };
 use backoff::future::retry;
@@ -88,6 +88,7 @@ pub struct FirestoreTransaction<'a> {
     db: &'a FirestoreDb,
     data: FirestoreTransactionData,
     finished: bool,
+    request_options: Option<FirestoreRequestOptions>,
 }
 
 impl<'a> FirestoreTransaction<'a> {
@@ -105,6 +106,7 @@ impl<'a> FirestoreTransaction<'a> {
         let request = gcloud_sdk::tonic::Request::new(BeginTransactionRequest {
             database: db.get_database_path().clone(),
             options: Some(options.clone().try_into()?),
+            request_options: db.resolve_request_options(options.request_options.as_ref()),
         });
 
         let response = db
@@ -134,6 +136,7 @@ impl<'a> FirestoreTransaction<'a> {
             db,
             data,
             finished: false,
+            request_options: options.request_options,
         })
     }
 
@@ -160,6 +163,9 @@ impl<'a> FirestoreTransaction<'a> {
             database: self.db.get_database_path().clone(),
             writes: self.data.writes.drain(..).collect(),
             transaction: self.data.transaction_id.clone(),
+            request_options: self
+                .db
+                .resolve_request_options(self.request_options.as_ref()),
         });
 
         let response = self.db.client().get().commit(request).await?.into_inner();
@@ -191,6 +197,9 @@ impl<'a> FirestoreTransaction<'a> {
         let request = gcloud_sdk::tonic::Request::new(RollbackRequest {
             database: self.db.get_database_path().clone(),
             transaction: self.data.transaction_id.clone(),
+            request_options: self
+                .db
+                .resolve_request_options(self.request_options.as_ref()),
         });
 
         self.db.client().get().rollback(request).await?;
@@ -228,6 +237,7 @@ impl<'a> FirestoreTransaction<'a> {
             db,
             data,
             finished: false,
+            request_options: None,
         }
     }
 
@@ -370,7 +380,7 @@ impl FirestoreDb {
         let retry_result = retry(backoff, || async {
             let options = FirestoreTransactionOptions {
                 mode: FirestoreTransactionMode::ReadWriteRetry(transaction_id.clone()),
-                ..options
+                ..options.clone()
             };
             let mut transaction = self
                 .begin_transaction_with_options(options)
@@ -438,7 +448,7 @@ impl FirestoreDb {
 
             let options = FirestoreTransactionOptions {
                 mode: FirestoreTransactionMode::ReadWriteRetry(transaction_id.clone()),
-                ..options
+                ..options.clone()
             };
             if let Ok(transaction) = self.begin_transaction_with_options(options).await {
                 transaction.rollback().await.ok();

@@ -1,5 +1,5 @@
 use crate::errors::FirestoreError;
-use crate::{FirestoreConsistencySelector, FirestoreWriteResult};
+use crate::{FirestoreConsistencySelector, FirestoreRequestOptions, FirestoreWriteResult};
 use chrono::prelude::*;
 use chrono::Duration;
 use rsb_derive::Builder;
@@ -22,6 +22,10 @@ pub struct FirestoreTransactionOptions {
     /// Concurrent transaction mode
     pub concurrent_mode:
         Option<gcloud_sdk::google::firestore::v1::transaction_options::ConcurrencyMode>,
+
+    /// Request options (e.g. request tags) attached to the `BeginTransaction`,
+    /// `Commit` and `Rollback` requests of this transaction.
+    pub request_options: Option<FirestoreRequestOptions>,
 }
 
 impl Default for FirestoreTransactionOptions {
@@ -30,6 +34,7 @@ impl Default for FirestoreTransactionOptions {
             mode: FirestoreTransactionMode::ReadWrite,
             max_elapsed_time: None,
             concurrent_mode: None,
+            request_options: None,
         }
     }
 }
@@ -138,4 +143,24 @@ pub struct FirestoreTransactionResponse {
     /// The time at which the transaction was committed.
     /// This is `None` if the transaction was read-only or did not involve writes.
     pub commit_time: Option<DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transaction_options_default_request_options() {
+        assert!(FirestoreTransactionOptions::default()
+            .request_options
+            .is_none());
+
+        let options = FirestoreTransactionOptions::new()
+            .with_request_options(FirestoreRequestOptions::from_tags(["checkout"]));
+
+        assert_eq!(
+            options.request_options,
+            Some(FirestoreRequestOptions::from_tags(["checkout"]))
+        );
+    }
 }

@@ -5,7 +5,7 @@
 use crate::errors::{
     FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
 };
-use crate::{FirestoreValue, FirestoreVector};
+use crate::{FirestoreRequestOptions, FirestoreValue, FirestoreVector};
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::Builder;
 
@@ -86,6 +86,12 @@ pub struct FirestoreQueryParams {
 
     /// Options for performing a vector similarity search (find nearest neighbors).
     pub find_nearest: Option<FirestoreFindNearestOptions>,
+
+    /// Request options (e.g. request tags) for this query.
+    ///
+    /// Overrides any session wide default configured with
+    /// [`FirestoreDb::clone_with_request_options`](crate::FirestoreDb::clone_with_request_options).
+    pub request_options: Option<FirestoreRequestOptions>,
 }
 
 impl TryFrom<FirestoreQueryParams> for StructuredQuery {

@@ -287,6 +287,8 @@ impl FirestoreDb {
                 .as_ref()
                 .map(|selector| selector.try_into())
                 .transpose()?,
+            request_options: self
+                .resolve_request_options(params.query_params.request_options.as_ref()),
             query_type: Some(run_aggregation_query_request::QueryType::StructuredAggregationQuery(
                 StructuredAggregationQuery {
                     aggregations: params.aggregations.iter().map(|agg| agg.into()).collect(),

@@ -588,6 +588,7 @@ impl FirestoreDb {
                     .as_ref()
                     .map(|selector| selector.try_into())
                     .transpose()?,
+                request_options: self.resolve_request_options(None),
                 mask: return_only_fields.map({
                     |vf| gcloud_sdk::google::firestore::v1::DocumentMask {
                         field_paths: vf.iter().map(|f| f.to_string()).collect(),
@@ -692,6 +693,7 @@ impl FirestoreDb {
                 .as_ref()
                 .map(|selector| selector.try_into())
                 .transpose()?,
+            request_options: self.resolve_request_options(None),
             mask: return_only_fields.map({
                 |vf| gcloud_sdk::google::firestore::v1::DocumentMask {
                     field_paths: vf.iter().map(|f| f.to_string()).collect(),

@@ -25,7 +25,7 @@ async fn my_token() -> gcloud_sdk::error::Result<gcloud_sdk::Token> {
         config_env_var("TOKEN_VALUE")
             .expect("TOKEN_VALUE must be specified")
             .into(),
-        chrono::Utc::now().add(std::time::Duration::from_secs(3600)),
+        jiff::Timestamp::now().add(std::time::Duration::from_secs(3600)),
     ))
 }
 

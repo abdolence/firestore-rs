@@ -104,6 +104,7 @@ impl FirestoreDb {
                 .as_ref()
                 .map(|eo| eo.try_into())
                 .transpose()?,
+            request_options: self.resolve_request_options(params.request_options.as_ref()),
             query_type: Some(run_query_request::QueryType::StructuredQuery(
                 params.try_into()?,
             )),
@@ -440,6 +441,9 @@ impl FirestoreQuerySupport for FirestoreDb {
                                                 .unwrap_or_else(|| self.get_documents_path())
                                                 .clone(),
                                             consistency_selector: maybe_consistency_selector,
+                                            request_options: self.resolve_request_options(
+                                                params.query_params.request_options.as_ref(),
+                                            ),
                                             query_type: Some(
                                                 partition_query_request::QueryType::StructuredQuery(
                                                     query_params,

@@ -1,7 +1,7 @@
 use crate::errors::*;
 use crate::{
     FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb,
-    FirestoreResult, FirestoreWriteResult,
+    FirestoreRequestOptions, FirestoreResult, FirestoreWriteResult,
 };
 use async_trait::async_trait;
 use futures::TryFutureExt;
@@ -13,6 +13,9 @@ use tracing::*;
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreSimpleBatchWriteOptions {
     retry_max_elapsed_time: Option<chrono::Duration>,
+
+    /// Request options (e.g. request tags) for the batch write requests.
+    pub request_options: Option<FirestoreRequestOptions>,
 }
 
 pub struct FirestoreSimpleBatchWriter {
@@ -58,6 +61,9 @@ impl FirestoreBatchWriter for FirestoreSimpleBatchWriter {
             database: self.db.get_database_path().to_string(),
             writes,
             labels: HashMap::new(),
+            request_options: self
+                .db
+                .resolve_request_options(self.options.request_options.as_ref()),
         };
 
         backoff::future::retry(backoff, || {
