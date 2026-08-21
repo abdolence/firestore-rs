@@ -3,17 +3,28 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::db::split_document_path;
 use crate::errors::*;
-use crate::FirestoreValue;
+use crate::{FirestoreResult, FirestoreValue};
 
 pub(crate) const FIRESTORE_REFERENCE_TYPE_TAG_TYPE: &str = "FirestoreReference";
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash, Default)]
-pub struct FirestoreReference(pub String);
+pub struct FirestoreReference(String);
 
 impl FirestoreReference {
     /// Creates a new reference
-    pub fn new(reference: String) -> Self {
-        FirestoreReference(reference)
+    pub fn new(reference: String) -> FirestoreResult<Self> {
+        if reference.matches("/").count() < 5 {
+            return Err(FirestoreError::InvalidParametersError(
+                FirestoreInvalidParametersError {
+                    public: FirestoreInvalidParametersPublicDetails {
+                        field: "reference".to_string(),
+                        error: "not absolute".to_string(),
+                    },
+                },
+            ));
+        }
+
+        Ok(FirestoreReference(reference))
     }
 
     /// Returns the reference as a string
@@ -337,11 +348,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_reference_new() {
+        FirestoreReference::new(
+            "projects/test-project/databases/(default)/documents/test-collection".to_string(),
+        )
+        .expect("valid ref");
+
+        assert!(FirestoreReference::new(
+            "projects/test-project/databases/(default)/documents".to_string(),
+        )
+        .is_err())
+    }
+
+    #[test]
     fn test_reference_split() {
         let reference = FirestoreReference::new(
             "projects/test-project/databases/(default)/documents/test-collection/test-document-id/child-collection/child-document-id"
                 .to_string(),
-        );
+        ).expect("valid ref");
         let (parent_path, collection_name, document_id) =
             reference.split("projects/test-project/databases/(default)/documents");
 

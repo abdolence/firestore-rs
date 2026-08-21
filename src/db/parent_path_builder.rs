@@ -1,4 +1,5 @@
 use crate::db::safe_document_path;
+use crate::errors::FirestoreError;
 use crate::{FirestoreReference, FirestoreResult};
 use std::fmt::{Display, Formatter};
 
@@ -91,8 +92,10 @@ impl<'a> From<&'a ParentPathBuilder> for &'a str {
     }
 }
 
-impl From<ParentPathBuilder> for FirestoreReference {
-    fn from(pb: ParentPathBuilder) -> Self {
-        FirestoreReference(pb.value)
+impl TryFrom<ParentPathBuilder> for FirestoreReference {
+    type Error = FirestoreError;
+
+    fn try_from(pb: ParentPathBuilder) -> Result<Self, Self::Error> {
+        FirestoreReference::new(pb.value)
     }
 }
