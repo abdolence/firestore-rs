@@ -735,16 +735,6 @@ where
     }
 }
 
-pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
-    // Return string range the last part after '/'
-    let split_pos = path.rfind('/').map(|pos| pos + 1).unwrap_or(0);
-    if split_pos == 0 {
-        ("", path)
-    } else {
-        (&path[0..split_pos - 1], &path[split_pos..])
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -813,17 +803,6 @@ mod tests {
         assert_eq!(
             ensure_url_scheme("invalid:localhost:8080".into()),
             "http://invalid:localhost:8080"
-        );
-    }
-
-    #[test]
-    fn test_split_document_path() {
-        assert_eq!(
-            split_document_path("projects/test-project/databases/(default)/documents/test/test1"),
-            (
-                "projects/test-project/databases/(default)/documents/test",
-                "test1"
-            )
         );
     }
 }

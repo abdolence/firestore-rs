@@ -1,9 +1,8 @@
 use gcloud_sdk::google::firestore::v1::value;
+use regex::regex;
 use serde::{Deserialize, Serialize, Serializer};
 
-use crate::db::split_document_path;
-use crate::errors::*;
-use crate::FirestoreValue;
+use crate::{errors::*, FirestoreResult, FirestoreValue};
 
 pub(crate) const FIRESTORE_REFERENCE_TYPE_TAG_TYPE: &str = "FirestoreReference";
 
@@ -13,7 +12,7 @@ pub struct FirestoreReference(pub String);
 impl FirestoreReference {
     /// Creates a new reference
     pub fn new(reference: String) -> Self {
-        FirestoreReference(reference)
+        Self(reference)
     }
 
     /// Returns the reference as a string
@@ -21,10 +20,21 @@ impl FirestoreReference {
         &self.0
     }
 
+    /// Parse the reference to extract commonly used accessors such as `id`, `path`, …
+    pub fn parse<'a>(&'a self) -> FirestoreResult<FirestoreParsedReference<'a>> {
+        self.try_into()
+    }
+
     /// Splits the reference into parent path, collection name and document id
     /// Returns (parent_path, collection_name, document_id)
+    #[deprecated(since = "0.53.0", note = "use `parse` instead")]
     pub fn split(&self, document_path: &str) -> (Option<String>, String, String) {
-        let (parent_raw_path, document_id) = split_document_path(self.as_str());
+        let split_pos = self.0.rfind('/').map(|pos| pos + 1).unwrap_or(0);
+        let (parent_raw_path, document_id) = if split_pos == 0 {
+            ("", self.0.as_str())
+        } else {
+            (&self.0[0..split_pos - 1], &self.0[split_pos..])
+        };
 
         let parent_path = parent_raw_path.replace(format!("{document_path}/").as_str(), "");
 
@@ -38,6 +48,61 @@ impl FirestoreReference {
                 document_id.to_string(),
             )
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct FirestoreParsedReference<'a> {
+    path: &'a str,
+    parent: Option<&'a str>,
+    id: &'a str,
+}
+
+impl<'a> FirestoreParsedReference<'a> {
+    // Returns the path to the document starting from the root of the database
+    pub fn path(&self) -> &'a str {
+        self.path
+    }
+
+    // Returns the parent, or None when it's the root of database
+    pub fn parent(&self) -> Option<&'a str> {
+        self.parent
+    }
+
+    /// Returns the document id, ie the last element of the path
+    pub fn id(&self) -> &'a str {
+        self.id
+    }
+}
+
+impl<'a> TryFrom<&'a FirestoreReference> for FirestoreParsedReference<'a> {
+    type Error = FirestoreError;
+
+    fn try_from(raw: &'a FirestoreReference) -> Result<Self, Self::Error> {
+        let regex = regex!(r"^(projects/[^/]+/databases/[^/]+/documents).*/([^/]+)");
+        let captures = regex
+            .captures(&raw.0)
+            .ok_or(FirestoreError::DeserializeError(
+                FirestoreSerializationError::from_message("invalid absolute reference"),
+            ))?;
+
+        let database_offset = (captures.get(1).expect("capture database prefix").end()) + 1; // skip first slash
+        let document_offset = captures.get(2).expect("capture collection prefix").start();
+
+        let path = raw.0.split_at(database_offset).1;
+        let id = path.split_at(document_offset - database_offset).1;
+        let parent = if path == id {
+            None
+        } else {
+            Some(
+                path.split_at(
+                    path.len() - id.len() - 1, // skip trailing slash
+                )
+                .0,
+            )
+        };
+
+        Ok(Self { path, parent, id })
     }
 }
 
@@ -339,9 +404,13 @@ mod tests {
     #[test]
     fn test_reference_split() {
         let reference = FirestoreReference::new(
-            "projects/test-project/databases/(default)/documents/test-collection/test-document-id/child-collection/child-document-id"
-                .to_string(),
+            concat!(
+                "projects/test-project/databases/(default)/documents/",
+                "test-collection/test-document-id/child-collection/child-document-id"
+            )
+            .to_string(),
         );
+        #[allow(deprecated)]
         let (parent_path, collection_name, document_id) =
             reference.split("projects/test-project/databases/(default)/documents");
 
@@ -351,5 +420,43 @@ mod tests {
         );
         assert_eq!(collection_name, "child-collection");
         assert_eq!(document_id, "child-document-id");
+    }
+
+    #[test]
+    fn test_reference_parsing() {
+        let reference = FirestoreReference(
+            concat!(
+                "projects/test-project/databases/(default)/documents/",
+                "test-collection/test-document-id/child-collection/child-document-id"
+            )
+            .to_string(),
+        );
+        let parsed = reference.parse().expect("valid ref");
+
+        assert_eq!(
+            parsed.path(),
+            "test-collection/test-document-id/child-collection/child-document-id",
+        );
+        assert_eq!(
+            parsed.parent(),
+            Some("test-collection/test-document-id/child-collection"),
+        );
+        assert_eq!(parsed.id(), "child-document-id");
+    }
+
+    #[test]
+    fn test_reference_parsing_root_document() {
+        let reference = FirestoreReference(
+            concat!(
+                "projects/test-project/databases/(default)/documents/",
+                "test-document-id"
+            )
+            .to_string(),
+        );
+        let parsed = reference.parse().expect("valid ref");
+
+        assert_eq!(parsed.path(), "test-document-id");
+        assert_eq!(parsed.parent(), None);
+        assert_eq!(parsed.id(), "test-document-id");
     }
 }

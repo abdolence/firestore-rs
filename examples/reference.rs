@@ -60,22 +60,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     println!("Now in the list: {objects1:?}");
 
-    let (parent_path, collection_name, document_id) = objects1
-        .first()
-        .unwrap()
-        .some_ref
-        .split(db.get_documents_path());
+    let parsed = objects1.first().unwrap().some_ref.parse()?;
 
-    println!("Document ID: {document_id}");
-    println!("Collection name: {collection_name:?}");
-    println!("Parent Path: {parent_path:?}");
+    println!("Document path: {:?}", parsed.path());
+    println!("Document ID: {}", parsed.id());
+    println!("Parent path: {:?}", parsed.parent());
 
     // Read by reference
     let object_returned: Option<FirestoreDocument> = db
         .fluent()
         .select()
-        .by_id_in(&collection_name)
-        .one(document_id)
+        .by_id_in(parsed.parent().unwrap())
+        .one(parsed.id())
         .await?;
 
     println!("Object by reference: {object_returned:?}");
