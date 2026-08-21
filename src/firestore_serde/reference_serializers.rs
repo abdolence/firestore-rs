@@ -50,6 +50,18 @@ impl FirestoreReference {
             )
         }
     }
+
+    /// Returns the document id, ie the last element of the path
+    pub fn id(&self) -> &str {
+        split_document_path(self.as_str()).1
+    }
+
+    // Returns the path to the document starting from the root of the documents
+    pub fn path(&self) -> &str {
+        (0..5).fold(self.as_str(), |acc, _| {
+            acc.split_once('/').expect("missing slashes").1
+        })
+    }
 }
 
 pub mod serialize_as_reference {
@@ -361,19 +373,26 @@ mod tests {
     }
 
     #[test]
-    fn test_reference_split() {
+    fn test_reference_accessors() {
         let reference = FirestoreReference::new(
             "projects/test-project/databases/(default)/documents/test-collection/test-document-id/child-collection/child-document-id"
                 .to_string(),
         ).expect("valid ref");
+
         let (parent_path, collection_name, document_id) =
             reference.split("projects/test-project/databases/(default)/documents");
-
         assert_eq!(
             parent_path,
             Some("test-collection/test-document-id".to_string())
         );
         assert_eq!(collection_name, "child-collection");
         assert_eq!(document_id, "child-document-id");
+
+        assert_eq!(reference.id(), "child-document-id");
+
+        assert_eq!(
+            reference.path(),
+            "test-collection/test-document-id/child-collection/child-document-id"
+        );
     }
 }
