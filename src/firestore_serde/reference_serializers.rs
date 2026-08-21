@@ -3,17 +3,28 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use crate::db::split_document_path;
 use crate::errors::*;
-use crate::FirestoreValue;
+use crate::{FirestoreResult, FirestoreValue};
 
 pub(crate) const FIRESTORE_REFERENCE_TYPE_TAG_TYPE: &str = "FirestoreReference";
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash, Default)]
-pub struct FirestoreReference(pub String);
+pub struct FirestoreReference(String);
 
 impl FirestoreReference {
     /// Creates a new reference
-    pub fn new(reference: String) -> Self {
-        FirestoreReference(reference)
+    pub fn new(reference: String) -> FirestoreResult<Self> {
+        if reference.matches("/").count() < 5 {
+            return Err(FirestoreError::InvalidParametersError(
+                FirestoreInvalidParametersError {
+                    public: FirestoreInvalidParametersPublicDetails {
+                        field: "reference".to_string(),
+                        error: "not absolute".to_string(),
+                    },
+                },
+            ));
+        }
+
+        Ok(FirestoreReference(reference))
     }
 
     /// Returns the reference as a string
@@ -38,6 +49,18 @@ impl FirestoreReference {
                 document_id.to_string(),
             )
         }
+    }
+
+    /// Returns the document id, ie the last element of the path
+    pub fn id(&self) -> &str {
+        split_document_path(self.as_str()).1
+    }
+
+    // Returns the path to the document starting from the root of the documents
+    pub fn path(&self) -> &str {
+        (0..5).fold(self.as_str(), |acc, _| {
+            acc.split_once('/').expect("missing slashes").1
+        })
     }
 }
 
@@ -337,19 +360,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_reference_split() {
+    fn test_reference_new() {
+        FirestoreReference::new(
+            "projects/test-project/databases/(default)/documents/test-collection".to_string(),
+        )
+        .expect("valid ref");
+
+        assert!(FirestoreReference::new(
+            "projects/test-project/databases/(default)/documents".to_string(),
+        )
+        .is_err())
+    }
+
+    #[test]
+    fn test_reference_accessors() {
         let reference = FirestoreReference::new(
             "projects/test-project/databases/(default)/documents/test-collection/test-document-id/child-collection/child-document-id"
                 .to_string(),
-        );
+        ).expect("valid ref");
+
         let (parent_path, collection_name, document_id) =
             reference.split("projects/test-project/databases/(default)/documents");
-
         assert_eq!(
             parent_path,
             Some("test-collection/test-document-id".to_string())
         );
         assert_eq!(collection_name, "child-collection");
         assert_eq!(document_id, "child-document-id");
+
+        assert_eq!(reference.id(), "child-document-id");
+
+        assert_eq!(
+            reference.path(),
+            "test-collection/test-document-id/child-collection/child-document-id"
+        );
     }
 }
