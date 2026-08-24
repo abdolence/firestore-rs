@@ -162,6 +162,14 @@ impl FirestorePersistentCacheBackend {
             .is_some()
     }
 
+    /// Stops a collection answering `list`/`query` until Firestore reports it consistent again.
+    fn suspend_collection(&self, collection_path: &str) {
+        self.suspended_collections
+            .write()
+            .expect("cache suspended collections lock poisoned")
+            .insert(collection_path.to_string());
+    }
+
     /// Whether a collection is mid-replay after Firestore reset or removed its listener target.
     fn is_suspended(&self, collection_path: &str) -> bool {
         self.suspended_collections
@@ -725,6 +733,29 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             .remove(collection_path);
 
         Ok(Some(removed.listener_target))
+    }
+
+    async fn begin_collection_resync(&self, collection_path: &str) -> FirestoreResult<()> {
+        if !self.config().collections.contains_key(collection_path) {
+            return Ok(());
+        }
+        self.suspend_collection(collection_path);
+        self.invalidate_collection(collection_path)?;
+        Ok(())
+    }
+
+    async fn authoritative_doc_count(&self, collection_path: &str) -> FirestoreResult<Option<u64>> {
+        // redb holds exactly what was written, with no eviction of its own, so a preloaded
+        // collection's row count is the server's count.
+        let config = self.config();
+        let Some(collection_config) = config.collections.get(collection_path) else {
+            return Ok(None);
+        };
+        if !collection_config.collection_load_mode.is_preloading() || !self.is_open() {
+            return Ok(None);
+        }
+
+        Ok(self.table_len(collection_path).ok())
     }
 
     async fn shutdown(&self) -> Result<(), FirestoreError> {

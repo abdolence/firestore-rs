@@ -41,6 +41,13 @@ pub type FirestoreMemCacheOptions = CacheBuilder<String, FirestoreDocument, Fire
 /// # }
 /// ```
 pub struct FirestoreMemoryCacheBackend {
+    /// Whether an entry count can be compared against Firestore's.
+    ///
+    /// False when the cache expires entries on its own, because then a shortfall is this cache
+    /// doing its job rather than a divergence from the server.
+    count_authoritative: bool,
+    /// The per-collection capacity, above which eviction makes the count meaningless.
+    max_capacity: u64,
     /// Behind a lock so that collections can be added and removed while the cache runs. Readers
     /// clone the `Arc` out and drop the guard, so no guard is ever held across an await.
     config: std::sync::RwLock<Arc<FirestoreCacheConfiguration>>,
@@ -139,7 +146,10 @@ impl FirestoreMemoryCacheBackend {
         config: FirestoreCacheConfiguration,
         options: FirestoreMemoryCacheOptions,
     ) -> FirestoreResult<Self> {
-        Self::with_collection_options(config, move |_| {
+        let count_authoritative = options.time_to_live.is_none() && options.time_to_idle.is_none();
+        let max_capacity = options.max_capacity;
+
+        let backend = Self::with_collection_options(config, move |_| {
             let mut builder = FirestoreMemCache::builder().max_capacity(options.max_capacity);
             if let Some(time_to_live) = options.time_to_live {
                 builder = builder.time_to_live(time_to_live);
@@ -148,6 +158,12 @@ impl FirestoreMemoryCacheBackend {
                 builder = builder.time_to_idle(time_to_idle);
             }
             builder
+        })?;
+
+        Ok(Self {
+            count_authoritative,
+            max_capacity,
+            ..backend
         })
     }
 
@@ -173,6 +189,10 @@ impl FirestoreMemoryCacheBackend {
             .collect();
 
         Ok(Self {
+            // An arbitrary moka builder can expire entries however it likes, so counts from a
+            // backend built this way are never comparable with Firestore's.
+            count_authoritative: false,
+            max_capacity: u64::MAX,
             config: std::sync::RwLock::new(Arc::new(config)),
             collection_caches: std::sync::RwLock::new(Arc::new(collection_caches)),
             collection_mem_options: Box::new(collection_mem_options),
@@ -203,6 +223,14 @@ impl FirestoreMemoryCacheBackend {
             .read()
             .expect("cache collections lock poisoned")
             .clone()
+    }
+
+    /// Stops a collection answering `list`/`query` until Firestore reports it consistent again.
+    fn suspend_collection(&self, collection_path: &str) {
+        self.suspended_collections
+            .write()
+            .expect("cache suspended collections lock poisoned")
+            .insert(collection_path.to_string());
     }
 
     /// Whether a collection is mid-replay after Firestore reset or removed its listener target.
@@ -483,6 +511,36 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         Ok(Some(removed.listener_target))
     }
 
+    async fn begin_collection_resync(&self, collection_path: &str) -> FirestoreResult<()> {
+        if !self.config().collections.contains_key(collection_path) {
+            return Ok(());
+        }
+        self.suspend_collection(collection_path);
+        self.invalidate_collection(collection_path).await;
+        Ok(())
+    }
+
+    async fn authoritative_doc_count(&self, collection_path: &str) -> FirestoreResult<Option<u64>> {
+        let config = self.config();
+        let Some(collection_config) = config.collections.get(collection_path) else {
+            return Ok(None);
+        };
+        if !self.count_authoritative || !collection_config.collection_load_mode.is_preloading() {
+            return Ok(None);
+        }
+
+        let Some(mem_cache) = self.collection_cache(collection_path) else {
+            return Ok(None);
+        };
+
+        // `entry_count` is otherwise an estimate.
+        mem_cache.run_pending_tasks().await;
+        let count = mem_cache.entry_count();
+
+        // At capacity a shortfall is eviction, not divergence.
+        Ok((count < self.max_capacity).then_some(count))
+    }
+
     async fn shutdown(&self) -> Result<(), FirestoreError> {
         // Handles to the backend outlive the cache - `read_through_cache` clones one into every
         // `FirestoreDb` it is attached to - so releasing the documents here rather than waiting to
@@ -667,6 +725,7 @@ mod tests {
     use gcloud_sdk::google::firestore::v1::{
         DocumentChange, DocumentDelete, DocumentRemove, TargetChange,
     };
+    use std::time::Duration;
 
     const DOCS: &str = "projects/test/databases/(default)/documents";
 
@@ -920,6 +979,62 @@ mod tests {
 
         assert!(!cached(&backend, "a", "one").await);
         assert!(cached(&backend, "a", "other").await);
+    }
+
+    #[tokio::test]
+    async fn a_preloaded_collection_reports_a_comparable_document_count() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed(&backend, "a", "one").await;
+        seed(&backend, "a", "two").await;
+
+        assert_eq!(
+            backend
+                .authoritative_doc_count(&format!("{DOCS}/a"))
+                .await
+                .unwrap(),
+            Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lazily_filled_collection_reports_no_comparable_count() {
+        let backend = backend(&[("a", 1000, FirestoreCacheCollectionLoadMode::PreloadNone)]);
+        seed(&backend, "a", "one").await;
+
+        // It holds whatever happened to be read, so its count says nothing about Firestore's.
+        assert_eq!(
+            backend
+                .authoritative_doc_count(&format!("{DOCS}/a"))
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cache_that_expires_entries_reports_no_comparable_count() {
+        let config = FirestoreCacheConfiguration::new().add_collection_config_at(
+            DOCS,
+            FirestoreCacheCollectionConfiguration::new(
+                "a",
+                FirestoreListenerTarget::new(1000),
+                FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+            ),
+        );
+        let backend = FirestoreMemoryCacheBackend::with_options(
+            config,
+            FirestoreMemoryCacheOptions::new().with_time_to_live(Duration::from_secs(60)),
+        )
+        .expect("backend");
+
+        // A shortfall here is this cache expiring entries, not Firestore having fewer documents.
+        assert_eq!(
+            backend
+                .authoritative_doc_count(&format!("{DOCS}/a"))
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     #[tokio::test]

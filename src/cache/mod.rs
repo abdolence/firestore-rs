@@ -76,6 +76,13 @@
 //! construction, but they are not guaranteed to be current. Do not cache data that must be read at
 //! strong consistency - read that through Firestore directly, or inside a transaction.
 //!
+//! Firestore also reports how many documents a target matches. When that disagrees with what a
+//! preloaded collection holds - which means changes were missed, typically deletes that happened
+//! while the listener was disconnected - the cache drops the collection and has Firestore replay
+//! it. The count is only compared when it can be trusted: a collection the cache expires entries
+//! from, or fills lazily, is never checked this way, because a shortfall there is the cache doing
+//! its job rather than a divergence.
+//!
 //! When Firestore resets or removes a listener target - after a reconnect, or when a stored resume
 //! token has expired - the cache drops what it holds for that collection and Firestore replays it.
 //! While that replay is in progress the collection stops answering `list` and `query` from the
@@ -150,6 +157,7 @@
 
 use crate::errors::{FirestoreCacheError, FirestoreErrorPublicGenericDetails};
 use crate::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Builds the error returned when a `read_cached_only` session asks for a `list`/`query` that the
@@ -453,14 +461,16 @@ where
             listener.add_target(target_params)?;
         }
 
-        let backend = self.inner.backend.clone();
+        let handler = Arc::new(FirestoreCacheListenHandler::new(
+            self.inner.backend.clone(),
+            listener.control_handle(),
+        ));
+
         listener
             .start(move |event| {
-                let backend = backend.clone();
+                let handler = handler.clone();
                 async move {
-                    if let Err(err) = backend.on_listen_event(event).await {
-                        error!(?err, "Error occurred while updating cache.");
-                    };
+                    handler.on_listen_event(event).await;
                     Ok(())
                 }
             })
@@ -712,6 +722,33 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
         ))
     }
 
+    /// Drops everything cached for one collection and stops it answering `list`/`query` until
+    /// Firestore reports it consistent again.
+    ///
+    /// Called when the cache is found to have diverged from the server and the collection is about
+    /// to be replayed. The default invalidates the entire cache, which is correct but far coarser
+    /// than it needs to be - override it.
+    async fn begin_collection_resync(&self, collection_path: &str) -> FirestoreResult<()> {
+        let _ = collection_path;
+        self.invalidate_all().await
+    }
+
+    /// How many documents the backend holds for a collection, **when that number can be trusted
+    /// to equal the number of documents Firestore holds**.
+    ///
+    /// Used to act on Firestore's existence filter, which reports the server's count so a client
+    /// can notice that its view has diverged - typically because deletes were missed while the
+    /// listener was disconnected.
+    ///
+    /// Returning `None` (the default) disables that check for the collection, and is the right
+    /// answer whenever the backend evicts documents on its own: an undercount caused by the
+    /// backend's own eviction is not a divergence, and treating it as one would re-download the
+    /// collection over and over.
+    async fn authoritative_doc_count(&self, collection_path: &str) -> FirestoreResult<Option<u64>> {
+        let _ = collection_path;
+        Ok(None)
+    }
+
     /// Stops caching a collection and drops its data.
     ///
     /// Returns the listener target that was keeping it up to date, or `None` if the collection was
@@ -724,6 +761,184 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
         Err(cache_dynamic_collections_unsupported_error(
             "remove_collection",
         ))
+    }
+}
+
+/// The shortest interval between two resynchronisations of the same target.
+///
+/// A target whose count keeps disagreeing with Firestore would otherwise re-download its
+/// collection in a loop.
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+const FIRESTORE_CACHE_MIN_RESYNC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Applies listen events to a cache backend, and acts on the ones that say the cache has diverged.
+///
+/// This sits between the listener and the backend so that the divergence policy lives in one place
+/// rather than in each backend, and so that it can reach the listener - which a backend cannot.
+struct FirestoreCacheListenHandler<B> {
+    backend: Arc<B>,
+    listener: FirestoreListenerControlHandle,
+    state: tokio::sync::Mutex<FirestoreCacheListenState>,
+}
+
+#[derive(Default)]
+struct FirestoreCacheListenState {
+    /// Existence filters awaiting the end of their snapshot, keyed by target.
+    pending_filters: HashMap<FirestoreListenerTarget, i32>,
+    /// When each target was last resynchronised, for the rate limit.
+    last_resync: HashMap<FirestoreListenerTarget, std::time::Instant>,
+}
+
+impl<B> FirestoreCacheListenHandler<B>
+where
+    B: FirestoreCacheBackend + Send + Sync + 'static,
+{
+    fn new(backend: Arc<B>, listener: FirestoreListenerControlHandle) -> Self {
+        Self {
+            backend,
+            listener,
+            state: tokio::sync::Mutex::new(FirestoreCacheListenState::default()),
+        }
+    }
+
+    async fn on_listen_event(&self, event: FirestoreListenEvent) {
+        match &event {
+            // Firestore sends the filter and the changes of the same snapshot as a group.
+            // Comparing counts the moment it arrives would compare a half-applied snapshot, and a
+            // false mismatch costs a full re-download - so hold it until the snapshot closes.
+            FirestoreListenEvent::Filter(filter) => {
+                if let Ok(target) = FirestoreListenerTarget::try_from(filter.target_id) {
+                    if filter.unchanged_names.is_some() {
+                        debug!(
+                            ?target,
+                            "Firestore sent a bloom filter with its existence filter; this cache                              resynchronises on a count mismatch instead of using it.",
+                        );
+                    }
+                    self.state
+                        .lock()
+                        .await
+                        .pending_filters
+                        .insert(target, filter.count);
+                }
+                return;
+            }
+            FirestoreListenEvent::TargetChange(target_change) => {
+                // NO_CHANGE and CURRENT with a read time are the snapshot boundaries.
+                let settles_snapshot = matches!(
+                    FirestoreListenerTargetChangeType::try_from(target_change.target_change_type),
+                    Ok(FirestoreListenerTargetChangeType::NoChange)
+                        | Ok(FirestoreListenerTargetChangeType::Current)
+                );
+                if settles_snapshot && target_change.read_time.is_some() {
+                    self.settle_pending_filters(&target_change.target_ids).await;
+                }
+            }
+            _ => {}
+        }
+
+        if let Err(err) = self.backend.on_listen_event(event).await {
+            error!(?err, "Error occurred while updating cache.");
+        }
+    }
+
+    /// Compares the filters that were waiting on this snapshot, and resynchronises what diverged.
+    async fn settle_pending_filters(&self, target_ids: &[i32]) {
+        let settled: Vec<(FirestoreListenerTarget, i32)> = {
+            let mut state = self.state.lock().await;
+            if state.pending_filters.is_empty() {
+                return;
+            }
+            if target_ids.is_empty() {
+                state.pending_filters.drain().collect()
+            } else {
+                target_ids
+                    .iter()
+                    .filter_map(|id| FirestoreListenerTarget::try_from(*id).ok())
+                    .filter_map(|target| {
+                        state
+                            .pending_filters
+                            .remove(&target)
+                            .map(|count| (target, count))
+                    })
+                    .collect()
+            }
+        };
+
+        let config = self.backend.cache_configuration();
+        for (target, remote_count) in settled {
+            let Some(collection_path) = config
+                .collections
+                .iter()
+                .find(|(_, c)| c.listener_target == target)
+                .map(|(path, _)| path.clone())
+            else {
+                continue;
+            };
+
+            let local_count = match self.backend.authoritative_doc_count(&collection_path).await {
+                Ok(Some(count)) => count,
+                Ok(None) => {
+                    debug!(
+                        collection_path,
+                        "Cannot compare this collection's document count with Firestore's, so                          the existence filter is ignored.",
+                    );
+                    continue;
+                }
+                Err(err) => {
+                    warn!(?err, collection_path, "Could not count cached documents.");
+                    continue;
+                }
+            };
+
+            if i64::from(remote_count) == local_count as i64 {
+                trace!(
+                    collection_path,
+                    local_count,
+                    "The cache agrees with Firestore."
+                );
+                continue;
+            }
+
+            self.resync(target, &collection_path, local_count, remote_count)
+                .await;
+        }
+    }
+
+    async fn resync(
+        &self,
+        target: FirestoreListenerTarget,
+        collection_path: &str,
+        local_count: u64,
+        remote_count: i32,
+    ) {
+        {
+            let mut state = self.state.lock().await;
+            if let Some(last) = state.last_resync.get(&target) {
+                if last.elapsed() < FIRESTORE_CACHE_MIN_RESYNC_INTERVAL {
+                    warn!(
+                        collection_path,
+                        local_count,
+                        remote_count,
+                        "The cache still disagrees with Firestore, but it was resynchronised                          recently. Skipping this one.",
+                    );
+                    return;
+                }
+            }
+            state
+                .last_resync
+                .insert(target.clone(), std::time::Instant::now());
+        }
+
+        warn!(
+            collection_path,
+            local_count,
+            remote_count,
+            "The cache holds a different number of documents than Firestore reports, so it has              missed changes. Resynchronising the collection.",
+        );
+
+        // The listener discards the target's resume state and reopens the stream; Firestore then
+        // replays the collection, and the reset that arrives with it empties the stale copy.
+        self.listener.resync_target(target);
     }
 }
 

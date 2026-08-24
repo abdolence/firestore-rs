@@ -74,7 +74,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         list(&cached_db, FIRST_COLLECTION).await?.len()
     );
 
+    // ---------------------------------------------------------------------------------------
+    // Tracking individual documents, and changing which ones are tracked
+    // ---------------------------------------------------------------------------------------
+
+    // Caching a known set of documents - configuration, feature flags, reference data - is worth
+    // saying explicitly: the listener then watches exactly these documents, so unrelated changes
+    // in the collection are never streamed here.
+    let mut tracked = vec!["test-0".to_string(), "test-1".to_string()];
+    track_documents(&cache, &tracked).await?;
+    report_tracked(&cached_db, &["test-0", "test-1", "test-2"]).await?;
+
+    // Start tracking one more document and stop tracking another. A Firestore documents target
+    // carries a fixed list, so changing it means replacing the target: keep the set on your side
+    // and re-apply it, rather than trying to edit it in place.
+    tracked.push("test-2".to_string());
+    tracked.retain(|id| id != "test-0");
+    track_documents(&cache, &tracked).await?;
+    report_tracked(&cached_db, &["test-0", "test-1", "test-2"]).await?;
+
     cache.shutdown().await?;
+    Ok(())
+}
+
+/// Caches exactly `document_ids` of the tracked collection, replacing whatever was tracked before.
+async fn track_documents(
+    cache: &FirestoreMemoryCache,
+    document_ids: &[String],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    println!("\nTracking documents: {document_ids:?}");
+
+    // Removing first because a collection can only be cached once, and the watched set is part of
+    // its listener target rather than something that can be edited afterwards.
+    cache.remove_collection(SECOND_COLLECTION).await?;
+
+    cache
+        .add_collection(
+            FirestoreCacheCollection::new(SECOND_COLLECTION)
+                .documents(document_ids)
+                .preload_all(),
+        )
+        .await?;
+
+    Ok(())
+}
+
+/// Prints which of `document_ids` the cache holds, without falling back to Firestore.
+async fn report_tracked(
+    cached_db: &FirestoreDb,
+    document_ids: &[&str],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    for document_id in document_ids {
+        let found: Option<MyTestStructure> = cached_db
+            .fluent()
+            .select()
+            .by_id_in(SECOND_COLLECTION)
+            .obj()
+            .one(*document_id)
+            .await?;
+
+        println!(
+            "  {document_id}: {}",
+            if found.is_some() {
+                "cached"
+            } else {
+                "not cached"
+            }
+        );
+    }
     Ok(())
 }
 

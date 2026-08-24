@@ -200,3 +200,19 @@ FirestoreCache::memory(&db)
 constructing that struct with a literal needs the extra field - use
 `FirestoreCacheCollectionConfiguration::new(..)` and the `with_documents` builder instead. Such a
 collection is never listable, whatever its load mode.
+
+### Detecting a diverged cache
+
+The cache now acts on Firestore's existence filter, which reports how many documents a target
+matches. When that disagrees with what a preloaded collection holds - meaning changes were missed,
+typically deletes that happened while the listener was disconnected - the collection is dropped and
+replayed rather than left quietly wrong.
+
+The count is only compared when it can be trusted. A collection filled lazily, or held in a memory
+cache configured with `time_to_live` / `time_to_idle`, is never checked this way: a shortfall there
+is the cache expiring entries rather than a divergence, and treating it as one would re-download
+the collection repeatedly.
+
+`FirestoreCacheBackend` gains `authoritative_doc_count` and `begin_collection_resync` for this, both
+with default implementations - the first disables the check, the second falls back to invalidating
+the whole cache. Custom backends keep compiling; implement them to get the finer behaviour.

@@ -251,10 +251,34 @@ pub(crate) type FirestoreListenerTargetsState =
 /// [`TargetsChanged`](Self::TargetsChanged) deliberately carries no payload: the shared target map
 /// is the single source of truth, so a change applies on the next reconnect even if the message is
 /// lost or arrives late.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum FirestoreListenerControl {
     Shutdown,
     TargetsChanged,
+    /// Listen to this target again from scratch, discarding its stored resume state.
+    ResyncTarget(FirestoreListenerTarget),
+}
+
+/// A cheap, cloneable handle for asking a running listener to resynchronise a target.
+///
+/// Separate from [`FirestoreListener`] so that code reacting to listen events - the cache above
+/// all - can ask for a resync without taking any lock the listener's own shutdown holds.
+#[derive(Clone, Debug)]
+pub struct FirestoreListenerControlHandle {
+    control_writer: Arc<UnboundedSender<FirestoreListenerControl>>,
+}
+
+impl FirestoreListenerControlHandle {
+    /// Discards the target's stored resume state and reopens the stream, so Firestore sends its
+    /// initial state again.
+    ///
+    /// Use this when the cached view of a target is known to have diverged from the server and
+    /// resuming would only carry the divergence forward. Does nothing if the listener has stopped.
+    pub fn resync_target(&self, target: FirestoreListenerTarget) {
+        self.control_writer
+            .send(FirestoreListenerControl::ResyncTarget(target))
+            .ok();
+    }
 }
 
 pub struct FirestoreListener<D, S>
@@ -383,6 +407,13 @@ where
             .keys()
             .cloned()
             .collect()
+    }
+
+    /// A handle for asking this listener to resynchronise a target while it runs.
+    pub fn control_handle(&self) -> FirestoreListenerControlHandle {
+        FirestoreListenerControlHandle {
+            control_writer: self.control_writer.clone(),
+        }
     }
 
     /// Whether this listener listens on the given target.
@@ -515,7 +546,9 @@ where
                     None | Some(FirestoreListenerControl::Shutdown) => {
                         shutdown_flag.store(true, Ordering::Relaxed);
                     }
-                    Some(FirestoreListenerControl::TargetsChanged) => {}
+                    // Nothing is being listened to, so there is nothing to resynchronise either.
+                    Some(FirestoreListenerControl::TargetsChanged)
+                    | Some(FirestoreListenerControl::ResyncTarget(_)) => {}
                 }
                 continue;
             }
@@ -549,6 +582,18 @@ where
                                 Some(FirestoreListenerControl::Shutdown) => {
                                     debug!("Exiting from listener on targets...");
                                     control_receiver.close();
+                                    break;
+                                }
+                                Some(FirestoreListenerControl::ResyncTarget(target)) => {
+                                    warn!(
+                                        ?target,
+                                        ?effective_delay,
+                                        "Resynchronising a listener target from scratch at the cache's request.",
+                                    );
+                                    Self::forget_resume_states(&storage, &targets_state, &[target]).await;
+                                    // Without this a target that keeps diverging would reconnect
+                                    // and re-download in a tight loop.
+                                    tokio::time::sleep(effective_delay).await;
                                     break;
                                 }
                                 Some(FirestoreListenerControl::TargetsChanged) => {
