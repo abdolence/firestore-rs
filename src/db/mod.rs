@@ -735,6 +735,17 @@ where
     }
 }
 
+/// Splits a document path into the path of its parent and the document ID.
+///
+/// Returns `(parent_path, document_id)`, where the parent path is empty when the path has no
+/// separator at all.
+pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
+    match path.rfind('/') {
+        Some(split_pos) => (&path[..split_pos], &path[split_pos + 1..]),
+        None => ("", path),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,5 +815,17 @@ mod tests {
             ensure_url_scheme("invalid:localhost:8080".into()),
             "http://invalid:localhost:8080"
         );
+    }
+
+    #[test]
+    fn test_split_document_path() {
+        assert_eq!(
+            split_document_path("projects/test-project/databases/(default)/documents/test/test1"),
+            (
+                "projects/test-project/databases/(default)/documents/test",
+                "test1"
+            )
+        );
+        assert_eq!(split_document_path("test1"), ("", "test1"));
     }
 }
