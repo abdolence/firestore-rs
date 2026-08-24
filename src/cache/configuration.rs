@@ -71,6 +71,20 @@ impl FirestoreCacheConfiguration {
         self
     }
 
+    /// Decides what a Firestore target change means for the collections of this cache.
+    ///
+    /// A backend's [`on_listen_event`](crate::FirestoreCacheBackend::on_listen_event) should act on
+    /// this rather than interpreting the target change itself: it resolves Firestore's "empty
+    /// target IDs means all targets" rule, and scopes the result to the documents a target actually
+    /// covers.
+    #[inline]
+    pub fn target_change_action(
+        &self,
+        target_change: &gcloud_sdk::google::firestore::v1::TargetChange,
+    ) -> crate::FirestoreCacheTargetChangeAction {
+        crate::cache::cache_target_change_action(self, target_change)
+    }
+
     /// Whether the cache holds this document: its collection is cached, and the collection is not
     /// restricted to a different set of document IDs.
     #[inline]
@@ -128,7 +142,6 @@ impl FirestoreCacheConfiguration {
     ///
     /// Used to scope the invalidation when Firestore resets or removes a target. A linear scan is
     /// deliberate: the map is small, and this runs only on target changes, never per document.
-    #[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
     pub(crate) fn target_scope(
         &self,
         target: &FirestoreListenerTarget,
@@ -142,7 +155,6 @@ impl FirestoreCacheConfiguration {
     /// Returns what every listener target of this cache covers.
     ///
     /// Firestore uses an empty set of target IDs to mean "all targets", which is what this is for.
-    #[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
     pub(crate) fn all_target_scopes(&self) -> Vec<FirestoreCacheTargetScope<'_>> {
         self.collections
             .iter()
@@ -210,7 +222,6 @@ impl Default for FirestoreCacheCollectionWatch {
 }
 
 /// The scope of the listener target that keeps one cached collection up to date.
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 #[inline]
 pub(crate) fn target_scope_of<'a>(
     collection_path: &'a str,
@@ -231,7 +242,6 @@ pub(crate) fn target_scope_of<'a>(
 /// [`Collection`](Self::Collection) is produced today. Invalidation is written against this rather
 /// than against a bare collection path so that a target watching a handful of documents does not
 /// end up wiping the entire collection.
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum FirestoreCacheTargetScope<'a> {
     /// The target covers every document in the collection at this path.
@@ -243,7 +253,6 @@ pub(crate) enum FirestoreCacheTargetScope<'a> {
     },
 }
 
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 impl FirestoreCacheTargetScope<'_> {
     /// The collection this scope belongs to.
     #[inline]
@@ -314,6 +323,29 @@ impl FirestoreCacheCollectionConfiguration {
             collection_watch: FirestoreCacheCollectionWatch::WholeCollection,
             indices: Vec::new(),
         }
+    }
+
+    /// The listener target that keeps this collection up to date.
+    ///
+    /// Backends use this in [`load`](crate::FirestoreCacheBackend::load) so that a collection
+    /// limited to named documents is listened to as a documents target rather than as a query over
+    /// the whole collection.
+    #[inline]
+    pub fn listener_target_params(
+        &self,
+        resume_type: Option<crate::FirestoreListenerTargetResumeType>,
+    ) -> crate::FirestoreListenerTargetParams {
+        crate::cache::target_params_for_collection(self, resume_type)
+    }
+
+    /// The point in time a newly attached listener target should be resumed from.
+    ///
+    /// Deliberately a little behind the local clock: a read time in the server's future is rejected
+    /// as invalid, and a client clock can easily run slightly ahead. The cost is a few redundant
+    /// document changes, which are idempotent.
+    #[inline]
+    pub fn listener_read_time() -> crate::FirestoreInstant {
+        crate::cache::cache_target_read_time()
     }
 
     /// Caches and listens to only these documents of the collection, instead of all of them.

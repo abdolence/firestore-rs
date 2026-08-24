@@ -776,7 +776,6 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
 ///
 /// A target whose count keeps disagreeing with Firestore would otherwise re-download its
 /// collection in a loop.
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 const FIRESTORE_CACHE_MIN_RESYNC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Applies listen events to a cache backend, and acts on the ones that say the cache has diverged.
@@ -994,14 +993,12 @@ where
 /// A resume `read_time` in the server's future is rejected as invalid, and the client's clock can
 /// easily be a little ahead. The cost of the margin is a few redundant document changes, which are
 /// idempotent; the cost of being wrong the other way is a rejected listen request.
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 const FIRESTORE_CACHE_READ_TIME_SKEW_MARGIN: std::time::Duration =
     std::time::Duration::from_secs(5);
 
 /// The point in time a newly attached target should be resumed from.
 ///
 /// Deliberately a little in the past - see [`FIRESTORE_CACHE_READ_TIME_SKEW_MARGIN`].
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 pub(crate) fn cache_target_read_time() -> FirestoreInstant {
     let now = FirestoreInstant::now();
     jiff::SignedDuration::try_from(FIRESTORE_CACHE_READ_TIME_SKEW_MARGIN)
@@ -1014,7 +1011,6 @@ pub(crate) fn cache_target_read_time() -> FirestoreInstant {
 ///
 /// Shared by the backends and by their runtime `add_collection`, so that a collection added later
 /// is listened to exactly like one configured up front.
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 pub(crate) fn target_params_for_collection(
     collection_config: &FirestoreCacheCollectionConfiguration,
     resume_type: Option<FirestoreListenerTargetResumeType>,
@@ -1058,8 +1054,7 @@ pub(crate) fn cache_dynamic_collections_unsupported_error(operation: &str) -> Fi
 ///
 /// Firestore uses an empty set of target IDs to mean *all* targets, which this resolves for the
 /// caller.
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
-pub(crate) enum FirestoreCacheTargetChangeAction {
+pub enum FirestoreCacheTargetChangeAction {
     /// The listener targets are being replayed from scratch: drop what is cached for them and stop
     /// answering `list`/`query` from their collections until the replay completes.
     SuspendAndInvalidate(Vec<FirestoreCacheInvalidation>),
@@ -1071,9 +1066,8 @@ pub(crate) enum FirestoreCacheTargetChangeAction {
 }
 
 /// What one target change asks the backend to drop.
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) enum FirestoreCacheInvalidation {
+pub enum FirestoreCacheInvalidation {
     /// Drop every document cached for this collection.
     Collection(String),
     /// Drop only these documents of the collection - the target watches nothing else, so wiping
@@ -1084,9 +1078,9 @@ pub(crate) enum FirestoreCacheInvalidation {
     },
 }
 
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 impl FirestoreCacheInvalidation {
-    pub(crate) fn collection_path(&self) -> &str {
+    /// The collection this invalidation belongs to.
+    pub fn collection_path(&self) -> &str {
         match self {
             Self::Collection(collection_path) => collection_path,
             Self::Documents {
@@ -1099,8 +1093,8 @@ impl FirestoreCacheInvalidation {
 /// Decides what a target change means for the cache.
 ///
 /// Shared by the backends so that they cannot drift apart, and kept free of any backend state so
-/// that it can be unit tested on its own.
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+/// that it can be unit tested on its own. Reachable publicly as
+/// [`FirestoreCacheConfiguration::target_change_action`].
 pub(crate) fn cache_target_change_action(
     config: &FirestoreCacheConfiguration,
     target_change: &gcloud_sdk::google::firestore::v1::TargetChange,
@@ -1143,7 +1137,6 @@ pub(crate) fn cache_target_change_action(
     }
 }
 
-#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 fn affected_scopes<'a>(
     config: &'a FirestoreCacheConfiguration,
     target_ids: &[i32],

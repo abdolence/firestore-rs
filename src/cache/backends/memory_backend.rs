@@ -381,7 +381,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        let read_from_time = crate::cache::cache_target_read_time();
+        let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
 
         self.preload_collections(db).await?;
 
@@ -390,10 +390,9 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
             .collections
             .values()
             .map(|collection_config| {
-                crate::cache::target_params_for_collection(
-                    collection_config,
-                    Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time)),
-                )
+                collection_config.listener_target_params(Some(
+                    FirestoreListenerTargetResumeType::ReadTime(read_from_time),
+                ))
             })
             .collect())
     }
@@ -419,7 +418,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
     ) -> FirestoreResult<FirestoreListenerTargetParams> {
         // Captured before reading anything, so that writes landing during the preload are still
         // delivered once the listener target attaches from this point in time.
-        let read_from_time = crate::cache::cache_target_read_time();
+        let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
         let collection_path = collection_config.resolve_collection_path(db.get_documents_path());
 
         let mem_cache = (self.collection_mem_options)(collection_path.as_str()).build();
@@ -441,10 +440,9 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
             *caches = Arc::new(updated);
         }
 
-        let target_params = crate::cache::target_params_for_collection(
-            &collection_config,
-            Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time)),
-        );
+        let target_params = collection_config.listener_target_params(Some(
+            FirestoreListenerTargetResumeType::ReadTime(read_from_time),
+        ));
 
         {
             let mut config = self
@@ -581,7 +579,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                 Ok(())
             }
             FirestoreListenEvent::TargetChange(ref target_change) => {
-                match crate::cache::cache_target_change_action(&self.config(), target_change) {
+                match self.config().target_change_action(target_change) {
                     crate::cache::FirestoreCacheTargetChangeAction::SuspendAndInvalidate(
                         invalidations,
                     ) => {

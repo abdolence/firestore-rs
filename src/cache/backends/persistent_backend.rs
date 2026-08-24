@@ -545,7 +545,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        let read_from_time = crate::cache::cache_target_read_time();
+        let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
 
         self.preload_collections(db).await?;
 
@@ -560,7 +560,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                 } else {
                     None
                 };
-                crate::cache::target_params_for_collection(collection_config, resume_type)
+                collection_config.listener_target_params(resume_type)
             })
             .collect())
     }
@@ -600,7 +600,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
     ) -> FirestoreResult<FirestoreListenerTargetParams> {
         // Captured before reading anything, so that writes landing during the preload are still
         // delivered once the listener target attaches from this point in time.
-        let read_from_time = crate::cache::cache_target_read_time();
+        let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
         let collection_path = collection_config.resolve_collection_path(db.get_documents_path());
 
         // A collection added at runtime starts from nothing - `remove_collection` deletes the
@@ -622,10 +622,9 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                     "Preloading watched documents has been finished.",
                 );
 
-                let target_params = crate::cache::target_params_for_collection(
-                    &collection_config,
-                    Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time)),
-                );
+                let target_params = collection_config.listener_target_params(Some(
+                    FirestoreListenerTargetResumeType::ReadTime(read_from_time),
+                ));
                 let mut config = self
                     .config
                     .write()
@@ -667,10 +666,9 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             );
         }
 
-        let target_params = crate::cache::target_params_for_collection(
-            &collection_config,
-            Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time)),
-        );
+        let target_params = collection_config.listener_target_params(Some(
+            FirestoreListenerTargetResumeType::ReadTime(read_from_time),
+        ));
 
         // Published only now: until this point the collection does not exist as far as reads are
         // concerned, so no listing can see it half filled.
@@ -794,7 +792,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                 Ok(())
             }
             FirestoreListenEvent::TargetChange(ref target_change) => {
-                match crate::cache::cache_target_change_action(&self.config(), target_change) {
+                match self.config().target_change_action(target_change) {
                     crate::cache::FirestoreCacheTargetChangeAction::SuspendAndInvalidate(
                         invalidations,
                     ) => {
@@ -1129,10 +1127,7 @@ mod tests {
 
         // The target has to watch the named documents, not the whole collection: getting this
         // wrong subscribes to everything while looking correct from the outside.
-        let params = crate::cache::target_params_for_collection(
-            &config.collections[&format!("{DOCS}/a")],
-            None,
-        );
+        let params = config.collections[&format!("{DOCS}/a")].listener_target_params(None);
         match params.target_type {
             FirestoreTargetType::Documents(documents) => {
                 assert_eq!(documents.collection, "a");
