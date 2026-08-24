@@ -237,16 +237,18 @@ where
     pub listener: tokio::sync::Mutex<FirestoreListener<FirestoreDb, LS>>,
     /// A clone of the Firestore database client.
     pub db: FirestoreDb,
-    /// Serialises adding and removing collections.
+    /// Serialises adding and removing collections, and holds the next listener target ID to give
+    /// to one added at runtime.
     ///
-    /// Without it two concurrent `add_collection` calls could both pass the "already cached" check
-    /// before either published its entry, leaving one of the two listener targets orphaned.
-    pub collection_mutations: tokio::sync::Mutex<()>,
-    /// The next listener target ID to hand out to a collection added at runtime.
+    /// The two belong together: the ID counter is exactly the state that serialising protects.
+    /// Without it, two concurrent `add_collection` calls could both pass the "already cached"
+    /// check before either published its entry, leaving one of the two listener targets orphaned.
     ///
-    /// Monotonic on purpose: an ID freed by `remove_collection` is never reissued in this process,
-    /// so a resume token that outlived its target cannot be applied to a different query.
-    pub next_listener_target: std::sync::Mutex<u32>,
+    /// Kept separate from the listener's own lock so that a slow preload does not hold up
+    /// `shutdown`. The counter only ever increases: an ID freed by `remove_collection` is not
+    /// reissued in this process, so a resume token that outlived its target cannot end up applied
+    /// to a different query.
+    pub collection_mutations: tokio::sync::Mutex<u32>,
 }
 
 /// A ready-to-use in-memory cache.
@@ -434,8 +436,7 @@ where
                 backend: Arc::new(backend),
                 listener: tokio::sync::Mutex::new(listener),
                 db: db.clone(),
-                collection_mutations: tokio::sync::Mutex::new(()),
-                next_listener_target: std::sync::Mutex::new(next_listener_target),
+                collection_mutations: tokio::sync::Mutex::new(next_listener_target),
             },
         })
     }
@@ -532,7 +533,7 @@ where
         &self,
         collection: FirestoreCacheCollection,
     ) -> FirestoreResult<()> {
-        let _mutation = self.inner.collection_mutations.lock().await;
+        let mut next_listener_target = self.inner.collection_mutations.lock().await;
 
         let documents_path = self.inner.db.get_documents_path();
         let config = self.inner.backend.cache_configuration();
@@ -546,13 +547,8 @@ where
             None => {
                 // Never reuse an ID freed by `remove_collection`: a resume token belongs to one
                 // target's query, so handing the ID to a different one would resume it wrongly.
-                let mut next = self
-                    .inner
-                    .next_listener_target
-                    .lock()
-                    .expect("cache listener target counter poisoned");
-                let allocated = config.allocate_listener_target(*next)?;
-                *next = allocated.value().saturating_add(1);
+                let allocated = config.allocate_listener_target(*next_listener_target)?;
+                *next_listener_target = allocated.value().saturating_add(1);
                 allocated
             }
         };
