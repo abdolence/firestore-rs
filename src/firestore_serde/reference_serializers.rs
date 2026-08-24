@@ -2,6 +2,7 @@ use gcloud_sdk::google::firestore::v1::value;
 use regex::regex;
 use serde::{Deserialize, Serialize, Serializer};
 
+use crate::db::split_document_path;
 use crate::{errors::*, FirestoreResult, FirestoreValue};
 
 pub(crate) const FIRESTORE_REFERENCE_TYPE_TAG_TYPE: &str = "FirestoreReference";
@@ -29,12 +30,7 @@ impl FirestoreReference {
     /// Returns (parent_path, collection_name, document_id)
     #[deprecated(since = "0.53.0", note = "use `parse` instead")]
     pub fn split(&self, document_path: &str) -> (Option<String>, String, String) {
-        let split_pos = self.0.rfind('/').map(|pos| pos + 1).unwrap_or(0);
-        let (parent_raw_path, document_id) = if split_pos == 0 {
-            ("", self.0.as_str())
-        } else {
-            (&self.0[0..split_pos - 1], &self.0[split_pos..])
-        };
+        let (parent_raw_path, document_id) = split_document_path(self.as_str());
 
         let parent_path = parent_raw_path.replace(format!("{document_path}/").as_str(), "");
 
@@ -59,12 +55,12 @@ pub struct FirestoreParsedReference<'a> {
 }
 
 impl<'a> FirestoreParsedReference<'a> {
-    // Returns the path to the document starting from the root of the database
+    /// Returns the path to the document starting from the root of the database
     pub fn path(&self) -> &'a str {
         self.path
     }
 
-    // Returns the parent, or None when it's the root of database
+    /// Returns the parent, or None when it's the root of database
     pub fn parent(&self) -> Option<&'a str> {
         self.parent
     }
@@ -79,30 +75,24 @@ impl<'a> TryFrom<&'a FirestoreReference> for FirestoreParsedReference<'a> {
     type Error = FirestoreError;
 
     fn try_from(raw: &'a FirestoreReference) -> Result<Self, Self::Error> {
-        let regex = regex!(r"^(projects/[^/]+/databases/[^/]+/documents).*/([^/]+)");
-        let captures = regex
+        let regex = regex!(r"(?s)^projects/[^/]+/databases/[^/]+/documents/(.+)\z");
+        let path = regex
             .captures(&raw.0)
-            .ok_or(FirestoreError::DeserializeError(
-                FirestoreSerializationError::from_message("invalid absolute reference"),
-            ))?;
+            .and_then(|captures| captures.get(1))
+            .map(|documents_path| documents_path.as_str())
+            .ok_or_else(|| {
+                FirestoreError::DeserializeError(FirestoreSerializationError::from_message(
+                    "invalid absolute reference",
+                ))
+            })?;
 
-        let database_offset = (captures.get(1).expect("capture database prefix").end()) + 1; // skip first slash
-        let document_offset = captures.get(2).expect("capture collection prefix").start();
+        let (parent, id) = split_document_path(path);
 
-        let path = raw.0.split_at(database_offset).1;
-        let id = path.split_at(document_offset - database_offset).1;
-        let parent = if path == id {
-            None
-        } else {
-            Some(
-                path.split_at(
-                    path.len() - id.len() - 1, // skip trailing slash
-                )
-                .0,
-            )
-        };
-
-        Ok(Self { path, parent, id })
+        Ok(Self {
+            path,
+            parent: (!parent.is_empty()).then_some(parent),
+            id,
+        })
     }
 }
 
@@ -458,5 +448,23 @@ mod tests {
         assert_eq!(parsed.path(), "test-document-id");
         assert_eq!(parsed.parent(), None);
         assert_eq!(parsed.id(), "test-document-id");
+    }
+
+    #[test]
+    fn test_reference_parsing_rejects_non_absolute_references() {
+        for reference in [
+            "",
+            "test-collection/test-document-id",
+            "projects/test-project/databases/(default)/documents",
+            "projects/test-project/databases/(default)/documents/",
+            "projects/test-project/databases/(default)/documentsX/test-collection/test-document-id",
+        ] {
+            assert!(
+                FirestoreReference::new(reference.to_string())
+                    .parse()
+                    .is_err(),
+                "expected `{reference}` to be rejected",
+            );
+        }
     }
 }
