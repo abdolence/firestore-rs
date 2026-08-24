@@ -7,18 +7,44 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::*;
 
+/// Stores where each listener target should resume from, so a listener picks up where it left off
+/// rather than replaying everything.
+///
+/// A resume token belongs to one target's *query*: feeding it to a different query is rejected by
+/// Firestore, which is why removing a target forgets its state rather than leaving it behind.
+///
+/// Two implementations ship with this crate: [`FirestoreMemListenStateStorage`], which starts fresh
+/// on every process, and [`FirestoreTempFilesListenStateStorage`], which survives restarts.
 #[async_trait]
 pub trait FirestoreResumeStateStorage {
+    /// Returns where the target should resume from, or `None` to listen to it from scratch.
+    ///
+    /// Called once per target each time the listen stream is opened.
     async fn read_resume_state(
         &self,
         target: &FirestoreListenerTarget,
     ) -> AnyBoxedErrResult<Option<FirestoreListenerTargetResumeType>>;
 
+    /// Records the newest resume token Firestore issued for a target.
+    ///
+    /// Called as tokens arrive, and only after the change they cover has been handled, so a stored
+    /// token never points past work that was not applied.
     async fn update_resume_token(
         &self,
         target: &FirestoreListenerTarget,
         token: FirestoreListenerToken,
     ) -> AnyBoxedErrResult<()>;
+
+    /// Discards any stored state for a target, so the next listen starts it from scratch.
+    ///
+    /// Called when Firestore resets or removes a target - where the stored token is at best useless
+    /// and at worst the cause - and when a target is removed from a listener, so that its ID can be
+    /// given to a different query safely.
+    ///
+    /// Durable implementations must actually erase it. Leaving the state behind hands a stale token
+    /// back on the next process start, which Firestore rejects with `INVALID_ARGUMENT`.
+    /// Implementations that keep nothing across restarts may simply do nothing here.
+    async fn forget_resume_state(&self, target: &FirestoreListenerTarget) -> AnyBoxedErrResult<()>;
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +112,20 @@ impl FirestoreResumeStateStorage for FirestoreTempFilesListenStateStorage {
             hex::encode(token.value()),
         )?)
     }
+
+    async fn forget_resume_state(
+        &self,
+        target: &FirestoreListenerTarget,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let target_state_file_name = self.get_file_path(target);
+
+        match std::fs::remove_file(&target_state_file_name) {
+            Ok(()) => Ok(()),
+            // Nothing stored for this target is the outcome we wanted anyway.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(Box::new(err)),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -128,5 +168,97 @@ impl FirestoreResumeStateStorage for FirestoreMemListenStateStorage {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.tokens.write().await.insert(target.clone(), token);
         Ok(())
+    }
+
+    async fn forget_resume_state(
+        &self,
+        target: &FirestoreListenerTarget,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.tokens.write().await.remove(target);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(id: u32) -> FirestoreListenerTarget {
+        FirestoreListenerTarget::new(id)
+    }
+
+    fn token(bytes: &[u8]) -> FirestoreListenerToken {
+        FirestoreListenerToken::new(bytes.to_vec())
+    }
+
+    fn stored_token(resume_state: Option<FirestoreListenerTargetResumeType>) -> Option<Vec<u8>> {
+        match resume_state {
+            Some(FirestoreListenerTargetResumeType::Token(token)) => Some(token.into_value()),
+            _ => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn mem_storage_forgets_only_the_named_target() {
+        let storage = FirestoreMemListenStateStorage::new();
+        storage
+            .update_resume_token(&target(1), token(b"one"))
+            .await
+            .unwrap();
+        storage
+            .update_resume_token(&target(2), token(b"two"))
+            .await
+            .unwrap();
+
+        storage.forget_resume_state(&target(1)).await.unwrap();
+
+        assert_eq!(
+            stored_token(storage.read_resume_state(&target(1)).await.unwrap()),
+            None
+        );
+        assert_eq!(
+            stored_token(storage.read_resume_state(&target(2)).await.unwrap()),
+            Some(b"two".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn mem_storage_forgetting_an_unknown_target_succeeds() {
+        let storage = FirestoreMemListenStateStorage::new();
+        storage.forget_resume_state(&target(42)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn temp_files_storage_forgets_only_the_named_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FirestoreTempFilesListenStateStorage::with_temp_dir(dir.path());
+
+        storage
+            .update_resume_token(&target(1), token(b"one"))
+            .await
+            .unwrap();
+        storage
+            .update_resume_token(&target(2), token(b"two"))
+            .await
+            .unwrap();
+
+        storage.forget_resume_state(&target(1)).await.unwrap();
+
+        assert_eq!(
+            stored_token(storage.read_resume_state(&target(1)).await.unwrap()),
+            None
+        );
+        assert_eq!(
+            stored_token(storage.read_resume_state(&target(2)).await.unwrap()),
+            Some(b"two".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn temp_files_storage_forgetting_an_unstored_target_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = FirestoreTempFilesListenStateStorage::with_temp_dir(dir.path());
+
+        storage.forget_resume_state(&target(42)).await.unwrap();
     }
 }

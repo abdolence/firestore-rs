@@ -69,6 +69,11 @@ path = "examples/caching_memory_collections.rs"
 required-features = ["caching-memory"]
 
 [[example]]
+name = "caching_dynamic_collections"
+path = "examples/caching_dynamic_collections.rs"
+required-features = ["caching-memory"]
+
+[[example]]
 name = "caching_persistent_collections"
 path = "examples/caching_persistent_collections.rs"
 required-features = ["caching-persistent"]
@@ -82,3 +87,18 @@ required-features = ["caching-memory"]
 name = "caching_persistent_test"
 path = "tests/caching_persistent_test.rs"
 required-features = ["caching-persistent"]
+
+[[test]]
+name = "caching_resume_token_test"
+path = "tests/caching_resume_token_test.rs"
+required-features = ["caching-persistent"]
+
+[[test]]
+name = "caching_dynamic_collections_test"
+path = "tests/caching_dynamic_collections_test.rs"
+required-features = ["caching-memory"]
+
+[[test]]
+name = "caching_watched_documents_test"
+path = "tests/caching_watched_documents_test.rs"
+required-features = ["caching-memory", "caching-persistent"]

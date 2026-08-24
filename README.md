@@ -841,6 +841,50 @@ Because `load` and `shutdown` take `&self`, a built cache can be shared directly
 `Arc<FirestoreMemoryCache>` in your application state. `FirestoreMemoryCache` and
 `FirestorePersistentCache` are aliases that save you from spelling out the generic parameters.
 
+`shutdown` stops the listener and releases the backend's resources: the in-memory cache drops its
+documents, and the persistent cache closes its database file, so another cache can be opened over
+the same directory.
+
+### Caching named documents instead of a whole collection
+
+`.collection(name)` subscribes the listener to the **entire** collection, even though it does not
+preload it - "lazy" only means the initial download is skipped. When you know which documents you
+care about, say so:
+
+```rust
+let cache = FirestoreCache::memory(&db)
+    .collection_with("configs", |c| c.documents(["site", "billing"]).preload_all())
+    .build()
+    .await?;
+```
+
+The listener then watches exactly those documents, so unrelated changes in the collection are never
+streamed to your process or written into the cache, and preloading reads just those IDs. This is
+the shape to reach for with configuration, feature flags and reference data.
+
+Such a collection is never listable, whatever its load mode: it holds a chosen subset, so `list`
+and `query` would return a partial answer that looks complete.
+
+### Changing the cached collections at runtime
+
+The set of cached collections does not have to be fixed when the cache is built:
+
+```rust
+cache.add_collection(FirestoreCacheCollection::new("currencies").preload_all()).await?;
+
+cache.remove_collection("currencies").await?;
+```
+
+`add_collection` downloads the collection first if it is preloaded, publishes it only once it is
+complete, and then extends the listener - so a listing never observes it half filled, and nothing
+written during the download is missed. `remove_collection` does the reverse, and also forgets the
+collection's resume token so its listener target ID cannot be reused against a different query.
+Use `remove_collection_at` for a sub-collection, whose absolute path a bare name cannot address.
+
+`FirestoreDb` handles created earlier with `read_through_cache` or `read_cached_only` pick both up
+immediately: they share the cache's backend rather than a copy of it. A cache can also be built
+with no collections at all and populated entirely at runtime.
+
 ### Choosing a cache mode
 
 - `db.read_through_cache(&cache)` serves what it can from the cache and goes to Firestore for the
@@ -883,9 +927,20 @@ acceptable, opt in with
   your application or from elsewhere;
 - Preloading at startup.
 
-Cached results are eventually consistent: they reflect the last state the listener delivered. A
-write may take a moment to show up, and a stalled or reset listener can leave the cache stale
-without saying so. Do not cache data that must be read at strong consistency.
+Cached results are eventually consistent: they reflect the last state the listener delivered, so a
+write may take a moment to show up. Do not cache data that must be read at strong consistency.
+
+Firestore also reports how many documents a target matches. When that disagrees with what a
+preloaded collection holds - which means changes were missed, typically deletes that happened while
+the listener was disconnected - the cache drops the collection and has Firestore replay it. The
+count is only compared when it can be trusted: a collection the cache expires entries from, or
+fills lazily, is never checked this way.
+
+When Firestore resets or removes a listener target - after a reconnect, or when a stored resume
+token has expired - the cache drops what it holds for that collection and Firestore replays it.
+While that replay is in progress the collection stops answering `list` and `query` from the cache:
+`read_through_cache` falls back to Firestore, and `read_cached_only` returns a `CacheError` rather
+than a listing that looks complete but is not.
 
 Full examples are available [here](examples/caching_memory_collections.rs)
 and [here](examples/caching_persistent_collections.rs).

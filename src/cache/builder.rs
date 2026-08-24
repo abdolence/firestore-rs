@@ -124,16 +124,66 @@ pub struct FirestoreCacheCollection {
     parent: Option<String>,
     load_mode: FirestoreCacheCollectionLoadMode,
     listener_target: Option<u32>,
+    documents: Option<Vec<String>>,
 }
 
 impl FirestoreCacheCollection {
+    /// Describes a collection to cache, filled lazily unless a preloading mode is chosen.
+    ///
+    /// This is what [`FirestoreCache::add_collection`](crate::FirestoreCache::add_collection)
+    /// takes; the builder has its own `collection` / `preloaded_collection` / `collection_with`
+    /// methods for describing collections up front.
+    ///
+    /// ```rust,no_run
+    /// # use firestore::*;
+    /// let collection = FirestoreCacheCollection::new("orders").preload_all();
+    /// ```
     #[inline]
-    fn new<S: AsRef<str>>(collection_name: S, load_mode: FirestoreCacheCollectionLoadMode) -> Self {
+    pub fn new<S: AsRef<str>>(collection_name: S) -> Self {
+        Self::with_load_mode(
+            collection_name,
+            FirestoreCacheCollectionLoadMode::PreloadNone,
+        )
+    }
+
+    #[inline]
+    pub(crate) fn with_load_mode<S: AsRef<str>>(
+        collection_name: S,
+        load_mode: FirestoreCacheCollectionLoadMode,
+    ) -> Self {
         Self {
             collection_name: collection_name.as_ref().to_string(),
             parent: None,
             load_mode,
             listener_target: None,
+            documents: None,
+        }
+    }
+
+    /// The listener target this collection was pinned to, if any.
+    #[inline]
+    pub(crate) fn requested_listener_target(&self) -> Option<u32> {
+        self.listener_target
+    }
+
+    /// Turns this description into a configuration entry using the given listener target.
+    #[inline]
+    pub(crate) fn into_configuration(
+        self,
+        listener_target: FirestoreListenerTarget,
+    ) -> FirestoreCacheCollectionConfiguration {
+        let config = FirestoreCacheCollectionConfiguration::new(
+            &self.collection_name,
+            listener_target,
+            self.load_mode,
+        );
+        let config = match self.parent {
+            Some(parent) => config.with_parent(parent),
+            None => config,
+        };
+        match self.documents {
+            Some(document_ids) => config.with_documents(document_ids),
+            None => config,
         }
     }
 
@@ -175,6 +225,39 @@ impl FirestoreCacheCollection {
         }
     }
 
+    /// Caches and listens to only these documents of the collection.
+    ///
+    /// The listener watches exactly these documents, so unrelated changes in the collection are
+    /// never streamed to your process. This is the shape to reach for when you cache a known set
+    /// of documents - configuration, feature flags, reference data - rather than a collection:
+    /// `.collection(name)` subscribes to the whole collection even when it does not preload it.
+    ///
+    /// Such a collection is never listable, whatever its load mode: it holds a chosen subset, so
+    /// `list` and `query` would return a partial answer that looks complete.
+    ///
+    /// ```rust,no_run
+    /// # use firestore::*;
+    /// let collection = FirestoreCacheCollection::new("configs")
+    ///     .documents(["site", "billing"])
+    ///     .preload_all();
+    /// ```
+    #[inline]
+    pub fn documents<I>(self, document_ids: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        Self {
+            documents: Some(
+                document_ids
+                    .into_iter()
+                    .map(|id| id.as_ref().to_string())
+                    .collect(),
+            ),
+            ..self
+        }
+    }
+
     /// Pins this collection to a specific Firestore listener target ID instead of an
     /// automatically assigned one.
     #[inline]
@@ -189,6 +272,7 @@ impl FirestoreCacheCollection {
 impl From<FirestoreCacheCollectionConfiguration> for FirestoreCacheCollection {
     fn from(config: FirestoreCacheCollectionConfiguration) -> Self {
         Self {
+            documents: config.watched_document_ids().map(|ids| ids.to_vec()),
             collection_name: config.collection_name,
             parent: config.parent,
             load_mode: config.collection_load_mode,
@@ -269,20 +353,22 @@ where
     /// Use [`preloaded_collection`](Self::preloaded_collection) if you need cached listings.
     #[inline]
     pub fn collection<S: AsRef<str>>(mut self, collection_name: S) -> Self {
-        self.collections.push(FirestoreCacheCollection::new(
-            collection_name,
-            FirestoreCacheCollectionLoadMode::PreloadNone,
-        ));
+        self.collections
+            .push(FirestoreCacheCollection::with_load_mode(
+                collection_name,
+                FirestoreCacheCollectionLoadMode::PreloadNone,
+            ));
         self
     }
 
     /// Caches a complete copy of a collection, so that `list` and `query` can be served from it.
     #[inline]
     pub fn preloaded_collection<S: AsRef<str>>(mut self, collection_name: S) -> Self {
-        self.collections.push(FirestoreCacheCollection::new(
-            collection_name,
-            K::default_preload_mode(),
-        ));
+        self.collections
+            .push(FirestoreCacheCollection::with_load_mode(
+                collection_name,
+                K::default_preload_mode(),
+            ));
         self
     }
 
@@ -304,10 +390,11 @@ where
         S: AsRef<str>,
         F: FnOnce(FirestoreCacheCollection) -> FirestoreCacheCollection,
     {
-        self.collections.push(f(FirestoreCacheCollection::new(
-            collection_name,
-            FirestoreCacheCollectionLoadMode::PreloadNone,
-        )));
+        self.collections
+            .push(f(FirestoreCacheCollection::with_load_mode(
+                collection_name,
+                FirestoreCacheCollectionLoadMode::PreloadNone,
+            )));
         self
     }
 
@@ -474,16 +561,8 @@ fn build_configuration(
     collections: &[FirestoreCacheCollection],
     incomplete_collection_policy: FirestoreCacheIncompleteCollectionPolicy,
 ) -> FirestoreResult<FirestoreCacheConfiguration> {
-    if collections.is_empty() {
-        return Err(FirestoreError::InvalidParametersError(
-            FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                "collections".into(),
-                "A cache must be configured with at least one collection. Add one with \
-                 `.collection(..)` or `.preloaded_collection(..)`."
-                    .into(),
-            )),
-        ));
-    }
+    // An empty cache is allowed: collections can be added at runtime with
+    // `FirestoreCache::add_collection`.
 
     // Explicitly requested targets are reserved first, so that automatic assignment can route
     // around them regardless of the order collections were added in.
@@ -545,6 +624,9 @@ fn build_configuration(
         if let Some(ref parent) = collection.parent {
             collection_config = collection_config.with_parent(parent);
         }
+        if let Some(ref documents) = collection.documents {
+            collection_config = collection_config.with_documents(documents);
+        }
 
         let collection_path = collection_config.resolve_collection_path(documents_path);
         if !seen_paths.insert(collection_path.clone()) {
@@ -572,7 +654,10 @@ mod tests {
     const DOCS: &str = "projects/test/databases/(default)/documents";
 
     fn lazy(name: &str) -> FirestoreCacheCollection {
-        FirestoreCacheCollection::new(name, FirestoreCacheCollectionLoadMode::PreloadNone)
+        FirestoreCacheCollection::with_load_mode(
+            name,
+            FirestoreCacheCollectionLoadMode::PreloadNone,
+        )
     }
 
     fn target_of(config: &FirestoreCacheConfiguration, path: &str) -> u32 {
@@ -649,16 +734,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_an_empty_collection_list() {
-        let err = build_configuration(
+    fn allows_an_empty_collection_list_for_a_cache_filled_at_runtime() {
+        let config = build_configuration(
             DOCS,
             1000,
             &[],
             FirestoreCacheIncompleteCollectionPolicy::default(),
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(matches!(err, FirestoreError::InvalidParametersError(_)));
+        assert!(config.collections.is_empty());
     }
 
     #[test]

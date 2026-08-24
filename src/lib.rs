@@ -251,6 +251,30 @@ pub type FirestoreResult<T> = std::result::Result<T, FirestoreError>;
 /// underlying gRPC/protobuf structure for a Firestore document.
 pub type FirestoreDocument = gcloud_sdk::google::firestore::v1::Document;
 
+/// The kind of change a listener reports for one of its targets.
+///
+/// This refers to `gcloud_sdk::google::firestore::v1::target_change::TargetChangeType`, and is
+/// re-exported so that a
+/// [`FirestoreListenEvent::TargetChange`](crate::FirestoreListenEvent::TargetChange) can be
+/// matched without depending on `gcloud-sdk` directly:
+///
+/// ```rust,no_run
+/// # use firestore::*;
+/// # fn example(event: FirestoreListenEvent) {
+/// if let FirestoreListenEvent::TargetChange(target_change) = event {
+///     match FirestoreListenerTargetChangeType::try_from(target_change.target_change_type) {
+///         // The target now reflects a consistent snapshot.
+///         Ok(FirestoreListenerTargetChangeType::Current) => {}
+///         // Firestore dropped the target; `target_change.cause` says why.
+///         Ok(FirestoreListenerTargetChangeType::Remove) => {}
+///         _ => {}
+///     }
+/// }
+/// # }
+/// ```
+pub type FirestoreListenerTargetChangeType =
+    gcloud_sdk::google::firestore::v1::target_change::TargetChangeType;
+
 mod firestore_meta;
 
 /// Re-exports all public items from the `firestore_meta` module.

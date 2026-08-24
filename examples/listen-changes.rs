@@ -84,6 +84,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         println!("As object: {obj:?}");
                     }
                 }
+                // The document went out of view of the target - deleted, or no longer readable.
+                FirestoreListenEvent::DocumentDelete(ref deleted) => {
+                    println!("Doc deleted: {:?}", deleted.document);
+                }
+                FirestoreListenEvent::DocumentRemove(ref removed) => {
+                    println!("Doc removed from the target: {:?}", removed.document);
+                }
+                // Target lifecycle. `Current` means the target now reflects a consistent
+                // snapshot, and `Remove` means Firestore dropped it - `cause` says why.
+                FirestoreListenEvent::TargetChange(ref target_change) => {
+                    match FirestoreListenerTargetChangeType::try_from(
+                        target_change.target_change_type,
+                    ) {
+                        Ok(FirestoreListenerTargetChangeType::Current) => {
+                            println!("Targets are up to date: {:?}", target_change.target_ids);
+                        }
+                        Ok(FirestoreListenerTargetChangeType::Remove) => {
+                            println!(
+                                "Targets {:?} were removed by Firestore: {:?}",
+                                target_change.target_ids, target_change.cause
+                            );
+                        }
+                        Ok(FirestoreListenerTargetChangeType::Reset) => {
+                            println!(
+                                "Targets {:?} were reset and will be resent",
+                                target_change.target_ids
+                            );
+                        }
+                        _ => {}
+                    }
+                }
                 _ => {
                     println!("Received a listen response event to handle: {event:?}");
                 }
