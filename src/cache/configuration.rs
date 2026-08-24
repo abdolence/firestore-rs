@@ -1,4 +1,8 @@
-use crate::{FirestoreDb, FirestoreListenerTarget};
+use crate::errors::{
+    FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
+};
+use crate::{FirestoreDb, FirestoreListenerTarget, FirestoreResult};
+use rvstruct::ValueStruct;
 use std::collections::HashMap;
 
 /// Describes which collections a [`FirestoreCache`](crate::FirestoreCache) holds and how each of
@@ -67,6 +71,72 @@ impl FirestoreCacheConfiguration {
         self
     }
 
+    /// Returns the first listener target ID at or above `from` that no collection uses.
+    ///
+    /// Shared by the builder's up-front assignment and by adding a collection at runtime, so the
+    /// two cannot drift apart.
+    pub(crate) fn allocate_listener_target(
+        &self,
+        from: u32,
+    ) -> FirestoreResult<FirestoreListenerTarget> {
+        let used: std::collections::HashSet<u32> = self
+            .collections
+            .values()
+            .map(|config| *config.listener_target.value())
+            .collect();
+
+        let mut candidate = from.max(1);
+        while used.contains(&candidate) {
+            candidate = candidate.checked_add(1).ok_or_else(|| {
+                FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+                    FirestoreInvalidParametersPublicDetails::new(
+                        "listener_target".into(),
+                        "Ran out of listener target IDs while assigning them automatically.".into(),
+                    ),
+                ))
+            })?;
+        }
+
+        let target = FirestoreListenerTarget::new(candidate);
+        target.validate()?;
+        Ok(target)
+    }
+
+    /// The highest listener target ID in use, if any.
+    pub(crate) fn max_listener_target(&self) -> Option<u32> {
+        self.collections
+            .values()
+            .map(|config| *config.listener_target.value())
+            .max()
+    }
+
+    /// Returns what a listener target covers, or `None` if the target does not belong to this
+    /// cache.
+    ///
+    /// Used to scope the invalidation when Firestore resets or removes a target. A linear scan is
+    /// deliberate: the map is small, and this runs only on target changes, never per document.
+    #[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+    pub(crate) fn target_scope(
+        &self,
+        target: &FirestoreListenerTarget,
+    ) -> Option<FirestoreCacheTargetScope<'_>> {
+        self.collections
+            .iter()
+            .find(|(_, config)| config.listener_target == *target)
+            .map(|(collection_path, _)| FirestoreCacheTargetScope::Collection(collection_path))
+    }
+
+    /// Returns what every listener target of this cache covers.
+    ///
+    /// Firestore uses an empty set of target IDs to mean "all targets", which is what this is for.
+    #[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+    pub(crate) fn all_target_scopes(&self) -> Vec<FirestoreCacheTargetScope<'_>> {
+        self.collections
+            .keys()
+            .map(|collection_path| FirestoreCacheTargetScope::Collection(collection_path))
+            .collect()
+    }
+
     /// Returns `true` when the cache is configured to hold a *complete* copy of the collection at
     /// `collection_path`, meaning `list` and `query` requests may be served from the cache.
     ///
@@ -96,6 +166,39 @@ impl Default for FirestoreCacheConfiguration {
     #[inline]
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// What a Firestore listener target of this cache covers.
+///
+/// Every cached target is currently a whole-collection query, so only
+/// [`Collection`](Self::Collection) is produced today. Invalidation is written against this rather
+/// than against a bare collection path so that a target watching a handful of documents does not
+/// end up wiping the entire collection.
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) enum FirestoreCacheTargetScope<'a> {
+    /// The target covers every document in the collection at this path.
+    Collection(&'a str),
+    /// The target covers only these document IDs within the collection at this path.
+    #[allow(dead_code)]
+    Documents {
+        collection_path: &'a str,
+        document_ids: &'a [String],
+    },
+}
+
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+impl FirestoreCacheTargetScope<'_> {
+    /// The collection this scope belongs to.
+    #[inline]
+    pub(crate) fn collection_path(&self) -> &str {
+        match self {
+            Self::Collection(collection_path) => collection_path,
+            Self::Documents {
+                collection_path, ..
+            } => collection_path,
+        }
     }
 }
 

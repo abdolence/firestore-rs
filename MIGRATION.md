@@ -56,9 +56,9 @@ relied on the old behaviour.
 | `db.aggregated_query_obj::<T>(params)` | `db.fluent().select().from(C).aggregate(...).obj::<T>().query()` |
 | `db.listen_doc_changes(...)` | `db.fluent().select().from(C).listen().add_target(target_id, &mut listener)?` |
 
-Unchanged in 0.52: batch writers, transactions, `db.create_listener()`,
-`FirestoreResumeStateStorage`, the cache backend traits and the
-`FirestoreDb::serialize_*_to_doc` / `deserialize_doc_to` helpers.
+Unchanged in 0.52: batch writers, transactions, `db.create_listener()` and the
+`FirestoreDb::serialize_*_to_doc` / `deserialize_doc_to` helpers. `FirestoreResumeStateStorage`
+gains one method with a default implementation - see [Listener changes](#listener-changes).
 
 `FirestoreTransactionOps` also stays public. It is implemented by both `FirestoreTransaction` and
 `FirestoreTransactionData`, so you can keep writing transaction-agnostic abstractions over it.
@@ -110,3 +110,78 @@ Two behaviour changes to be aware of:
 
 The persistent cache also had a bug where document deletions were never committed, so deleted
 documents stayed cached indefinitely. If you use `caching-persistent`, upgrading is recommended.
+
+### Listener changes
+
+The listener now acts on the target-lifecycle messages it previously ignored. Three things change
+for callers.
+
+`FirestoreResumeStateStorage` gains `forget_resume_state`, with a default implementation that does
+nothing, so existing implementations keep compiling. Implement it if your storage is durable: it is
+called when Firestore reports that it reset or removed a target, and a token kept past that point
+is read back on the next process start and rejected. Both shipped storages implement it.
+
+Listener callbacks now receive `TargetChange` events that carried a resume token. Previously the
+listener consumed those itself and never passed them on, so a `RESET` or a `REMOVE` was invisible.
+Callbacks that only match `DocumentChange` are unaffected; a callback with a catch-all arm will see
+more events than before. Match on them with the new `FirestoreListenerTargetChangeType` alias:
+
+```rust
+if let FirestoreListenEvent::TargetChange(target_change) = event {
+    if FirestoreListenerTargetChangeType::try_from(target_change.target_change_type)
+        == Ok(FirestoreListenerTargetChangeType::Current)
+    {
+        // The target now reflects a consistent snapshot.
+    }
+}
+```
+
+A listen request Firestore rejects as invalid no longer shuts the whole listener down on the first
+attempt. Because a stale resume token is a plausible cause, and one bad token used to take down
+every target, the listener now discards all stored resume tokens and retries once before treating
+the error as permanent.
+
+### Caching changes from the listener work
+
+The cache now removes a document when Firestore reports it as removed rather than deleted
+(`DocumentRemove`), which it previously dropped on the floor - such a document stayed cached
+indefinitely. It also acts on target resets: it drops what it holds for the affected collection and
+lets Firestore replay it. While that replay is in progress the collection does not answer
+`list`/`query` from the cache, so `read_through_cache` falls back to Firestore and
+`read_cached_only` returns a `FirestoreError::CacheError` for the duration.
+
+### Changing cached collections at runtime
+
+Collections can now be added to and removed from a running cache, so the set of cached collections
+no longer has to be decided when the cache is built:
+
+```rust
+cache.add_collection(FirestoreCacheCollection::new("currencies").preload_all()).await?;
+cache.remove_collection("currencies").await?;
+```
+
+Three things changed to make this possible.
+
+`FirestoreListener::add_target` now takes `&self` instead of `&mut self`, and works after `start()`
+as well as before it. Calling it through a `&mut` binding still compiles, so the fluent
+`.listen().add_target(target_id, &mut listener)` form is unaffected. It now rejects a target ID that
+is already registered, where it previously accepted the duplicate and silently collapsed it. There
+is also a new `remove_target`, which is `async` because it forgets the target's stored resume state
+before returning.
+
+`FirestoreCacheBackend` gains `cache_configuration`, `add_collection` and `remove_collection`. All
+three have default implementations - the last two report that the backend does not support the
+operation - so existing backends keep compiling. The `config` field on both shipped backends is now
+private; use the `config()` accessor instead.
+
+A cache may now be built with no collections at all, where the builder previously rejected that.
+
+### Shutdown releases resources
+
+`FirestoreCache::shutdown` now releases the backend's resources rather than only stopping the
+listener. The in-memory backend drops its cached documents; the persistent backend closes its
+database, releasing the exclusive lock on the file so another cache can be opened over the same
+directory without waiting for the first to be dropped.
+
+Reads through a cache that has been shut down do not fail: they behave as a cache miss, so
+`read_through_cache` falls back to Firestore and `read_cached_only` reports the miss as an error.

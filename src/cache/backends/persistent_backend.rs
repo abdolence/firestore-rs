@@ -9,8 +9,9 @@ use futures::StreamExt;
 use gcloud_sdk::google::firestore::v1::Document;
 use gcloud_sdk::prost::Message;
 use redb::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::*;
 
 /// A disk-backed cache, storing documents as protobuf in a
@@ -34,8 +35,19 @@ use tracing::*;
 /// # }
 /// ```
 pub struct FirestorePersistentCacheBackend {
-    pub config: FirestoreCacheConfiguration,
-    redb: Database,
+    /// Behind a lock so that collections can be added and removed while the cache runs. Readers
+    /// clone the `Arc` out and drop the guard, so no guard is ever held across an await.
+    config: std::sync::RwLock<Arc<FirestoreCacheConfiguration>>,
+    /// `None` once the cache has been shut down.
+    ///
+    /// The database holds an exclusive lock on its file, so closing it is the only way to release
+    /// that lock without dropping every handle to the backend - and handles outlive the cache,
+    /// because `read_through_cache` clones one into each `FirestoreDb` it is attached to.
+    redb: std::sync::RwLock<Option<Database>>,
+    /// Collections whose listener target Firestore has reset or removed, and which are therefore
+    /// mid-replay. They must not answer `list`/`query` until the replay completes, because what
+    /// they hold in the meantime is a partial view that would look like a complete one.
+    suspended_collections: std::sync::RwLock<HashSet<String>>,
 }
 
 /// Tuning options for [`FirestorePersistentCacheBackend`].
@@ -111,18 +123,117 @@ impl FirestorePersistentCacheBackend {
         db.compact()?;
         info!("Successfully opened database for persistent cache.");
 
-        Ok(Self { config, redb: db })
+        Ok(Self {
+            config: std::sync::RwLock::new(Arc::new(config)),
+            redb: std::sync::RwLock::new(Some(db)),
+            suspended_collections: std::sync::RwLock::new(HashSet::new()),
+        })
+    }
+
+    /// A snapshot of the collections this backend currently caches.
+    pub fn config(&self) -> Arc<FirestoreCacheConfiguration> {
+        self.config
+            .read()
+            .expect("cache configuration lock poisoned")
+            .clone()
+    }
+
+    /// Borrows the open database, or reports that the cache has been shut down.
+    ///
+    /// The guard must not be held across an await - every caller uses it inside a synchronous
+    /// block, which is what keeps `shutdown` able to take the database away promptly.
+    fn open_db(&self) -> FirestoreResult<std::sync::RwLockReadGuard<'_, Option<Database>>> {
+        let guard = self.redb.read().expect("cache database lock poisoned");
+        if guard.is_none() {
+            return Err(FirestoreError::CacheError(FirestoreCacheError::new(
+                FirestoreErrorPublicGenericDetails::new("CacheShutdown".into()),
+                "This persistent cache has been shut down and no longer holds its database."
+                    .to_string(),
+            )));
+        }
+        Ok(guard)
+    }
+
+    /// Whether the cache is still usable. Reads fall back to Firestore once it is not.
+    fn is_open(&self) -> bool {
+        self.redb
+            .read()
+            .expect("cache database lock poisoned")
+            .is_some()
+    }
+
+    /// Whether a collection is mid-replay after Firestore reset or removed its listener target.
+    fn is_suspended(&self, collection_path: &str) -> bool {
+        self.suspended_collections
+            .read()
+            .expect("cache suspended collections lock poisoned")
+            .contains(collection_path)
+    }
+
+    /// Drops everything cached for one collection, leaving its table in place.
+    fn invalidate_collection(&self, collection_path: &str) -> FirestoreResult<()> {
+        if !self.config().collections.contains_key(collection_path) {
+            return Ok(());
+        }
+
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+        let write_txn = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_write()?;
+        {
+            debug!(
+                collection_path,
+                "Invalidating collection and draining the corresponding table.",
+            );
+            let mut table = write_txn.open_table(td)?;
+            table.retain(|_, _| false)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Removes a document from the cache, wherever the listener said it went.
+    fn evict_doc_by_path(&self, document_path: &str) -> FirestoreResult<()> {
+        let (collection_path, document_id) = split_document_path(document_path);
+
+        if !self.config().collections.contains_key(collection_path) {
+            return Ok(());
+        }
+
+        trace!(
+            document_path,
+            "Removing document from cache due to listener event.",
+        );
+
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+        let write_txn = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_write()?;
+        {
+            let mut table = write_txn.open_table(td)?;
+            table.remove(document_id)?;
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
     async fn preload_collections(&self, db: &FirestoreDb) -> Result<(), FirestoreError> {
-        for (collection_path, config) in &self.config.collections {
+        for (collection_path, config) in &self.config().collections {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path.as_str());
 
             match config.collection_load_mode {
                 FirestoreCacheCollectionLoadMode::PreloadAllDocs
                 | FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty => {
                     let existing_records = {
-                        let read_tx = self.redb.begin_read()?;
+                        let read_tx = self
+                            .open_db()?
+                            .as_ref()
+                            .expect("database checked open")
+                            .begin_read()?;
                         if read_tx
                             .list_tables()?
                             .any(|t| t.name() == collection_path.as_str())
@@ -187,7 +298,11 @@ impl FirestorePersistentCacheBackend {
                         FirestoreCacheCollectionLoadMode::PreloadAllDocs
                     ) || existing_records == 0
                     {
-                        let read_tx = self.redb.begin_read()?;
+                        let read_tx = self
+                            .open_db()?
+                            .as_ref()
+                            .expect("database checked open")
+                            .begin_read()?;
                         let table = read_tx.open_table(td)?;
                         table.len()?
                     } else {
@@ -200,7 +315,11 @@ impl FirestorePersistentCacheBackend {
                     );
                 }
                 FirestoreCacheCollectionLoadMode::PreloadNone => {
-                    let tx = self.redb.begin_write()?;
+                    let tx = self
+                        .open_db()?
+                        .as_ref()
+                        .expect("database checked open")
+                        .begin_write()?;
                     debug!(collection_path, "Creating corresponding collection table.",);
                     tx.open_table(td)?;
                     tx.commit()?;
@@ -213,7 +332,11 @@ impl FirestorePersistentCacheBackend {
     fn write_batch_docs(&self, collection_path: &str, docs: Vec<Document>) -> FirestoreResult<()> {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-        let write_txn = self.redb.begin_write()?;
+        let write_txn = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_write()?;
         {
             let mut table = write_txn.open_table(td)?;
 
@@ -245,10 +368,14 @@ impl FirestorePersistentCacheBackend {
     fn write_document(&self, doc: &Document) -> FirestoreResult<()> {
         let (collection_path, document_id) = split_document_path(&doc.name);
 
-        if self.config.collections.contains_key(collection_path) {
+        if self.config().collections.contains_key(collection_path) {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-            let write_txn = self.redb.begin_write()?;
+            let write_txn = self
+                .open_db()?
+                .as_ref()
+                .expect("database checked open")
+                .begin_write()?;
             {
                 let mut table = write_txn.open_table(td)?;
                 let doc_bytes = Self::document_to_buf(doc)?;
@@ -261,9 +388,39 @@ impl FirestorePersistentCacheBackend {
         }
     }
 
+    /// Creates a collection's table if it does not exist yet.
+    fn create_collection_table(&self, collection_path: &str) -> FirestoreResult<()> {
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+        let tx = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_write()?;
+        tx.open_table(td)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Deletes a collection's table entirely. Returns whether there was one.
+    fn drop_collection_table(&self, collection_path: &str) -> FirestoreResult<bool> {
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+        let tx = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_write()?;
+        let existed = tx.delete_table(td)?;
+        tx.commit()?;
+        Ok(existed)
+    }
+
     fn table_len(&self, collection_id: &str) -> FirestoreResult<u64> {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id);
-        let read_tx = self.redb.begin_read()?;
+        let read_tx = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_read()?;
         let len = read_tx.open_table(td)?.len()?;
         Ok(len)
     }
@@ -275,7 +432,11 @@ impl FirestorePersistentCacheBackend {
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-        let read_tx = self.redb.begin_read()?;
+        let read_tx = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_read()?;
         let table = read_tx.open_table(td)?;
         let iter = table.iter()?;
 
@@ -308,7 +469,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         self.preload_collections(db).await?;
 
         Ok(self
-            .config
+            .config()
             .collections
             .iter()
             .map(|(collection_path, collection_config)| {
@@ -334,10 +495,14 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
     }
 
     async fn invalidate_all(&self) -> FirestoreResult<()> {
-        for collection_path in self.config.collections.keys() {
+        for collection_path in self.config().collections.keys() {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path.as_str());
 
-            let write_txn = self.redb.begin_write()?;
+            let write_txn = self
+                .open_db()?
+                .as_ref()
+                .expect("database checked open")
+                .begin_write()?;
             {
                 debug!(
                     collection_path,
@@ -352,11 +517,140 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         Ok(())
     }
 
+    fn cache_configuration(&self) -> Arc<FirestoreCacheConfiguration> {
+        self.config()
+    }
+
+    async fn add_collection(
+        &self,
+        _options: &FirestoreCacheOptions,
+        db: &FirestoreDb,
+        collection_config: FirestoreCacheCollectionConfiguration,
+    ) -> FirestoreResult<FirestoreListenerTargetParams> {
+        // Captured before reading anything, so that writes landing during the preload are still
+        // delivered once the listener target attaches from this point in time.
+        let read_from_time = FirestoreInstant::now();
+        let collection_path = collection_config.resolve_collection_path(db.get_documents_path());
+
+        // A collection added at runtime starts from nothing - `remove_collection` deletes the
+        // table - so both preloading modes mean the same thing here.
+        self.create_collection_table(&collection_path)?;
+
+        if collection_config.collection_load_mode.is_preloading() {
+            debug!(
+                collection_path = collection_path.as_str(),
+                "Preloading collection."
+            );
+
+            let params = if let Some(parent) = &collection_config.parent {
+                db.fluent()
+                    .select()
+                    .from(collection_config.collection_name.as_str())
+                    .parent(parent)
+            } else {
+                db.fluent()
+                    .select()
+                    .from(collection_config.collection_name.as_str())
+            };
+
+            params
+                .stream_query()
+                .await?
+                .ready_chunks(100)
+                .for_each(|docs| async {
+                    if let Err(err) = self.write_batch_docs(&collection_path, docs) {
+                        error!(?err, "Error while preloading collection.");
+                    }
+                })
+                .await;
+
+            info!(
+                collection_path = collection_path.as_str(),
+                updated_records = self.table_len(&collection_path).unwrap_or(0),
+                "Preloading collection has been finished.",
+            );
+        }
+
+        let target_params = crate::cache::target_params_for_collection(
+            &collection_config,
+            Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time)),
+        );
+
+        // Published only now: until this point the collection does not exist as far as reads are
+        // concerned, so no listing can see it half filled.
+        {
+            let mut config = self
+                .config
+                .write()
+                .expect("cache configuration lock poisoned");
+            *config = Arc::new(
+                (**config)
+                    .clone()
+                    .add_collection_config_at(db.get_documents_path(), collection_config),
+            );
+        }
+
+        Ok(target_params)
+    }
+
+    async fn remove_collection(
+        &self,
+        collection_path: &str,
+    ) -> FirestoreResult<Option<FirestoreListenerTarget>> {
+        // The configuration goes first, so reads stop using the collection immediately and any
+        // listener event arriving before the target is dropped is ignored.
+        let removed = {
+            let mut config = self
+                .config
+                .write()
+                .expect("cache configuration lock poisoned");
+            let mut updated = (**config).clone();
+            let removed = updated.collections.remove(collection_path);
+            *config = Arc::new(updated);
+            removed
+        };
+
+        let Some(removed) = removed else {
+            return Ok(None);
+        };
+
+        debug!(
+            collection_path,
+            "Dropping the table of a removed collection."
+        );
+        self.drop_collection_table(collection_path)?;
+
+        self.suspended_collections
+            .write()
+            .expect("cache suspended collections lock poisoned")
+            .remove(collection_path);
+
+        Ok(Some(removed.listener_target))
+    }
+
     async fn shutdown(&self) -> Result<(), FirestoreError> {
+        // Closing the database is what releases its exclusive file lock, so that another cache can
+        // be opened over the same directory in this process. Dropping it here rather than with the
+        // backend matters because handles to the backend outlive the cache: `read_through_cache`
+        // clones one into every `FirestoreDb` it is attached to.
+        let closed = self
+            .redb
+            .write()
+            .expect("cache database lock poisoned")
+            .take();
+
+        if closed.is_some() {
+            debug!("Closing the database of the persistent cache.");
+        }
+        drop(closed);
         Ok(())
     }
 
     async fn on_listen_event(&self, event: FirestoreListenEvent) -> FirestoreResult<()> {
+        if !self.is_open() {
+            return Ok(());
+        }
+
         match event {
             FirestoreListenEvent::DocumentChange(doc_change) => {
                 if let Some(doc) = doc_change.document {
@@ -370,26 +664,47 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                 Ok(())
             }
             FirestoreListenEvent::DocumentDelete(doc_deleted) => {
-                let (collection_path, document_id) = split_document_path(&doc_deleted.document);
-
-                if self.config.collections.contains_key(collection_path) {
-                    trace!(
-                        deleted_doc = ?doc_deleted.document.as_str(),
-                        "Removing document from cache due to listener event.",
-                    );
-
-                    let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-
-                    let write_txn = self.redb.begin_write()?;
-                    {
-                        let mut table = write_txn.open_table(td)?;
-                        table.remove(document_id)?;
+                self.evict_doc_by_path(&doc_deleted.document)?;
+                Ok(())
+            }
+            // The document went out of view of the target. Firestore sends this instead of a
+            // delete when it cannot send the new value, so keeping the document would leave the
+            // cache serving something the caller can no longer read.
+            FirestoreListenEvent::DocumentRemove(doc_removed) => {
+                self.evict_doc_by_path(&doc_removed.document)?;
+                Ok(())
+            }
+            FirestoreListenEvent::TargetChange(ref target_change) => {
+                match crate::cache::cache_target_change_action(&self.config(), target_change) {
+                    crate::cache::FirestoreCacheTargetChangeAction::SuspendAndInvalidate(paths) => {
+                        {
+                            let mut suspended = self
+                                .suspended_collections
+                                .write()
+                                .expect("cache suspended collections lock poisoned");
+                            suspended.extend(paths.iter().cloned());
+                        }
+                        for collection_path in &paths {
+                            self.invalidate_collection(collection_path)?;
+                        }
                     }
-                    write_txn.commit()?;
+                    crate::cache::FirestoreCacheTargetChangeAction::Resume(paths) => {
+                        let mut suspended = self
+                            .suspended_collections
+                            .write()
+                            .expect("cache suspended collections lock poisoned");
+                        for collection_path in &paths {
+                            suspended.remove(collection_path);
+                        }
+                    }
+                    crate::cache::FirestoreCacheTargetChangeAction::Ignore => {}
                 }
                 Ok(())
             }
-            _ => Ok(()),
+            _ => {
+                trace!(?event, "Ignoring a listen event the cache does not act on.");
+                Ok(())
+            }
         }
     }
 }
@@ -401,9 +716,13 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
         let (collection_path, document_id) = split_document_path(document_path);
-        if self.config.collections.contains_key(collection_path) {
+        if self.is_open() && self.config().collections.contains_key(collection_path) {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-            let read_tx = self.redb.begin_read()?;
+            let read_tx = self
+                .open_db()?
+                .as_ref()
+                .expect("database checked open")
+                .begin_read()?;
             let table = read_tx.open_table(td)?;
             let value = table.get(document_id)?;
             value.map(|v| Self::buf_to_document(v.value())).transpose()
@@ -413,6 +732,10 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
     }
 
     async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()> {
+        // A shut down cache stops accepting writes rather than failing the caller's read.
+        if !self.is_open() {
+            return Ok(());
+        }
         self.write_document(document)?;
         Ok(())
     }
@@ -422,10 +745,17 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         collection_path: &str,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if self.config.is_collection_listable(collection_path) {
+        if self.is_open()
+            && self.config().is_collection_listable(collection_path)
+            && !self.is_suspended(collection_path)
+        {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-            let read_tx = self.redb.begin_read()?;
+            let read_tx = self
+                .open_db()?
+                .as_ref()
+                .expect("database checked open")
+                .begin_read()?;
             let table = read_tx.open_table(td)?;
             let iter = table.iter()?;
 
@@ -451,7 +781,10 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if self.config.is_collection_listable(collection_path) {
+        if self.is_open()
+            && self.config().is_collection_listable(collection_path)
+            && !self.is_suspended(collection_path)
+        {
             // For now only basic/simple query all supported
             let simple_query_engine = FirestoreCacheQueryEngine::new(query);
             if simple_query_engine.params_supported() {
@@ -528,5 +861,172 @@ impl From<redb::CompactionError> for FirestoreError {
             FirestoreErrorPublicGenericDetails::new("RedbCompactionError".into()),
             format!("Cache error: {db_err}"),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gcloud_sdk::google::firestore::v1::{DocumentDelete, DocumentRemove, TargetChange};
+
+    const DOCS: &str = "projects/test/databases/(default)/documents";
+
+    struct TestBackend {
+        backend: FirestorePersistentCacheBackend,
+        // Kept alive so the database file outlives the test.
+        _dir: tempfile::TempDir,
+    }
+
+    impl std::ops::Deref for TestBackend {
+        type Target = FirestorePersistentCacheBackend;
+        fn deref(&self) -> &Self::Target {
+            &self.backend
+        }
+    }
+
+    fn preloaded(collections: &[(&str, u32)]) -> TestBackend {
+        let config = collections.iter().fold(
+            FirestoreCacheConfiguration::new(),
+            |config, (name, target)| {
+                config.add_collection_config_at(
+                    DOCS,
+                    FirestoreCacheCollectionConfiguration::new(
+                        name,
+                        FirestoreListenerTarget::new(*target),
+                        FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+                    ),
+                )
+            },
+        );
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let backend =
+            FirestorePersistentCacheBackend::with_options(config, dir.path().join("redb"))
+                .expect("backend");
+
+        TestBackend { backend, _dir: dir }
+    }
+
+    fn doc_path(collection: &str, id: &str) -> String {
+        format!("{DOCS}/{collection}/{id}")
+    }
+
+    async fn seed(backend: &FirestorePersistentCacheBackend, collection: &str, id: &str) {
+        backend
+            .update_doc_by_path(&FirestoreDocument {
+                name: doc_path(collection, id),
+                ..Default::default()
+            })
+            .await
+            .expect("seeded document");
+    }
+
+    async fn cached(backend: &FirestorePersistentCacheBackend, collection: &str, id: &str) -> bool {
+        backend
+            .get_doc_by_path(&doc_path(collection, id))
+            .await
+            .expect("cache lookup")
+            .is_some()
+    }
+
+    fn target_change(
+        change_type: FirestoreListenerTargetChangeType,
+        target_ids: Vec<i32>,
+    ) -> FirestoreListenEvent {
+        FirestoreListenEvent::TargetChange(TargetChange {
+            target_change_type: change_type as i32,
+            target_ids,
+            ..Default::default()
+        })
+    }
+
+    async fn is_listable(backend: &FirestorePersistentCacheBackend, collection: &str) -> bool {
+        matches!(
+            backend
+                .list_all_docs(&format!("{DOCS}/{collection}"))
+                .await
+                .expect("listing"),
+            FirestoreCachedValue::UseCached(_)
+        )
+    }
+
+    #[tokio::test]
+    async fn document_remove_evicts_the_document() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed(&backend, "a", "one").await;
+
+        backend
+            .on_listen_event(FirestoreListenEvent::DocumentRemove(DocumentRemove {
+                document: doc_path("a", "one"),
+                ..Default::default()
+            }))
+            .await
+            .expect("event handled");
+
+        assert!(!cached(&backend, "a", "one").await);
+    }
+
+    #[tokio::test]
+    async fn document_delete_still_evicts_the_document() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed(&backend, "a", "one").await;
+
+        backend
+            .on_listen_event(FirestoreListenEvent::DocumentDelete(DocumentDelete {
+                document: doc_path("a", "one"),
+                ..Default::default()
+            }))
+            .await
+            .expect("event handled");
+
+        assert!(!cached(&backend, "a", "one").await);
+    }
+
+    #[tokio::test]
+    async fn a_reset_empties_only_the_collection_of_that_target() {
+        let backend = preloaded(&[("a", 1000), ("b", 1001)]);
+        seed(&backend, "a", "one").await;
+        seed(&backend, "b", "one").await;
+
+        backend
+            .on_listen_event(target_change(
+                FirestoreListenerTargetChangeType::Reset,
+                vec![1000],
+            ))
+            .await
+            .expect("event handled");
+
+        assert!(!cached(&backend, "a", "one").await);
+        assert!(cached(&backend, "b", "one").await);
+    }
+
+    #[tokio::test]
+    async fn a_reset_stops_the_collection_answering_listings_until_it_is_current() {
+        let backend = preloaded(&[("a", 1000), ("b", 1001)]);
+        seed(&backend, "a", "one").await;
+        seed(&backend, "b", "one").await;
+
+        assert!(is_listable(&backend, "a").await);
+
+        backend
+            .on_listen_event(target_change(
+                FirestoreListenerTargetChangeType::Reset,
+                vec![1000],
+            ))
+            .await
+            .expect("event handled");
+
+        assert!(!is_listable(&backend, "a").await);
+        assert!(is_listable(&backend, "b").await);
+
+        backend
+            .on_listen_event(target_change(
+                FirestoreListenerTargetChangeType::Current,
+                vec![1000],
+            ))
+            .await
+            .expect("event handled");
+
+        assert!(is_listable(&backend, "a").await);
     }
 }

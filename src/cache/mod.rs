@@ -72,16 +72,52 @@
 //! # Consistency
 //!
 //! Cached results are **eventually consistent**. They reflect the last state the listener
-//! delivered, so a write may take a moment to appear, and a stalled or reset listener can leave
-//! the cache stale without saying so. Cached listings are never *partial* by construction, but
-//! they are not guaranteed to be current. Do not cache data that must be read at strong
-//! consistency - read that through Firestore directly, or inside a transaction.
+//! delivered, so a write may take a moment to appear. Cached listings are never *partial* by
+//! construction, but they are not guaranteed to be current. Do not cache data that must be read at
+//! strong consistency - read that through Firestore directly, or inside a transaction.
+//!
+//! When Firestore resets or removes a listener target - after a reconnect, or when a stored resume
+//! token has expired - the cache drops what it holds for that collection and Firestore replays it.
+//! While that replay is in progress the collection stops answering `list` and `query` from the
+//! cache, because what it holds in the meantime is a partial view that would otherwise look like a
+//! complete one. `read_through_cache` falls back to Firestore for the duration;
+//! `read_cached_only` returns a [`FirestoreError::CacheError`](crate::errors::FirestoreError::CacheError).
+//! Reads by ID are unaffected beyond behaving like a cache miss.
+//!
+//! # Changing the cached collections at runtime
+//!
+//! The set of cached collections does not have to be fixed when the cache is built:
+//!
+//! ```rust,no_run
+//! # use firestore::*;
+//! # async fn example(cache: &FirestoreMemoryCache) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! cache
+//!     .add_collection(FirestoreCacheCollection::new("currencies").preload_all())
+//!     .await?;
+//!
+//! cache.remove_collection("currencies").await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [`FirestoreCache::add_collection`] downloads the collection first if it is preloaded, publishes
+//! it only once it is complete, and then extends the listener - so a listing never observes it half
+//! filled, and nothing written during the download is missed.
+//! [`FirestoreCache::remove_collection`] does the reverse, and also forgets the collection's resume
+//! token so its listener target ID cannot be reused against a different query.
+//!
+//! `FirestoreDb` handles created earlier with [`FirestoreDb::read_through_cache`] or
+//! [`FirestoreDb::read_cached_only`] pick both up immediately: they share the cache's backend
+//! rather than a copy of it. A cache can also be built with no collections at all and populated
+//! entirely at runtime.
 //!
 //! # Lifecycle
 //!
 //! [`FirestoreCacheBuilder::build`] creates the cache, preloads it and starts the listener. Call
-//! [`FirestoreCache::shutdown`] when you are done. Because `load` and `shutdown` take `&self`, a
-//! built cache can be shared as `Arc<FirestoreMemoryCache>` in your application state.
+//! [`FirestoreCache::shutdown`] when you are done - it stops the listener and releases the
+//! backend's resources, dropping the cached documents and, for the persistent backend, closing its
+//! database file. Because `load` and `shutdown` take `&self`, a built cache can be shared as
+//! `Arc<FirestoreMemoryCache>` in your application state.
 //!
 //! # Custom backends
 //!
@@ -169,6 +205,11 @@ where
     pub listener: tokio::sync::Mutex<FirestoreListener<FirestoreDb, LS>>,
     /// A clone of the Firestore database client.
     pub db: FirestoreDb,
+    /// The next listener target ID to hand out to a collection added at runtime.
+    ///
+    /// Monotonic on purpose: an ID freed by `remove_collection` is never reissued in this process,
+    /// so a resume token that outlived its target cannot be applied to a different query.
+    pub next_listener_target: std::sync::Mutex<u32>,
 }
 
 /// A ready-to-use in-memory cache.
@@ -344,12 +385,19 @@ where
             db.create_listener(listener_storage).await?
         };
 
+        let next_listener_target = backend
+            .cache_configuration()
+            .max_listener_target()
+            .map(|max| max.saturating_add(1))
+            .unwrap_or(FIRESTORE_CACHE_DEFAULT_LISTENER_TARGET_BASE);
+
         Ok(Self {
             inner: FirestoreCacheInner {
                 options,
                 backend: Arc::new(backend),
                 listener: tokio::sync::Mutex::new(listener),
                 db: db.clone(),
+                next_listener_target: std::sync::Mutex::new(next_listener_target),
             },
         })
     }
@@ -396,7 +444,17 @@ where
         Ok(())
     }
 
-    /// Shuts down the Firestore listener and the cache backend.
+    /// Shuts down the Firestore listener and releases the cache backend's resources.
+    ///
+    /// The in-memory backend drops its cached documents; the persistent backend closes its
+    /// database, releasing the exclusive lock on the file so that another cache can be opened over
+    /// the same directory. This happens here rather than on drop because handles to the backend
+    /// outlive the cache - [`read_through_cache`](crate::FirestoreDb::read_through_cache) clones
+    /// one into every `FirestoreDb` it is attached to.
+    ///
+    /// Reads through a cache that has been shut down do not fail: they behave as a cache miss, so
+    /// `read_through_cache` falls back to Firestore. `read_cached_only` reports the miss as an
+    /// error, as it does for anything else it cannot answer.
     ///
     /// # Returns
     /// A `Result` indicating success or failure.
@@ -404,6 +462,130 @@ where
         self.inner.listener.lock().await.shutdown().await?;
         self.inner.backend.shutdown().await?;
         Ok(())
+    }
+
+    /// Starts caching a collection on a running cache, without rebuilding it.
+    ///
+    /// The collection is downloaded first if it is configured to be preloaded, and only becomes
+    /// visible to readers once it is fully populated - so a listing never sees it half filled.
+    /// The listener then picks it up from the moment the download started, so nothing written in
+    /// the meantime is missed.
+    ///
+    /// `FirestoreDb` handles created earlier with
+    /// [`read_through_cache`](crate::FirestoreDb::read_through_cache) or
+    /// [`read_cached_only`](crate::FirestoreDb::read_cached_only) see the new collection
+    /// immediately: they share this cache's backend rather than a copy of it.
+    ///
+    /// ```rust,no_run
+    /// # use firestore::*;
+    /// # async fn example(cache: &FirestoreMemoryCache) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// cache
+    ///     .add_collection(FirestoreCacheCollection::new("currencies").preload_all())
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Returns an error if the collection is already cached, or if the backend does not support
+    /// changing its collections at runtime.
+    pub async fn add_collection(
+        &self,
+        collection: FirestoreCacheCollection,
+    ) -> FirestoreResult<()> {
+        let documents_path = self.inner.db.get_documents_path();
+        let config = self.inner.backend.cache_configuration();
+
+        let listener_target = match collection.requested_listener_target() {
+            Some(target) => {
+                let target = FirestoreListenerTarget::new(target);
+                target.validate()?;
+                target
+            }
+            None => {
+                // Never reuse an ID freed by `remove_collection`: a resume token belongs to one
+                // target's query, so handing the ID to a different one would resume it wrongly.
+                let mut next = self
+                    .inner
+                    .next_listener_target
+                    .lock()
+                    .expect("cache listener target counter poisoned");
+                let allocated = config.allocate_listener_target(*next)?;
+                *next = allocated.value().saturating_add(1);
+                allocated
+            }
+        };
+
+        let collection_config = collection.into_configuration(listener_target);
+        let collection_path = collection_config.resolve_collection_path(documents_path);
+
+        if config.collections.contains_key(&collection_path) {
+            return Err(FirestoreError::CacheError(FirestoreCacheError::new(
+                FirestoreErrorPublicGenericDetails::new("CacheCollectionAlreadyCached".into()),
+                format!("The collection `{collection_path}` is already cached."),
+            )));
+        }
+
+        let target_params = self
+            .inner
+            .backend
+            .add_collection(&self.inner.options, &self.inner.db, collection_config)
+            .await?;
+
+        self.inner.listener.lock().await.add_target(target_params)?;
+
+        info!(collection_path, "Added a collection to the cache.");
+        Ok(())
+    }
+
+    /// Stops caching a collection, drops its documents and stops listening to it.
+    ///
+    /// Returns `false` if the collection was not cached. Use
+    /// [`remove_collection_at`](Self::remove_collection_at) for a sub-collection, whose absolute
+    /// path a bare name cannot address.
+    pub async fn remove_collection<S>(&self, collection_name: S) -> FirestoreResult<bool>
+    where
+        S: AsRef<str>,
+    {
+        let collection_path = format!(
+            "{}/{}",
+            self.inner.db.get_documents_path(),
+            collection_name.as_ref()
+        );
+        self.remove_collection_at(&collection_path).await
+    }
+
+    /// Stops caching the collection at an absolute path. See
+    /// [`remove_collection`](Self::remove_collection).
+    pub async fn remove_collection_at(&self, collection_path: &str) -> FirestoreResult<bool> {
+        let Some(target) = self
+            .inner
+            .backend
+            .remove_collection(collection_path)
+            .await?
+        else {
+            return Ok(false);
+        };
+
+        self.inner
+            .listener
+            .lock()
+            .await
+            .remove_target(&target)
+            .await?;
+
+        info!(collection_path, "Removed a collection from the cache.");
+        Ok(true)
+    }
+
+    /// The absolute paths of the collections this cache currently holds.
+    pub fn cached_collections(&self) -> Vec<String> {
+        self.inner
+            .backend
+            .cache_configuration()
+            .collections
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// Returns a thread-safe reference-counted pointer to the cache backend.
@@ -473,6 +655,154 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
     /// # Returns
     /// A `FirestoreResult` indicating success or failure of processing the event.
     async fn on_listen_event(&self, event: FirestoreListenEvent) -> FirestoreResult<()>;
+
+    /// A snapshot of the collections this backend currently caches.
+    ///
+    /// [`FirestoreCache`] is generic over the backend, so this is the only way it can see the
+    /// configuration - it uses it to reject a collection that is already cached and to pick a free
+    /// listener target ID for a new one.
+    ///
+    /// The default returns an empty configuration, which disables adding and removing collections
+    /// at runtime.
+    fn cache_configuration(&self) -> Arc<FirestoreCacheConfiguration> {
+        Arc::new(FirestoreCacheConfiguration::new())
+    }
+
+    /// Starts caching a collection on a running cache.
+    ///
+    /// The backend creates the collection's storage, preloads it if the load mode asks for it, and
+    /// publishes it into its configuration only once it is fully populated. It returns the target
+    /// the cache should then start listening on.
+    ///
+    /// The default reports that the backend does not support this, so that a backend which cannot
+    /// do it fails loudly rather than quietly ignoring the request.
+    async fn add_collection(
+        &self,
+        options: &FirestoreCacheOptions,
+        db: &FirestoreDb,
+        collection_config: FirestoreCacheCollectionConfiguration,
+    ) -> FirestoreResult<FirestoreListenerTargetParams> {
+        let _ = (options, db, collection_config);
+        Err(cache_dynamic_collections_unsupported_error(
+            "add_collection",
+        ))
+    }
+
+    /// Stops caching a collection and drops its data.
+    ///
+    /// Returns the listener target that was keeping it up to date, or `None` if the collection was
+    /// not cached. See [`add_collection`](Self::add_collection) for the default behaviour.
+    async fn remove_collection(
+        &self,
+        collection_path: &str,
+    ) -> FirestoreResult<Option<FirestoreListenerTarget>> {
+        let _ = collection_path;
+        Err(cache_dynamic_collections_unsupported_error(
+            "remove_collection",
+        ))
+    }
+}
+
+/// Builds the listener target that keeps one cached collection up to date.
+///
+/// Shared by the backends and by their runtime `add_collection`, so that a collection added later
+/// is listened to exactly like one configured up front.
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+pub(crate) fn target_params_for_collection(
+    collection_config: &FirestoreCacheCollectionConfiguration,
+    resume_type: Option<FirestoreListenerTargetResumeType>,
+) -> FirestoreListenerTargetParams {
+    FirestoreListenerTargetParams::new(
+        collection_config.listener_target.clone(),
+        FirestoreTargetType::Query(
+            FirestoreQueryParams::new(collection_config.collection_name.as_str().into())
+                .opt_parent(collection_config.parent.clone()),
+        ),
+        std::collections::HashMap::new(),
+    )
+    .opt_resume_type(resume_type)
+}
+
+/// Builds the error returned when a backend does not support changing its collections at runtime.
+pub(crate) fn cache_dynamic_collections_unsupported_error(operation: &str) -> FirestoreError {
+    FirestoreError::CacheError(FirestoreCacheError::new(
+        FirestoreErrorPublicGenericDetails::new("CacheDynamicCollectionsUnsupported".into()),
+        format!(
+            "This cache backend does not support `{operation}`. Implement it on your \
+             FirestoreCacheBackend to add and remove cached collections while the cache runs."
+        ),
+    ))
+}
+
+/// What a backend should do with the collections a Firestore target change affects.
+///
+/// Firestore uses an empty set of target IDs to mean *all* targets, which this resolves for the
+/// caller.
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+pub(crate) enum FirestoreCacheTargetChangeAction {
+    /// The listener target is being replayed from scratch: drop what is cached for these
+    /// collections and stop answering `list`/`query` from them until the replay completes.
+    SuspendAndInvalidate(Vec<String>),
+    /// The listener target now reflects a consistent snapshot again: these collections may serve
+    /// `list`/`query` once more.
+    Resume(Vec<String>),
+    /// Nothing to do.
+    Ignore,
+}
+
+/// Decides what a target change means for the cache.
+///
+/// Shared by the backends so that they cannot drift apart, and kept free of any backend state so
+/// that it can be unit tested on its own.
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+pub(crate) fn cache_target_change_action(
+    config: &FirestoreCacheConfiguration,
+    target_change: &gcloud_sdk::google::firestore::v1::TargetChange,
+) -> FirestoreCacheTargetChangeAction {
+    use gcloud_sdk::google::firestore::v1::target_change::TargetChangeType;
+
+    let Ok(change_type) = TargetChangeType::try_from(target_change.target_change_type) else {
+        return FirestoreCacheTargetChangeAction::Ignore;
+    };
+
+    match change_type {
+        TargetChangeType::Reset | TargetChangeType::Remove => {
+            FirestoreCacheTargetChangeAction::SuspendAndInvalidate(affected_collection_paths(
+                config,
+                &target_change.target_ids,
+            ))
+        }
+        TargetChangeType::Current => FirestoreCacheTargetChangeAction::Resume(
+            affected_collection_paths(config, &target_change.target_ids),
+        ),
+        TargetChangeType::NoChange | TargetChangeType::Add => {
+            FirestoreCacheTargetChangeAction::Ignore
+        }
+    }
+}
+
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+fn affected_collection_paths(
+    config: &FirestoreCacheConfiguration,
+    target_ids: &[i32],
+) -> Vec<String> {
+    if target_ids.is_empty() {
+        return config
+            .all_target_scopes()
+            .into_iter()
+            .map(|scope| scope.collection_path().to_string())
+            .collect();
+    }
+
+    target_ids
+        .iter()
+        .filter_map(|target_id_num| FirestoreListenerTarget::try_from(*target_id_num).ok())
+        .filter_map(|target| {
+            config
+                .target_scope(&target)
+                .map(|scope| scope.collection_path().to_string())
+        })
+        .collect()
 }
 
 /// Defines support for retrieving and updating cached documents by their full path.
@@ -573,4 +903,147 @@ pub trait FirestoreCacheDocsByPathSupport {
         collection_path: &str,
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>;
+}
+
+#[cfg(test)]
+mod target_change_tests {
+    use super::*;
+    use gcloud_sdk::google::firestore::v1::TargetChange;
+
+    const DOCS: &str = "projects/test/databases/(default)/documents";
+
+    fn config_with(collections: &[(&str, u32)]) -> FirestoreCacheConfiguration {
+        collections.iter().fold(
+            FirestoreCacheConfiguration::new(),
+            |config, (name, target)| {
+                config.add_collection_config_at(
+                    DOCS,
+                    FirestoreCacheCollectionConfiguration::new(
+                        name,
+                        FirestoreListenerTarget::new(*target),
+                        FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+                    ),
+                )
+            },
+        )
+    }
+
+    fn change(
+        change_type: FirestoreListenerTargetChangeType,
+        target_ids: Vec<i32>,
+    ) -> TargetChange {
+        TargetChange {
+            target_change_type: change_type as i32,
+            target_ids,
+            ..Default::default()
+        }
+    }
+
+    fn suspended(action: FirestoreCacheTargetChangeAction) -> Vec<String> {
+        match action {
+            FirestoreCacheTargetChangeAction::SuspendAndInvalidate(paths) => sorted(paths),
+            other => panic!(
+                "expected SuspendAndInvalidate, got {}",
+                describe_action(&other)
+            ),
+        }
+    }
+
+    fn resumed(action: FirestoreCacheTargetChangeAction) -> Vec<String> {
+        match action {
+            FirestoreCacheTargetChangeAction::Resume(paths) => sorted(paths),
+            other => panic!("expected Resume, got {}", describe_action(&other)),
+        }
+    }
+
+    fn sorted(mut paths: Vec<String>) -> Vec<String> {
+        paths.sort();
+        paths
+    }
+
+    fn describe_action(action: &FirestoreCacheTargetChangeAction) -> &'static str {
+        match action {
+            FirestoreCacheTargetChangeAction::SuspendAndInvalidate(_) => "SuspendAndInvalidate",
+            FirestoreCacheTargetChangeAction::Resume(_) => "Resume",
+            FirestoreCacheTargetChangeAction::Ignore => "Ignore",
+        }
+    }
+
+    #[test]
+    fn reset_suspends_only_the_collections_of_the_named_targets() {
+        let config = config_with(&[("a", 1000), ("b", 1001)]);
+
+        let action = cache_target_change_action(
+            &config,
+            &change(FirestoreListenerTargetChangeType::Reset, vec![1000]),
+        );
+
+        assert_eq!(suspended(action), vec![format!("{DOCS}/a")]);
+    }
+
+    #[test]
+    fn remove_suspends_like_reset_does() {
+        let config = config_with(&[("a", 1000), ("b", 1001)]);
+
+        let action = cache_target_change_action(
+            &config,
+            &change(FirestoreListenerTargetChangeType::Remove, vec![1001]),
+        );
+
+        assert_eq!(suspended(action), vec![format!("{DOCS}/b")]);
+    }
+
+    #[test]
+    fn an_empty_target_id_set_means_every_target() {
+        let config = config_with(&[("a", 1000), ("b", 1001)]);
+
+        let action = cache_target_change_action(
+            &config,
+            &change(FirestoreListenerTargetChangeType::Reset, vec![]),
+        );
+
+        assert_eq!(
+            suspended(action),
+            vec![format!("{DOCS}/a"), format!("{DOCS}/b")]
+        );
+    }
+
+    #[test]
+    fn current_resumes_the_collection() {
+        let config = config_with(&[("a", 1000)]);
+
+        let action = cache_target_change_action(
+            &config,
+            &change(FirestoreListenerTargetChangeType::Current, vec![1000]),
+        );
+
+        assert_eq!(resumed(action), vec![format!("{DOCS}/a")]);
+    }
+
+    #[test]
+    fn keepalives_and_adds_do_nothing() {
+        let config = config_with(&[("a", 1000)]);
+
+        for change_type in [
+            FirestoreListenerTargetChangeType::NoChange,
+            FirestoreListenerTargetChangeType::Add,
+        ] {
+            assert!(matches!(
+                cache_target_change_action(&config, &change(change_type, vec![1000])),
+                FirestoreCacheTargetChangeAction::Ignore
+            ));
+        }
+    }
+
+    #[test]
+    fn targets_belonging_to_another_listener_are_ignored() {
+        let config = config_with(&[("a", 1000)]);
+
+        let action = cache_target_change_action(
+            &config,
+            &change(FirestoreListenerTargetChangeType::Reset, vec![42]),
+        );
+
+        assert!(suspended(action).is_empty());
+    }
 }

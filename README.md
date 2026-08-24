@@ -841,6 +841,30 @@ Because `load` and `shutdown` take `&self`, a built cache can be shared directly
 `Arc<FirestoreMemoryCache>` in your application state. `FirestoreMemoryCache` and
 `FirestorePersistentCache` are aliases that save you from spelling out the generic parameters.
 
+`shutdown` stops the listener and releases the backend's resources: the in-memory cache drops its
+documents, and the persistent cache closes its database file, so another cache can be opened over
+the same directory.
+
+### Changing the cached collections at runtime
+
+The set of cached collections does not have to be fixed when the cache is built:
+
+```rust
+cache.add_collection(FirestoreCacheCollection::new("currencies").preload_all()).await?;
+
+cache.remove_collection("currencies").await?;
+```
+
+`add_collection` downloads the collection first if it is preloaded, publishes it only once it is
+complete, and then extends the listener - so a listing never observes it half filled, and nothing
+written during the download is missed. `remove_collection` does the reverse, and also forgets the
+collection's resume token so its listener target ID cannot be reused against a different query.
+Use `remove_collection_at` for a sub-collection, whose absolute path a bare name cannot address.
+
+`FirestoreDb` handles created earlier with `read_through_cache` or `read_cached_only` pick both up
+immediately: they share the cache's backend rather than a copy of it. A cache can also be built
+with no collections at all and populated entirely at runtime.
+
 ### Choosing a cache mode
 
 - `db.read_through_cache(&cache)` serves what it can from the cache and goes to Firestore for the
@@ -883,9 +907,14 @@ acceptable, opt in with
   your application or from elsewhere;
 - Preloading at startup.
 
-Cached results are eventually consistent: they reflect the last state the listener delivered. A
-write may take a moment to show up, and a stalled or reset listener can leave the cache stale
-without saying so. Do not cache data that must be read at strong consistency.
+Cached results are eventually consistent: they reflect the last state the listener delivered, so a
+write may take a moment to show up. Do not cache data that must be read at strong consistency.
+
+When Firestore resets or removes a listener target - after a reconnect, or when a stored resume
+token has expired - the cache drops what it holds for that collection and Firestore replays it.
+While that replay is in progress the collection stops answering `list` and `query` from the cache:
+`read_through_cache` falls back to Firestore, and `read_cached_only` returns a `CacheError` rather
+than a listing that looks complete but is not.
 
 Full examples are available [here](examples/caching_memory_collections.rs)
 and [here](examples/caching_persistent_collections.rs).
