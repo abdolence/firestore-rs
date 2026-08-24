@@ -597,13 +597,25 @@ where
                                     break;
                                 }
                                 Some(FirestoreListenerControl::TargetsChanged) => {
-                                    // Collapse a burst of changes into a single reconnect.
+                                    // Collapse a burst of changes into a single reconnect. A resync
+                                    // drained here still has to take effect, or the target would
+                                    // come back resuming from the position we were asked to drop.
+                                    let mut drained_resyncs = Vec::new();
                                     while let Ok(queued) = control_receiver.try_recv() {
-                                        if queued == FirestoreListenerControl::Shutdown {
-                                            shutdown_flag.store(true, Ordering::Relaxed);
-                                            control_receiver.close();
-                                            break;
+                                        match queued {
+                                            FirestoreListenerControl::Shutdown => {
+                                                shutdown_flag.store(true, Ordering::Relaxed);
+                                                control_receiver.close();
+                                                break;
+                                            }
+                                            FirestoreListenerControl::ResyncTarget(target) => {
+                                                drained_resyncs.push(target);
+                                            }
+                                            FirestoreListenerControl::TargetsChanged => {}
                                         }
+                                    }
+                                    if !drained_resyncs.is_empty() {
+                                        Self::forget_resume_states(&storage, &targets_state, &drained_resyncs).await;
                                     }
                                     debug!("Listener targets changed. Reopening the stream with the new set...");
                                     break;
@@ -625,23 +637,28 @@ where
 
                                         match event.response_type {
                                             Some(listen_response::ResponseType::TargetChange(target_change)) => {
-                                                if !target_change.resume_token.is_empty()
-                                                    && !Self::store_resume_token(&storage, &targets_state, &target_change).await
-                                                {
-                                                    break;
-                                                }
-
                                                 let change_type = target_change::TargetChangeType::try_from(
                                                     target_change.target_change_type,
                                                 ).ok();
                                                 let affected = Self::affected_targets(&targets_state, &target_change.target_ids);
                                                 let cause = target_change.cause.clone();
+                                                let resume_token = target_change.resume_token.clone();
+                                                let target_ids = target_change.target_ids.clone();
 
                                                 // Anything listening on this - the cache above all -
                                                 // has to see the change, and drop what it holds for a
                                                 // reset target, before the stream is reopened.
                                                 if let Err(err) = cb(listen_response::ResponseType::TargetChange(target_change)).await {
                                                     error!(%err, "Listener callback function error occurred.");
+                                                    break;
+                                                }
+
+                                                // Stored only once the change has been applied. A
+                                                // token saved before that would, after a failure
+                                                // here, resume past a change nothing acted on.
+                                                if !resume_token.is_empty()
+                                                    && !Self::store_resume_token(&storage, &targets_state, &resume_token, &target_ids).await
+                                                {
                                                     break;
                                                 }
 
@@ -684,7 +701,14 @@ where
                                             None  =>  {}
                                         }
                                     }
-                                    Ok(None) => break,
+                                    Ok(None) => {
+                                        // A clean close still needs the retry delay: without it a
+                                        // server that closes immediately would be reconnected to in
+                                        // a tight loop.
+                                        debug!(?effective_delay, "Listen stream closed. Reconnecting after the specified delay...");
+                                        tokio::time::sleep(effective_delay).await;
+                                        break;
+                                    }
                                     Err(err) => {
                                         Self::handle_listener_error(
                                             err,
@@ -791,13 +815,14 @@ where
     async fn store_resume_token(
         storage: &S,
         targets_state: &FirestoreListenerTargetsState,
-        target_change: &TargetChange,
+        resume_token: &[u8],
+        target_ids: &[i32],
     ) -> bool {
-        let Ok(affected) = Self::affected_targets(targets_state, &target_change.target_ids) else {
+        let Ok(affected) = Self::affected_targets(targets_state, target_ids) else {
             return false;
         };
 
-        let new_token: FirestoreListenerToken = target_change.resume_token.clone().into();
+        let new_token: FirestoreListenerToken = resume_token.to_vec().into();
 
         for target_id in affected {
             if let Err(err) = storage

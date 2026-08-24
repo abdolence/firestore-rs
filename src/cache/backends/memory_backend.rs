@@ -1,5 +1,4 @@
 use crate::errors::*;
-use crate::FirestoreInstant;
 use crate::*;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -382,7 +381,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        let read_from_time = FirestoreInstant::now();
+        let read_from_time = crate::cache::cache_target_read_time();
 
         self.preload_collections(db).await?;
 
@@ -420,7 +419,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
     ) -> FirestoreResult<FirestoreListenerTargetParams> {
         // Captured before reading anything, so that writes landing during the preload are still
         // delivered once the listener target attaches from this point in time.
-        let read_from_time = FirestoreInstant::now();
+        let read_from_time = crate::cache::cache_target_read_time();
         let collection_path = collection_config.resolve_collection_path(db.get_documents_path());
 
         let mem_cache = (self.collection_mem_options)(collection_path.as_str()).build();

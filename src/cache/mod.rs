@@ -237,6 +237,11 @@ where
     pub listener: tokio::sync::Mutex<FirestoreListener<FirestoreDb, LS>>,
     /// A clone of the Firestore database client.
     pub db: FirestoreDb,
+    /// Serialises adding and removing collections.
+    ///
+    /// Without it two concurrent `add_collection` calls could both pass the "already cached" check
+    /// before either published its entry, leaving one of the two listener targets orphaned.
+    pub collection_mutations: tokio::sync::Mutex<()>,
     /// The next listener target ID to hand out to a collection added at runtime.
     ///
     /// Monotonic on purpose: an ID freed by `remove_collection` is never reissued in this process,
@@ -429,6 +434,7 @@ where
                 backend: Arc::new(backend),
                 listener: tokio::sync::Mutex::new(listener),
                 db: db.clone(),
+                collection_mutations: tokio::sync::Mutex::new(()),
                 next_listener_target: std::sync::Mutex::new(next_listener_target),
             },
         })
@@ -526,6 +532,8 @@ where
         &self,
         collection: FirestoreCacheCollection,
     ) -> FirestoreResult<()> {
+        let _mutation = self.inner.collection_mutations.lock().await;
+
         let documents_path = self.inner.db.get_documents_path();
         let config = self.inner.backend.cache_configuration();
 
@@ -823,6 +831,17 @@ where
                 return;
             }
             FirestoreListenEvent::TargetChange(target_change) => {
+                // A reset or removed target is about to be replayed, so a filter counting the copy
+                // we are dropping says nothing about the copy that replaces it.
+                if matches!(
+                    FirestoreListenerTargetChangeType::try_from(target_change.target_change_type),
+                    Ok(FirestoreListenerTargetChangeType::Reset)
+                        | Ok(FirestoreListenerTargetChangeType::Remove)
+                ) {
+                    self.discard_pending_filters(&target_change.target_ids)
+                        .await;
+                }
+
                 // NO_CHANGE and CURRENT with a read time are the snapshot boundaries.
                 let settles_snapshot = matches!(
                     FirestoreListenerTargetChangeType::try_from(target_change.target_change_type),
@@ -838,6 +857,21 @@ where
 
         if let Err(err) = self.backend.on_listen_event(event).await {
             error!(?err, "Error occurred while updating cache.");
+        }
+    }
+
+    /// Forgets the filters waiting on targets whose contents are being thrown away anyway.
+    async fn discard_pending_filters(&self, target_ids: &[i32]) {
+        let mut state = self.state.lock().await;
+        if target_ids.is_empty() {
+            state.pending_filters.clear();
+            return;
+        }
+        for target in target_ids
+            .iter()
+            .filter_map(|id| FirestoreListenerTarget::try_from(*id).ok())
+        {
+            state.pending_filters.remove(&target);
         }
     }
 
@@ -936,10 +970,44 @@ where
             "The cache holds a different number of documents than Firestore reports, so it has              missed changes. Resynchronising the collection.",
         );
 
-        // The listener discards the target's resume state and reopens the stream; Firestore then
-        // replays the collection, and the reset that arrives with it empties the stale copy.
+        // Drop the stale copy first. Firestore replays a target that is re-added without a resume
+        // token, but a replay only says which documents exist - never which ones no longer do - so
+        // without this the documents whose deletion we missed would survive the resync, and the
+        // count would keep disagreeing.
+        if let Err(err) = self.backend.begin_collection_resync(collection_path).await {
+            error!(
+                ?err,
+                collection_path,
+                "Could not drop a diverged collection, so it was not resynchronised."
+            );
+            return;
+        }
+
+        // The listener then discards the target's resume state and reopens the stream. The
+        // collection serves listings again once Firestore reports the target current.
         self.listener.resync_target(target);
     }
+}
+
+/// How far back a target's read time is set from the local clock.
+///
+/// A resume `read_time` in the server's future is rejected as invalid, and the client's clock can
+/// easily be a little ahead. The cost of the margin is a few redundant document changes, which are
+/// idempotent; the cost of being wrong the other way is a rejected listen request.
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+const FIRESTORE_CACHE_READ_TIME_SKEW_MARGIN: std::time::Duration =
+    std::time::Duration::from_secs(5);
+
+/// The point in time a newly attached target should be resumed from.
+///
+/// Deliberately a little in the past - see [`FIRESTORE_CACHE_READ_TIME_SKEW_MARGIN`].
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+pub(crate) fn cache_target_read_time() -> FirestoreInstant {
+    let now = FirestoreInstant::now();
+    jiff::SignedDuration::try_from(FIRESTORE_CACHE_READ_TIME_SKEW_MARGIN)
+        .ok()
+        .and_then(|margin| now.checked_sub(margin).ok())
+        .unwrap_or(now)
 }
 
 /// Builds the listener target that keeps one cached collection up to date.

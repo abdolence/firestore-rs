@@ -4,12 +4,11 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 
 use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
-use crate::FirestoreInstant;
 use futures::StreamExt;
 use gcloud_sdk::google::firestore::v1::Document;
 use gcloud_sdk::prost::Message;
 use redb::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::*;
@@ -546,7 +545,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        let read_from_time = FirestoreInstant::now();
+        let read_from_time = crate::cache::cache_target_read_time();
 
         self.preload_collections(db).await?;
 
@@ -561,17 +560,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                 } else {
                     None
                 };
-                FirestoreListenerTargetParams::new(
-                    collection_config.listener_target.clone(),
-                    FirestoreTargetType::Query(
-                        FirestoreQueryParams::new(
-                            collection_config.collection_name.as_str().into(),
-                        )
-                        .opt_parent(collection_config.parent.clone()),
-                    ),
-                    HashMap::new(),
-                )
-                .opt_resume_type(resume_type)
+                crate::cache::target_params_for_collection(collection_config, resume_type)
             })
             .collect())
     }
@@ -611,7 +600,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
     ) -> FirestoreResult<FirestoreListenerTargetParams> {
         // Captured before reading anything, so that writes landing during the preload are still
         // delivered once the listener target attaches from this point in time.
-        let read_from_time = FirestoreInstant::now();
+        let read_from_time = crate::cache::cache_target_read_time();
         let collection_path = collection_config.resolve_collection_path(db.get_documents_path());
 
         // A collection added at runtime starts from nothing - `remove_collection` deletes the
@@ -1124,6 +1113,65 @@ mod tests {
             .expect("event handled");
 
         assert!(!cached(&backend, "a", "one").await);
+    }
+
+    #[tokio::test]
+    async fn a_documents_watch_builds_a_documents_target_and_is_not_listable() {
+        let config = FirestoreCacheConfiguration::new().add_collection_config_at(
+            DOCS,
+            FirestoreCacheCollectionConfiguration::new(
+                "a",
+                FirestoreListenerTarget::new(1000),
+                FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+            )
+            .with_documents(["one", "two"]),
+        );
+
+        // The target has to watch the named documents, not the whole collection: getting this
+        // wrong subscribes to everything while looking correct from the outside.
+        let params = crate::cache::target_params_for_collection(
+            &config.collections[&format!("{DOCS}/a")],
+            None,
+        );
+        match params.target_type {
+            FirestoreTargetType::Documents(documents) => {
+                assert_eq!(documents.collection, "a");
+                assert_eq!(documents.documents, vec!["one", "two"]);
+            }
+            other => panic!("expected a documents target, got {other:?}"),
+        }
+
+        assert!(!config.is_collection_listable(&format!("{DOCS}/a")));
+    }
+
+    #[tokio::test]
+    async fn a_preloaded_collection_reports_a_comparable_document_count() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed(&backend, "a", "one").await;
+        seed(&backend, "a", "two").await;
+
+        assert_eq!(
+            backend
+                .authoritative_doc_count(&format!("{DOCS}/a"))
+                .await
+                .unwrap(),
+            Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_shut_down_cache_reports_no_comparable_count() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed(&backend, "a", "one").await;
+        backend.shutdown().await.unwrap();
+
+        assert_eq!(
+            backend
+                .authoritative_doc_count(&format!("{DOCS}/a"))
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     #[tokio::test]

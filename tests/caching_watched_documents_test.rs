@@ -109,7 +109,65 @@ async fn a_cache_limited_to_named_documents_ignores_the_rest_of_the_collection(
     );
 
     cache.shutdown().await?;
+
+    // Each backend builds its listener targets on its own path, so assert the shape of the target
+    // itself. Checking cached contents instead would prove nothing here: writes are filtered to
+    // the watched set anyway, so a target covering the whole collection would look identical from
+    // the cache while quietly streaming every unrelated change in it.
+    for (name, targets) in [
+        ("memory", memory_backend_targets(&db).await?),
+        ("persistent", persistent_backend_targets(&db).await?),
+    ] {
+        assert_eq!(targets.len(), 1, "{name}: expected one target");
+        match &targets[0].target_type {
+            FirestoreTargetType::Documents(documents) => {
+                assert_eq!(documents.collection, TEST_COLLECTION_NAME, "{name}");
+                assert_eq!(documents.documents, WATCHED.to_vec(), "{name}");
+            }
+            other => panic!(
+                "{name}: a watched-documents collection must listen on a documents target, got \
+                 {other:?}"
+            ),
+        }
+    }
+
     Ok(())
+}
+
+fn watched_configuration(db: &FirestoreDb) -> FirestoreCacheConfiguration {
+    FirestoreCacheConfiguration::new().add_collection_config(
+        db,
+        FirestoreCacheCollectionConfiguration::new(
+            TEST_COLLECTION_NAME,
+            FirestoreListenerTarget::new(1600),
+            FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+        )
+        .with_documents(WATCHED),
+    )
+}
+
+async fn memory_backend_targets(
+    db: &FirestoreDb,
+) -> Result<Vec<FirestoreListenerTargetParams>, Box<dyn std::error::Error + Send + Sync>> {
+    let backend = FirestoreMemoryCacheBackend::new(watched_configuration(db))?;
+    Ok(backend
+        .load(&FirestoreCacheOptions::new("watched-memory".into()), db)
+        .await?)
+}
+
+async fn persistent_backend_targets(
+    db: &FirestoreDb,
+) -> Result<Vec<FirestoreListenerTargetParams>, Box<dyn std::error::Error + Send + Sync>> {
+    let data_dir = tempfile::tempdir()?;
+    let backend = FirestorePersistentCacheBackend::with_options(
+        watched_configuration(db),
+        data_dir.path().join("redb"),
+    )?;
+    let targets = backend
+        .load(&FirestoreCacheOptions::new("watched-persistent".into()), db)
+        .await?;
+    backend.shutdown().await?;
+    Ok(targets)
 }
 
 async fn cached_string(db: &FirestoreDb, document_id: &str) -> FirestoreResult<Option<String>> {
