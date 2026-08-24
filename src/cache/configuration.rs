@@ -71,6 +71,19 @@ impl FirestoreCacheConfiguration {
         self
     }
 
+    /// Whether the cache holds this document: its collection is cached, and the collection is not
+    /// restricted to a different set of document IDs.
+    #[inline]
+    pub fn is_document_cached(&self, collection_path: &str, document_id: &str) -> bool {
+        match self.collections.get(collection_path) {
+            Some(config) => match config.watched_document_ids() {
+                Some(document_ids) => document_ids.iter().any(|id| id == document_id),
+                None => true,
+            },
+            None => false,
+        }
+    }
+
     /// Returns the first listener target ID at or above `from` that no collection uses.
     ///
     /// Shared by the builder's up-front assignment and by adding a collection at runtime, so the
@@ -123,7 +136,7 @@ impl FirestoreCacheConfiguration {
         self.collections
             .iter()
             .find(|(_, config)| config.listener_target == *target)
-            .map(|(collection_path, _)| FirestoreCacheTargetScope::Collection(collection_path))
+            .map(|(collection_path, config)| target_scope_of(collection_path, config))
     }
 
     /// Returns what every listener target of this cache covers.
@@ -132,8 +145,8 @@ impl FirestoreCacheConfiguration {
     #[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
     pub(crate) fn all_target_scopes(&self) -> Vec<FirestoreCacheTargetScope<'_>> {
         self.collections
-            .keys()
-            .map(|collection_path| FirestoreCacheTargetScope::Collection(collection_path))
+            .iter()
+            .map(|(collection_path, config)| target_scope_of(collection_path, config))
             .collect()
     }
 
@@ -151,6 +164,9 @@ impl FirestoreCacheConfiguration {
     #[inline]
     pub fn is_collection_listable(&self, collection_path: &str) -> bool {
         match self.collections.get(collection_path) {
+            // A collection watched by document ID holds only those documents, however it is
+            // loaded, so it can never answer a listing of the collection completely.
+            Some(config) if config.watched_document_ids().is_some() => false,
             Some(config) => match self.incomplete_collection_policy {
                 FirestoreCacheIncompleteCollectionPolicy::SkipCache => {
                     config.collection_load_mode.is_preloading()
@@ -169,6 +185,46 @@ impl Default for FirestoreCacheConfiguration {
     }
 }
 
+/// Which documents of a collection the cache holds and listens to.
+///
+/// This is independent of [`FirestoreCacheCollectionLoadMode`]: that decides *when* documents are
+/// fetched, this decides *which* ones exist as far as the cache is concerned.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum FirestoreCacheCollectionWatch {
+    /// Listen to every document in the collection. The default.
+    WholeCollection,
+    /// Listen only to these document IDs.
+    ///
+    /// The listener watches exactly these documents rather than the whole collection, so unrelated
+    /// changes are never streamed to your process or written into the cache. Such a collection is
+    /// never listable: it holds a chosen subset, so answering `list` or `query` from it would
+    /// return a partial result that looks complete.
+    Documents(Vec<String>),
+}
+
+impl Default for FirestoreCacheCollectionWatch {
+    #[inline]
+    fn default() -> Self {
+        Self::WholeCollection
+    }
+}
+
+/// The scope of the listener target that keeps one cached collection up to date.
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+#[inline]
+pub(crate) fn target_scope_of<'a>(
+    collection_path: &'a str,
+    config: &'a FirestoreCacheCollectionConfiguration,
+) -> FirestoreCacheTargetScope<'a> {
+    match config.watched_document_ids() {
+        Some(document_ids) => FirestoreCacheTargetScope::Documents {
+            collection_path,
+            document_ids,
+        },
+        None => FirestoreCacheTargetScope::Collection(collection_path),
+    }
+}
+
 /// What a Firestore listener target of this cache covers.
 ///
 /// Every cached target is currently a whole-collection query, so only
@@ -181,7 +237,6 @@ pub(crate) enum FirestoreCacheTargetScope<'a> {
     /// The target covers every document in the collection at this path.
     Collection(&'a str),
     /// The target covers only these document IDs within the collection at this path.
-    #[allow(dead_code)]
     Documents {
         collection_path: &'a str,
         document_ids: &'a [String],
@@ -233,6 +288,8 @@ pub struct FirestoreCacheCollectionConfiguration {
     /// How this collection is populated at startup, which also determines whether `list`/`query`
     /// may be served from the cache.
     pub collection_load_mode: FirestoreCacheCollectionLoadMode,
+    /// Which documents of the collection the cache holds and listens to.
+    pub collection_watch: FirestoreCacheCollectionWatch,
     #[doc(hidden)]
     /// Not implemented and has no effect. Scheduled for removal.
     pub indices: Vec<FirestoreCacheIndexConfiguration>,
@@ -254,7 +311,35 @@ impl FirestoreCacheCollectionConfiguration {
             parent: None,
             listener_target,
             collection_load_mode,
+            collection_watch: FirestoreCacheCollectionWatch::WholeCollection,
             indices: Vec::new(),
+        }
+    }
+
+    /// Caches and listens to only these documents of the collection, instead of all of them.
+    #[inline]
+    pub fn with_documents<I>(self, document_ids: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        Self {
+            collection_watch: FirestoreCacheCollectionWatch::Documents(
+                document_ids
+                    .into_iter()
+                    .map(|id| id.as_ref().to_string())
+                    .collect(),
+            ),
+            ..self
+        }
+    }
+
+    /// The document IDs this collection is limited to, if any.
+    #[inline]
+    pub fn watched_document_ids(&self) -> Option<&[String]> {
+        match &self.collection_watch {
+            FirestoreCacheCollectionWatch::WholeCollection => None,
+            FirestoreCacheCollectionWatch::Documents(ids) => Some(ids),
         }
     }
 

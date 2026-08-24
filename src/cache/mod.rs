@@ -84,6 +84,30 @@
 //! `read_cached_only` returns a [`FirestoreError::CacheError`](crate::errors::FirestoreError::CacheError).
 //! Reads by ID are unaffected beyond behaving like a cache miss.
 //!
+//! # Caching named documents instead of a whole collection
+//!
+//! `.collection(name)` subscribes the listener to the **entire** collection, even though it does
+//! not preload it - "lazy" only means the initial download is skipped. When you know which
+//! documents you care about, say so:
+//!
+//! ```rust,no_run
+//! # use firestore::*;
+//! # async fn example(db: &FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! let cache = FirestoreCache::memory(db)
+//!     .collection_with("configs", |c| c.documents(["site", "billing"]).preload_all())
+//!     .build()
+//!     .await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! The listener then watches exactly those documents, so unrelated changes in the collection are
+//! never streamed to your process or written into the cache, and preloading reads just those IDs.
+//! This is the shape to reach for with configuration, feature flags and reference data.
+//!
+//! Such a collection is never listable, whatever its load mode: it holds a chosen subset, so
+//! `list` and `query` would return a partial answer that looks complete.
+//!
 //! # Changing the cached collections at runtime
 //!
 //! The set of cached collections does not have to be fixed when the cache is built:
@@ -712,12 +736,25 @@ pub(crate) fn target_params_for_collection(
     collection_config: &FirestoreCacheCollectionConfiguration,
     resume_type: Option<FirestoreListenerTargetResumeType>,
 ) -> FirestoreListenerTargetParams {
-    FirestoreListenerTargetParams::new(
-        collection_config.listener_target.clone(),
-        FirestoreTargetType::Query(
+    let target_type = match collection_config.watched_document_ids() {
+        // Watching named documents keeps unrelated changes in the collection off the wire
+        // entirely, instead of streaming them here only to be filtered out.
+        Some(document_ids) => FirestoreTargetType::Documents(
+            FirestoreCollectionDocuments::new(
+                collection_config.collection_name.clone(),
+                document_ids.to_vec(),
+            )
+            .opt_parent(collection_config.parent.clone()),
+        ),
+        None => FirestoreTargetType::Query(
             FirestoreQueryParams::new(collection_config.collection_name.as_str().into())
                 .opt_parent(collection_config.parent.clone()),
         ),
+    };
+
+    FirestoreListenerTargetParams::new(
+        collection_config.listener_target.clone(),
+        target_type,
         std::collections::HashMap::new(),
     )
     .opt_resume_type(resume_type)
@@ -740,14 +777,40 @@ pub(crate) fn cache_dynamic_collections_unsupported_error(operation: &str) -> Fi
 /// caller.
 #[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 pub(crate) enum FirestoreCacheTargetChangeAction {
-    /// The listener target is being replayed from scratch: drop what is cached for these
-    /// collections and stop answering `list`/`query` from them until the replay completes.
-    SuspendAndInvalidate(Vec<String>),
-    /// The listener target now reflects a consistent snapshot again: these collections may serve
+    /// The listener targets are being replayed from scratch: drop what is cached for them and stop
+    /// answering `list`/`query` from their collections until the replay completes.
+    SuspendAndInvalidate(Vec<FirestoreCacheInvalidation>),
+    /// The listener targets now reflect a consistent snapshot again: their collections may serve
     /// `list`/`query` once more.
     Resume(Vec<String>),
     /// Nothing to do.
     Ignore,
+}
+
+/// What one target change asks the backend to drop.
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) enum FirestoreCacheInvalidation {
+    /// Drop every document cached for this collection.
+    Collection(String),
+    /// Drop only these documents of the collection - the target watches nothing else, so wiping
+    /// the whole collection would throw away documents it never covered.
+    Documents {
+        collection_path: String,
+        document_ids: Vec<String>,
+    },
+}
+
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+impl FirestoreCacheInvalidation {
+    pub(crate) fn collection_path(&self) -> &str {
+        match self {
+            Self::Collection(collection_path) => collection_path,
+            Self::Documents {
+                collection_path, ..
+            } => collection_path,
+        }
+    }
 }
 
 /// Decides what a target change means for the cache.
@@ -767,13 +830,29 @@ pub(crate) fn cache_target_change_action(
 
     match change_type {
         TargetChangeType::Reset | TargetChangeType::Remove => {
-            FirestoreCacheTargetChangeAction::SuspendAndInvalidate(affected_collection_paths(
-                config,
-                &target_change.target_ids,
-            ))
+            FirestoreCacheTargetChangeAction::SuspendAndInvalidate(
+                affected_scopes(config, &target_change.target_ids)
+                    .into_iter()
+                    .map(|scope| match scope {
+                        FirestoreCacheTargetScope::Collection(collection_path) => {
+                            FirestoreCacheInvalidation::Collection(collection_path.to_string())
+                        }
+                        FirestoreCacheTargetScope::Documents {
+                            collection_path,
+                            document_ids,
+                        } => FirestoreCacheInvalidation::Documents {
+                            collection_path: collection_path.to_string(),
+                            document_ids: document_ids.to_vec(),
+                        },
+                    })
+                    .collect(),
+            )
         }
         TargetChangeType::Current => FirestoreCacheTargetChangeAction::Resume(
-            affected_collection_paths(config, &target_change.target_ids),
+            affected_scopes(config, &target_change.target_ids)
+                .into_iter()
+                .map(|scope| scope.collection_path().to_string())
+                .collect(),
         ),
         TargetChangeType::NoChange | TargetChangeType::Add => {
             FirestoreCacheTargetChangeAction::Ignore
@@ -782,26 +861,18 @@ pub(crate) fn cache_target_change_action(
 }
 
 #[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
-fn affected_collection_paths(
-    config: &FirestoreCacheConfiguration,
+fn affected_scopes<'a>(
+    config: &'a FirestoreCacheConfiguration,
     target_ids: &[i32],
-) -> Vec<String> {
+) -> Vec<FirestoreCacheTargetScope<'a>> {
     if target_ids.is_empty() {
-        return config
-            .all_target_scopes()
-            .into_iter()
-            .map(|scope| scope.collection_path().to_string())
-            .collect();
+        return config.all_target_scopes();
     }
 
     target_ids
         .iter()
         .filter_map(|target_id_num| FirestoreListenerTarget::try_from(*target_id_num).ok())
-        .filter_map(|target| {
-            config
-                .target_scope(&target)
-                .map(|scope| scope.collection_path().to_string())
-        })
+        .filter_map(|target| config.target_scope(&target))
         .collect()
 }
 
@@ -941,7 +1012,12 @@ mod target_change_tests {
 
     fn suspended(action: FirestoreCacheTargetChangeAction) -> Vec<String> {
         match action {
-            FirestoreCacheTargetChangeAction::SuspendAndInvalidate(paths) => sorted(paths),
+            FirestoreCacheTargetChangeAction::SuspendAndInvalidate(invalidations) => sorted(
+                invalidations
+                    .into_iter()
+                    .map(|invalidation| invalidation.collection_path().to_string())
+                    .collect(),
+            ),
             other => panic!(
                 "expected SuspendAndInvalidate, got {}",
                 describe_action(&other)

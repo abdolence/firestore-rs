@@ -185,3 +185,18 @@ directory without waiting for the first to be dropped.
 
 Reads through a cache that has been shut down do not fail: they behave as a cache miss, so
 `read_through_cache` falls back to Firestore and `read_cached_only` reports the miss as an error.
+
+### Caching named documents
+
+A cached collection can now be limited to a set of document IDs, which makes the listener watch
+exactly those documents instead of the whole collection:
+
+```rust
+FirestoreCache::memory(&db)
+    .collection_with("configs", |c| c.documents(["site", "billing"]).preload_all())
+```
+
+`FirestoreCacheCollectionConfiguration` gains a `collection_watch` field for this, so any code
+constructing that struct with a literal needs the extra field - use
+`FirestoreCacheCollectionConfiguration::new(..)` and the `with_documents` builder instead. Such a
+collection is never listable, whatever its load mode.

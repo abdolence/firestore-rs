@@ -97,3 +97,8 @@ required-features = ["caching-persistent"]
 name = "caching_dynamic_collections_test"
 path = "tests/caching_dynamic_collections_test.rs"
 required-features = ["caching-memory"]
+
+[[test]]
+name = "caching_watched_documents_test"
+path = "tests/caching_watched_documents_test.rs"
+required-features = ["caching-memory"]

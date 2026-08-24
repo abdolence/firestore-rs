@@ -247,6 +247,35 @@ impl FirestoreMemoryCacheBackend {
     ) -> Result<(), FirestoreError> {
         debug!(collection_path, "Preloading collection.");
 
+        // A collection watched by document ID is preloaded by reading exactly those documents,
+        // rather than downloading the collection and throwing most of it away.
+        if let Some(document_ids) = config.watched_document_ids() {
+            let selector = db
+                .fluent()
+                .select()
+                .by_id_in(config.collection_name.as_str());
+            let selector = match &config.parent {
+                Some(parent) => selector.parent(parent),
+                None => selector,
+            };
+
+            let mut stream = selector.batch(document_ids.to_vec()).await?;
+            while let Some((_, doc)) = stream.next().await {
+                if let Some(doc) = doc {
+                    let (_, document_id) = split_document_path(&doc.name);
+                    mem_cache.insert(document_id.to_string(), doc).await;
+                }
+            }
+
+            mem_cache.run_pending_tasks().await;
+            info!(
+                collection_path,
+                entry_count = mem_cache.entry_count(),
+                "Preloading watched documents has been finished.",
+            );
+            return Ok(());
+        }
+
         let params = if let Some(parent) = &config.parent {
             db.fluent()
                 .select()
@@ -282,54 +311,12 @@ impl FirestoreMemoryCacheBackend {
     async fn preload_collections(&self, db: &FirestoreDb) -> Result<(), FirestoreError> {
         let config_snapshot = self.config();
         for (collection_path, config) in &config_snapshot.collections {
-            match config.collection_load_mode {
-                FirestoreCacheCollectionLoadMode::PreloadAllDocs
-                | FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty => {
-                    if let Some(mem_cache) = self.collection_cache(collection_path.as_str()) {
-                        debug!(collection_path, "Preloading collection.");
-
-                        let params = if let Some(parent) = &config.parent {
-                            db.fluent()
-                                .select()
-                                .from(config.collection_name.as_str())
-                                .parent(parent)
-                        } else {
-                            db.fluent().select().from(config.collection_name.as_str())
-                        };
-
-                        let stream = params.stream_query().await?;
-
-                        stream
-                            .enumerate()
-                            .map(|(index, docs)| {
-                                if index > 0 && index % 5000 == 0 {
-                                    debug!(
-                                        collection_path = collection_path.as_str(),
-                                        entries_loaded = index,
-                                        "Collection preload in progress...",
-                                    );
-                                }
-                                docs
-                            })
-                            .for_each_concurrent(1, |doc| {
-                                let mem_cache = mem_cache.clone();
-                                async move {
-                                    let (_, document_id) = split_document_path(&doc.name);
-                                    mem_cache.insert(document_id.to_string(), doc).await;
-                                }
-                            })
-                            .await;
-
-                        mem_cache.run_pending_tasks().await;
-
-                        info!(
-                            collection_path = collection_path.as_str(),
-                            entry_count = mem_cache.entry_count(),
-                            "Preloading collection has been finished.",
-                        );
-                    }
-                }
-                FirestoreCacheCollectionLoadMode::PreloadNone => {}
+            if !config.collection_load_mode.is_preloading() {
+                continue;
+            }
+            if let Some(mem_cache) = self.collection_cache(collection_path.as_str()) {
+                self.preload_one_collection(db, collection_path, config, &mem_cache)
+                    .await?;
             }
         }
         Ok(())
@@ -509,6 +496,12 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
             FirestoreListenEvent::DocumentChange(doc_change) => {
                 if let Some(doc) = doc_change.document {
                     let (collection_path, document_id) = split_document_path(&doc.name);
+                    if !self
+                        .config()
+                        .is_document_cached(collection_path, document_id)
+                    {
+                        return Ok(());
+                    }
                     if let Some(mem_cache) = self.collection_cache(collection_path) {
                         trace!(
                             doc_name = ?doc.name,
@@ -532,16 +525,37 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
             }
             FirestoreListenEvent::TargetChange(ref target_change) => {
                 match crate::cache::cache_target_change_action(&self.config(), target_change) {
-                    crate::cache::FirestoreCacheTargetChangeAction::SuspendAndInvalidate(paths) => {
+                    crate::cache::FirestoreCacheTargetChangeAction::SuspendAndInvalidate(
+                        invalidations,
+                    ) => {
                         {
                             let mut suspended = self
                                 .suspended_collections
                                 .write()
                                 .expect("cache suspended collections lock poisoned");
-                            suspended.extend(paths.iter().cloned());
+                            suspended.extend(
+                                invalidations
+                                    .iter()
+                                    .map(|invalidation| invalidation.collection_path().to_string()),
+                            );
                         }
-                        for collection_path in &paths {
-                            self.invalidate_collection(collection_path).await;
+                        for invalidation in &invalidations {
+                            match invalidation {
+                                crate::cache::FirestoreCacheInvalidation::Collection(
+                                    collection_path,
+                                ) => self.invalidate_collection(collection_path).await,
+                                crate::cache::FirestoreCacheInvalidation::Documents {
+                                    collection_path,
+                                    document_ids,
+                                } => {
+                                    if let Some(mem_cache) = self.collection_cache(collection_path)
+                                    {
+                                        for document_id in document_ids {
+                                            mem_cache.remove(document_id).await;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     crate::cache::FirestoreCacheTargetChangeAction::Resume(paths) => {
@@ -581,6 +595,13 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
 
     async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()> {
         let (collection_path, document_id) = split_document_path(&document.name);
+
+        if !self
+            .config()
+            .is_document_cached(collection_path, document_id)
+        {
+            return Ok(());
+        }
 
         match self.collection_cache(collection_path) {
             Some(mem_cache) => {
@@ -687,14 +708,22 @@ mod tests {
         format!("{DOCS}/{collection}/{id}")
     }
 
+    /// Writes straight into the collection's cache, bypassing the watch filter, so that tests can
+    /// set up documents a target does not cover.
     async fn seed(backend: &FirestoreMemoryCacheBackend, collection: &str, id: &str) {
-        backend
-            .update_doc_by_path(&FirestoreDocument {
-                name: doc_path(collection, id),
-                ..Default::default()
-            })
-            .await
-            .expect("seeded document");
+        let collection_path = format!("{DOCS}/{collection}");
+        let mem_cache = backend
+            .collection_cache(&collection_path)
+            .expect("configured collection");
+        mem_cache
+            .insert(
+                id.to_string(),
+                FirestoreDocument {
+                    name: doc_path(collection, id),
+                    ..Default::default()
+                },
+            )
+            .await;
     }
 
     async fn cached(backend: &FirestoreMemoryCacheBackend, collection: &str, id: &str) -> bool {
@@ -823,6 +852,74 @@ mod tests {
         assert!(!cached(&backend, "b", "one").await);
         assert!(!is_listable(&backend, "a").await);
         assert!(!is_listable(&backend, "b").await);
+    }
+
+    fn watched(collections: &[(&str, u32, &[&str])]) -> FirestoreMemoryCacheBackend {
+        let config = collections.iter().fold(
+            FirestoreCacheConfiguration::new(),
+            |config, (name, target, documents)| {
+                config.add_collection_config_at(
+                    DOCS,
+                    FirestoreCacheCollectionConfiguration::new(
+                        name,
+                        FirestoreListenerTarget::new(*target),
+                        FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+                    )
+                    .with_documents(documents.iter()),
+                )
+            },
+        );
+
+        FirestoreMemoryCacheBackend::new(config).expect("backend")
+    }
+
+    #[tokio::test]
+    async fn a_documents_watch_is_never_listable_even_when_preloaded() {
+        let backend = watched(&[("a", 1000, &["one", "two"])]);
+
+        // It holds a chosen subset, so answering a listing would look complete but not be.
+        assert!(!is_listable(&backend, "a").await);
+    }
+
+    #[tokio::test]
+    async fn a_documents_watch_ignores_documents_outside_its_set() {
+        let backend = watched(&[("a", 1000, &["one"])]);
+
+        for document_id in ["one", "three"] {
+            backend
+                .on_listen_event(FirestoreListenEvent::DocumentChange(DocumentChange {
+                    document: Some(FirestoreDocument {
+                        name: doc_path("a", document_id),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }))
+                .await
+                .expect("event handled");
+        }
+
+        assert!(cached(&backend, "a", "one").await);
+        assert!(!cached(&backend, "a", "three").await);
+    }
+
+    #[tokio::test]
+    async fn resetting_a_documents_target_drops_only_the_watched_documents() {
+        let backend = watched(&[("a", 1000, &["one"])]);
+        seed(&backend, "a", "one").await;
+        // Present despite not being watched, as it would be if another target also covered this
+        // collection: the reset must not take it with it.
+        seed(&backend, "a", "other").await;
+
+        backend
+            .on_listen_event(target_change(
+                FirestoreListenerTargetChangeType::Reset,
+                vec![1000],
+            ))
+            .await
+            .expect("event handled");
+
+        assert!(!cached(&backend, "a", "one").await);
+        assert!(cached(&backend, "a", "other").await);
     }
 
     #[tokio::test]

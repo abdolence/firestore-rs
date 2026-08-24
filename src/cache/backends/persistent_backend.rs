@@ -194,6 +194,67 @@ impl FirestorePersistentCacheBackend {
         Ok(())
     }
 
+    /// Reads exactly the documents a collection is limited to, rather than downloading the whole
+    /// collection and throwing most of it away.
+    async fn preload_watched_documents(
+        &self,
+        db: &FirestoreDb,
+        collection_path: &str,
+        config: &FirestoreCacheCollectionConfiguration,
+    ) -> FirestoreResult<()> {
+        let Some(document_ids) = config.watched_document_ids() else {
+            return Ok(());
+        };
+
+        let selector = db
+            .fluent()
+            .select()
+            .by_id_in(config.collection_name.as_str());
+        let selector = match &config.parent {
+            Some(parent) => selector.parent(parent),
+            None => selector,
+        };
+
+        let mut stream = selector.batch(document_ids.to_vec()).await?;
+        let mut found: Vec<Document> = Vec::new();
+        while let Some((_, doc)) = stream.next().await {
+            if let Some(doc) = doc {
+                found.push(doc);
+            }
+        }
+
+        if !found.is_empty() {
+            self.write_batch_docs(collection_path, found)?;
+        }
+        Ok(())
+    }
+
+    /// Removes several documents of one collection in a single transaction.
+    fn evict_documents(
+        &self,
+        collection_path: &str,
+        document_ids: &[String],
+    ) -> FirestoreResult<()> {
+        if !self.config().collections.contains_key(collection_path) {
+            return Ok(());
+        }
+
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+        let write_txn = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_write()?;
+        {
+            let mut table = write_txn.open_table(td)?;
+            for document_id in document_ids {
+                table.remove(document_id.as_str())?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
     /// Removes a document from the cache, wherever the listener said it went.
     fn evict_doc_by_path(&self, document_path: &str) -> FirestoreResult<()> {
         let (collection_path, document_id) = split_document_path(document_path);
@@ -261,6 +322,16 @@ impl FirestorePersistentCacheBackend {
                         collection_path = collection_path.as_str(),
                         "Preloading collection."
                     );
+
+                    if config.watched_document_ids().is_some() {
+                        self.preload_watched_documents(db, collection_path, config)
+                            .await?;
+                        info!(
+                            collection_path = collection_path.as_str(),
+                            "Preloading watched documents has been finished.",
+                        );
+                        continue;
+                    }
 
                     let params = if let Some(parent) = &config.parent {
                         db.fluent()
@@ -368,7 +439,10 @@ impl FirestorePersistentCacheBackend {
     fn write_document(&self, doc: &Document) -> FirestoreResult<()> {
         let (collection_path, document_id) = split_document_path(&doc.name);
 
-        if self.config().collections.contains_key(collection_path) {
+        if self
+            .config()
+            .is_document_cached(collection_path, document_id)
+        {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
             let write_txn = self
@@ -542,6 +616,31 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                 "Preloading collection."
             );
 
+            if let Some(document_ids) = collection_config.watched_document_ids() {
+                self.preload_watched_documents(db, &collection_path, &collection_config)
+                    .await?;
+                info!(
+                    collection_path = collection_path.as_str(),
+                    watched_documents = document_ids.len(),
+                    "Preloading watched documents has been finished.",
+                );
+
+                let target_params = crate::cache::target_params_for_collection(
+                    &collection_config,
+                    Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time)),
+                );
+                let mut config = self
+                    .config
+                    .write()
+                    .expect("cache configuration lock poisoned");
+                *config = Arc::new(
+                    (**config)
+                        .clone()
+                        .add_collection_config_at(db.get_documents_path(), collection_config),
+                );
+                return Ok(target_params);
+            }
+
             let params = if let Some(parent) = &collection_config.parent {
                 db.fluent()
                     .select()
@@ -676,16 +775,30 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             }
             FirestoreListenEvent::TargetChange(ref target_change) => {
                 match crate::cache::cache_target_change_action(&self.config(), target_change) {
-                    crate::cache::FirestoreCacheTargetChangeAction::SuspendAndInvalidate(paths) => {
+                    crate::cache::FirestoreCacheTargetChangeAction::SuspendAndInvalidate(
+                        invalidations,
+                    ) => {
                         {
                             let mut suspended = self
                                 .suspended_collections
                                 .write()
                                 .expect("cache suspended collections lock poisoned");
-                            suspended.extend(paths.iter().cloned());
+                            suspended.extend(
+                                invalidations
+                                    .iter()
+                                    .map(|invalidation| invalidation.collection_path().to_string()),
+                            );
                         }
-                        for collection_path in &paths {
-                            self.invalidate_collection(collection_path)?;
+                        for invalidation in &invalidations {
+                            match invalidation {
+                                crate::cache::FirestoreCacheInvalidation::Collection(
+                                    collection_path,
+                                ) => self.invalidate_collection(collection_path)?,
+                                crate::cache::FirestoreCacheInvalidation::Documents {
+                                    collection_path,
+                                    document_ids,
+                                } => self.evict_documents(collection_path, document_ids)?,
+                            }
                         }
                     }
                     crate::cache::FirestoreCacheTargetChangeAction::Resume(paths) => {

@@ -124,6 +124,7 @@ pub struct FirestoreCacheCollection {
     parent: Option<String>,
     load_mode: FirestoreCacheCollectionLoadMode,
     listener_target: Option<u32>,
+    documents: Option<Vec<String>>,
 }
 
 impl FirestoreCacheCollection {
@@ -155,6 +156,7 @@ impl FirestoreCacheCollection {
             parent: None,
             load_mode,
             listener_target: None,
+            documents: None,
         }
     }
 
@@ -175,8 +177,12 @@ impl FirestoreCacheCollection {
             listener_target,
             self.load_mode,
         );
-        match self.parent {
+        let config = match self.parent {
             Some(parent) => config.with_parent(parent),
+            None => config,
+        };
+        match self.documents {
+            Some(document_ids) => config.with_documents(document_ids),
             None => config,
         }
     }
@@ -219,6 +225,39 @@ impl FirestoreCacheCollection {
         }
     }
 
+    /// Caches and listens to only these documents of the collection.
+    ///
+    /// The listener watches exactly these documents, so unrelated changes in the collection are
+    /// never streamed to your process. This is the shape to reach for when you cache a known set
+    /// of documents - configuration, feature flags, reference data - rather than a collection:
+    /// `.collection(name)` subscribes to the whole collection even when it does not preload it.
+    ///
+    /// Such a collection is never listable, whatever its load mode: it holds a chosen subset, so
+    /// `list` and `query` would return a partial answer that looks complete.
+    ///
+    /// ```rust,no_run
+    /// # use firestore::*;
+    /// let collection = FirestoreCacheCollection::new("configs")
+    ///     .documents(["site", "billing"])
+    ///     .preload_all();
+    /// ```
+    #[inline]
+    pub fn documents<I>(self, document_ids: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        Self {
+            documents: Some(
+                document_ids
+                    .into_iter()
+                    .map(|id| id.as_ref().to_string())
+                    .collect(),
+            ),
+            ..self
+        }
+    }
+
     /// Pins this collection to a specific Firestore listener target ID instead of an
     /// automatically assigned one.
     #[inline]
@@ -233,6 +272,7 @@ impl FirestoreCacheCollection {
 impl From<FirestoreCacheCollectionConfiguration> for FirestoreCacheCollection {
     fn from(config: FirestoreCacheCollectionConfiguration) -> Self {
         Self {
+            documents: config.watched_document_ids().map(|ids| ids.to_vec()),
             collection_name: config.collection_name,
             parent: config.parent,
             load_mode: config.collection_load_mode,
@@ -583,6 +623,9 @@ fn build_configuration(
         );
         if let Some(ref parent) = collection.parent {
             collection_config = collection_config.with_parent(parent);
+        }
+        if let Some(ref documents) = collection.documents {
+            collection_config = collection_config.with_documents(documents);
         }
 
         let collection_path = collection_config.resolve_collection_path(documents_path);
