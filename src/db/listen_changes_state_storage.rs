@@ -7,32 +7,44 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::*;
 
+/// Stores where each listener target should resume from, so a listener picks up where it left off
+/// rather than replaying everything.
+///
+/// A resume token belongs to one target's *query*: feeding it to a different query is rejected by
+/// Firestore, which is why removing a target forgets its state rather than leaving it behind.
+///
+/// Two implementations ship with this crate: [`FirestoreMemListenStateStorage`], which starts fresh
+/// on every process, and [`FirestoreTempFilesListenStateStorage`], which survives restarts.
 #[async_trait]
 pub trait FirestoreResumeStateStorage {
+    /// Returns where the target should resume from, or `None` to listen to it from scratch.
+    ///
+    /// Called once per target each time the listen stream is opened.
     async fn read_resume_state(
         &self,
         target: &FirestoreListenerTarget,
     ) -> AnyBoxedErrResult<Option<FirestoreListenerTargetResumeType>>;
 
+    /// Records the newest resume token Firestore issued for a target.
+    ///
+    /// Called as tokens arrive, and only after the change they cover has been handled, so a stored
+    /// token never points past work that was not applied.
     async fn update_resume_token(
         &self,
         target: &FirestoreListenerTarget,
         token: FirestoreListenerToken,
     ) -> AnyBoxedErrResult<()>;
 
-    /// Forgets any stored resume state for a target, so that the next listen starts fresh.
+    /// Discards any stored state for a target, so the next listen starts it from scratch.
     ///
-    /// This is called when Firestore reports that it removed or reset a target, in which case the
-    /// stored token is at best useless and at worst the cause, and when a target is removed from a
-    /// listener so that its ID can be reused safely.
+    /// Called when Firestore resets or removes a target - where the stored token is at best useless
+    /// and at worst the cause - and when a target is removed from a listener, so that its ID can be
+    /// given to a different query safely.
     ///
-    /// The default implementation does nothing, which keeps existing implementations compiling.
-    /// Implement it if your storage is durable: otherwise a stale token is read back on the next
-    /// process start, and a resume token belonging to a different query is rejected by Firestore.
-    async fn forget_resume_state(&self, target: &FirestoreListenerTarget) -> AnyBoxedErrResult<()> {
-        let _ = target;
-        Ok(())
-    }
+    /// Durable implementations must actually erase it. Leaving the state behind hands a stale token
+    /// back on the next process start, which Firestore rejects with `INVALID_ARGUMENT`.
+    /// Implementations that keep nothing across restarts may simply do nothing here.
+    async fn forget_resume_state(&self, target: &FirestoreListenerTarget) -> AnyBoxedErrResult<()>;
 }
 
 #[derive(Clone, Debug)]

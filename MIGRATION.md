@@ -58,7 +58,7 @@ relied on the old behaviour.
 
 Unchanged in 0.52: batch writers, transactions, `db.create_listener()` and the
 `FirestoreDb::serialize_*_to_doc` / `deserialize_doc_to` helpers. `FirestoreResumeStateStorage`
-gains one method with a default implementation - see [Listener changes](#listener-changes).
+gains one required method - see [Listener changes](#listener-changes).
 
 `FirestoreTransactionOps` also stays public. It is implemented by both `FirestoreTransaction` and
 `FirestoreTransactionData`, so you can keep writing transaction-agnostic abstractions over it.
@@ -116,10 +116,21 @@ documents stayed cached indefinitely. If you use `caching-persistent`, upgrading
 The listener now acts on the target-lifecycle messages it previously ignored. Three things change
 for callers.
 
-`FirestoreResumeStateStorage` gains `forget_resume_state`, with a default implementation that does
-nothing, so existing implementations keep compiling. Implement it if your storage is durable: it is
-called when Firestore reports that it reset or removed a target, and a token kept past that point
-is read back on the next process start and rejected. Both shipped storages implement it.
+`FirestoreResumeStateStorage` gains a required `forget_resume_state`, so a custom implementation
+will not compile until it is added. That is deliberate: it is called when Firestore resets or
+removes a target, and a durable storage that quietly kept the token would hand it back on the next
+process start, where Firestore rejects it with `INVALID_ARGUMENT`. For most storages it is a
+one-liner - dropping the entry, as the in-memory one does:
+
+```rust
+async fn forget_resume_state(&self, target: &FirestoreListenerTarget) -> AnyBoxedErrResult<()> {
+    self.tokens.write().await.remove(target);
+    Ok(())
+}
+```
+
+A storage that holds nothing across restarts may return `Ok(())` and do nothing. Both shipped
+storages implement it.
 
 Listener callbacks now receive `TargetChange` events that carried a resume token. Previously the
 listener consumed those itself and never passed them on, so a `RESET` or a `REMOVE` was invisible.
