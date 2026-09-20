@@ -6,9 +6,10 @@
 //! - Unary filters (e.g., IS NULL, IS NAN).
 //! - Composite filters (AND, OR) to combine multiple conditions.
 //!
-//! The main entry point is [`FirestoreQueryFilterBuilder`], which is typically
-//! accessed within a closure passed to the `.filter()` method of a query builder
-//! (e.g., [`FirestoreSelectDocBuilder::filter()`](crate::select_builder::FirestoreSelectDocBuilder::filter)).
+//! The main entry point is [`FirestoreQueryFilterBuilder`], passed into the closure given to
+//! `.filter()` on a select builder.
+//!
+//! [`FirestoreQueryFilterBuilder`]: crate::select_filter_builder::FirestoreQueryFilterBuilder
 
 use crate::{
     FirestoreQueryFilter, FirestoreQueryFilterCompare, FirestoreQueryFilterComposite,
@@ -26,8 +27,6 @@ use crate::{
 pub struct FirestoreQueryFilterBuilder;
 
 impl FirestoreQueryFilterBuilder {
-    /// Creates a new `FirestoreQueryFilterBuilder`.
-    /// This is typically not called directly but provided within a `.filter()` closure.
     pub(crate) fn new() -> Self {
         Self {}
     }
@@ -63,15 +62,10 @@ impl FirestoreQueryFilterBuilder {
         }
     }
 
-    /// Creates a composite filter where all provided filter expressions must be true (logical AND).
+    /// Combines `filter_expressions` so every one of them must match (logical AND).
     ///
-    /// # Arguments
-    /// * `filter_expressions`: An iterator of items that implement [`FirestoreQueryFilterExpr`].
-    ///
-    /// # Returns
-    /// An `Option<FirestoreQueryFilter>` representing the AND-combined filter.
-    /// Returns `None` if `filter_expressions` is empty or contains only `None` expressions.
-    /// Returns the single filter directly if only one valid expression is provided.
+    /// Returns the single filter unwrapped if only one expression is valid, or `None` if none
+    /// are.
     #[inline]
     pub fn for_all<I>(&self, filter_expressions: I) -> Option<FirestoreQueryFilter>
     where
@@ -84,15 +78,10 @@ impl FirestoreQueryFilterBuilder {
         )
     }
 
-    /// Creates a composite filter where at least one of the provided filter expressions must be true (logical OR).
+    /// Combines `filter_expressions` so at least one of them must match (logical OR).
     ///
-    /// # Arguments
-    /// * `filter_expressions`: An iterator of items that implement [`FirestoreQueryFilterExpr`].
-    ///
-    /// # Returns
-    /// An `Option<FirestoreQueryFilter>` representing the OR-combined filter.
-    /// Returns `None` if `filter_expressions` is empty or contains only `None` expressions.
-    /// Returns the single filter directly if only one valid expression is provided.
+    /// Returns the single filter unwrapped if only one expression is valid, or `None` if none
+    /// are.
     #[inline]
     pub fn for_any<I>(&self, filter_expressions: I) -> Option<FirestoreQueryFilter>
     where
@@ -105,13 +94,7 @@ impl FirestoreQueryFilterBuilder {
         )
     }
 
-    /// Specifies a document field to apply a filter condition to.
-    ///
-    /// # Arguments
-    /// * `field_name`: The dot-separated path to the field.
-    ///
-    /// # Returns
-    /// A [`FirestoreQueryFilterFieldExpr`] to specify the comparison or unary operator.
+    /// Targets `field_name` for a comparison or unary filter.
     #[inline]
     pub fn field<S>(&self, field_name: S) -> FirestoreQueryFilterFieldExpr
     where
@@ -140,7 +123,6 @@ pub struct FirestoreQueryFilterFieldExpr {
 }
 
 impl FirestoreQueryFilterFieldExpr {
-    /// Creates a new `FirestoreQueryFilterFieldExpr` for the given field name.
     pub(crate) fn new(field_name: String) -> Self {
         Self { field_name }
     }
@@ -267,9 +249,8 @@ impl FirestoreQueryFilterFieldExpr {
         )))
     }
 
-    /// Creates an "array-contains-any" filter (e.g., `field array-contains-any [value1, value2, ...]`).
-    /// Checks if an array field contains any of the values in the provided array.
-    /// The provided `value` should be an array [`FirestoreValue`].
+    /// Creates an "array-contains-any" filter: does the array field contain any of `value`.
+    /// `value` should be an array [`FirestoreValue`].
     #[inline]
     pub fn array_contains_any<V>(self, value: V) -> Option<FirestoreQueryFilter>
     where

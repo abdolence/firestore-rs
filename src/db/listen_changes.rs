@@ -36,6 +36,10 @@ pub struct FirestoreListenerTargetParams {
 }
 
 impl FirestoreListenerTargetParams {
+    /// Checks that the target ID is valid before the target is registered on a listener.
+    ///
+    /// Returns an error if the target ID is zero or greater than `i32::MAX` - Firestore's wire
+    /// protocol represents a target ID as a signed 32-bit integer.
     pub fn validate(&self) -> FirestoreResult<()> {
         self.target.validate()?;
         Ok(())
@@ -87,6 +91,10 @@ impl FirestoreListenSupport for FirestoreDb {
 pub struct FirestoreListenerTarget(u32);
 
 impl FirestoreListenerTarget {
+    /// Checks the target ID against Firestore's wire representation.
+    ///
+    /// Returns an error if the ID is zero, or greater than `i32::MAX` - Firestore's `Target`
+    /// message carries it as a signed 32-bit integer, so a larger value cannot be sent.
     pub fn validate(&self) -> FirestoreResult<()> {
         if *self.value() == 0 {
             Err(FirestoreError::InvalidParametersError(
@@ -150,6 +158,39 @@ impl TryFrom<i32> for FirestoreListenerTarget {
 pub struct FirestoreListenerToken(Vec<u8>);
 
 impl FirestoreDb {
+    /// Creates a listener with the default retry delay.
+    ///
+    /// `storage` decides what a restart replays: [`crate::FirestoreTempFilesListenStateStorage`]
+    /// persists each target's resume token to disk, so a restarted process continues from where
+    /// it left off, while [`crate::FirestoreMemListenStateStorage`] keeps nothing across restarts
+    /// and replays every target's current state from scratch. Register what to listen on with
+    /// [`FirestoreListener::add_target`], then call [`FirestoreListener::start`] to begin
+    /// receiving events and [`FirestoreListener::shutdown`] to stop.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use firestore::*;
+    /// # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let mut listener = db.create_listener(FirestoreTempFilesListenStateStorage::new()).await?;
+    ///
+    /// db.fluent()
+    ///     .select()
+    ///     .from("test")
+    ///     .listen()
+    ///     .add_target(FirestoreListenerTarget::new(1000), &mut listener)?;
+    ///
+    /// listener
+    ///     .start(|event| async move {
+    ///         println!("{event:?}");
+    ///         Ok(())
+    ///     })
+    ///     .await?;
+    ///
+    /// listener.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_listener<S>(
         &self,
         storage: S,
@@ -161,6 +202,9 @@ impl FirestoreDb {
             .await
     }
 
+    /// Creates a listener with the given [`FirestoreListenerParams`], for example to override the
+    /// retry delay. See [`create_listener`](Self::create_listener) for the storage argument and a
+    /// full lifecycle example.
     pub async fn create_listener_with_params<S>(
         &self,
         storage: S,
@@ -303,6 +347,12 @@ where
     D: FirestoreListenSupport + Clone + Send + Sync + 'static,
     S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
 {
+    /// Creates a listener with no targets yet, for any type implementing `FirestoreListenSupport`.
+    ///
+    /// Prefer [`FirestoreDb::create_listener`] or [`FirestoreDb::create_listener_with_params`]
+    /// when listening through a [`FirestoreDb`] - this constructor exists so a listener can be
+    /// built against another implementation instead. Call [`FirestoreListener::add_target`] to
+    /// register what to listen on and [`FirestoreListener::start`] to begin receiving events.
     pub async fn new(
         db: D,
         storage: S,
@@ -424,6 +474,22 @@ where
             .contains_key(target)
     }
 
+    /// Starts listening and spawns the loop that keeps the stream open, invoking `cb` for every
+    /// event.
+    ///
+    /// Targets added before this call resolve their stored resume state first, so a restart with
+    /// [`crate::FirestoreTempFilesListenStateStorage`] continues from where it left off instead of
+    /// replaying every change; a target with no stored state - the first run, or one using
+    /// [`crate::FirestoreMemListenStateStorage`] - listens from scratch and Firestore sends its
+    /// current state as the initial snapshot.
+    ///
+    /// The returned future resolves once the loop is spawned, not once it exits: the loop keeps
+    /// running, reconnecting on a dropped stream, until [`shutdown`](Self::shutdown) is called.
+    /// Always call `shutdown` when the listener is no longer needed, or the spawned task and its
+    /// connection are never released.
+    ///
+    /// Returns an error if this listener has already been started, or if reading a target's
+    /// stored resume state fails.
     pub async fn start<FN, F>(&mut self, cb: FN) -> FirestoreResult<()>
     where
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync + 'static,
@@ -499,6 +565,11 @@ where
         Ok(())
     }
 
+    /// Stops the listener's loop and waits for it to exit, releasing its connection.
+    ///
+    /// Safe to call on a listener that was never started, or one already shut down - both are a
+    /// no-op beyond setting the shutdown flag. Never returns an error itself; if the spawned loop
+    /// panicked, that is logged rather than surfaced here.
     pub async fn shutdown(&mut self) -> FirestoreResult<()> {
         debug!("Shutting down Firestore listener...");
         self.shutdown_flag.store(true, Ordering::Relaxed);

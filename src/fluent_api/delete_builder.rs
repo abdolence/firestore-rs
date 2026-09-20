@@ -24,19 +24,12 @@ impl<'a, D> FirestoreDeleteInitialBuilder<'a, D>
 where
     D: FirestoreDeleteSupport,
 {
-    /// Creates a new `FirestoreDeleteInitialBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D) -> Self {
         Self { db }
     }
 
     /// Specifies the collection ID from which to delete the document.
-    ///
-    /// # Arguments
-    /// * `collection_id`: The ID of the collection.
-    ///
-    /// # Returns
-    /// A [`FirestoreDeleteDocIdBuilder`] to specify the document ID and other options.
     #[inline]
     pub fn from<S: AsRef<str>>(self, collection_id: S) -> FirestoreDeleteDocIdBuilder<'a, D> {
         FirestoreDeleteDocIdBuilder::new(self.db, collection_id.as_ref().to_string())
@@ -59,7 +52,6 @@ impl<'a, D> FirestoreDeleteDocIdBuilder<'a, D>
 where
     D: FirestoreDeleteSupport,
 {
-    /// Creates a new `FirestoreDeleteDocIdBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D, collection_id: String) -> Self {
         Self {
@@ -71,12 +63,6 @@ where
     }
 
     /// Specifies the parent document path for deleting a document in a sub-collection.
-    ///
-    /// # Arguments
-    /// * `parent`: The full path to the parent document.
-    ///
-    /// # Returns
-    /// The builder instance with the parent path set.
     #[inline]
     pub fn parent<S>(self, parent: S) -> Self
     where
@@ -91,12 +77,6 @@ where
     /// Specifies a precondition for the delete operation.
     ///
     /// The delete will only be executed if the precondition is met.
-    ///
-    /// # Arguments
-    /// * `precondition`: The [`FirestoreWritePrecondition`] to apply.
-    ///
-    /// # Returns
-    /// The builder instance with the precondition set.
     #[inline]
     pub fn precondition(self, precondition: FirestoreWritePrecondition) -> Self {
         Self {
@@ -106,12 +86,6 @@ where
     }
 
     /// Specifies the ID of the document to delete.
-    ///
-    /// # Arguments
-    /// * `document_id`: The ID of the document.
-    ///
-    /// # Returns
-    /// A [`FirestoreDeleteExecuteBuilder`] to execute the delete operation or add it to a batch/transaction.
     #[inline]
     pub fn document_id<S>(self, document_id: S) -> FirestoreDeleteExecuteBuilder<'a, D>
     where
@@ -144,7 +118,6 @@ impl<'a, D> FirestoreDeleteExecuteBuilder<'a, D>
 where
     D: FirestoreDeleteSupport,
 {
-    /// Creates a new `FirestoreDeleteExecuteBuilder`.
     #[inline]
     pub(crate) fn new(
         db: &'a D,
@@ -162,8 +135,7 @@ where
         }
     }
 
-    /// Specifies the parent document path. This is an alternative way to set the parent
-    /// if not already set in the previous builder step.
+    /// Sets or overrides the parent document path.
     #[inline]
     pub fn parent<S>(self, parent: S) -> Self
     where
@@ -175,8 +147,7 @@ where
         }
     }
 
-    /// Specifies a precondition for the delete operation. This is an alternative way to set
-    /// the precondition if not already set.
+    /// Sets or overrides the precondition for the delete.
     #[inline]
     pub fn precondition(self, precondition: FirestoreWritePrecondition) -> Self {
         Self {
@@ -185,10 +156,23 @@ where
         }
     }
 
-    /// Executes the configured delete operation.
+    /// Sends the delete to Firestore.
     ///
-    /// # Returns
-    /// A `FirestoreResult` indicating success or failure.
+    /// Returns an error if the request fails, or if a precondition was set and does not hold.
+    ///
+    /// ```rust,no_run
+    /// use firestore::FirestoreDb;
+    ///
+    /// # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error>> {
+    /// db.fluent()
+    ///     .delete()
+    ///     .from("users")
+    ///     .document_id("user-42")
+    ///     .execute()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn execute(self) -> FirestoreResult<()> {
         if let Some(parent) = self.parent {
             self.db
@@ -210,13 +194,9 @@ where
         }
     }
 
-    /// Adds this delete operation to a [`FirestoreTransaction`](crate::FirestoreTransaction).
+    /// Queues this delete on `transaction`, to be sent when the transaction commits.
     ///
-    /// # Arguments
-    /// * `transaction`: A mutable reference to the transaction to add this operation to.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing the mutable reference to the transaction, allowing for chaining.
+    /// Returns an error if the delete cannot be added to the transaction.
     #[inline]
     pub fn add_to_transaction<'t, TO>(self, transaction: &'t mut TO) -> FirestoreResult<&'t mut TO>
     where
@@ -238,16 +218,9 @@ where
         }
     }
 
-    /// Adds this delete operation to a [`FirestoreBatch`].
+    /// Queues this delete on `batch`, to be sent when the batch is written.
     ///
-    /// # Arguments
-    /// * `batch`: A mutable reference to the batch writer to add this operation to.
-    ///
-    /// # Type Parameters
-    /// * `W`: The type of the batch writer, implementing [`FirestoreBatchWriter`].
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing the mutable reference to the batch, allowing for chaining.
+    /// Returns an error if the delete cannot be added to the batch.
     #[inline]
     pub fn add_to_batch<'t, W>(
         self,

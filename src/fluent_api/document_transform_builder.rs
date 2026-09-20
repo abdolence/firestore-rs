@@ -9,8 +9,10 @@
 //! - Incrementing a numeric field.
 //! - Adding or removing elements from an array field.
 //!
-//! The main entry point is [`FirestoreTransformBuilder`], which is typically
-//! accessed via a method on an update builder (e.g., [`FirestoreUpdateSetBuilder::transforms()`](crate::update_builder::FirestoreUpdateObjExecuteBuilder::transforms)).
+//! The main entry point is [`FirestoreTransformBuilder`], passed into the closure given to
+//! `.transforms()` on an update builder.
+//!
+//! [`FirestoreTransformBuilder`]: crate::document_transform_builder::FirestoreTransformBuilder
 
 use crate::{
     FirestoreFieldTransform, FirestoreFieldTransformType, FirestoreTransformServerValue,
@@ -24,25 +26,12 @@ use crate::{
 pub struct FirestoreTransformBuilder {}
 
 impl FirestoreTransformBuilder {
-    /// Creates a new `FirestoreTransformBuilder`.
-    /// This is typically not called directly but obtained from an update builder.
     pub(crate) fn new() -> Self {
         Self {}
     }
 
-    /// Builds a `Vec` of [`FirestoreFieldTransform`] from a collection of transform expressions.
-    ///
-    /// This method takes an iterator of items that implement [`FirestoreTransformExpr`]
-    /// (typically created using [`FirestoreTransformBuilder::field()`] and its chained methods)
-    /// and collects them into a vector of transformations.
-    ///
-    /// `Option<FirestoreFieldTransform>` expressions are filtered, so `None` values are ignored.
-    ///
-    /// # Arguments
-    /// * `transform_field_expr`: An iterator of transform expressions.
-    ///
-    /// # Returns
-    /// A `Vec<FirestoreFieldTransform>` ready to be used in an update operation.
+    /// Collects `transform_field_expr` - typically built with [`FirestoreTransformBuilder::field`]
+    /// and its chained methods - into the transformations for an update, dropping `None` entries.
     #[inline]
     pub fn fields<I>(&self, transform_field_expr: I) -> Vec<FirestoreFieldTransform>
     where
@@ -55,13 +44,7 @@ impl FirestoreTransformBuilder {
             .collect()
     }
 
-    /// Specifies a field to apply a transformation to.
-    ///
-    /// # Arguments
-    /// * `field_name`: The dot-separated path to the field.
-    ///
-    /// # Returns
-    /// A [`FirestoreTransformFieldExpr`] to specify the type of transformation.
+    /// Targets `field_name` for a transformation.
     #[inline]
     pub fn field<S>(&self, field_name: S) -> FirestoreTransformFieldExpr
     where
@@ -90,7 +73,6 @@ pub struct FirestoreTransformFieldExpr {
 }
 
 impl FirestoreTransformFieldExpr {
-    /// Creates a new `FirestoreTransformFieldExpr` for the given field name.
     pub(crate) fn new(field_name: String) -> Self {
         Self { field_name }
     }
@@ -99,12 +81,6 @@ impl FirestoreTransformFieldExpr {
     ///
     /// Atomically increments the numeric value of the field by the given value.
     /// The value must be an integer or a double.
-    ///
-    /// # Arguments
-    /// * `value`: The value to increment by, convertible to [`FirestoreValue`].
-    ///
-    /// # Returns
-    /// An `Option<FirestoreFieldTransform>` representing this transformation.
     #[inline]
     pub fn increment<V>(self, value: V) -> Option<FirestoreFieldTransform>
     where
@@ -119,12 +95,6 @@ impl FirestoreTransformFieldExpr {
     /// Specifies a "maximum" transformation.
     ///
     /// Atomically sets the field to the maximum of its current value and the given value.
-    ///
-    /// # Arguments
-    /// * `value`: The value to compare with, convertible to [`FirestoreValue`].
-    ///
-    /// # Returns
-    /// An `Option<FirestoreFieldTransform>` representing this transformation.
     #[inline]
     pub fn maximum<V>(self, value: V) -> Option<FirestoreFieldTransform>
     where
@@ -139,12 +109,6 @@ impl FirestoreTransformFieldExpr {
     /// Specifies a "minimum" transformation.
     ///
     /// Atomically sets the field to the minimum of its current value and the given value.
-    ///
-    /// # Arguments
-    /// * `value`: The value to compare with, convertible to [`FirestoreValue`].
-    ///
-    /// # Returns
-    /// An `Option<FirestoreFieldTransform>` representing this transformation.
     #[inline]
     pub fn minimum<V>(self, value: V) -> Option<FirestoreFieldTransform>
     where
@@ -159,12 +123,6 @@ impl FirestoreTransformFieldExpr {
     /// Specifies a "set to server value" transformation.
     ///
     /// Sets the field to a server-generated value, most commonly the request timestamp.
-    ///
-    /// # Arguments
-    /// * `value`: The [`FirestoreTransformServerValue`] to set (e.g., `RequestTime`).
-    ///
-    /// # Returns
-    /// An `Option<FirestoreFieldTransform>` representing this transformation.
     #[inline]
     pub fn server_value(
         self,
@@ -180,12 +138,6 @@ impl FirestoreTransformFieldExpr {
     ///
     /// Atomically adds elements to the end of an array field, but only if they are
     /// not already present in the array.
-    ///
-    /// # Arguments
-    /// * `values`: An iterator of items convertible to [`FirestoreValue`] to append.
-    ///
-    /// # Returns
-    /// An `Option<FirestoreFieldTransform>` representing this transformation.
     #[inline]
     pub fn append_missing_elements<I>(self, values: I) -> Option<FirestoreFieldTransform>
     where
@@ -203,12 +155,6 @@ impl FirestoreTransformFieldExpr {
     /// Specifies a "remove all from array" transformation for an array field.
     ///
     /// Atomically removes all instances of the given elements from an array field.
-    ///
-    /// # Arguments
-    /// * `values`: An iterator of items convertible to [`FirestoreValue`] to remove.
-    ///
-    /// # Returns
-    /// An `Option<FirestoreFieldTransform>` representing this transformation.
     #[inline]
     pub fn remove_all_from_array<I>(self, values: I) -> Option<FirestoreFieldTransform>
     where

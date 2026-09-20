@@ -1,3 +1,12 @@
+//! `#[serde(with = "...")]` attributes for storing a [`FirestoreInstant`] as a native Firestore
+//! timestamp instead of the default string representation.
+//!
+//! Firestore keeps timestamps at microsecond precision and discards the nanoseconds on write, so
+//! a `FirestoreInstant` carrying nanoseconds does not survive a round trip through these
+//! attributes; [`FirestoreTimestamp`] truncates on construction instead and always round-trips.
+//! All three attributes change the Firestore wire representation only - the field still
+//! serializes as a string to JSON, so the same struct works for both.
+
 use crate::FirestoreInstant;
 use gcloud_sdk::google::firestore::v1::value;
 use rvstruct::ValueStruct;
@@ -8,13 +17,13 @@ use crate::{
     FirestoreValue,
 };
 
-/// A wrapper around [`FirestoreInstant`] that is always serialized as a
-/// Firestore timestamp value, without needing a `#[serde(with)]` attribute.
+/// A wrapper around [`FirestoreInstant`](crate::FirestoreInstant) that is always serialized
+/// as a Firestore timestamp value, without needing a `#[serde(with)]` attribute.
 ///
-/// Use [`FirestoreInstant`] directly when you prefer the attributes, and this
-/// wrapper when you would rather carry the behaviour in the type. It still
-/// serializes as a string to JSON, so the same model can be reused for both
-/// JSON and Firestore.
+/// Use [`FirestoreInstant`](crate::FirestoreInstant) directly when you prefer the
+/// attributes, and this wrapper when you would rather carry the behaviour in the type. It
+/// still serializes as a string to JSON, so the same model can be reused for both JSON and
+/// Firestore.
 #[derive(
     Serialize, Deserialize, Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Default, ValueStruct,
 )]
@@ -31,9 +40,9 @@ impl FirestoreTimestamp {
     ///
     /// Firestore keeps the timestamps with microsecond precision and discards
     /// the nanoseconds on write, so a value that carries them never comes back
-    /// unchanged. Every constructor and conversion of this type truncates for
-    /// you, and this method is here for the values built directly through the
-    /// public field.
+    /// unchanged. Every constructor and conversion of this type truncates
+    /// already; call this directly only for a value built through the public
+    /// field.
     ///
     /// # Examples
     ///
@@ -128,10 +137,33 @@ pub(crate) const FIRESTORE_TS_TYPE_TAG_TYPE: &str = "FirestoreTimestamp";
 
 pub(crate) const FIRESTORE_TS_NULL_TYPE_TAG_TYPE: &str = "FirestoreTimestampAsNull";
 
+/// Stores a `FirestoreInstant` field as a native Firestore timestamp instead of a string.
+///
+/// ```rust
+/// use firestore::{firestore_document_from_serializable, FirestoreInstant};
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Event {
+///     #[serde(with = "firestore::serialize_as_timestamp")]
+///     created_at: FirestoreInstant,
+/// }
+///
+/// let event = Event {
+///     created_at: FirestoreInstant::now(),
+/// };
+/// let document = firestore_document_from_serializable("events/e1", &event).unwrap();
+///
+/// assert!(matches!(
+///     document.fields["created_at"].value_type,
+///     Some(gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(_))
+/// ));
+/// ```
 pub mod serialize_as_timestamp {
     use crate::FirestoreInstant;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    /// Serializes `ts` as a native Firestore timestamp.
     pub fn serialize<S>(ts: &FirestoreInstant, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -139,6 +171,7 @@ pub mod serialize_as_timestamp {
         serializer.serialize_newtype_struct(crate::firestore_serde::FIRESTORE_TS_TYPE_TAG_TYPE, &ts)
     }
 
+    /// Deserializes a Firestore timestamp or a timestamp string back into a [`FirestoreInstant`].
     pub fn deserialize<'de, D>(deserializer: D) -> Result<FirestoreInstant, D::Error>
     where
         D: Deserializer<'de>,
@@ -147,10 +180,42 @@ pub mod serialize_as_timestamp {
     }
 }
 
+/// Stores an `Option<FirestoreInstant>` field as a native Firestore timestamp when present.
+///
+/// `None` serializes as an absent field, the same as a plain `Option` with no attribute; pair
+/// this with `#[serde(default)]` so a document that omits the field deserializes back to `None`
+/// instead of failing. Use [`serialize_as_null_timestamp`] instead when `None` should write an
+/// explicit Firestore null rather than leave the field out.
+///
+/// ```rust
+/// use firestore::{firestore_document_from_serializable, FirestoreInstant};
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Event {
+///     #[serde(default)]
+///     #[serde(with = "firestore::serialize_as_optional_timestamp")]
+///     updated_at: Option<FirestoreInstant>,
+/// }
+///
+/// let with_value = Event {
+///     updated_at: Some(FirestoreInstant::now()),
+/// };
+/// let document = firestore_document_from_serializable("events/e1", &with_value).unwrap();
+/// assert!(matches!(
+///     document.fields["updated_at"].value_type,
+///     Some(gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(_))
+/// ));
+///
+/// let without_value = Event { updated_at: None };
+/// let document = firestore_document_from_serializable("events/e2", &without_value).unwrap();
+/// assert!(!document.fields.contains_key("updated_at"));
+/// ```
 pub mod serialize_as_optional_timestamp {
     use crate::FirestoreInstant;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    /// Serializes `ts` as a native Firestore timestamp when `Some`, or omits the field.
     pub fn serialize<S>(ts: &Option<FirestoreInstant>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -162,6 +227,7 @@ pub mod serialize_as_optional_timestamp {
         }
     }
 
+    /// Deserializes a Firestore timestamp, a timestamp string, or an absent field.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<FirestoreInstant>, D::Error>
     where
         D: Deserializer<'de>,
@@ -170,10 +236,38 @@ pub mod serialize_as_optional_timestamp {
     }
 }
 
+/// Stores an `Option<FirestoreInstant>` field as a native Firestore timestamp when present, or
+/// an explicit Firestore null when `None`.
+///
+/// By default `None` serializes as an absent field; use this instead of
+/// [`serialize_as_optional_timestamp`] when the field must write a null value Firestore clients
+/// can see and clear, rather than leave the field unsent. Pair it with `#[serde(default)]` so a
+/// document that omits the field still deserializes.
+///
+/// ```rust
+/// use firestore::{firestore_document_from_serializable, FirestoreInstant};
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Event {
+///     #[serde(default)]
+///     #[serde(with = "firestore::serialize_as_null_timestamp")]
+///     cleared_at: Option<FirestoreInstant>,
+/// }
+///
+/// let event = Event { cleared_at: None };
+/// let document = firestore_document_from_serializable("events/e1", &event).unwrap();
+///
+/// assert!(matches!(
+///     document.fields["cleared_at"].value_type,
+///     Some(gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(_))
+/// ));
+/// ```
 pub mod serialize_as_null_timestamp {
     use crate::FirestoreInstant;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    /// Serializes `ts` as a native Firestore timestamp when `Some`, or an explicit null.
     pub fn serialize<S>(ts: &Option<FirestoreInstant>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -182,6 +276,7 @@ pub mod serialize_as_null_timestamp {
             .serialize_newtype_struct(crate::firestore_serde::FIRESTORE_TS_NULL_TYPE_TAG_TYPE, ts)
     }
 
+    /// Deserializes a Firestore timestamp, a timestamp string, or a null value.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<FirestoreInstant>, D::Error>
     where
         D: Deserializer<'de>,
@@ -190,6 +285,16 @@ pub mod serialize_as_null_timestamp {
     }
 }
 
+/// Serializes `value` as a Firestore timestamp value, writing an explicit null for `None` when
+/// `none_as_null` is set.
+///
+/// Called internally by the [`serialize_as_timestamp`] family once the newtype tag they attach
+/// has been recognised; not meant to be called directly from a `#[serde(with = "...")]`
+/// attribute.
+///
+/// Returns an error if `value` is not a string parseable as a [`FirestoreInstant`], or is a
+/// shape other than a string, `Option`, unit, or newtype wrapper around one of those - the
+/// serializers above only ever hand it one of the shapes it accepts.
 pub fn serialize_timestamp_for_firestore<T: ?Sized + Serialize>(
     value: &T,
     none_as_null: bool,

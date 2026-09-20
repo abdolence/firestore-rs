@@ -1,3 +1,10 @@
+//! Support for storing a document reference as a native Firestore reference value.
+//!
+//! [`FirestoreReference`] needs no attribute - its derived `Serialize`/`Deserialize` already
+//! route through [`serialize_reference_for_firestore`]. Use the
+//! `#[serde(with = "firestore::serialize_as_reference")]` attribute instead when the field is
+//! already a plain `String` and only the wire representation needs to change.
+
 use gcloud_sdk::google::firestore::v1::value;
 use regex::regex;
 use serde::{Deserialize, Serialize, Serializer};
@@ -96,9 +103,38 @@ impl<'a> TryFrom<&'a FirestoreReference> for FirestoreParsedReference<'a> {
     }
 }
 
+/// Stores a `String` field as a native Firestore document reference instead of a plain string
+/// value.
+///
+/// Use [`FirestoreReference`] instead when the model can own a dedicated type and benefits from
+/// its [`parse`](FirestoreReference::parse) accessors; use this attribute when the field is
+/// already a bare `String` - a foreign key column, say - and only the Firestore wire
+/// representation needs to change.
+///
+/// ```rust
+/// use firestore::firestore_document_from_serializable;
+/// use serde::Serialize;
+///
+/// #[derive(Serialize)]
+/// struct Comment {
+///     #[serde(with = "firestore::serialize_as_reference")]
+///     post_ref: String,
+/// }
+///
+/// let comment = Comment {
+///     post_ref: "projects/p/databases/(default)/documents/posts/1".to_string(),
+/// };
+/// let document = firestore_document_from_serializable("comments/c1", &comment).unwrap();
+///
+/// assert!(matches!(
+///     document.fields["post_ref"].value_type,
+///     Some(gcloud_sdk::google::firestore::v1::value::ValueType::ReferenceValue(_))
+/// ));
+/// ```
 pub mod serialize_as_reference {
     use serde::{Deserialize, Deserializer, Serializer};
 
+    /// Serializes `str` as a native Firestore document reference.
     pub fn serialize<S>(str: &String, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -109,6 +145,7 @@ pub mod serialize_as_reference {
         )
     }
 
+    /// Deserializes a Firestore reference value or a plain string back into a `String`.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<String, D::Error>
     where
         D: Deserializer<'de>,
@@ -117,6 +154,14 @@ pub mod serialize_as_reference {
     }
 }
 
+/// Serializes `value` as a Firestore reference value, writing an explicit null for `None` when
+/// `none_as_null` is set.
+///
+/// Called internally once [`serialize_as_reference`] or [`FirestoreReference`]'s derived
+/// `Serialize` has tagged the value; not meant to be called directly.
+///
+/// Returns an error if `value` is not a string - the reference path itself is not validated
+/// here, since the reference format depends on the project and database the path was built for.
 pub fn serialize_reference_for_firestore<T: ?Sized + Serialize>(
     value: &T,
     none_as_null: bool,

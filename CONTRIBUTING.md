@@ -62,6 +62,20 @@ These are some of the rules we try to follow:
 -   Keep an eye on performance and memory consumption, properly destroy objects when not used anymore
 -   Avoid incompatible changes if possible, especially do not modify the name or behavior of public API methods or properties
 
+### Documentation
+
+Prose lives in the book under `docs/`, and nowhere else. `README.md` is a landing page: badges,
+the description, a quick start, a pointer to the site, examples, licence, author. A new feature
+gets a book chapter and item-level rustdoc, never a README section.
+
+Every ```rust fence in `docs/src` is compiled by `cargo test --doc`, through the per-chapter
+entries in `src/book.rs`. A fence that talks to Firestore is marked `no_run`, so it is compiled
+but never executed. A new chapter needs its entry in `src/book.rs`; a test enforces that.
+
+Rustdoc covers what a caller calls: methods, functions, macros, traits. Structs and fields that
+mirror Google's Firestore model are left to Google's documentation. Write what the code cannot
+say - preconditions, failure modes, ordering, cost - and never a restatement of the signature.
+
 ### How to contribute - the Process
 
 1.  Make sure the change would be welcome (e.g. a bugfix or a useful feature); best do so by proposing it in a GitHub issue

@@ -1,3 +1,10 @@
+//! The crate's error type and the pieces it is built from.
+//!
+//! Reach for [`FirestoreError`] to match on what went wrong - every fallible call in this crate
+//! returns it. [`crate::errors::BackoffError`] is the separate type a
+//! [`FirestoreDb::run_transaction`](crate::FirestoreDb::run_transaction) closure returns, to say
+//! whether a failure should be retried.
+
 use crate::{FirestoreTransaction, FirestoreTransactionId};
 use gcloud_sdk::google::firestore::v1::WriteRequest;
 use rsb_derive::Builder;

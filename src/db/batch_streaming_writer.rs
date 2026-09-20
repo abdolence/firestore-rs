@@ -50,6 +50,24 @@ impl Drop for FirestoreStreamingBatchWriter {
 }
 
 impl FirestoreStreamingBatchWriter {
+    /// Opens a streaming batch writer against `db` and returns it with the stream of per-batch
+    /// responses.
+    ///
+    /// Most callers get one from [`FirestoreDb::create_streaming_batch_writer`] or
+    /// [`FirestoreDb::create_streaming_batch_writer_with_options`] rather than calling this
+    /// directly. This backs Firestore's streaming `Write` RPC: writes queued through
+    /// [`new_batch`](Self::new_batch) and [`FirestoreBatch::write`] go over one long-lived stream
+    /// instead of one request per batch, and `options.throttle_batch_duration` - 500ms by
+    /// default - paces how often a batch is flushed onto the wire, which is what keeps a fast
+    /// producer under Firestore's per-stream write-rate limit; a
+    /// [`FirestoreSimpleBatchWriter`](crate::FirestoreSimpleBatchWriter) has no such limit to
+    /// manage and is the simpler choice unless batches are being sent back-to-back. The returned
+    /// stream yields one [`FirestoreBatchWriteResponse`] per batch, in send order; consume it
+    /// (for example from a spawned task) or responses back up unread. Call
+    /// [`finish`](Self::finish) when done - dropping the writer instead only logs a warning and
+    /// leaves the stream's background task running until it notices.
+    ///
+    /// Returns an error if the initial handshake with the `Write` RPC fails.
     pub async fn new<'b>(
         db: FirestoreDb,
         options: FirestoreStreamingBatchWriteOptions,
@@ -228,6 +246,13 @@ impl FirestoreStreamingBatchWriter {
         ))
     }
 
+    /// Waits for every sent write's response, then closes the stream and joins its background
+    /// task.
+    ///
+    /// Always call this instead of letting the writer drop. It waits for pending responses to
+    /// arrive, so the response stream returned by [`new`](Self::new) must already be consumed
+    /// (for example from a spawned task) before calling this, or it blocks forever waiting for
+    /// responses nobody is reading.
     pub async fn finish(mut self) {
         let locked = self.last_token.write().await;
 
@@ -290,6 +315,10 @@ impl FirestoreStreamingBatchWriter {
         })?)
     }
 
+    /// Starts a new batch of writes against this writer.
+    ///
+    /// Queue writes on it with [`FirestoreBatch`] methods such as `update_object`, then send it
+    /// with [`FirestoreBatch::write`].
     pub fn new_batch(&self) -> FirestoreBatch<'_, FirestoreStreamingBatchWriter> {
         FirestoreBatch::new(&self.db, self)
     }
@@ -305,6 +334,59 @@ impl FirestoreBatchWriter for FirestoreStreamingBatchWriter {
 }
 
 impl FirestoreDb {
+    /// Opens a streaming batch writer with default options.
+    ///
+    /// Equivalent to
+    /// `create_streaming_batch_writer_with_options(FirestoreStreamingBatchWriteOptions::new())`.
+    /// See [`FirestoreStreamingBatchWriter::new`] for the throttling behavior, the response
+    /// stream and the failure mode, and prefer
+    /// [`create_simple_batch_writer`](Self::create_simple_batch_writer) unless enough batches are
+    /// sent back-to-back that one `BatchWrite` request per batch becomes the bottleneck.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use firestore::*;
+    /// use futures::TryStreamExt;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Debug, Clone, Deserialize, Serialize)]
+    /// struct MyTestStructure {
+    ///     some_id: String,
+    /// }
+    ///
+    /// # async fn example(db: FirestoreDb) -> FirestoreResult<()> {
+    /// let (batch_writer, mut responses) = db.create_streaming_batch_writer().await?;
+    ///
+    /// let responses_task = tokio::spawn(async move {
+    ///     while let Ok(Some(response)) = responses.try_next().await {
+    ///         println!("{response:?}");
+    ///     }
+    /// });
+    ///
+    /// let mut current_batch = batch_writer.new_batch();
+    /// for idx in 0..1000 {
+    ///     let doc = MyTestStructure {
+    ///         some_id: format!("doc-{idx}"),
+    ///     };
+    ///
+    ///     db.fluent()
+    ///         .update()
+    ///         .in_col("my-collection")
+    ///         .document_id(&doc.some_id)
+    ///         .object(&doc)
+    ///         .add_to_batch(&mut current_batch)?;
+    ///
+    ///     if idx % 100 == 0 {
+    ///         current_batch.write().await?;
+    ///         current_batch = batch_writer.new_batch();
+    ///     }
+    /// }
+    ///
+    /// batch_writer.finish().await;
+    /// let _ = tokio::join!(responses_task);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_streaming_batch_writer<'b>(
         &self,
     ) -> FirestoreResult<(
@@ -315,6 +397,13 @@ impl FirestoreDb {
             .await
     }
 
+    /// Opens a streaming batch writer with explicit `options`.
+    ///
+    /// Most usefully `options.throttle_batch_duration`, which paces how often queued writes are
+    /// flushed onto Firestore's streaming `Write` RPC to stay under its per-stream write-rate
+    /// limit; see [`FirestoreStreamingBatchWriter::new`] for the full behavior.
+    ///
+    /// Returns an error if the initial handshake with the `Write` RPC fails.
     pub async fn create_streaming_batch_writer_with_options<'b>(
         &self,
         options: FirestoreStreamingBatchWriteOptions,

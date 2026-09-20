@@ -130,13 +130,37 @@ where
     }
 }
 
+/// Queues writes on a [`FirestoreTransaction`](crate::FirestoreTransaction) or on
+/// [`FirestoreTransactionData`](crate::FirestoreTransactionData) - both stage writes the same
+/// way, which is why this is a trait rather than inherent methods on either type. Nothing here
+/// talks to Firestore: writes are only sent once the transaction is committed.
 pub trait FirestoreTransactionOps {
+    /// Queues a single write, converting `write` via its `TryInto<Write>` impl.
+    ///
+    /// This is the primitive every other method on this trait queues through; call it directly
+    /// only when building a write Firestore's higher-level helpers do not cover.
+    ///
+    /// Returns an error if the conversion fails.
     fn add<I>(&mut self, write: I) -> FirestoreResult<&mut Self>
     where
         I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>;
 
+    /// Returns the documents path that `update_object`, `delete_by_id` and `transform` resolve
+    /// against when no explicit parent is given.
     fn get_documents_path(&self) -> &String;
 
+    /// Queues a create-or-replace of `obj` at `document_id` in `collection_id`, under this
+    /// transaction's own documents path.
+    ///
+    /// A Firestore transaction cannot create a document with a server-generated ID, so this -
+    /// with an explicit `document_id` - is how a transaction creates a document. `update_only`
+    /// restricts the write to those field paths, leaving the rest of an existing document
+    /// untouched; `precondition` fails the whole commit if the document's current state does not
+    /// match it; `update_transforms` runs additional server-side transforms atomically with the
+    /// write.
+    ///
+    /// Returns an error if `collection_id` or `document_id` fails Firestore's ID validation, or
+    /// if `obj` cannot be serialized.
     fn update_object<T, S>(
         &mut self,
         collection_id: &str,
@@ -161,6 +185,11 @@ pub trait FirestoreTransactionOps {
         )
     }
 
+    /// Same as [`update_object`](Self::update_object), at an explicit `parent` path instead of
+    /// this transaction's own documents path.
+    ///
+    /// Returns an error if `collection_id` or `document_id` fails Firestore's ID validation, or
+    /// if `obj` cannot be serialized.
     fn update_object_at<T, S>(
         &mut self,
         parent: &str,
@@ -186,6 +215,11 @@ pub trait FirestoreTransactionOps {
         })
     }
 
+    /// Queues a delete of `document_id` in `collection_id`, under this transaction's own
+    /// documents path. `precondition` fails the whole commit if the document's current state
+    /// does not match it.
+    ///
+    /// Returns an error if `collection_id` or `document_id` fails Firestore's ID validation.
     fn delete_by_id<S>(
         &mut self,
         collection_id: &str,
@@ -203,6 +237,10 @@ pub trait FirestoreTransactionOps {
         )
     }
 
+    /// Same as [`delete_by_id`](Self::delete_by_id), at an explicit `parent` path instead of this
+    /// transaction's own documents path.
+    ///
+    /// Returns an error if `collection_id` or `document_id` fails Firestore's ID validation.
     fn delete_by_id_at<S>(
         &mut self,
         parent: &str,
@@ -221,6 +259,12 @@ pub trait FirestoreTransactionOps {
         })
     }
 
+    /// Queues one or more atomic field transforms (for example `serverTimestamp()` or a numeric
+    /// increment) on `document_id` in `collection_id`, under this transaction's own documents
+    /// path, without reading or resending the rest of the document. `precondition` fails the
+    /// whole commit if the document's current state does not match it.
+    ///
+    /// Returns an error if `collection_id` or `document_id` fails Firestore's ID validation.
     fn transform<S>(
         &mut self,
         collection_id: &str,
@@ -240,6 +284,10 @@ pub trait FirestoreTransactionOps {
         )
     }
 
+    /// Same as [`transform`](Self::transform), at an explicit `parent` path instead of this
+    /// transaction's own documents path.
+    ///
+    /// Returns an error if `collection_id` or `document_id` fails Firestore's ID validation.
     fn transform_at<S>(
         &mut self,
         parent: &str,

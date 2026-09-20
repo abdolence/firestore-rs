@@ -1,34 +1,52 @@
-//! Provides a fluent, chainable API for constructing and executing Firestore operations.
+//! A fluent, chainable API for building and executing Firestore operations.
 //!
-//! This module is the entry point for the fluent API, which allows for a more declarative
-//! and type-safe way to interact with Firestore compared to using the direct methods on
-//! [`FirestoreDb`](crate::FirestoreDb) with [`FirestoreQueryParams`](crate::FirestoreQueryParams).
-//!
-//! The main way to access this API is via the [`FirestoreDb::fluent()`](crate::FirestoreDb::fluent) method,
-//! which returns a [`FirestoreExprBuilder`]. From there, you can chain calls to build
-//! `select`, `insert`, `update`, `delete`, or `list` operations.
-//!
-//! Each operation type has its own dedicated builder module:
-//! - [`delete_builder`]: For constructing delete operations.
-//! - [`document_transform_builder`]: For specifying field transformations in update operations.
-//! - [`insert_builder`]: For constructing insert/create operations.
-//! - [`listing_builder`]: For listing documents or collection IDs.
-//! - [`select_aggregation_builder`]: For building aggregation queries (e.g., count, sum, avg).
-//! - [`select_builder`]: For constructing query/select operations.
-//! - [`select_filter_builder`]: For building complex filter conditions for queries.
-//! - [`update_builder`]: For constructing update operations.
+//! Start from [`FirestoreDb::fluent()`](crate::FirestoreDb::fluent), then chain `select`,
+//! `insert`, `update`, `delete` or `list` to pick the operation, followed by builder methods to
+//! configure it and a terminal method to send it to Firestore.
 
-// Linter allowance for functions that might have many arguments,
-// often seen in builder patterns or comprehensive configuration methods.
 #![allow(clippy::too_many_arguments)]
 
+/// Deletes a document, or queues the delete on a batch or transaction.
+///
+/// Reach for this from [`FirestoreExprBuilder::delete()`](FirestoreExprBuilder::delete).
 pub mod delete_builder;
+
+/// Builds server-side field transformations (increment, array append/remove, server timestamp)
+/// for an update.
+///
+/// Reach for this via `.transforms()` on an update builder, not directly.
 pub mod document_transform_builder;
+
+/// Inserts a document from a raw `Document` or a serializable Rust object.
+///
+/// Reach for this from [`FirestoreExprBuilder::insert()`](FirestoreExprBuilder::insert).
 pub mod insert_builder;
+
+/// Lists the documents in a collection, or the collection IDs under a path, with pagination.
+///
+/// Reach for this from [`FirestoreExprBuilder::list()`](FirestoreExprBuilder::list).
 pub mod listing_builder;
+
+/// Builds `COUNT`, `SUM` and `AVG` aggregations for a query.
+///
+/// Reach for this via `.aggregate()` on a select builder, not directly.
 pub mod select_aggregation_builder;
+
+/// Runs queries and document/collection-group reads, including filtering, ordering, cursors,
+/// vector search, partitioned queries and listeners.
+///
+/// Reach for this from [`FirestoreExprBuilder::select()`](FirestoreExprBuilder::select).
 pub mod select_builder;
+
+/// Builds comparison, unary and composite (AND/OR) filters for a query.
+///
+/// Reach for this via `.filter()` on a select builder, not directly.
 pub mod select_filter_builder;
+
+/// Updates a document from a raw `Document`, a serializable Rust object, or transformations
+/// only, and queues updates on a batch or transaction.
+///
+/// Reach for this from [`FirestoreExprBuilder::update()`](FirestoreExprBuilder::update).
 pub mod update_builder;
 
 use crate::delete_builder::FirestoreDeleteInitialBuilder;
@@ -44,9 +62,7 @@ use crate::{
 
 /// The entry point for building fluent Firestore expressions.
 ///
-/// Obtain an instance of this builder by calling [`FirestoreDb::fluent()`](crate::FirestoreDb::fluent).
-/// From this builder, you can chain methods to specify the type of operation
-/// (select, insert, update, delete, list) and then further configure and execute it.
+/// Obtained from [`FirestoreDb::fluent()`](crate::FirestoreDb::fluent).
 ///
 /// The type parameter `D` is an internal implementation detail; in practice it is always
 /// [`FirestoreDb`](crate::FirestoreDb).
@@ -70,48 +86,38 @@ where
         + Sync
         + 'static,
 {
-    /// Creates a new `FirestoreExprBuilder` with a reference to the database client.
-    /// This is typically called by [`FirestoreDb::fluent()`](crate::FirestoreDb::fluent).
     pub(crate) fn new(db: &'a D) -> Self {
         Self { db }
     }
 
-    /// Begins building a Firestore select/query operation.
-    ///
-    /// Returns a [`FirestoreSelectInitialBuilder`] to further configure the query.
+    /// Starts a query or a fetch by document ID. Continue with `.fields()`, then `.from()` for a
+    /// collection or `.by_id_in()` for known IDs.
     #[inline]
     pub fn select(self) -> FirestoreSelectInitialBuilder<'a, D> {
         FirestoreSelectInitialBuilder::new(self.db)
     }
 
-    /// Begins building a Firestore insert/create operation.
-    ///
-    /// Returns a [`FirestoreInsertInitialBuilder`] to further configure the insertion.
+    /// Starts inserting a document. Continue with `.into()` to name the target collection.
     #[inline]
     pub fn insert(self) -> FirestoreInsertInitialBuilder<'a, D> {
         FirestoreInsertInitialBuilder::new(self.db)
     }
 
-    /// Begins building a Firestore update operation.
-    ///
-    /// Returns a [`FirestoreUpdateInitialBuilder`] to further configure the update.
+    /// Starts updating a document. Continue with `.fields()` to restrict which fields are
+    /// touched, then `.in_col()` to name the target collection.
     #[inline]
     pub fn update(self) -> FirestoreUpdateInitialBuilder<'a, D> {
         FirestoreUpdateInitialBuilder::new(self.db)
     }
 
-    /// Begins building a Firestore delete operation.
-    ///
-    /// Returns a [`FirestoreDeleteInitialBuilder`] to further configure the deletion.
+    /// Starts deleting a document. Continue with `.from()` to name the source collection.
     #[inline]
     pub fn delete(self) -> FirestoreDeleteInitialBuilder<'a, D> {
         FirestoreDeleteInitialBuilder::new(self.db)
     }
 
-    /// Begins building a Firestore list operation (e.g., listing documents in a collection
-    /// or listing collection IDs).
-    ///
-    /// Returns a [`FirestoreListingInitialBuilder`] to further configure the listing operation.
+    /// Starts listing documents in a collection or collection IDs under a path. Continue with
+    /// `.from()` for documents or `.collections()` for collection IDs.
     #[inline]
     pub fn list(self) -> FirestoreListingInitialBuilder<'a, D> {
         FirestoreListingInitialBuilder::new(self.db)
@@ -119,9 +125,8 @@ where
 }
 
 impl FirestoreDb {
-    /// Provides access to the fluent API for building Firestore operations.
-    ///
-    /// This is the main entry point for using the chainable builder pattern.
+    /// Starts a fluent Firestore operation. Continue with `select`, `insert`, `update`, `delete`
+    /// or `list`.
     #[inline]
     pub fn fluent(&self) -> FirestoreExprBuilder<'_, FirestoreDb> {
         FirestoreExprBuilder::new(self)
