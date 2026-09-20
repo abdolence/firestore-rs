@@ -56,11 +56,13 @@ firestore = "0.54"
 
 ```rust,no_run
 use firestore::*;
+use futures::stream::BoxStream;
+use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
-    some_id: String,
+    some_id: FirestoreDocumentId,
     some_string: String,
     some_num: u64,
 }
@@ -69,10 +71,11 @@ struct MyTestStructure {
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = FirestoreDb::new("my-project-id").await?;
 
-    const TEST_COLLECTION_NAME: &str = "test";
+    const TEST_COLLECTION_NAME: FirestoreCollectionId =
+        FirestoreCollectionId::from_static("test");
 
     let my_struct = MyTestStructure {
-        some_id: "test-1".to_string(),
+        some_id: FirestoreDocumentId::from_static("test-1"),
         some_string: "Test".to_string(),
         some_num: 42,
     };
@@ -109,6 +112,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .one(&my_struct.some_id)
         .await?;
 
+    // Query as a stream
+    let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db.fluent()
+        .select()
+        .fields(paths!(MyTestStructure::{some_id, some_num, some_string}))
+        .from(TEST_COLLECTION_NAME)
+        .filter(|q| {
+            q.for_all([
+                q.field(path!(MyTestStructure::some_num)).is_not_null(),
+                q.field(path!(MyTestStructure::some_string)).eq("Test"),
+            ])
+        })
+        .order_by([(
+            path!(MyTestStructure::some_num),
+            FirestoreQueryDirection::Descending,
+        )])
+        .obj()
+        .stream_query_with_errors()
+        .await?;
+
+    let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
+
     // Delete data
     db.fluent()
         .delete()
@@ -117,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .execute()
         .await?;
 
-    println!("{object_returned:?} {object_updated:?} {find_it_again:?}");
+    println!("{object_returned:?} {object_updated:?} {find_it_again:?} {as_vec:?}");
 
     Ok(())
 }

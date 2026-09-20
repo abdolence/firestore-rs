@@ -15,7 +15,8 @@ The Fluent API is the only public API of this library. Everything starts from `d
 # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 use firestore::*;
 
-const TEST_COLLECTION_NAME: &'static str = "test";
+const TEST_COLLECTION_NAME: FirestoreCollectionId =
+    FirestoreCollectionId::from_static("test");
 
 let my_struct = MyTestStructure {
   some_id: "test-1".to_string(),

@@ -15,7 +15,7 @@
 //!
 //! #[derive(Debug, Clone, Deserialize, Serialize)]
 //! struct MyTestStructure {
-//!     some_id: String,
+//!     some_id: FirestoreDocumentId,
 //!     some_string: String,
 //!     some_num: u64,
 //! }
@@ -23,10 +23,11 @@
 //! # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let db = FirestoreDb::new("my-project-id").await?;
 //!
-//! const TEST_COLLECTION_NAME: &str = "test";
+//! const TEST_COLLECTION_NAME: FirestoreCollectionId =
+//!     FirestoreCollectionId::from_static("test");
 //!
 //! let my_struct = MyTestStructure {
-//!     some_id: "test-1".to_string(),
+//!     some_id: FirestoreDocumentId::from_static("test-1"),
 //!     some_string: "Test".to_string(),
 //!     some_num: 42,
 //! };
