@@ -31,7 +31,6 @@ impl<'a, D> FirestoreListingInitialBuilder<'a, D>
 where
     D: FirestoreListingSupport,
 {
-    /// Creates a new `FirestoreListingInitialBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D) -> Self {
         Self {
@@ -44,12 +43,6 @@ where
     ///
     /// This is a projection. If not set, all fields are returned.
     /// This option is only applicable when listing documents, not collection IDs.
-    ///
-    /// # Arguments
-    /// * `return_only_fields`: An iterator of field paths to return.
-    ///
-    /// # Returns
-    /// The builder instance with the projection mask set.
     #[inline]
     pub fn fields<I>(self, return_only_fields: I) -> Self
     where
@@ -68,12 +61,6 @@ where
     }
 
     /// Specifies that documents should be listed from the given collection.
-    ///
-    /// # Arguments
-    /// * `collection`: The ID of the collection to list documents from.
-    ///
-    /// # Returns
-    /// A [`FirestoreListingDocBuilder`] to further configure and execute the document listing.
     #[inline]
     pub fn from<S: AsRef<str>>(self, collection: S) -> FirestoreListingDocBuilder<'a, D> {
         let params: FirestoreListDocParams =
@@ -83,9 +70,6 @@ where
     }
 
     /// Specifies that collection IDs should be listed.
-    ///
-    /// # Returns
-    /// A [`FirestoreListCollectionIdsBuilder`] to configure and execute the collection ID listing.
     #[inline]
     pub fn collections(self) -> FirestoreListCollectionIdsBuilder<'a, D> {
         FirestoreListCollectionIdsBuilder::new(self.db)
@@ -106,19 +90,12 @@ impl<'a, D> FirestoreListingDocBuilder<'a, D>
 where
     D: FirestoreListingSupport,
 {
-    /// Creates a new `FirestoreListingDocBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D, params: FirestoreListDocParams) -> Self {
         Self { db, params }
     }
 
     /// Specifies that the listed documents should be deserialized into a specific Rust type `T`.
-    ///
-    /// # Type Parameters
-    /// * `T`: The type to deserialize documents into. Must implement `serde::Deserialize`.
-    ///
-    /// # Returns
-    /// A [`FirestoreListingObjBuilder`] for streaming deserialized objects.
     #[inline]
     pub fn obj<T>(self) -> FirestoreListingObjBuilder<'a, D, T>
     where
@@ -129,12 +106,6 @@ where
     }
 
     /// Specifies the parent document path for listing documents in a sub-collection.
-    ///
-    /// # Arguments
-    /// * `parent`: The full path to the parent document.
-    ///
-    /// # Returns
-    /// The builder instance with the parent path set.
     #[inline]
     pub fn parent<S>(self, parent: S) -> Self
     where
@@ -147,12 +118,6 @@ where
     }
 
     /// Sets the maximum number of documents to return in a single page.
-    ///
-    /// # Arguments
-    /// * `value`: The page size.
-    ///
-    /// # Returns
-    /// The builder instance with the page size set.
     #[inline]
     pub fn page_size(self, value: usize) -> Self {
         Self {
@@ -162,12 +127,6 @@ where
     }
 
     /// Sets the page token for pagination.
-    ///
-    /// # Arguments
-    /// * `value`: The page token from a previous listing operation.
-    ///
-    /// # Returns
-    /// The builder instance with the page token set.
     #[inline]
     pub fn page_token(self, value: String) -> Self {
         Self {
@@ -177,12 +136,6 @@ where
     }
 
     /// Specifies the order in which to sort the documents.
-    ///
-    /// # Arguments
-    /// * `fields`: An iterator of [`FirestoreQueryOrder`] specifying the fields and directions to sort by.
-    ///
-    /// # Returns
-    /// The builder instance with the ordering set.
     #[inline]
     pub fn order_by<I>(self, fields: I) -> Self
     where
@@ -201,12 +154,6 @@ where
     ///
     /// They override any session wide default configured with
     /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
-    ///
-    /// # Arguments
-    /// * `request_tags`: An iterator of tags to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request tags set.
     #[inline]
     pub fn request_tags<I>(self, request_tags: I) -> Self
     where
@@ -217,12 +164,6 @@ where
     }
 
     /// Attaches request options to this listing operation.
-    ///
-    /// # Arguments
-    /// * `options`: The [`FirestoreRequestOptions`] to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request options set.
     #[inline]
     pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
         Self {
@@ -231,32 +172,37 @@ where
         }
     }
 
-    /// Retrieves a single page of documents.
+    /// Fetches one page of documents, with a token for the next page when more remain.
     ///
-    /// # Returns
-    /// A `FirestoreResult` containing a [`FirestoreListDocResult`], which includes the documents
-    /// for the current page and a potential next page token.
+    /// Returns an error if the request to Firestore fails.
     pub async fn get_page(self) -> FirestoreResult<FirestoreListDocResult> {
         self.db.list_doc(self.params).await
     }
 
-    /// Streams all documents matching the configuration, handling pagination automatically.
+    /// Streams every document, sending further requests to Firestore as needed to page through
+    /// the full result.
     ///
-    /// Errors encountered during streaming will terminate the stream.
+    /// An error while streaming terminates the stream early.
     ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of [`Document`]s.
+    /// ```rust,no_run
+    /// use firestore::FirestoreDb;
+    /// use futures::stream::BoxStream;
+    /// use futures::StreamExt;
+    ///
+    /// # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut documents: BoxStream<_> = db.fluent().list().from("users").stream_all().await?;
+    /// while let Some(document) = documents.next().await {
+    ///     let _ = document;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn stream_all<'b>(self) -> FirestoreResult<BoxStream<'b, Document>> {
         self.db.stream_list_doc(self.params).await
     }
 
-    /// Streams all documents matching the configuration, handling pagination automatically.
-    ///
-    /// Errors encountered during streaming are yielded as `Err` items in the stream,
-    /// allowing the caller to handle them without terminating the entire stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<Document>`.
+    /// Streams a `FirestoreResult<Document>` per document, paging through the full result, so
+    /// one failed request does not end the stream.
     pub async fn stream_all_with_errors<'b>(
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
@@ -283,7 +229,6 @@ where
     T: Send,
     for<'de> T: Deserialize<'de>,
 {
-    /// Creates a new `FirestoreListingObjBuilder`.
     pub(crate) fn new(
         db: &'a D,
         params: FirestoreListDocParams,
@@ -299,12 +244,6 @@ where
     ///
     /// They override any session wide default configured with
     /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
-    ///
-    /// # Arguments
-    /// * `request_tags`: An iterator of tags to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request tags set.
     #[inline]
     pub fn request_tags<I>(self, request_tags: I) -> Self
     where
@@ -315,12 +254,6 @@ where
     }
 
     /// Attaches request options to this listing operation.
-    ///
-    /// # Arguments
-    /// * `options`: The [`FirestoreRequestOptions`] to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request options set.
     #[inline]
     pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
         Self {
@@ -329,13 +262,9 @@ where
         }
     }
 
-    /// Streams all documents matching the configuration, deserializing them into type `T`
-    /// and handling pagination automatically.
+    /// Streams every document deserialized into `T`, paging through the full result.
     ///
-    /// Errors encountered during streaming or deserialization will terminate the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of deserialized objects `T`.
+    /// An error while streaming or deserializing terminates the stream early.
     pub async fn stream_all<'b>(self) -> FirestoreResult<BoxStream<'b, T>>
     where
         T: 'b,
@@ -343,14 +272,8 @@ where
         self.db.stream_list_obj(self.params).await
     }
 
-    /// Streams all documents matching the configuration, deserializing them into type `T`
-    /// and handling pagination automatically.
-    ///
-    /// Errors encountered during streaming or deserialization are yielded as `Err` items
-    /// in the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<T>`.
+    /// Streams a `FirestoreResult<T>` per document, paging through the full result, so one
+    /// failed fetch or deserialization does not end the stream.
     pub async fn stream_all_with_errors<'b>(
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
@@ -375,7 +298,6 @@ impl<'a, D> FirestoreListCollectionIdsBuilder<'a, D>
 where
     D: FirestoreListingSupport,
 {
-    /// Creates a new `FirestoreListCollectionIdsBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D) -> Self {
         Self {
@@ -387,12 +309,6 @@ where
     /// Specifies the parent document path under which to list collection IDs.
     ///
     /// If not specified, collection IDs directly under the database root are listed.
-    ///
-    /// # Arguments
-    /// * `parent`: The full path to the parent document.
-    ///
-    /// # Returns
-    /// The builder instance with the parent path set.
     #[inline]
     pub fn parent<S>(self, parent: S) -> Self
     where
@@ -405,12 +321,6 @@ where
     }
 
     /// Sets the maximum number of collection IDs to return in a single page.
-    ///
-    /// # Arguments
-    /// * `value`: The page size.
-    ///
-    /// # Returns
-    /// The builder instance with the page size set.
     #[inline]
     pub fn page_size(self, value: usize) -> Self {
         Self {
@@ -423,12 +333,6 @@ where
     ///
     /// They override any session wide default configured with
     /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
-    ///
-    /// # Arguments
-    /// * `request_tags`: An iterator of tags to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request tags set.
     #[inline]
     pub fn request_tags<I>(self, request_tags: I) -> Self
     where
@@ -439,12 +343,6 @@ where
     }
 
     /// Attaches request options to this listing operation.
-    ///
-    /// # Arguments
-    /// * `options`: The [`FirestoreRequestOptions`] to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request options set.
     #[inline]
     pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
         Self {
@@ -453,31 +351,22 @@ where
         }
     }
 
-    /// Retrieves a single page of collection IDs.
+    /// Fetches one page of collection IDs, with a token for the next page when more remain.
     ///
-    /// # Returns
-    /// A `FirestoreResult` containing a [`FirestoreListCollectionIdsResult`], which includes
-    /// the collection IDs for the current page and a potential next page token.
+    /// Returns an error if the request to Firestore fails.
     pub async fn get_page(self) -> FirestoreResult<FirestoreListCollectionIdsResult> {
         self.db.list_collection_ids(self.params).await
     }
 
-    /// Streams all collection IDs matching the configuration, handling pagination automatically.
+    /// Streams every collection ID, paging through the full result.
     ///
-    /// Errors encountered during streaming will terminate the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `String` (collection IDs).
+    /// An error while streaming terminates the stream early.
     pub async fn stream_all(self) -> FirestoreResult<BoxStream<'a, String>> {
         self.db.stream_list_collection_ids(self.params).await
     }
 
-    /// Streams all collection IDs matching the configuration, handling pagination automatically.
-    ///
-    /// Errors encountered during streaming are yielded as `Err` items in the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<String>`.
+    /// Streams a `FirestoreResult<String>` per collection ID, paging through the full result, so
+    /// one failed request does not end the stream.
     pub async fn stream_all_with_errors(
         self,
     ) -> FirestoreResult<BoxStream<'a, FirestoreResult<String>>> {
