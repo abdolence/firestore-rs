@@ -52,39 +52,68 @@ enum PathSegmentViolation {
     DotOrDotDot,
 }
 
+impl PathSegmentViolation {
+    /// The message `from_static` panics with.
+    ///
+    /// A plain literal, not the detailed message [`validate_path_segment`] builds: `Display::fmt`
+    /// is not a `const fn` on stable Rust, so there is no const-compatible way to interpolate the
+    /// segment or its length here the way the runtime path does. `panic!("{}", ...)` with a single
+    /// `&'static str` argument is const-evaluable even though general formatting is not, which is
+    /// what makes returning one from here workable inside a `const fn`.
+    const fn panic_message(self, kind: FirestorePathSegmentKind) -> &'static str {
+        use FirestorePathSegmentKind::{CollectionId, DocumentId};
+        match (kind, self) {
+            (DocumentId, Self::Empty) => "Firestore document id must not be empty",
+            (DocumentId, Self::TooLong { .. }) => {
+                "Firestore document id must be at most 1500 bytes"
+            }
+            (DocumentId, Self::ContainsSlash) => "Firestore document id must not contain '/'",
+            (DocumentId, Self::DotOrDotDot) => "Firestore document id must not be \".\" or \"..\"",
+            (CollectionId, Self::Empty) => "Firestore collection id must not be empty",
+            (CollectionId, Self::TooLong { .. }) => {
+                "Firestore collection id must be at most 1500 bytes"
+            }
+            (CollectionId, Self::ContainsSlash) => "Firestore collection id must not contain '/'",
+            (CollectionId, Self::DotOrDotDot) => {
+                "Firestore collection id must not be \".\" or \"..\""
+            }
+        }
+    }
+}
+
 /// Checks `segment` against Firestore's ID rules without allocating.
 ///
 /// `str::contains` and `str::eq` are not `const fn`, so this cannot reuse the ordinary string
 /// methods and instead walks `segment.as_bytes()` by hand. That byte loop is what lets
 /// `from_static` run at compile time; do not replace it with the `str`-method equivalent even
 /// though it reads simpler; doing so would stop `from_static` from being a `const fn`.
-const fn check_path_segment(segment: &str) -> Option<PathSegmentViolation> {
+const fn check_path_segment(segment: &str) -> Result<(), PathSegmentViolation> {
     let bytes = segment.as_bytes();
     let len = bytes.len();
 
     if len == 0 {
-        return Some(PathSegmentViolation::Empty);
+        return Err(PathSegmentViolation::Empty);
     }
 
     // Checked before the '/' and '.'/'..' checks below so that every other rule sees a value
     // already bounded to 1500 bytes.
     if len > 1500 {
-        return Some(PathSegmentViolation::TooLong { len });
+        return Err(PathSegmentViolation::TooLong { len });
     }
 
     let mut i = 0;
     while i < len {
         if bytes[i] == b'/' {
-            return Some(PathSegmentViolation::ContainsSlash);
+            return Err(PathSegmentViolation::ContainsSlash);
         }
         i += 1;
     }
 
     if (len == 1 && bytes[0] == b'.') || (len == 2 && bytes[0] == b'.' && bytes[1] == b'.') {
-        return Some(PathSegmentViolation::DotOrDotDot);
+        return Err(PathSegmentViolation::DotOrDotDot);
     }
 
-    None
+    Ok(())
 }
 
 /// Validates a single Firestore path segment (a document ID or a collection ID).
@@ -98,17 +127,17 @@ pub(crate) fn validate_path_segment(
     let field = kind.field_name();
 
     match check_path_segment(segment) {
-        None => Ok(()),
-        Some(PathSegmentViolation::Empty) => {
+        Ok(()) => Ok(()),
+        Err(PathSegmentViolation::Empty) => {
             Err(path_segment_error(field, "must not be empty".to_string()))
         }
         // The value itself is unbounded here, unlike every other violation below, so this
         // message reports the length rather than echoing it.
-        Some(PathSegmentViolation::TooLong { len }) => Err(path_segment_error(
+        Err(PathSegmentViolation::TooLong { len }) => Err(path_segment_error(
             field,
             format!("must be at most 1500 bytes, was {len} bytes"),
         )),
-        Some(PathSegmentViolation::ContainsSlash) => Err(path_segment_error(
+        Err(PathSegmentViolation::ContainsSlash) => Err(path_segment_error(
             field,
             format!(
                 "must not contain '/': \"{}\" - a slash-delimited path such as \"users/123/posts\" is not a single ID; \
@@ -116,7 +145,7 @@ pub(crate) fn validate_path_segment(
                 segment.escape_debug(),
             ),
         )),
-        Some(PathSegmentViolation::DotOrDotDot) => Err(path_segment_error(
+        Err(PathSegmentViolation::DotOrDotDot) => Err(path_segment_error(
             field,
             format!("must not be \".\" or \"..\", got \"{segment}\""),
         )),
@@ -270,18 +299,12 @@ impl FirestoreDocumentId {
     /// `".."`, and the call is not evaluated at compile time.
     pub const fn from_static(id: &'static str) -> Self {
         match check_path_segment(id) {
-            None => Self(Cow::Borrowed(id)),
-            Some(PathSegmentViolation::Empty) => {
-                panic!("Firestore document id must not be empty")
-            }
-            Some(PathSegmentViolation::TooLong { .. }) => {
-                panic!("Firestore document id must be at most 1500 bytes")
-            }
-            Some(PathSegmentViolation::ContainsSlash) => {
-                panic!("Firestore document id must not contain '/'")
-            }
-            Some(PathSegmentViolation::DotOrDotDot) => {
-                panic!("Firestore document id must not be \".\" or \"..\"")
+            Ok(()) => Self(Cow::Borrowed(id)),
+            Err(violation) => {
+                panic!(
+                    "{}",
+                    violation.panic_message(FirestorePathSegmentKind::DocumentId)
+                )
             }
         }
     }
@@ -504,18 +527,12 @@ impl FirestoreCollectionId {
     /// `".."`, and the call is not evaluated at compile time.
     pub const fn from_static(id: &'static str) -> Self {
         match check_path_segment(id) {
-            None => Self(Cow::Borrowed(id)),
-            Some(PathSegmentViolation::Empty) => {
-                panic!("Firestore collection id must not be empty")
-            }
-            Some(PathSegmentViolation::TooLong { .. }) => {
-                panic!("Firestore collection id must be at most 1500 bytes")
-            }
-            Some(PathSegmentViolation::ContainsSlash) => {
-                panic!("Firestore collection id must not contain '/'")
-            }
-            Some(PathSegmentViolation::DotOrDotDot) => {
-                panic!("Firestore collection id must not be \".\" or \"..\"")
+            Ok(()) => Self(Cow::Borrowed(id)),
+            Err(violation) => {
+                panic!(
+                    "{}",
+                    violation.panic_message(FirestorePathSegmentKind::CollectionId)
+                )
             }
         }
     }
