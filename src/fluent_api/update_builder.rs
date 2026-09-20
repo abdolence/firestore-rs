@@ -31,7 +31,6 @@ impl<'a, D> FirestoreUpdateInitialBuilder<'a, D>
 where
     D: FirestoreUpdateSupport,
 {
-    /// Creates a new `FirestoreUpdateInitialBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D) -> Self {
         Self {
@@ -47,13 +46,6 @@ where
     /// the update acts as a merge: fields in the provided object will overwrite
     /// existing fields, and new fields will be added. Fields not present in the
     /// provided object will remain untouched in the document.
-    ///
-    /// # Arguments
-    /// * `update_only_fields`: An iterator of field paths (dot-separated for nested fields)
-    ///   to be included in the update mask.
-    ///
-    /// # Returns
-    /// The builder instance with the field mask set.
     #[inline]
     pub fn fields<I>(self, update_only_fields: I) -> Self
     where
@@ -72,12 +64,6 @@ where
     }
 
     /// Specifies the collection ID where the document to update resides.
-    ///
-    /// # Arguments
-    /// * `collection_id`: The ID of the collection.
-    ///
-    /// # Returns
-    /// A [`FirestoreUpdateDocObjBuilder`] to specify the document ID and data.
     #[inline]
     pub fn in_col<S: AsRef<str>>(self, collection_id: S) -> FirestoreUpdateDocObjBuilder<'a, D> {
         FirestoreUpdateDocObjBuilder::new(
@@ -110,7 +96,6 @@ impl<'a, D> FirestoreUpdateDocObjBuilder<'a, D>
 where
     D: FirestoreUpdateSupport,
 {
-    /// Creates a new `FirestoreUpdateDocObjBuilder`.
     #[inline]
     pub(crate) fn new(
         db: &'a D,
@@ -131,12 +116,6 @@ where
     /// Specifies which fields of the updated document should be returned.
     ///
     /// If not set, the entire document is typically returned after the update.
-    ///
-    /// # Arguments
-    /// * `return_only_fields`: An iterator of field paths to return.
-    ///
-    /// # Returns
-    /// The builder instance with the projection mask for the return value set.
     #[inline]
     pub fn return_only_fields<I>(self, return_only_fields: I) -> Self
     where
@@ -157,12 +136,6 @@ where
     /// Specifies a precondition for the update operation.
     ///
     /// The update will only be executed if the precondition is met.
-    ///
-    /// # Arguments
-    /// * `precondition`: The [`FirestoreWritePrecondition`] to apply.
-    ///
-    /// # Returns
-    /// The builder instance with the precondition set.
     #[inline]
     pub fn precondition(self, precondition: FirestoreWritePrecondition) -> Self {
         Self {
@@ -175,12 +148,6 @@ where
     ///
     /// The `doc_transform` argument is a closure that receives a [`FirestoreTransformBuilder`]
     /// and should return a `Vec<FirestoreFieldTransform>`.
-    ///
-    /// # Arguments
-    /// * `doc_transform`: A closure to build the list of field transformations.
-    ///
-    /// # Returns
-    /// The builder instance with the field transformations set.
     #[inline]
     pub fn transforms<FN>(self, doc_transform: FN) -> Self
     where
@@ -195,12 +162,6 @@ where
     /// Specifies the document data to update using a raw [`Document`].
     ///
     /// The `document.name` field should contain the full path to the document.
-    ///
-    /// # Arguments
-    /// * `document`: The Firestore `Document` containing the fields to update.
-    ///
-    /// # Returns
-    /// A [`FirestoreUpdateDocExecuteBuilder`] to execute the operation.
     #[inline]
     pub fn document(self, document: Document) -> FirestoreUpdateDocExecuteBuilder<'a, D> {
         FirestoreUpdateDocExecuteBuilder::new(
@@ -216,12 +177,6 @@ where
     /// Specifies the ID of the document to update.
     ///
     /// This transitions the builder to expect a Rust object for the update data.
-    ///
-    /// # Arguments
-    /// * `document_id`: The ID of the document to update.
-    ///
-    /// # Returns
-    /// A [`FirestoreUpdateObjInitExecuteBuilder`] to specify the object and execute.
     #[inline]
     pub fn document_id<S>(self, document_id: S) -> FirestoreUpdateObjInitExecuteBuilder<'a, D>
     where
@@ -258,7 +213,6 @@ impl<'a, D> FirestoreUpdateDocExecuteBuilder<'a, D>
 where
     D: FirestoreUpdateSupport,
 {
-    /// Creates a new `FirestoreUpdateDocExecuteBuilder`.
     #[inline]
     pub(crate) fn new(
         db: &'a D,
@@ -278,10 +232,9 @@ where
         }
     }
 
-    /// Executes the configured update operation using a raw `Document`.
+    /// Sends the update to Firestore and returns the document as stored.
     ///
-    /// # Returns
-    /// A `FirestoreResult` containing the updated [`Document`].
+    /// Returns an error if the request fails, or if a precondition was set and does not hold.
     pub async fn execute(self) -> FirestoreResult<Document> {
         // Note: The `update_doc` method on `FirestoreUpdateSupport` expects the full document path
         // to be in `self.document.name`. The `collection_id` here is somewhat redundant if
@@ -319,7 +272,6 @@ impl<'a, D> FirestoreUpdateObjInitExecuteBuilder<'a, D>
 where
     D: FirestoreUpdateSupport,
 {
-    /// Creates a new `FirestoreUpdateObjInitExecuteBuilder`.
     #[inline]
     pub(crate) fn new(
         db: &'a D,
@@ -358,15 +310,6 @@ where
     /// Specifies the Rust object containing the data to update the document with.
     ///
     /// The object `T` must implement `serde::Serialize`.
-    ///
-    /// # Arguments
-    /// * `object`: A reference to the Rust object.
-    ///
-    /// # Type Parameters
-    /// * `T`: The type of the object.
-    ///
-    /// # Returns
-    /// A [`FirestoreUpdateObjExecuteBuilder`] to execute the operation or add it to a batch/transaction.
     #[inline]
     pub fn object<T>(self, object: &'a T) -> FirestoreUpdateObjExecuteBuilder<'a, D, T>
     where
@@ -386,15 +329,9 @@ where
         )
     }
 
-    /// Specifies server-side field transformations to apply.
-    /// This method is used when the update consists *only* of transformations,
-    /// without merging an object's fields.
-    ///
-    /// # Arguments
-    /// * `doc_transform`: A closure to build the list of field transformations.
-    ///
-    /// # Returns
-    /// The builder instance with the field transformations set.
+    /// Specifies server-side field transformations to apply, used together with
+    /// `.only_transform()` when the update applies transformations only, without merging an
+    /// object's fields.
     #[inline]
     pub fn transforms<FN>(self, doc_transform: FN) -> Self
     where
@@ -406,13 +343,8 @@ where
         }
     }
 
-    /// Finalizes the builder for an update operation that *only* applies field transformations.
-    ///
-    /// This should be called if no `.object()` is provided, and the update relies solely
-    /// on the transformations defined via `.transforms()`.
-    ///
-    /// # Returns
-    /// A [`FirestoreUpdateOnlyTransformBuilder`] to add the transform-only operation to a batch or transaction.
+    /// Switches to an update that applies only the transformations set via `.transforms()`,
+    /// without merging an object's fields.
     #[inline]
     pub fn only_transform(self) -> FirestoreUpdateOnlyTransformBuilder<'a, D> {
         FirestoreUpdateOnlyTransformBuilder::new(
@@ -449,7 +381,6 @@ where
     D: FirestoreUpdateSupport,
     T: Serialize + Sync + Send,
 {
-    /// Creates a new `FirestoreUpdateObjExecuteBuilder`.
     #[inline]
     pub(crate) fn new(
         db: &'a D,
@@ -475,14 +406,34 @@ where
         }
     }
 
-    /// Executes the configured update operation, serializing the object and
-    /// deserializing the result into type `O`.
+    /// Serializes the object, sends the update to Firestore, and deserializes the stored result
+    /// into `O`.
     ///
-    /// # Type Parameters
-    /// * `O`: The type to deserialize the result into. Must implement `serde::Deserialize`.
+    /// Returns an error if serialization or the request fails, if a precondition was set and
+    /// does not hold, or if the result does not deserialize into `O`.
     ///
-    /// # Returns
-    /// A `FirestoreResult` containing the deserialized object `O` representing the updated document.
+    /// ```rust,no_run
+    /// use firestore::FirestoreDb;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct User {
+    ///     name: String,
+    /// }
+    ///
+    /// # async fn example(db: FirestoreDb, user: User) -> Result<(), Box<dyn std::error::Error>> {
+    /// let updated: User = db
+    ///     .fluent()
+    ///     .update()
+    ///     .in_col("users")
+    ///     .document_id("user-42")
+    ///     .object(&user)
+    ///     .execute()
+    ///     .await?;
+    /// # let _ = updated;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn execute<O>(self) -> FirestoreResult<O>
     where
         for<'de> O: Deserialize<'de>,
@@ -522,12 +473,6 @@ where
     ///
     /// This can be combined with updating fields from an object. The transformations
     /// are applied *after* the object merge/update.
-    ///
-    /// # Arguments
-    /// * `transforms_builder`: A closure to build the list of field transformations.
-    ///
-    /// # Returns
-    /// The builder instance with added transformations.
     #[inline]
     pub fn transforms<FN>(self, transforms_builder: FN) -> Self
     where
@@ -539,13 +484,10 @@ where
         }
     }
 
-    /// Adds this update operation (object merge and/or transforms) to a [`FirestoreTransaction`].
+    /// Queues this update (object merge and/or transforms) on `transaction`, to be sent when the
+    /// transaction commits.
     ///
-    /// # Arguments
-    /// * `transaction`: A mutable reference to the transaction.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing the mutable reference to the transaction.
+    /// Returns an error if the update cannot be added to the transaction.
     #[inline]
     pub fn add_to_transaction<'t, TO>(self, transaction: &'t mut TO) -> FirestoreResult<&'t mut TO>
     where
@@ -573,16 +515,10 @@ where
         }
     }
 
-    /// Adds this update operation (object merge and/or transforms) to a [`FirestoreBatch`].
+    /// Queues this update (object merge and/or transforms) on `batch`, to be sent when the batch
+    /// is written.
     ///
-    /// # Arguments
-    /// * `batch`: A mutable reference to the batch writer.
-    ///
-    /// # Type Parameters
-    /// * `W`: The type of the batch writer.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing the mutable reference to the batch.
+    /// Returns an error if the update cannot be added to the batch.
     #[inline]
     pub fn add_to_batch<'t, W>(
         self,
@@ -635,7 +571,6 @@ impl<'a, D> FirestoreUpdateOnlyTransformBuilder<'a, D>
 where
     D: FirestoreUpdateSupport,
 {
-    /// Creates a new `FirestoreUpdateOnlyTransformBuilder`.
     #[inline]
     pub(crate) fn new(
         db: &'a D,
@@ -655,13 +590,10 @@ where
         }
     }
 
-    /// Adds this transform-only update operation to a [`FirestoreTransaction`].
+    /// Queues this transform-only update on `transaction`, to be sent when the transaction
+    /// commits.
     ///
-    /// # Arguments
-    /// * `transaction`: A mutable reference to the transaction.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing the mutable reference to the transaction.
+    /// Returns an error if the update cannot be added to the transaction.
     #[inline]
     pub fn add_to_transaction<'t>(
         self,
@@ -685,16 +617,9 @@ where
         }
     }
 
-    /// Adds this transform-only update operation to a [`FirestoreBatch`].
+    /// Queues this transform-only update on `batch`, to be sent when the batch is written.
     ///
-    /// # Arguments
-    /// * `batch`: A mutable reference to the batch writer.
-    ///
-    /// # Type Parameters
-    /// * `W`: The type of the batch writer.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing the mutable reference to the batch.
+    /// Returns an error if the update cannot be added to the batch.
     #[inline]
     pub fn add_to_batch<'t, W>(
         self,

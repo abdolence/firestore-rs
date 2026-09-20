@@ -716,6 +716,16 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
     }
 }
 
+/// Deserializes a Firestore document into `T`.
+///
+/// Besides the document's own fields, `T` can read four synthetic fields added here:
+/// `_firestore_id` (the last path segment of the document name) and `_firestore_full_id` (the
+/// full document name) always, plus `_firestore_created` and `_firestore_updated` when Firestore
+/// returned those timestamps. Map a struct field onto one with, for example,
+/// `#[serde(alias = "_firestore_id")]`.
+///
+/// Returns an error if `T`'s `Deserialize` impl rejects the document's shape - a missing
+/// non-optional field, or a type mismatch such as a string where a number is expected.
 pub fn firestore_document_to_serializable<T>(
     document: &gcloud_sdk::google::firestore::v1::Document,
 ) -> Result<T, FirestoreError>

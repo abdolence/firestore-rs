@@ -40,6 +40,13 @@ jobs:
           cargo clippy --all-targets --features "caching-memory,caching-persistent" -- -Dwarnings
       - name: 'Checking documentation'
         run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features "caching-memory,caching-persistent"
+      - name: 'Compiling the book examples'
+        run: cargo test --doc --features "caching-memory,caching-persistent"
+      - uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: '0.5.4'
+      - name: 'Building the book'
+        run: cd docs && mdbook build
       - name: 'Checking the minimum supported Rust version'
         uses: dtolnay/rust-toolchain@1.90.0
       - name: 'Building on the minimum supported Rust version'

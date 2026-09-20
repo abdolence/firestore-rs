@@ -562,6 +562,10 @@ impl serde::ser::SerializeStructVariant for SerializeStructVariant {
     }
 }
 
+/// Serializes `object` into a Firestore document named `document_path`.
+///
+/// Returns an error if `object`'s `Serialize` impl fails, or if `object` does not serialize to a
+/// struct-shaped value - a top level `Vec` or scalar has no fields to become a document.
 pub fn firestore_document_from_serializable<S, T>(
     document_path: S,
     object: &T,
@@ -593,6 +597,11 @@ where
     }
 }
 
+/// Builds a Firestore document named `document_path` directly from a `(field name, value)`
+/// iterator, bypassing `Serialize`.
+///
+/// Always succeeds; the `Result` return type exists to match
+/// [`firestore_document_from_serializable`]'s signature.
 pub fn firestore_document_from_map<S, I, IS>(
     document_path: S,
     fields: I,

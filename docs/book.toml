@@ -1,0 +1,21 @@
+[book]
+authors = ["Abdulla Abdurakhmanov"]
+language = "en"
+src = "src"
+title = "Firestore for Rust"
+description = "Library provides a simple API for Google Firestore based on the official gRPC API"
+
+[rust]
+edition = "2021"
+
+[build]
+build-dir = "output"
+create-missing = false
+
+[output.html]
+default-theme = "navy"
+git-repository-url = "https://github.com/abdolence/firestore-rs"
+cname = "firestore-rust.abdolence.dev"
+
+[output.html.playground]
+runnable = false
