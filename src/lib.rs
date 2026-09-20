@@ -48,7 +48,7 @@
 //!         q.field(path!(MyTestStructure::some_num)).is_not_null(),
 //!         q.field(path!(MyTestStructure::some_string)).eq("Test"),
 //!     ]))
-//!     .order_by([(path!(MyTestStructure::some_num), FirestoreQueryDirection::Descending)])
+//!     .order(|o| o.fields([o.field(path!(MyTestStructure::some_num)).desc()]))
 //!     .obj()
 //!     .query()
 //!     .await?;

@@ -4,6 +4,7 @@
 //! or listing collection IDs under a parent document (or the database root).
 //! It supports pagination, ordering (for document listing), and projections.
 
+use crate::select_order_builder::FirestoreQueryOrderBuilder;
 use crate::{
     FirestoreListCollectionIdsParams, FirestoreListCollectionIdsResult, FirestoreListDocParams,
     FirestoreListDocResult, FirestoreListingSupport, FirestoreQueryOrder, FirestoreRequestOptions,
@@ -136,6 +137,14 @@ where
     }
 
     /// Specifies the order in which to sort the documents.
+    ///
+    /// Each call replaces any ordering set by a previous call; it does not add to it.
+    #[deprecated(
+        since = "0.55.0",
+        note = "Superseded by `.order()`, which takes a closure builder: \
+                `.order(|o| o.fields([o.field(path!(T::some_num)).desc()]))`. \
+                This method keeps working and will not be removed in 0.x."
+    )]
     #[inline]
     pub fn order_by<I>(self, fields: I) -> Self
     where
@@ -146,6 +155,29 @@ where
             params: self
                 .params
                 .with_order_by(fields.into_iter().map(|field| field.into()).collect()),
+            ..self
+        }
+    }
+
+    /// Specifies the order in which to sort the documents.
+    ///
+    /// The `order` argument is a closure that receives a [`FirestoreQueryOrderBuilder`] and
+    /// should return a `Vec<FirestoreQueryOrder>`, typically built with
+    /// [`FirestoreQueryOrderBuilder::fields`]. Each call replaces any ordering set by a previous
+    /// call; it does not add to it.
+    #[inline]
+    pub fn order<FN>(self, order: FN) -> Self
+    where
+        FN: Fn(FirestoreQueryOrderBuilder) -> Vec<FirestoreQueryOrder>,
+    {
+        let orders = order(FirestoreQueryOrderBuilder::new());
+
+        Self {
+            params: self.params.opt_order_by(if orders.is_empty() {
+                None
+            } else {
+                Some(orders)
+            }),
             ..self
         }
     }
@@ -380,7 +412,7 @@ where
 mod tests {
     use crate::fluent_api::tests::*;
     use crate::fluent_api::FirestoreExprBuilder;
-    use crate::FirestoreRequestOptions;
+    use crate::{path, FirestoreQueryDirection, FirestoreQueryOrder, FirestoreRequestOptions};
 
     #[test]
     fn list_doc_builder_request_tags() {
@@ -406,5 +438,61 @@ mod tests {
             builder.params.request_options,
             Some(FirestoreRequestOptions::from_tags(["tag-1"]))
         )
+    }
+
+    #[test]
+    fn list_doc_builder_order() {
+        let builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .list()
+            .from("test")
+            .order(|o| {
+                o.fields([
+                    o.field(path!(TestStructure::some_num)).desc(),
+                    o.field(path!(TestStructure::some_id)).asc(),
+                ])
+            });
+
+        assert_eq!(
+            builder.params.order_by,
+            Some(vec![
+                FirestoreQueryOrder::new(
+                    path!(TestStructure::some_num),
+                    FirestoreQueryDirection::Descending
+                ),
+                FirestoreQueryOrder::new(
+                    path!(TestStructure::some_id),
+                    FirestoreQueryDirection::Ascending
+                ),
+            ])
+        )
+    }
+
+    #[test]
+    fn list_doc_builder_order_empty_is_none() {
+        let builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .list()
+            .from("test")
+            .order(|o| o.fields(Vec::<FirestoreQueryOrder>::new()));
+
+        assert_eq!(builder.params.order_by, None)
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn list_doc_builder_order_by_tuples_are_still_accepted() {
+        let tuple_builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .list()
+            .from("test")
+            .order_by([(
+                path!(TestStructure::some_num),
+                FirestoreQueryDirection::Descending,
+            )]);
+
+        let closure_builder = FirestoreExprBuilder::new(&mockdb::MockDatabase {})
+            .list()
+            .from("test")
+            .order(|o| o.fields([o.field(path!(TestStructure::some_num)).desc()]));
+
+        assert_eq!(tuple_builder.params, closure_builder.params);
     }
 }

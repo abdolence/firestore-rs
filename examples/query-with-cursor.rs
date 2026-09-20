@@ -66,10 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .select()
         .from(TEST_COLLECTION_NAME)
         .start_at(FirestoreQueryCursor::BeforeValue(vec!["test-5".into()]))
-        .order_by([(
-            path!(MyTestStructure::some_id),
-            FirestoreQueryDirection::Ascending,
-        )])
+        .order(|o| o.fields([o.field(path!(MyTestStructure::some_id)).asc()]))
         .obj()
         .stream_query()
         .await?;

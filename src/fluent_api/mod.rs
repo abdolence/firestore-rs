@@ -43,6 +43,11 @@ pub mod select_builder;
 /// Reach for this via `.filter()` on a select builder, not directly.
 pub mod select_filter_builder;
 
+/// Builds the per-field sort direction for a query or listing's result ordering.
+///
+/// Reach for this via `.order()` on a select or listing builder, not directly.
+pub mod select_order_builder;
+
 /// Updates a document from a raw `Document`, a serializable Rust object, or transformations
 /// only, and queues updates on a batch or transaction.
 ///

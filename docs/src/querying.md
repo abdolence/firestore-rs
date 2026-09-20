@@ -31,10 +31,7 @@ let object_stream: BoxStream<FirestoreResult<MyTestStructure> > = db.fluent()
           .and_then( | value | q.field(path ! (MyTestStructure::one_more_string)).eq(value)),        
       ])
   })
-  .order_by([(
-    path!(MyTestStructure::some_num),
-    FirestoreQueryDirection::Descending,
-  )])
+  .order(|o| o.fields([o.field(path!(MyTestStructure::some_num)).desc()]))
   .obj() // Reading documents as structures using Serde gRPC deserializer
   .stream_query_with_errors()
   .await?;
@@ -51,3 +48,36 @@ Use:
 - `q.for_any` for OR conditions (Firestore has just recently added support for OR conditions)
 
 You can nest `q.for_all`/`q.for_any`.
+
+## Ordering
+
+`.order()` takes a closure that receives an order builder and returns a `Vec`, the same shape as
+`.filter()` and `.transforms()`. List multiple fields to sort by more than one, in priority order:
+
+```rust,ignore
+.order(|o| {
+    o.fields([
+        o.field(path!(MyTestStructure::some_num)).desc(),
+        o.field(path!(MyTestStructure::some_id)).asc(),
+    ])
+})
+```
+
+An entry can be conditional, since `field(..).asc()`/`.desc()` return `Option<FirestoreQueryOrder>`
+and `None` is dropped:
+
+```rust,ignore
+.order(|o| {
+    o.fields([sort_by_num.then(|| o.field(path!(MyTestStructure::some_num)).desc())])
+})
+```
+
+Each call to `.order()` replaces any ordering set by a previous call; it does not add to it. An
+empty result (every entry conditional and every condition false) clears the ordering entirely.
+
+If the query also uses `start_at`/`end_at`, the cursor's value count must match the number of
+ordered fields - this is not enforced by the library, so a mismatch is a runtime error from
+Firestore rather than a compile-time one.
+
+`.order_by([(path!(..), FirestoreQueryDirection::Descending)])` still works but is deprecated in
+favor of `.order()`.

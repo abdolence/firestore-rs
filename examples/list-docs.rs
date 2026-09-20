@@ -65,10 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .list()
         .from(TEST_COLLECTION_NAME)
         .page_size(3) // This is decreased just to show an example of automatic pagination, in the real usage please use bigger figure or don't specify it (default is 100)
-        .order_by([(
-            path!(MyTestStructure::some_id),
-            FirestoreQueryDirection::Descending,
-        )])
+        .order(|o| o.fields([o.field(path!(MyTestStructure::some_id)).desc()]))
         .obj()
         .stream_all()
         .await?;
