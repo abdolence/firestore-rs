@@ -38,8 +38,8 @@ where
     /// # Returns
     /// A [`FirestoreDeleteDocIdBuilder`] to specify the document ID and other options.
     #[inline]
-    pub fn from(self, collection_id: &str) -> FirestoreDeleteDocIdBuilder<'a, D> {
-        FirestoreDeleteDocIdBuilder::new(self.db, collection_id.to_string())
+    pub fn from<S: AsRef<str>>(self, collection_id: S) -> FirestoreDeleteDocIdBuilder<'a, D> {
+        FirestoreDeleteDocIdBuilder::new(self.db, collection_id.as_ref().to_string())
     }
 }
 

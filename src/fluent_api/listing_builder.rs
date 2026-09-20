@@ -75,9 +75,10 @@ where
     /// # Returns
     /// A [`FirestoreListingDocBuilder`] to further configure and execute the document listing.
     #[inline]
-    pub fn from(self, collection: &str) -> FirestoreListingDocBuilder<'a, D> {
-        let params: FirestoreListDocParams = FirestoreListDocParams::new(collection.to_string())
-            .opt_return_only_fields(self.return_only_fields);
+    pub fn from<S: AsRef<str>>(self, collection: S) -> FirestoreListingDocBuilder<'a, D> {
+        let params: FirestoreListDocParams =
+            FirestoreListDocParams::new(collection.as_ref().to_string())
+                .opt_return_only_fields(self.return_only_fields);
         FirestoreListingDocBuilder::new(self.db, params)
     }
 

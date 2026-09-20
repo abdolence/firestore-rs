@@ -2,6 +2,10 @@
 // often seen in builder patterns or comprehensive configuration methods.
 #![allow(clippy::too_many_arguments)]
 
+/// Module for validated document and collection ID newtypes.
+mod path_ids;
+pub use path_ids::*;
+
 /// Module for document retrieval operations (get).
 mod get;
 
@@ -435,17 +439,18 @@ impl FirestoreDb {
     /// # Errors
     /// Returns [`FirestoreError::InvalidParametersError`] if the `document_id` is invalid.
     #[inline]
-    pub fn parent_path<S>(
+    pub fn parent_path<C, S>(
         &self,
-        collection_name: &str,
+        collection_name: C,
         document_id: S,
     ) -> FirestoreResult<ParentPathBuilder>
     where
+        C: AsRef<str>,
         S: AsRef<str>,
     {
         Ok(ParentPathBuilder::new(safe_document_path(
             self.inner.doc_path.as_str(),
-            collection_name,
+            collection_name.as_ref(),
             document_id.as_ref(),
         )?))
     }
@@ -712,6 +717,10 @@ impl std::fmt::Debug for FirestoreDb {
     }
 }
 
+/// Builds the absolute path of a document, validating both `collection_id` and `document_id`.
+///
+/// `parent` is not validated: a malformed parent is not an injection risk (it is not
+/// attacker-controlled the way a collection or document ID can be) and is rejected server-side.
 pub(crate) fn safe_document_path<S>(
     parent: &str,
     collection_id: &str,
@@ -720,19 +729,10 @@ pub(crate) fn safe_document_path<S>(
 where
     S: AsRef<str>,
 {
-    // All restrictions described here: https://firebase.google.com/docs/firestore/quotas#collections_documents_and_fields
-    // Here we check only the most dangerous one for `/` to avoid document_id injections, leaving other validation to the server side.
+    validate_path_segment(collection_id, FirestorePathSegmentKind::CollectionId)?;
     let document_id_ref = document_id.as_ref();
-    if document_id_ref.chars().all(|c| c != '/') && document_id_ref.len() <= 1500 {
-        Ok(format!("{parent}/{collection_id}/{document_id_ref}"))
-    } else {
-        Err(FirestoreError::InvalidParametersError(
-            FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                "document_id".to_string(),
-                format!("Invalid document ID provided: {document_id_ref}"),
-            )),
-        ))
-    }
+    validate_path_segment(document_id_ref, FirestorePathSegmentKind::DocumentId)?;
+    Ok(format!("{parent}/{collection_id}/{document_id_ref}"))
 }
 
 /// Splits a document path into the path of its parent and the document ID.
@@ -799,6 +799,41 @@ mod tests {
             .ok(),
             None
         );
+
+        // Exactly 1500 bytes is still accepted; the limit is a byte count, not a char count.
+        let at_limit = "e".repeat(1500);
+        assert!(safe_document_path(
+            "projects/test-project/databases/(default)/documents",
+            "test",
+            at_limit
+        )
+        .is_ok());
+
+        for bad_document_id in ["", ".", ".."] {
+            assert!(
+                safe_document_path(
+                    "projects/test-project/databases/(default)/documents",
+                    "test",
+                    bad_document_id
+                )
+                .is_err(),
+                "expected document_id {bad_document_id:?} to be rejected"
+            );
+        }
+
+        // A `/` in the collection id re-targets the write at a different collection; this is the
+        // one real injection vector `safe_document_path` exists to close.
+        for bad_collection_id in ["", ".", "..", "test/other"] {
+            assert!(
+                safe_document_path(
+                    "projects/test-project/databases/(default)/documents",
+                    bad_collection_id,
+                    "test1"
+                )
+                .is_err(),
+                "expected collection_id {bad_collection_id:?} to be rejected"
+            );
+        }
     }
 
     #[test]
