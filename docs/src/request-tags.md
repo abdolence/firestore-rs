@@ -14,14 +14,14 @@ Tags can be set per operation for queries, aggregations, listings and listeners:
 # const TEST_COLLECTION_NAME: &str = "test";
 # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 db.fluent()
-  .select()
-  .from(TEST_COLLECTION_NAME)
-  .request_tags(["nightly-report"])
-  // or use request_options if you want to provide the options structure directly
-  // .request_options(FirestoreRequestOptions::from_tags(["nightly-report"]))
-  .obj::<MyTestStructure>()
-  .query()
-  .await?;
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .request_tags(["nightly-report"])
+    // or use request_options if you want to provide the options structure directly
+    // .request_options(FirestoreRequestOptions::from_tags(["nightly-report"]))
+    .obj::<MyTestStructure>()
+    .query()
+    .await?;
 # Ok(())
 # }
 ```
@@ -38,13 +38,14 @@ you attach tags to the CRUD operations (insert/update/delete/get):
 # async fn example(db: FirestoreDb, my_struct: MyTestStructure) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 let tagged_db = db.clone_with_request_tags(["nightly-report"]);
 
-tagged_db.fluent()
-  .insert()
-  .into(TEST_COLLECTION_NAME)
-  .document_id(&my_struct.some_id)
-  .object(&my_struct)
-  .execute::<MyTestStructure>()
-  .await?;
+tagged_db
+    .fluent()
+    .insert()
+    .into(TEST_COLLECTION_NAME)
+    .document_id(&my_struct.some_id)
+    .object(&my_struct)
+    .execute::<MyTestStructure>()
+    .await?;
 # Ok(())
 # }
 ```
@@ -75,7 +76,8 @@ db.run_transaction_with_options(
     },
     FirestoreTransactionOptions::new()
         .with_request_options(FirestoreRequestOptions::from_tags(["checkout"])),
-).await?;
+)
+.await?;
 # Ok(())
 # }
 ```

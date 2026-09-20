@@ -22,53 +22,53 @@ storage if needed:
 # const TEST_TARGET_ID_BY_QUERY: FirestoreListenerTarget = FirestoreListenerTarget::new(42_u32);
 # const TEST_TARGET_ID_BY_DOC_IDS: FirestoreListenerTarget = FirestoreListenerTarget::new(17_u32);
 # async fn example(db: FirestoreDb, doc_id1: String, doc_id2: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-
-let mut listener = db.create_listener(
-    FirestoreTempFilesListenStateStorage::new() // or FirestoreMemListenStateStorage or your own implementation 
-).await?;
+let mut listener = db
+    .create_listener(
+        FirestoreTempFilesListenStateStorage::new(), // or FirestoreMemListenStateStorage or your own implementation
+    )
+    .await?;
 
 // Adding query listener
 db.fluent()
-.select()
-.from(TEST_COLLECTION_NAME)
-.listen()
-.add_target(TEST_TARGET_ID_BY_QUERY, &mut listener) ?;
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .listen()
+    .add_target(TEST_TARGET_ID_BY_QUERY, &mut listener)?;
 
 // Adding docs listener by IDs
 db.fluent()
-.select()
-.by_id_in(TEST_COLLECTION_NAME)
-.batch_listen([doc_id1, doc_id2])
-.add_target(TEST_TARGET_ID_BY_DOC_IDS, &mut listener) ?;
+    .select()
+    .by_id_in(TEST_COLLECTION_NAME)
+    .batch_listen([doc_id1, doc_id2])
+    .add_target(TEST_TARGET_ID_BY_DOC_IDS, &mut listener)?;
 
 listener
-.start( | event| async move {
-    match event {
-        FirestoreListenEvent::DocumentChange( ref doc_change) => {
-            println ! ("Doc changed: {:?}", doc_change);
-            
-            if let Some(doc) = & doc_change.document {
-              let obj: MyTestStructure =
-              FirestoreDb::deserialize_doc_to::<MyTestStructure > (doc)
-              .expect("Deserialized object");
-              println ! ("As object: {:?}", obj);
+    .start(|event| async move {
+        match event {
+            FirestoreListenEvent::DocumentChange(ref doc_change) => {
+                println!("Doc changed: {:?}", doc_change);
+
+                if let Some(doc) = &doc_change.document {
+                    let obj: MyTestStructure =
+                        FirestoreDb::deserialize_doc_to::<MyTestStructure>(doc)
+                            .expect("Deserialized object");
+                    println!("As object: {:?}", obj);
+                }
+            }
+            _ => {
+                println!("Received a listen response event to handle: {:?}", event);
             }
         }
-        _ => {
-          println ! ("Received a listen response event to handle: {:?}", event);
-        }
-    }
 
-  Ok(())
-})
-.await?;
+        Ok(())
+    })
+    .await?;
 
 // Wait some events like Ctrl-C, signals, etc
 // <put-your-implementation-for-wait-here>
 
 // and then shutdown
 listener.shutdown().await?;
-
 # Ok(())
 # }
 ```

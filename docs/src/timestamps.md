@@ -13,7 +13,7 @@ Firestore timestamps there are three options.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
     created_at: SystemTime,
-    updated_at: Option<SystemTime>
+    updated_at: Option<SystemTime>,
 }
 ```
 
@@ -27,7 +27,8 @@ struct MyTestStructure {
 # const TEST_COLLECTION_NAME: &str = "test";
 # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 # db.fluent().select().from(TEST_COLLECTION_NAME).filter(|q| { q.for_all([
-   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(SystemTime::now())
+q.field(path!(MyTestStructure::created_at))
+    .less_than_or_equal(SystemTime::now())
 # ]) }).obj::<MyTestStructure>().query().await?;
 # Ok(())
 # }
@@ -44,7 +45,7 @@ struct MyTestStructure {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct MyTestStructure {
     created_at: FirestoreTimestamp,
-    updated_at: Option<FirestoreTimestamp>
+    updated_at: Option<FirestoreTimestamp>,
 }
 ```
 
@@ -72,7 +73,8 @@ Use it in your queries as well, for example:
 # const TEST_COLLECTION_NAME: &str = "test";
 # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 # db.fluent().select().from(TEST_COLLECTION_NAME).filter(|q| { q.for_all([
-   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(FirestoreTimestamp::now())
+q.field(path!(MyTestStructure::created_at))
+    .less_than_or_equal(FirestoreTimestamp::now())
 # ]) }).obj::<MyTestStructure>().query().await?;
 # Ok(())
 # }

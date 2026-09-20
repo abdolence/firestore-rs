@@ -12,7 +12,7 @@ firestore = "0.55"
 Depends on your other dependencies you may see the error like:
 
 ```text
-no process-level CryptoProvider available -- call CryptoProvider::install_default() before this point 
+no process-level CryptoProvider available -- call CryptoProvider::install_default() before this point
 ```
 
 This is because the TLS providers are not installed by default and you can choose different.

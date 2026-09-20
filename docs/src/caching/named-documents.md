@@ -8,7 +8,9 @@ care about, say so:
 # use firestore::*;
 # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 let cache = FirestoreCache::memory(&db)
-    .collection_with("configs", |c| c.documents(["site", "billing"]).preload_all())
+    .collection_with("configs", |c| {
+        c.documents(["site", "billing"]).preload_all()
+    })
     .build()
     .await?;
 # let _ = cache;
