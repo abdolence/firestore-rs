@@ -1,3 +1,9 @@
+//! Support for storing a [`FirestoreGeoPoint`] as a native Firestore `LatLng` value.
+//!
+//! Unlike the timestamp and null attributes, this needs no `#[serde(with = "...")]`: wrap the
+//! field in [`FirestoreLatLng`] and its derived `Serialize`/`Deserialize` already carry the
+//! `FirestoreLatLng` type name that routes them through [`serialize_latlng_for_firestore`].
+
 use gcloud_sdk::google::firestore::v1::value;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
@@ -17,6 +23,14 @@ pub struct FirestoreGeoPoint {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, PartialOrd, Default)]
 pub struct FirestoreLatLng(pub FirestoreGeoPoint);
 
+/// Serializes a struct with `latitude` and `longitude` fields as a native Firestore `LatLng`.
+///
+/// Called internally once [`FirestoreLatLng`]'s derived `Serialize` has tagged the value; not
+/// meant to be called directly.
+///
+/// Returns an error if `value` does not serialize to a struct carrying both fields as `f64`,
+/// which happens only if a type other than [`FirestoreGeoPoint`] is wrapped in
+/// [`FirestoreLatLng`].
 pub fn serialize_latlng_for_firestore<T: ?Sized + Serialize>(
     value: &T,
 ) -> Result<FirestoreValue, FirestoreError> {

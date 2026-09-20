@@ -19,6 +19,8 @@ use serde::Serialize;
 /// call callers actually make.
 #[async_trait]
 pub trait FirestoreBatchWriter {
+    /// What a completed write reports back. The simple writer returns Firestore's response;
+    /// the streaming one returns nothing, since it acknowledges writes as they drain.
     type WriteResult;
 
     /// Sends `writes` to Firestore. Called by [`FirestoreBatch::write`]; build writes through a

@@ -1,131 +1,102 @@
 //! # Firestore for Rust
 //!
-//! Library provides a simple API for Google Firestore:
-//! - Create or update documents using Rust structures and Serde;
-//! - Support for querying / streaming / listing / listening changes / aggregated queries of documents from Firestore;
-//! - Fluent high-level and strongly typed API - the only public API of this library;
-//! - Validated [`FirestoreDocumentId`] and [`FirestoreCollectionId`] newtypes for document and
-//!   collection IDs arriving from outside your process;
-//! - Full async based on Tokio runtime;
-//! - Macro that helps you use JSON paths as references to your structure fields;
-//! - Implements own Serde serializer to Firestore gRPC values;
-//! - Supports for Firestore timestamp with `#[serde(with)]`;
-//! - Transactions support;
-//! - Streaming batch writes with automatic throttling to avoid time limits from Firestore;
-//! - Aggregated Queries;
-//! - Request tags (request options) to attribute Firestore usage;
-//! - Optional in-memory and persistent caching for collections and documents, kept up to date
-//!   automatically with Firestore listeners (`caching-memory` / `caching-persistent` features).
-//!   See [`FirestoreCache`];
-//! - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
-//!   that automatically detects GKE environment or application default accounts for local development;
+//! A client for Google Firestore built on the official gRPC API, with a fluent, strongly typed
+//! query builder and its own Serde serializer for Firestore's protobuf values.
 //!
-//! ## Example using the Fluent API:
+//! Full documentation, with a chapter per topic: <https://firestore-rust.abdolence.dev>
+//!
+//! ## Example
 //!
 //! ```rust,no_run
+//! use firestore::*;
+//! use serde::{Deserialize, Serialize};
+//! use futures::stream::BoxStream;
+//! use futures::TryStreamExt;
 //!
-//!use firestore::*;
-//!use serde::{Deserialize, Serialize};
-//!use futures::stream::BoxStream;
-//!use futures::StreamExt;
+//! #[derive(Debug, Clone, Deserialize, Serialize)]
+//! struct MyTestStructure {
+//!     some_id: String,
+//!     some_string: String,
+//!     some_num: u64,
+//! }
 //!
-//!pub fn config_env_var(name: &str) -> Result<String, String> {
-//!    std::env::var(name).map_err(|e| format!("{}: {}", name, e))
-//!}
+//! # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! let db = FirestoreDb::new("my-project-id").await?;
 //!
-//!// Example structure to play with
-//!#[derive(Debug, Clone, Deserialize, Serialize)]
-//!struct MyTestStructure {
-//!    some_id: String,
-//!    some_string: String,
-//!    one_more_string: String,
-//!    some_num: u64,
-//!}
+//! const TEST_COLLECTION_NAME: &str = "test";
 //!
-//!#[tokio::main]
-//!async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {//!
-//!   // Create an instance
-//!   let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+//! let my_struct = MyTestStructure {
+//!     some_id: "test-1".to_string(),
+//!     some_string: "Test".to_string(),
+//!     some_num: 42,
+//! };
 //!
-//!   const TEST_COLLECTION_NAME: &'static str = "test";
-//!
-//!   let my_struct = MyTestStructure {
-//!        some_id: "test-1".to_string(),
-//!        some_string: "Test".to_string(),
-//!        one_more_string: "Test2".to_string(),
-//!        some_num: 42,
-//!   };
-//!
-//!   // Create documents
-//!   let object_returned: MyTestStructure = db.fluent()
-//!       .insert()
-//!       .into(TEST_COLLECTION_NAME)
-//!       .document_id(&my_struct.some_id)
-//!       .object(&my_struct)
-//!       .execute()
-//!       .await?;
-//!
-//!   // Update documents
-//!   let object_updated: MyTestStructure = db.fluent()
-//!       .update()
-//!       .fields(paths!(MyTestStructure::{some_num, one_more_string})) // Update only specified fields
-//!       .in_col(TEST_COLLECTION_NAME)
-//!       .document_id(&my_struct.some_id)
-//!       .object(&MyTestStructure {
-//!           some_num: my_struct.some_num + 1,
-//!          one_more_string: "updated-value".to_string(),
-//!           ..my_struct.clone()
-//!       })
-//!       .execute()
-//!      .await?;
-//!  
-//!   // Get a document as an object by id
-//!   let find_it_again: Option<MyTestStructure> = db.fluent()
-//!         .select()
-//!         .by_id_in(TEST_COLLECTION_NAME)
-//!         .obj()
-//!         .one(&my_struct.some_id)
-//!         .await?;
-//!
-//!   // Query and read stream of objects
-//!   let object_stream: BoxStream<MyTestStructure> = db.fluent()
-//!     .select()
-//!     .fields(paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string})) // Optionally select the fields needed
-//!     .from(TEST_COLLECTION_NAME)
-//!     .filter(|q| { // Fluent filter API example
-//!         q.for_all([
-//!             q.field(path!(MyTestStructure::some_num)).is_not_null(),
-//!             q.field(path!(MyTestStructure::some_string)).eq("Test"),
-//!             // Sometimes you have optional filters
-//!             Some("Test2")
-//!                 .and_then(|value| q.field(path!(MyTestStructure::one_more_string)).eq(value)),
-//!         ])
-//!     })
-//!     .order_by([(
-//!         path!(MyTestStructure::some_num),
-//!         FirestoreQueryDirection::Descending,
-//!     )])
-//!     .obj() // Reading documents as structures using Serde gRPC deserializer
-//!     .stream_query()
+//! // Create a document from a Rust structure
+//! let created: MyTestStructure = db.fluent()
+//!     .insert()
+//!     .into(TEST_COLLECTION_NAME)
+//!     .document_id(&my_struct.some_id)
+//!     .object(&my_struct)
+//!     .execute()
 //!     .await?;
 //!
-//!     let as_vec: Vec<MyTestStructure> = object_stream.collect().await;
-//!     println!("{:?}", as_vec);
+//! // Query as a stream, selecting fields by compile-time checked paths
+//! let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db.fluent()
+//!     .select()
+//!     .fields(paths!(MyTestStructure::{some_id, some_num, some_string}))
+//!     .from(TEST_COLLECTION_NAME)
+//!     .filter(|q| q.for_all([
+//!         q.field(path!(MyTestStructure::some_num)).is_not_null(),
+//!         q.field(path!(MyTestStructure::some_string)).eq("Test"),
+//!     ]))
+//!     .order_by([(path!(MyTestStructure::some_num), FirestoreQueryDirection::Descending)])
+//!     .obj()
+//!     .stream_query_with_errors()
+//!     .await?;
 //!
-//!     // Delete documents
-//!     db.fluent()
-//!         .delete()
-//!         .from(TEST_COLLECTION_NAME)
-//!         .document_id(&my_struct.some_id)
-//!         .execute()
-//!         .await?;
+//! let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
 //!
-//!     Ok(())
-//! }
+//! db.fluent()
+//!     .delete()
+//!     .from(TEST_COLLECTION_NAME)
+//!     .document_id(&my_struct.some_id)
+//!     .execute()
+//!     .await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
-//! All examples and more docs available at: [github](https://github.com/abdolence/firestore-rs/tree/master/examples)
+//! ## Where to look
 //!
+//! | For | Start at |
+//! |---|---|
+//! | Creating a client | [`FirestoreDb::new`], [`FirestoreDb::with_options`] |
+//! | Every read and write | [`FirestoreDb::fluent`] |
+//! | Document and collection IDs | [`FirestoreDocumentId`], [`FirestoreCollectionId`], [`ParentPathBuilder`] |
+//! | Field paths in queries and updates | [`path!`], [`paths!`] |
+//! | Transactions | [`FirestoreDb::run_transaction`], [`FirestoreTransaction`] |
+//! | Batch writes | [`FirestoreDb::create_simple_batch_writer`], [`FirestoreDb::create_streaming_batch_writer`] |
+//! | Realtime changes | [`FirestoreDb::create_listener`], [`FirestoreListener`] |
+//! | Timestamps | [`FirestoreTimestamp`], [`FirestoreInstant`], [`serialize_as_timestamp`] |
+//! | Schemaless documents | [`FirestoreDb::serialize_map_to_doc`], [`FirestoreValue`] |
+//! | Errors | [`errors`] |
+//!
+#![cfg_attr(
+    feature = "caching",
+    doc = "Caching is enabled in this build: see [`FirestoreCache`]."
+)]
+//!
+//! ## Cargo features
+//!
+//! | Feature | Effect |
+//! |---|---|
+//! | `tls-roots` (default) | TLS trust anchors from the platform's native root store |
+//! | `tls-webpki-roots` | TLS trust anchors bundled from the `webpki-roots` crate instead |
+//! | `caching-memory` | In-memory collection and document cache, kept current by a listener |
+//! | `caching-persistent` | The same cache backed by an on-disk database |
+//!
+//! Runnable examples for every topic:
+//! <https://github.com/abdolence/firestore-rs/tree/master/examples>
 
 #![allow(clippy::new_without_default)]
 #![allow(clippy::needless_lifetimes)]
@@ -140,46 +111,25 @@ pub mod errors;
 
 mod firestore_value;
 
-/// Re-exports all public items from the `firestore_value` module.
-///
-/// The `firestore_value` module provides representations and utilities for
-/// working with Firestore's native data types (e.g., `Map`, `Array`, `Timestamp`).
 pub use firestore_value::*;
 
 mod db;
 
-/// Re-exports all public items from the `db` module.
-///
-/// The `db` module contains the core [`FirestoreDb`] client and
-/// functionalities for interacting with the Firestore database, such as CRUD operations,
-/// queries, and transactions.
 pub use db::*;
 
 mod firestore_serde;
 
-/// Re-exports all public items from the `firestore_serde` module.
-///
-/// This module provides custom Serde serializers and deserializers for converting
-/// Rust types to and from Firestore's data format. It enables seamless integration
-/// of user-defined structs with Firestore.
 pub use firestore_serde::*;
 
 mod struct_path_macro;
 
-/// Re-exports macros for creating type-safe paths to struct fields.
-///
-/// These macros, like `path!` and `paths!`, are used to refer to document fields
-/// in a way that can be checked at compile time, reducing runtime errors when
-/// specifying fields for queries, updates, or projections.
-/// The `#[allow(unused_imports)]` is present because these are macro re-exports
-/// and their usage pattern might trigger the lint incorrectly.
 #[allow(unused_imports)]
 pub use struct_path_macro::*;
 
 /// Re-export of the [`macro@async_trait`] macro.
 ///
-/// It is needed to implement the public async traits of this crate - such as
-/// [`FirestoreResumeStateStorage`] and [`FirestoreCacheBackend`] - without having to depend on
+/// It is needed to implement the public async traits of this crate, such as
+/// [`FirestoreResumeStateStorage`] and the cache backend traits, without having to depend on
 /// `async-trait` directly.
 pub use async_trait::async_trait;
 
@@ -279,48 +229,27 @@ pub type FirestoreListenerTargetChangeType =
 
 mod firestore_meta;
 
-/// Re-exports all public items from the `firestore_meta` module.
-///
-/// This module provides metadata associated with Firestore documents, such as
-/// `create_time`, `update_time`, and `read_time`. These are often included
-/// in responses from Firestore.
 pub use firestore_meta::*;
 
 mod firestore_document_functions;
 
-/// Re-exports helper functions for working with [`FirestoreDocument`]s.
-///
-/// These functions provide conveniences for extracting data or metadata
-/// from raw Firestore documents.
 pub use firestore_document_functions::*;
 
 mod fluent_api;
 
-/// Re-exports all public items from the `fluent_api` module.
-///
-/// This module provides a high-level, fluent interface for building and executing
-/// Firestore operations (select, insert, update, delete, list). It aims to make
-/// common database interactions more ergonomic and type-safe.
 pub use fluent_api::*;
 
-/// Re-exports the `struct_path` crate.
+/// The crate backing [`path!`] and [`paths!`].
 ///
-/// The `struct_path` crate is a dependency that provides the core functionality
-/// for the `path!` and `paths!` macros used for type-safe field path generation.
+/// Re-exported because those macros expand to paths into it, so a caller cannot use them
+/// without it being in scope.
 pub extern crate struct_path;
 
 #[cfg(feature = "caching")]
-/// Provides caching capabilities for Firestore operations.
-///
-/// This module is only available if the `caching` feature is enabled.
-/// It allows for caching Firestore documents and query results to reduce latency
-/// and read costs.
 mod cache;
 
 #[cfg(feature = "caching")]
-/// Re-exports all public items from the `cache` module.
-///
-/// This is only available if the `caching` feature is enabled.
-/// It includes types like [`FirestoreCache`] and various
-/// caching backends and configurations.
 pub use cache::*;
+
+#[cfg(doctest)]
+mod book;
