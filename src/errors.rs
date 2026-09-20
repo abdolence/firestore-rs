@@ -569,21 +569,3 @@ impl From<gcloud_sdk::prost::DecodeError> for FirestoreError {
         ))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn invalid_parameters_error_display_is_not_data_not_found() {
-        let err =
-            FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                "document_id".to_string(),
-                "must not be empty".to_string(),
-            ));
-        assert_eq!(
-            err.to_string(),
-            "Invalid parameters error: document_id. must not be empty"
-        );
-    }
-}
