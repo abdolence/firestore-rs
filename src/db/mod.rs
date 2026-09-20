@@ -2,46 +2,34 @@
 // often seen in builder patterns or comprehensive configuration methods.
 #![allow(clippy::too_many_arguments)]
 
-/// Module for validated document and collection ID newtypes.
 mod path_ids;
 pub use path_ids::*;
 
-/// Module for document retrieval operations (get).
 mod get;
 
-/// Module for document creation operations.
 mod create;
 
-/// Module for document update operations.
 mod update;
 
-/// Module for document deletion operations.
 mod delete;
 
-/// Module defining models used in queries (filters, orders, etc.).
 mod query_models;
 pub use query_models::*;
 
-/// Module defining models for preconditions (e.g., last update time).
 mod precondition_models;
 pub use precondition_models::*;
 
-/// Module for query execution.
 mod query;
 
-/// Module for aggregated query execution.
 mod aggregated_query;
 pub use aggregated_query::*;
 
-/// Module for listing documents or collections.
 mod list;
 pub use list::*;
 
-/// Module for listening to real-time document changes.
 mod listen_changes;
 pub use listen_changes::*;
 
-/// Module for storing the state of listen operations (e.g., resume tokens).
 mod listen_changes_state_storage;
 pub use listen_changes_state_storage::*;
 
@@ -53,52 +41,39 @@ use gcloud_sdk::*;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
-/// Module for database client options and configuration.
 mod options;
 pub use options::*;
 
-/// Module for Firestore transactions.
 mod transaction;
 pub use transaction::*;
 
-/// Module defining models related to transactions.
 mod transaction_models;
 pub use transaction_models::*;
 
-/// Internal module for transaction operations.
-/// Crate-private low-level support traits that the fluent API is built on.
-/// See `support.rs` for why they are `pub trait` inside a private module.
 mod support;
 pub(crate) use support::*;
 
 mod transaction_ops;
 use transaction_ops::*;
 
-/// Module for session-specific parameters (e.g., consistency, caching).
 mod session_params;
 pub use session_params::*;
 
-/// Module for defining read consistency (e.g., read_time, transaction_id).
 mod consistency_selector;
 pub use consistency_selector::*;
 
-/// Module for per-request options (e.g., request tags).
 mod request_options;
 pub use request_options::*;
 
-/// Module for building parent paths for sub-collections.
 mod parent_path_builder;
 pub use parent_path_builder::*;
 
-/// Module for batch writing operations.
 mod batch_writer;
 pub use batch_writer::*;
 
-/// Module for streaming batch write operations.
 mod batch_streaming_writer;
 pub use batch_streaming_writer::*;
 
-/// Module for simple (non-streaming) batch write operations.
 mod batch_simple_writer;
 pub use batch_simple_writer::*;
 
@@ -108,7 +83,6 @@ use crate::errors::{
 use std::fmt::Formatter;
 use std::sync::Arc;
 
-/// Module defining models for document transformations (e.g., server-side increments).
 mod transform_models;
 pub use transform_models::*;
 
@@ -165,9 +139,6 @@ impl FirestoreDb {
     /// This is a convenience method that uses default [`FirestoreDbOptions`].
     /// For more control over configuration, use [`FirestoreDb::with_options`].
     ///
-    /// # Arguments
-    /// * `google_project_id`: The Google Cloud Project ID that owns the Firestore database.
-    ///
     /// # Example
     /// ```rust,no_run
     /// use firestore::*; // Imports FirestoreDb, FirestoreResult, etc.
@@ -193,9 +164,6 @@ impl FirestoreDb {
     /// This method allows for detailed configuration of the Firestore client,
     /// such as setting a custom database ID or API URL.
     /// It uses default token scopes and token source.
-    ///
-    /// # Arguments
-    /// * `options`: The [`FirestoreDbOptions`] to configure the client.
     pub async fn with_options(options: FirestoreDbOptions) -> FirestoreResult<Self> {
         Self::with_options_token_source(
             options,
@@ -224,12 +192,8 @@ impl FirestoreDb {
         }
     }
 
-    /// Creates a new `FirestoreDb` instance with specified options and a service account key file
-    /// for authentication.
-    ///
-    /// # Arguments
-    /// * `options`: The [`FirestoreDbOptions`] to configure the client.
-    /// * `service_account_key_path`: Path to the JSON service account key file.
+    /// Creates a new `FirestoreDb` instance with the given options, authenticating with the
+    /// service account key file at `service_account_key_path`.
     pub async fn with_options_service_account_key_file(
         options: FirestoreDbOptions,
         service_account_key_path: std::path::PathBuf,
@@ -246,13 +210,9 @@ impl FirestoreDb {
     /// and token source type.
     ///
     /// This is the most flexible constructor, allowing customization of authentication
-    /// and authorization aspects.
-    ///
-    /// # Arguments
-    /// * `options`: The [`FirestoreDbOptions`] to configure the client.
-    /// * `token_scopes`: A list of OAuth2 scopes required for Firestore access.
-    /// * `token_source_type`: The [`TokenSourceType`](gcloud_sdk::TokenSourceType)
-    ///   specifying how to obtain authentication tokens (e.g., default, file, metadata server).
+    /// and authorization aspects: `token_scopes` are the OAuth2 scopes to request, and
+    /// `token_source_type` is how to obtain the token (default, a key file, or a metadata
+    /// server).
     pub async fn with_options_token_source(
         options: FirestoreDbOptions,
         token_scopes: Vec<String>,
@@ -319,12 +279,6 @@ impl FirestoreDb {
     /// This function uses the custom Serde deserializer provided by this crate
     /// to map Firestore's native data types to Rust structs.
     ///
-    /// # Arguments
-    /// * `doc`: A reference to the Firestore [`Document`] to deserialize.
-    ///
-    /// # Type Parameters
-    /// * `T`: The target Rust type that implements `serde::Deserialize`.
-    ///
     /// # Errors
     /// Returns a [`FirestoreError::DeserializeError`] if deserialization fails.
     pub fn deserialize_doc_to<T>(doc: &Document) -> FirestoreResult<T>
@@ -334,19 +288,11 @@ impl FirestoreDb {
         crate::firestore_serde::firestore_document_to_serializable(doc)
     }
 
-    /// Serializes a Rust type `T` into a Firestore [`Document`].
+    /// Serializes a Rust type `T` into a Firestore [`Document`], setting the document's `name`
+    /// field to `document_path`.
     ///
     /// This function uses the custom Serde serializer to convert Rust structs
     /// into Firestore's native data format.
-    ///
-    /// # Arguments
-    /// * `document_path`: The full path to the document (e.g., "projects/my-project/databases/(default)/documents/my-collection/my-doc").
-    ///   This is used to set the `name` field of the resulting Firestore document.
-    /// * `obj`: A reference to the Rust object to serialize.
-    ///
-    /// # Type Parameters
-    /// * `S`: A type that can be converted into a string for the document path.
-    /// * `T`: The source Rust type that implements `serde::Serialize`.
     ///
     /// # Errors
     /// Returns a [`FirestoreError::SerializeError`] if serialization fails.
@@ -358,20 +304,11 @@ impl FirestoreDb {
         crate::firestore_serde::firestore_document_from_serializable(document_path, obj)
     }
 
-    /// Serializes a map of field names to [`FirestoreValue`]s into a Firestore [`Document`].
+    /// Serializes an iterator of field name/[`FirestoreValue`] pairs into a Firestore
+    /// [`Document`] at `document_path`.
     ///
-    /// This is useful for constructing documents dynamically or when working with
-    /// partially structured data.
-    ///
-    /// # Arguments
-    /// * `document_path`: The full path to the document.
-    /// * `fields`: An iterator yielding pairs of field names (as strings) and their
-    ///   corresponding [`FirestoreValue`]s.
-    ///
-    /// # Type Parameters
-    /// * `S`: A type that can be converted into a string for the document path.
-    /// * `I`: An iterator type for the fields.
-    /// * `IS`: A type that can be converted into a string for field names.
+    /// Use this for constructing documents dynamically or when working with
+    /// partially structured data, rather than a typed `T`.
     ///
     /// # Errors
     /// Returns a [`FirestoreError::SerializeError`] if serialization fails.
@@ -429,12 +366,8 @@ impl FirestoreDb {
         &self.inner.doc_path
     }
 
-    /// Constructs a [`ParentPathBuilder`] for creating paths to sub-collections
-    /// under a specified document.
-    ///
-    /// # Arguments
-    /// * `collection_name`: The name of the collection containing the parent document.
-    /// * `document_id`: The ID of the parent document.
+    /// Constructs a [`ParentPathBuilder`] for the path to `document_id` in `collection_name`, for
+    /// building paths to its sub-collections.
     ///
     /// # Errors
     /// Returns [`FirestoreError::InvalidParametersError`] if the `document_id` is invalid.
@@ -505,9 +438,6 @@ impl FirestoreDb {
     /// This is useful for creating a new client instance that shares the same
     /// underlying connection and configuration but has different session-level
     /// settings (e.g., for a specific transaction or consistency requirement).
-    ///
-    /// # Arguments
-    /// * `session_params`: The new [`FirestoreDbSessionParams`] to use.
     #[inline]
     pub fn clone_with_session_params(&self, session_params: FirestoreDbSessionParams) -> Self {
         Self {
@@ -520,9 +450,6 @@ impl FirestoreDb {
     ///
     /// Similar to [`clone_with_session_params`](FirestoreDb::clone_with_session_params)
     /// but takes ownership of `self`.
-    ///
-    /// # Arguments
-    /// * `session_params`: The new [`FirestoreDbSessionParams`] to use.
     #[inline]
     pub fn with_session_params(self, session_params: FirestoreDbSessionParams) -> Self {
         Self {
@@ -535,9 +462,6 @@ impl FirestoreDb {
     ///
     /// This creates a new `FirestoreDb` instance configured to use the provided
     /// [`FirestoreConsistencySelector`] for subsequent operations.
-    ///
-    /// # Arguments
-    /// * `consistency_selector`: The consistency mode to apply (e.g., read at a specific time).
     #[inline]
     pub fn clone_with_consistency_selector(
         &self,
@@ -554,9 +478,6 @@ impl FirestoreDb {
     ///
     /// Every request issued through the returned instance carries these options,
     /// unless an operation overrides them explicitly.
-    ///
-    /// # Arguments
-    /// * `request_options`: The [`FirestoreRequestOptions`] to apply by default.
     #[inline]
     pub fn clone_with_request_options(&self, request_options: FirestoreRequestOptions) -> Self {
         let existing_session_params = (*self.session_params).clone();
@@ -572,9 +493,6 @@ impl FirestoreDb {
     /// [`clone_with_request_options`](FirestoreDb::clone_with_request_options).
     /// This is also the way to attach request tags to the CRUD operations
     /// (get/create/update/delete), which have no per operation options.
-    ///
-    /// # Arguments
-    /// * `request_tags`: An iterator of tags to attach to every request.
     ///
     /// # Examples
     ///
@@ -597,9 +515,6 @@ impl FirestoreDb {
 
     /// Consumes the `FirestoreDb` instance and returns a new one with default
     /// request options.
-    ///
-    /// # Arguments
-    /// * `request_options`: The [`FirestoreRequestOptions`] to apply by default.
     #[inline]
     pub fn with_request_options(self, request_options: FirestoreRequestOptions) -> Self {
         let session_params = (*self.session_params)
@@ -614,9 +529,6 @@ impl FirestoreDb {
     ///
     /// A convenience shortcut for
     /// [`with_request_options`](FirestoreDb::with_request_options).
-    ///
-    /// # Arguments
-    /// * `request_tags`: An iterator of tags to attach to every request.
     #[inline]
     pub fn with_request_tags<I>(self, request_tags: I) -> Self
     where
@@ -629,9 +541,6 @@ impl FirestoreDb {
     /// Clones the `FirestoreDb` instance with a specific cache mode.
     ///
     /// This method is only available if the `caching` feature is enabled.
-    ///
-    /// # Arguments
-    /// * `cache_mode`: The [`FirestoreDbSessionCacheMode`] to apply.
     #[cfg(feature = "caching")]
     pub fn with_cache(&self, cache_mode: crate::FirestoreDbSessionCacheMode) -> Self {
         let existing_session_params = (*self.session_params).clone();
@@ -654,9 +563,6 @@ impl FirestoreDb {
     /// that means in practice.
     ///
     /// This method is only available if the `caching` feature is enabled.
-    ///
-    /// # Arguments
-    /// * `cache`: A reference to the [`FirestoreCache`](crate::FirestoreCache) to use.
     #[cfg(feature = "caching")]
     pub fn read_through_cache<B, LS>(&self, cache: &FirestoreCache<B, LS>) -> Self
     where
@@ -682,9 +588,6 @@ impl FirestoreDb {
     /// if partial results are genuinely acceptable for your use case.
     ///
     /// This method is only available if the `caching` feature is enabled.
-    ///
-    /// # Arguments
-    /// * `cache`: A reference to the [`FirestoreCache`](crate::FirestoreCache) to use.
     #[cfg(feature = "caching")]
     pub fn read_cached_only<B, LS>(&self, cache: &FirestoreCache<B, LS>) -> Self
     where
