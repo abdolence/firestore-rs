@@ -54,18 +54,73 @@ Cargo.toml:
 firestore = "0.54"
 ```
 
-```rust
+```rust,no_run
 use firestore::*;
+use serde::{Deserialize, Serialize};
 
-let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {
+    some_id: String,
+    some_string: String,
+    some_num: u64,
+}
 
-let object_returned: MyTestStructure = db.fluent()
-  .insert()
-  .into("test")
-  .document_id(&my_struct.some_id)
-  .object(&my_struct)
-  .execute()
-  .await?;
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let db = FirestoreDb::new("my-project-id").await?;
+
+    const TEST_COLLECTION_NAME: &str = "test";
+
+    let my_struct = MyTestStructure {
+        some_id: "test-1".to_string(),
+        some_string: "Test".to_string(),
+        some_num: 42,
+    };
+
+    // Create
+    let object_returned: MyTestStructure = db.fluent()
+        .insert()
+        .into(TEST_COLLECTION_NAME)
+        .document_id(&my_struct.some_id)
+        .object(&my_struct)
+        .execute()
+        .await?;
+
+    // Update or create
+    // (Firestore supports creating documents with update if you provide the document ID).
+    let object_updated: MyTestStructure = db.fluent()
+        .update()
+        .fields(paths!(MyTestStructure::{some_num, some_string}))
+        .in_col(TEST_COLLECTION_NAME)
+        .document_id(&my_struct.some_id)
+        .object(&MyTestStructure {
+            some_num: my_struct.some_num + 1,
+            some_string: "updated-value".to_string(),
+            ..my_struct.clone()
+        })
+        .execute()
+        .await?;
+
+    // Get object by id
+    let find_it_again: Option<MyTestStructure> = db.fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .one(&my_struct.some_id)
+        .await?;
+
+    // Delete data
+    db.fluent()
+        .delete()
+        .from(TEST_COLLECTION_NAME)
+        .document_id(&my_struct.some_id)
+        .execute()
+        .await?;
+
+    println!("{object_returned:?} {object_updated:?} {find_it_again:?}");
+
+    Ok(())
+}
 ```
 
 If you see `no process-level CryptoProvider available`, see
@@ -77,7 +132,7 @@ All examples available in the [examples](examples) directory.
 
 To run an example with environment variables:
 
-```
+```bash
 PROJECT_ID=<your-google-project-id> cargo run --example crud
 ```
 
