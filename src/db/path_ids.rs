@@ -9,7 +9,7 @@ use crate::errors::{
 };
 use crate::FirestoreResult;
 use serde::{Deserialize, Serialize, Serializer};
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
@@ -39,6 +39,54 @@ fn path_segment_error(field: &str, error: String) -> FirestoreError {
     ))
 }
 
+/// The one rule a path segment fails, if any.
+///
+/// This is the single source of truth for what makes a Firestore path segment valid, shared by
+/// the runtime path ([`validate_path_segment`], which turns a violation into an error message)
+/// and the compile-time path (`from_static` on both ID types, which turns one into a `panic!` that
+/// aborts `const` evaluation). Add or change a rule here, not in either caller.
+enum PathSegmentViolation {
+    Empty,
+    TooLong { len: usize },
+    ContainsSlash,
+    DotOrDotDot,
+}
+
+/// Checks `segment` against Firestore's ID rules without allocating.
+///
+/// `str::contains` and `str::eq` are not `const fn`, so this cannot reuse the ordinary string
+/// methods and instead walks `segment.as_bytes()` by hand. That byte loop is what lets
+/// `from_static` run at compile time; do not replace it with the `str`-method equivalent even
+/// though it reads simpler; doing so would stop `from_static` from being a `const fn`.
+const fn check_path_segment(segment: &str) -> Option<PathSegmentViolation> {
+    let bytes = segment.as_bytes();
+    let len = bytes.len();
+
+    if len == 0 {
+        return Some(PathSegmentViolation::Empty);
+    }
+
+    // Checked before the '/' and '.'/'..' checks below so that every other rule sees a value
+    // already bounded to 1500 bytes.
+    if len > 1500 {
+        return Some(PathSegmentViolation::TooLong { len });
+    }
+
+    let mut i = 0;
+    while i < len {
+        if bytes[i] == b'/' {
+            return Some(PathSegmentViolation::ContainsSlash);
+        }
+        i += 1;
+    }
+
+    if (len == 1 && bytes[0] == b'.') || (len == 2 && bytes[0] == b'.' && bytes[1] == b'.') {
+        return Some(PathSegmentViolation::DotOrDotDot);
+    }
+
+    None
+}
+
 /// Validates a single Firestore path segment (a document ID or a collection ID).
 ///
 /// UTF-8 validity needs no check of its own — `segment: &str` is UTF-8 by construction. The
@@ -49,39 +97,30 @@ pub(crate) fn validate_path_segment(
 ) -> FirestoreResult<()> {
     let field = kind.field_name();
 
-    if segment.is_empty() {
-        return Err(path_segment_error(field, "must not be empty".to_string()));
-    }
-
-    // This runs before the '/' and '.'/'..' checks below so that every value reaching those
-    // messages is already bounded to 1500 bytes; only this message must avoid echoing the value,
-    // since it is the one case where the value itself can be unbounded.
-    if segment.len() > 1500 {
-        return Err(path_segment_error(
+    match check_path_segment(segment) {
+        None => Ok(()),
+        Some(PathSegmentViolation::Empty) => {
+            Err(path_segment_error(field, "must not be empty".to_string()))
+        }
+        // The value itself is unbounded here, unlike every other violation below, so this
+        // message reports the length rather than echoing it.
+        Some(PathSegmentViolation::TooLong { len }) => Err(path_segment_error(
             field,
-            format!("must be at most 1500 bytes, was {} bytes", segment.len()),
-        ));
-    }
-
-    if segment.contains('/') {
-        return Err(path_segment_error(
+            format!("must be at most 1500 bytes, was {len} bytes"),
+        )),
+        Some(PathSegmentViolation::ContainsSlash) => Err(path_segment_error(
             field,
             format!(
                 "must not contain '/': \"{}\" - a slash-delimited path such as \"users/123/posts\" is not a single ID; \
                  build it with `.parent(db.parent_path(\"users\", \"123\")?)` and pass \"posts\" as the {field}",
                 segment.escape_debug(),
             ),
-        ));
-    }
-
-    if segment == "." || segment == ".." {
-        return Err(path_segment_error(
+        )),
+        Some(PathSegmentViolation::DotOrDotDot) => Err(path_segment_error(
             field,
             format!("must not be \".\" or \"..\", got \"{segment}\""),
-        ));
+        )),
     }
-
-    Ok(())
 }
 
 /// A Firestore document ID that has been checked against Firestore's ID rules.
@@ -168,7 +207,7 @@ pub(crate) fn validate_path_segment(
 /// [`FirestoreCollectionId::new`] on purpose.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize)]
 #[serde(try_from = "String")]
-pub struct FirestoreDocumentId(String);
+pub struct FirestoreDocumentId(Cow<'static, str>);
 
 impl FirestoreDocumentId {
     /// Validates `id` and wraps it.
@@ -179,7 +218,7 @@ impl FirestoreDocumentId {
     pub fn new<S: Into<String>>(id: S) -> FirestoreResult<Self> {
         let id = id.into();
         validate_path_segment(&id, FirestorePathSegmentKind::DocumentId)?;
-        Ok(Self(id))
+        Ok(Self(Cow::Owned(id)))
     }
 
     /// Validates `id` without allocating or constructing a value.
@@ -204,16 +243,60 @@ impl FirestoreDocumentId {
         validate_path_segment(&self.0, FirestorePathSegmentKind::DocumentId)
     }
 
+    /// Validates `id` at compile time and wraps it without allocating, for a name known up front.
+    ///
+    /// Declare validated names the way you would declare `const NAME: &str = "..."` today:
+    ///
+    /// ```rust
+    /// use firestore::FirestoreDocumentId;
+    ///
+    /// const WELCOME_DOC: FirestoreDocumentId = FirestoreDocumentId::from_static("welcome");
+    /// assert_eq!(WELCOME_DOC.as_str(), "welcome");
+    /// ```
+    ///
+    /// Used in a `const` or `static` item, an invalid literal is a compile error: evaluating the
+    /// item panics, which `rustc` reports at the definition site rather than letting the invalid
+    /// value reach a binary. Called from inside a function body, where the result is only a
+    /// runtime value, the same invalid literal panics instead, exactly like an out-of-bounds
+    /// `const fn` array index would.
+    ///
+    /// ```compile_fail
+    /// use firestore::FirestoreDocumentId;
+    /// const BAD: FirestoreDocumentId = FirestoreDocumentId::from_static("a/b");
+    /// ```
+    ///
+    /// # Panics
+    /// Panics if `id` is empty, longer than 1500 bytes, contains `/`, or is exactly `"."` or
+    /// `".."`, and the call is not evaluated at compile time.
+    pub const fn from_static(id: &'static str) -> Self {
+        match check_path_segment(id) {
+            None => Self(Cow::Borrowed(id)),
+            Some(PathSegmentViolation::Empty) => {
+                panic!("Firestore document id must not be empty")
+            }
+            Some(PathSegmentViolation::TooLong { .. }) => {
+                panic!("Firestore document id must be at most 1500 bytes")
+            }
+            Some(PathSegmentViolation::ContainsSlash) => {
+                panic!("Firestore document id must not contain '/'")
+            }
+            Some(PathSegmentViolation::DotOrDotDot) => {
+                panic!("Firestore document id must not be \".\" or \"..\"")
+            }
+        }
+    }
+
     /// Returns the wrapped ID.
     ///
-    /// There is no consuming equivalent that returns an owned `String` (see the
-    /// [`FirestoreDocumentId`] type docs for why). Use `id.as_str().to_string()` when an owned
-    /// copy is genuinely needed.
-    pub fn value(&self) -> &String {
+    /// Equivalent to [`as_str`](Self::as_str); kept as a separate method so a validated ID reads
+    /// the same as [`rvstruct::ValueStruct::value`] elsewhere in this crate's API. There is no
+    /// consuming equivalent that returns an owned `String` (see the [`FirestoreDocumentId`] type
+    /// docs for why). Use `id.as_str().to_string()` when an owned copy is genuinely needed.
+    pub fn value(&self) -> &str {
         &self.0
     }
 
-    /// Returns the wrapped ID as a `&str`.
+    /// Returns the wrapped ID as a `&str`. Equivalent to [`value`](Self::value).
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -233,7 +316,7 @@ impl Borrow<str> for FirestoreDocumentId {
 
 impl Display for FirestoreDocumentId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(&self.0, f)
+        Display::fmt(self.0.as_ref(), f)
     }
 }
 
@@ -263,37 +346,37 @@ impl FromStr for FirestoreDocumentId {
 
 impl PartialEq<str> for FirestoreDocumentId {
     fn eq(&self, other: &str) -> bool {
-        self.0 == other
+        self.0.as_ref() == other
     }
 }
 
 impl PartialEq<FirestoreDocumentId> for str {
     fn eq(&self, other: &FirestoreDocumentId) -> bool {
-        self == other.0
+        self == other.0.as_ref()
     }
 }
 
 impl PartialEq<&str> for FirestoreDocumentId {
     fn eq(&self, other: &&str) -> bool {
-        self.0 == *other
+        self.0.as_ref() == *other
     }
 }
 
 impl PartialEq<FirestoreDocumentId> for &str {
     fn eq(&self, other: &FirestoreDocumentId) -> bool {
-        *self == other.0
+        *self == other.0.as_ref()
     }
 }
 
 impl PartialEq<String> for FirestoreDocumentId {
     fn eq(&self, other: &String) -> bool {
-        &self.0 == other
+        self.0.as_ref() == other.as_str()
     }
 }
 
 impl PartialEq<FirestoreDocumentId> for String {
     fn eq(&self, other: &FirestoreDocumentId) -> bool {
-        self == &other.0
+        self.as_str() == other.0.as_ref()
     }
 }
 
@@ -302,7 +385,7 @@ impl Serialize for FirestoreDocumentId {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&self.0)
+        serializer.serialize_str(self.0.as_ref())
     }
 }
 
@@ -360,7 +443,7 @@ impl Serialize for FirestoreDocumentId {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize)]
 #[serde(try_from = "String")]
-pub struct FirestoreCollectionId(String);
+pub struct FirestoreCollectionId(Cow<'static, str>);
 
 impl FirestoreCollectionId {
     /// Validates `id` and wraps it.
@@ -371,7 +454,7 @@ impl FirestoreCollectionId {
     pub fn new<S: Into<String>>(id: S) -> FirestoreResult<Self> {
         let id = id.into();
         validate_path_segment(&id, FirestorePathSegmentKind::CollectionId)?;
-        Ok(Self(id))
+        Ok(Self(Cow::Owned(id)))
     }
 
     /// Validates `id` without allocating or constructing a value.
@@ -394,16 +477,60 @@ impl FirestoreCollectionId {
         validate_path_segment(&self.0, FirestorePathSegmentKind::CollectionId)
     }
 
+    /// Validates `id` at compile time and wraps it without allocating, for a name known up front.
+    ///
+    /// Declare validated names the way you would declare `const NAME: &str = "..."` today:
+    ///
+    /// ```rust
+    /// use firestore::FirestoreCollectionId;
+    ///
+    /// const USERS: FirestoreCollectionId = FirestoreCollectionId::from_static("users");
+    /// assert_eq!(USERS.as_str(), "users");
+    /// ```
+    ///
+    /// Used in a `const` or `static` item, an invalid literal is a compile error: evaluating the
+    /// item panics, which `rustc` reports at the definition site rather than letting the invalid
+    /// value reach a binary. Called from inside a function body, where the result is only a
+    /// runtime value, the same invalid literal panics instead, exactly like an out-of-bounds
+    /// `const fn` array index would.
+    ///
+    /// ```compile_fail
+    /// use firestore::FirestoreCollectionId;
+    /// const BAD: FirestoreCollectionId = FirestoreCollectionId::from_static("a/b");
+    /// ```
+    ///
+    /// # Panics
+    /// Panics if `id` is empty, longer than 1500 bytes, contains `/`, or is exactly `"."` or
+    /// `".."`, and the call is not evaluated at compile time.
+    pub const fn from_static(id: &'static str) -> Self {
+        match check_path_segment(id) {
+            None => Self(Cow::Borrowed(id)),
+            Some(PathSegmentViolation::Empty) => {
+                panic!("Firestore collection id must not be empty")
+            }
+            Some(PathSegmentViolation::TooLong { .. }) => {
+                panic!("Firestore collection id must be at most 1500 bytes")
+            }
+            Some(PathSegmentViolation::ContainsSlash) => {
+                panic!("Firestore collection id must not contain '/'")
+            }
+            Some(PathSegmentViolation::DotOrDotDot) => {
+                panic!("Firestore collection id must not be \".\" or \"..\"")
+            }
+        }
+    }
+
     /// Returns the wrapped ID.
     ///
-    /// There is no consuming equivalent that returns an owned `String` (see the
-    /// [`FirestoreDocumentId`] type docs for why). Use `id.as_str().to_string()` when an owned
-    /// copy is genuinely needed.
-    pub fn value(&self) -> &String {
+    /// Equivalent to [`as_str`](Self::as_str); kept as a separate method so a validated ID reads
+    /// the same as [`rvstruct::ValueStruct::value`] elsewhere in this crate's API. There is no
+    /// consuming equivalent that returns an owned `String` (see the [`FirestoreDocumentId`] type
+    /// docs for why). Use `id.as_str().to_string()` when an owned copy is genuinely needed.
+    pub fn value(&self) -> &str {
         &self.0
     }
 
-    /// Returns the wrapped ID as a `&str`.
+    /// Returns the wrapped ID as a `&str`. Equivalent to [`value`](Self::value).
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -423,7 +550,7 @@ impl Borrow<str> for FirestoreCollectionId {
 
 impl Display for FirestoreCollectionId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(&self.0, f)
+        Display::fmt(self.0.as_ref(), f)
     }
 }
 
@@ -453,37 +580,37 @@ impl FromStr for FirestoreCollectionId {
 
 impl PartialEq<str> for FirestoreCollectionId {
     fn eq(&self, other: &str) -> bool {
-        self.0 == other
+        self.0.as_ref() == other
     }
 }
 
 impl PartialEq<FirestoreCollectionId> for str {
     fn eq(&self, other: &FirestoreCollectionId) -> bool {
-        self == other.0
+        self == other.0.as_ref()
     }
 }
 
 impl PartialEq<&str> for FirestoreCollectionId {
     fn eq(&self, other: &&str) -> bool {
-        self.0 == *other
+        self.0.as_ref() == *other
     }
 }
 
 impl PartialEq<FirestoreCollectionId> for &str {
     fn eq(&self, other: &FirestoreCollectionId) -> bool {
-        *self == other.0
+        *self == other.0.as_ref()
     }
 }
 
 impl PartialEq<String> for FirestoreCollectionId {
     fn eq(&self, other: &String) -> bool {
-        &self.0 == other
+        self.0.as_ref() == other.as_str()
     }
 }
 
 impl PartialEq<FirestoreCollectionId> for String {
     fn eq(&self, other: &FirestoreCollectionId) -> bool {
-        self == &other.0
+        self.as_str() == other.0.as_ref()
     }
 }
 
@@ -492,7 +619,7 @@ impl Serialize for FirestoreCollectionId {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&self.0)
+        serializer.serialize_str(self.0.as_ref())
     }
 }
 
@@ -588,11 +715,11 @@ mod tests {
     }
 
     #[test]
-    fn value_returns_reference_to_string() {
+    fn value_and_as_str_agree() {
         let id = FirestoreDocumentId::new("user-42").unwrap();
-        let v: &String = id.value();
+        let v: &str = id.value();
         assert_eq!(v, "user-42");
-        assert_eq!(id.as_str(), "user-42");
+        assert_eq!(id.value(), id.as_str());
     }
 
     #[test]
@@ -651,5 +778,52 @@ mod tests {
         let coll_id = FirestoreCollectionId::new("col-1").unwrap();
         takes(coll_id.clone());
         takes(&coll_id);
+    }
+
+    const CONST_DOC_ID: FirestoreDocumentId = FirestoreDocumentId::from_static("const-doc");
+    static STATIC_COLLECTION_ID: FirestoreCollectionId =
+        FirestoreCollectionId::from_static("static-collection");
+
+    #[test]
+    fn from_static_builds_const_and_static_items() {
+        assert_eq!(CONST_DOC_ID.as_str(), "const-doc");
+        assert_eq!(STATIC_COLLECTION_ID.as_str(), "static-collection");
+    }
+
+    #[test]
+    fn from_static_agrees_with_new_on_valid_input() {
+        let via_new = FirestoreDocumentId::new("const-doc").unwrap();
+        assert_eq!(CONST_DOC_ID, via_new);
+
+        let via_new = FirestoreCollectionId::new("static-collection").unwrap();
+        assert_eq!(STATIC_COLLECTION_ID, via_new);
+    }
+
+    #[test]
+    fn borrowed_and_owned_are_equal_and_hash_the_same() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let borrowed = FirestoreDocumentId::from_static("user-42");
+        let owned = FirestoreDocumentId::new("user-42").unwrap();
+        assert_eq!(borrowed, owned);
+
+        let hash_of = |id: &FirestoreDocumentId| {
+            let mut hasher = DefaultHasher::new();
+            id.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash_of(&borrowed), hash_of(&owned));
+    }
+
+    #[test]
+    fn hashmap_lookup_by_str_finds_a_from_static_key() {
+        use std::collections::HashMap;
+
+        const KEY: FirestoreCollectionId = FirestoreCollectionId::from_static("users");
+        let mut map: HashMap<FirestoreCollectionId, u32> = HashMap::new();
+        map.insert(KEY, 1);
+
+        assert_eq!(map.get("users"), Some(&1));
     }
 }

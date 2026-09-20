@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &str = "test";
+    const TEST_COLLECTION_NAME: FirestoreCollectionId = FirestoreCollectionId::from_static("test");
 
     // Stands in for a document ID arriving from outside the process, such as a request path segment.
     let id = FirestoreDocumentId::new("test-1")?;

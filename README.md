@@ -739,6 +739,14 @@ let id = FirestoreDocumentId::new("user-42")?;
 let collection = FirestoreCollectionId::new("users")?;
 ```
 
+A name known up front - the sort of thing you would today write as `const NAME: &str = "..."` -
+can be declared as a validated `const` or `static` with `from_static`. An invalid literal there is
+a compile error, not a runtime one:
+
+```rust
+const USERS: FirestoreCollectionId = FirestoreCollectionId::from_static("users");
+```
+
 Both implement `AsRef<str>`, so a reference drops straight into any call that already takes a
 document or collection ID or name, with no conversion:
 
