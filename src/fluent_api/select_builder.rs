@@ -205,6 +205,8 @@ where
     {
         let orders = order(FirestoreQueryOrderBuilder::new());
 
+        // An ordering whose entries were all conditional and all absent clears the field rather
+        // than storing an empty vec, so that "no ordering" has one representation everywhere.
         Self {
             params: self.params.opt_order_by(if orders.is_empty() {
                 None
