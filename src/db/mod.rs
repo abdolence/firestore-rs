@@ -729,9 +729,9 @@ pub(crate) fn safe_document_path<S>(
 where
     S: AsRef<str>,
 {
-    validate_path_segment(collection_id, FirestorePathSegmentKind::CollectionId)?;
+    validate_path_segment(collection_id, "collection_id")?;
     let document_id_ref = document_id.as_ref();
-    validate_path_segment(document_id_ref, FirestorePathSegmentKind::DocumentId)?;
+    validate_path_segment(document_id_ref, "document_id")?;
     Ok(format!("{parent}/{collection_id}/{document_id_ref}"))
 }
 

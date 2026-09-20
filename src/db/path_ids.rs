@@ -13,26 +13,6 @@ use std::borrow::{Borrow, Cow};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-/// Which Firestore path segment [`validate_path_segment`] is checking.
-///
-/// Firestore's documented limits (<https://firebase.google.com/docs/firestore/quotas>) are
-/// identical for document IDs and collection IDs; this only selects the `field` name reported in
-/// the resulting error.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum FirestorePathSegmentKind {
-    DocumentId,
-    CollectionId,
-}
-
-impl FirestorePathSegmentKind {
-    const fn field_name(self) -> &'static str {
-        match self {
-            FirestorePathSegmentKind::DocumentId => "document_id",
-            FirestorePathSegmentKind::CollectionId => "collection_id",
-        }
-    }
-}
-
 fn path_segment_error(field: &str, error: String) -> FirestoreError {
     FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
         FirestoreInvalidParametersPublicDetails::new(field.to_string(), error),
@@ -45,6 +25,7 @@ fn path_segment_error(field: &str, error: String) -> FirestoreError {
 /// the runtime path ([`validate_path_segment`], which turns a violation into an error message)
 /// and the compile-time path (`from_static` on both ID types, which turns one into a `panic!` that
 /// aborts `const` evaluation). Add or change a rule here, not in either caller.
+#[derive(Clone, Copy)]
 enum PathSegmentViolation {
     Empty,
     TooLong { len: usize },
@@ -53,30 +34,20 @@ enum PathSegmentViolation {
 }
 
 impl PathSegmentViolation {
-    /// The message `from_static` panics with.
+    /// The base rule phrase, shared by both callers below.
     ///
-    /// A plain literal, not the detailed message [`validate_path_segment`] builds: `Display::fmt`
-    /// is not a `const fn` on stable Rust, so there is no const-compatible way to interpolate the
-    /// segment or its length here the way the runtime path does. `panic!("{}", ...)` with a single
-    /// `&'static str` argument is const-evaluable even though general formatting is not, which is
-    /// what makes returning one from here workable inside a `const fn`.
-    const fn panic_message(self, kind: FirestorePathSegmentKind) -> &'static str {
-        use FirestorePathSegmentKind::{CollectionId, DocumentId};
-        match (kind, self) {
-            (DocumentId, Self::Empty) => "Firestore document id must not be empty",
-            (DocumentId, Self::TooLong { .. }) => {
-                "Firestore document id must be at most 1500 bytes"
-            }
-            (DocumentId, Self::ContainsSlash) => "Firestore document id must not contain '/'",
-            (DocumentId, Self::DotOrDotDot) => "Firestore document id must not be \".\" or \"..\"",
-            (CollectionId, Self::Empty) => "Firestore collection id must not be empty",
-            (CollectionId, Self::TooLong { .. }) => {
-                "Firestore collection id must be at most 1500 bytes"
-            }
-            (CollectionId, Self::ContainsSlash) => "Firestore collection id must not contain '/'",
-            (CollectionId, Self::DotOrDotDot) => {
-                "Firestore collection id must not be \".\" or \"..\""
-            }
+    /// [`validate_path_segment`] appends a field name and, for some rules, a dynamic detail on top
+    /// of this. `from_static`'s panic uses it bare: `Display::fmt` is not a `const fn` on stable
+    /// Rust, so there is no const-compatible way to interpolate a field name or a value into this
+    /// message, and `panic!("{}", ...)` with a single `&'static str` argument is the one form of
+    /// `panic!` that is const-evaluable. A failing `const` declaration already points `rustc` at
+    /// the offending line, so the missing field name costs nothing there.
+    const fn rule_message(self) -> &'static str {
+        match self {
+            Self::Empty => "must not be empty",
+            Self::TooLong { .. } => "must be at most 1500 bytes",
+            Self::ContainsSlash => "must not contain '/'",
+            Self::DotOrDotDot => "must not be \".\" or \"..\"",
         }
     }
 }
@@ -118,37 +89,34 @@ const fn check_path_segment(segment: &str) -> Result<(), PathSegmentViolation> {
 
 /// Validates a single Firestore path segment (a document ID or a collection ID).
 ///
+/// `field` is the name reported in the resulting error, `"document_id"` or `"collection_id"`.
 /// UTF-8 validity needs no check of its own — `segment: &str` is UTF-8 by construction. The
 /// reserved `__*__` namespace is deliberately not checked; see the module docs.
-pub(crate) fn validate_path_segment(
-    segment: &str,
-    kind: FirestorePathSegmentKind,
-) -> FirestoreResult<()> {
-    let field = kind.field_name();
+pub(crate) fn validate_path_segment(segment: &str, field: &'static str) -> FirestoreResult<()> {
+    let violation = match check_path_segment(segment) {
+        Ok(()) => return Ok(()),
+        Err(violation) => violation,
+    };
+    let rule = violation.rule_message();
 
-    match check_path_segment(segment) {
-        Ok(()) => Ok(()),
-        Err(PathSegmentViolation::Empty) => {
-            Err(path_segment_error(field, "must not be empty".to_string()))
-        }
+    match violation {
+        PathSegmentViolation::Empty => Err(path_segment_error(field, rule.to_string())),
         // The value itself is unbounded here, unlike every other violation below, so this
         // message reports the length rather than echoing it.
-        Err(PathSegmentViolation::TooLong { len }) => Err(path_segment_error(
-            field,
-            format!("must be at most 1500 bytes, was {len} bytes"),
-        )),
-        Err(PathSegmentViolation::ContainsSlash) => Err(path_segment_error(
+        PathSegmentViolation::TooLong { len } => {
+            Err(path_segment_error(field, format!("{rule}, was {len} bytes")))
+        }
+        PathSegmentViolation::ContainsSlash => Err(path_segment_error(
             field,
             format!(
-                "must not contain '/': \"{}\" - a slash-delimited path such as \"users/123/posts\" is not a single ID; \
+                "{rule}: \"{}\" - a slash-delimited path such as \"users/123/posts\" is not a single ID; \
                  build it with `.parent(db.parent_path(\"users\", \"123\")?)` and pass \"posts\" as the {field}",
                 segment.escape_debug(),
             ),
         )),
-        Err(PathSegmentViolation::DotOrDotDot) => Err(path_segment_error(
-            field,
-            format!("must not be \".\" or \"..\", got \"{segment}\""),
-        )),
+        PathSegmentViolation::DotOrDotDot => {
+            Err(path_segment_error(field, format!("{rule}, got \"{segment}\"")))
+        }
     }
 }
 
@@ -246,7 +214,7 @@ impl FirestoreDocumentId {
     /// bytes, contains `/`, or is exactly `"."` or `".."`.
     pub fn new<S: Into<String>>(id: S) -> FirestoreResult<Self> {
         let id = id.into();
-        validate_path_segment(&id, FirestorePathSegmentKind::DocumentId)?;
+        validate_path_segment(&id, "document_id")?;
         Ok(Self(Cow::Owned(id)))
     }
 
@@ -257,7 +225,7 @@ impl FirestoreDocumentId {
     /// # Errors
     /// Same conditions as [`FirestoreDocumentId::new`].
     pub fn validate_str(id: &str) -> FirestoreResult<()> {
-        validate_path_segment(id, FirestorePathSegmentKind::DocumentId)
+        validate_path_segment(id, "document_id")
     }
 
     /// Re-validates an already-constructed ID.
@@ -269,7 +237,7 @@ impl FirestoreDocumentId {
     /// # Errors
     /// Never fails; returns `FirestoreResult<()>` for symmetry with [`FirestoreDocumentId::validate_str`].
     pub fn validate(&self) -> FirestoreResult<()> {
-        validate_path_segment(&self.0, FirestorePathSegmentKind::DocumentId)
+        validate_path_segment(&self.0, "document_id")
     }
 
     /// Validates `id` at compile time and wraps it without allocating, for a name known up front.
@@ -300,12 +268,7 @@ impl FirestoreDocumentId {
     pub const fn from_static(id: &'static str) -> Self {
         match check_path_segment(id) {
             Ok(()) => Self(Cow::Borrowed(id)),
-            Err(violation) => {
-                panic!(
-                    "{}",
-                    violation.panic_message(FirestorePathSegmentKind::DocumentId)
-                )
-            }
+            Err(violation) => panic!("{}", violation.rule_message()),
         }
     }
 
@@ -476,7 +439,7 @@ impl FirestoreCollectionId {
     /// bytes, contains `/`, or is exactly `"."` or `".."`.
     pub fn new<S: Into<String>>(id: S) -> FirestoreResult<Self> {
         let id = id.into();
-        validate_path_segment(&id, FirestorePathSegmentKind::CollectionId)?;
+        validate_path_segment(&id, "collection_id")?;
         Ok(Self(Cow::Owned(id)))
     }
 
@@ -485,7 +448,7 @@ impl FirestoreCollectionId {
     /// # Errors
     /// Same conditions as [`FirestoreCollectionId::new`].
     pub fn validate_str(id: &str) -> FirestoreResult<()> {
-        validate_path_segment(id, FirestorePathSegmentKind::CollectionId)
+        validate_path_segment(id, "collection_id")
     }
 
     /// Re-validates an already-constructed ID.
@@ -497,7 +460,7 @@ impl FirestoreCollectionId {
     /// # Errors
     /// Never fails; returns `FirestoreResult<()>` for symmetry with [`FirestoreCollectionId::validate_str`].
     pub fn validate(&self) -> FirestoreResult<()> {
-        validate_path_segment(&self.0, FirestorePathSegmentKind::CollectionId)
+        validate_path_segment(&self.0, "collection_id")
     }
 
     /// Validates `id` at compile time and wraps it without allocating, for a name known up front.
@@ -528,12 +491,7 @@ impl FirestoreCollectionId {
     pub const fn from_static(id: &'static str) -> Self {
         match check_path_segment(id) {
             Ok(()) => Self(Cow::Borrowed(id)),
-            Err(violation) => {
-                panic!(
-                    "{}",
-                    violation.panic_message(FirestorePathSegmentKind::CollectionId)
-                )
-            }
+            Err(violation) => panic!("{}", violation.rule_message()),
         }
     }
 

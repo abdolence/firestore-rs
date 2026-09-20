@@ -1,5 +1,5 @@
 use crate::db::support::FirestoreCreateSupport;
-use crate::db::{validate_path_segment, FirestorePathSegmentKind};
+use crate::db::validate_path_segment;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
@@ -15,9 +15,9 @@ fn validate_create_doc_ids<S: AsRef<str>>(
     collection_id: &str,
     document_id: Option<&S>,
 ) -> FirestoreResult<()> {
-    validate_path_segment(collection_id, FirestorePathSegmentKind::CollectionId)?;
+    validate_path_segment(collection_id, "collection_id")?;
     if let Some(document_id) = document_id {
-        validate_path_segment(document_id.as_ref(), FirestorePathSegmentKind::DocumentId)?;
+        validate_path_segment(document_id.as_ref(), "document_id")?;
     }
     Ok(())
 }
