@@ -220,7 +220,7 @@ pub struct FirestoreInvalidParametersError {
 
 impl Display for FirestoreInvalidParametersError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Data not found error occurred: {}", self.public)
+        write!(f, "{}", self.public)
     }
 }
 
@@ -567,5 +567,23 @@ impl From<gcloud_sdk::prost::DecodeError> for FirestoreError {
             FirestoreErrorPublicGenericDetails::new("PrototBufDecodeError".into()),
             format!("Protobuf deserialization error: {err}"),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_parameters_error_display_is_not_data_not_found() {
+        let err =
+            FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
+                "document_id".to_string(),
+                "must not be empty".to_string(),
+            ));
+        assert_eq!(
+            err.to_string(),
+            "Invalid parameters error: document_id. must not be empty"
+        );
     }
 }
