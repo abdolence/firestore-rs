@@ -26,6 +26,17 @@ pub struct FirestoreSimpleBatchWriter {
 }
 
 impl FirestoreSimpleBatchWriter {
+    /// Wraps `db` with `options` to write batches through Firestore's non-streaming `BatchWrite`
+    /// RPC.
+    ///
+    /// Most callers get one from [`FirestoreDb::create_simple_batch_writer`] or
+    /// [`FirestoreDb::create_simple_batch_writer_with_options`] rather than calling this
+    /// directly.
+    ///
+    /// # Errors
+    /// Never fails; returns `FirestoreResult<Self>` for symmetry with
+    /// [`FirestoreStreamingBatchWriter::new`](crate::FirestoreStreamingBatchWriter::new), which
+    /// can.
     pub async fn new(
         db: FirestoreDb,
         options: FirestoreSimpleBatchWriteOptions,
@@ -39,6 +50,10 @@ impl FirestoreSimpleBatchWriter {
         })
     }
 
+    /// Starts a new batch of writes against this writer.
+    ///
+    /// Queue writes on it with [`FirestoreBatch`] methods such as `update_object`, then send it
+    /// with [`FirestoreBatch::write`].
     pub fn new_batch(&self) -> FirestoreBatch<'_, FirestoreSimpleBatchWriter> {
         FirestoreBatch::new(&self.db, self)
     }
@@ -98,11 +113,33 @@ impl FirestoreBatchWriter for FirestoreSimpleBatchWriter {
 }
 
 impl FirestoreDb {
+    /// Opens a batch writer that sends each batch as one Firestore `BatchWrite` request, with
+    /// default options.
+    ///
+    /// Prefer this over [`create_streaming_batch_writer`](Self::create_streaming_batch_writer)
+    /// for occasional or moderate-sized batches; reach for the streaming writer only once enough
+    /// batches are being sent back-to-back that one request per batch becomes the bottleneck.
+    /// Equivalent to
+    /// `create_simple_batch_writer_with_options(FirestoreSimpleBatchWriteOptions::new())`.
+    ///
+    /// # Errors
+    /// Never fails; returns `FirestoreResult<FirestoreSimpleBatchWriter>` for symmetry with
+    /// [`create_streaming_batch_writer`](Self::create_streaming_batch_writer), which can.
     pub async fn create_simple_batch_writer(&self) -> FirestoreResult<FirestoreSimpleBatchWriter> {
         self.create_simple_batch_writer_with_options(FirestoreSimpleBatchWriteOptions::new())
             .await
     }
 
+    /// Same as [`create_simple_batch_writer`](Self::create_simple_batch_writer), with explicit
+    /// `options`.
+    ///
+    /// Most usefully `options.retry_max_elapsed_time`, which bounds how long a `BatchWrite`
+    /// request keeps retrying on a transient failure before giving up.
+    ///
+    /// # Errors
+    /// Never fails; returns `FirestoreResult<FirestoreSimpleBatchWriter>` for symmetry with
+    /// [the streaming writer's equivalent](Self::create_streaming_batch_writer_with_options),
+    /// which can.
     pub async fn create_simple_batch_writer_with_options(
         &self,
         options: FirestoreSimpleBatchWriteOptions,

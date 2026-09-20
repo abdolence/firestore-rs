@@ -26,6 +26,10 @@ pub struct FirestoreTransactionData {
 }
 
 impl FirestoreTransactionData {
+    /// Assembles a transaction snapshot from its parts, bypassing `begin_transaction`.
+    ///
+    /// Most callers get a value of this type from [`FirestoreTransaction::into_data`] instead of
+    /// calling this directly.
     pub fn new(
         transaction_id: FirestoreTransactionId,
         document_path: String,
@@ -40,26 +44,31 @@ impl FirestoreTransactionData {
         }
     }
 
+    /// Returns the transaction ID Firestore assigned when the transaction began.
     #[inline]
     pub fn transaction_id(&self) -> &FirestoreTransactionId {
         &self.transaction_id
     }
 
+    /// Returns the documents path that this transaction's writes are resolved against.
     #[inline]
     pub fn documents_path(&self) -> &String {
         &self.document_path
     }
 
+    /// Returns the tracing span opened for this transaction.
     #[inline]
     pub fn transaction_span(&self) -> &Span {
         &self.transaction_span
     }
 
+    /// Returns the writes queued on this transaction so far, in the order they were added.
     #[inline]
     pub fn writes(&self) -> &Vec<gcloud_sdk::google::firestore::v1::Write> {
         &self.writes
     }
 
+    /// Returns whether the transaction has no queued writes yet.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.writes.is_empty()
@@ -96,6 +105,13 @@ pub struct FirestoreTransaction<'a> {
 }
 
 impl<'a> FirestoreTransaction<'a> {
+    /// Opens a new transaction against `db` via Firestore's `BeginTransaction` RPC.
+    ///
+    /// Most callers reach this through [`FirestoreDb::begin_transaction`] or
+    /// [`FirestoreDb::begin_transaction_with_options`] rather than calling it directly.
+    ///
+    /// Returns an error if converting a read-only `options.mode`'s consistency selector fails,
+    /// or if the `BeginTransaction` request itself fails.
     pub async fn new(
         db: &'a FirestoreDb,
         options: FirestoreTransactionOptions,
@@ -144,16 +160,28 @@ impl<'a> FirestoreTransaction<'a> {
         })
     }
 
+    /// Returns the transaction ID Firestore assigned when the transaction began.
     #[inline]
     pub fn transaction_id(&self) -> &FirestoreTransactionId {
         &self.data.transaction_id
     }
 
+    /// Returns the client the transaction was opened on.
     #[inline]
     pub fn db(&self) -> &'a FirestoreDb {
         self.db
     }
 
+    /// Commits every write queued on the transaction and consumes it.
+    ///
+    /// This is the only one of [`commit`](Self::commit), [`rollback`](Self::rollback) and
+    /// [`finish`](Self::finish) that sends the queued writes to Firestore; the other two discard
+    /// them. A transaction with no queued writes still commits successfully - useful for a
+    /// read-only transaction that only needed a consistent snapshot.
+    ///
+    /// Returns an error if the `Commit` request fails; a [`FirestoreError::DatabaseError`] with
+    /// `retry_possible` set is what [`FirestoreDb::run_transaction`] retries the whole
+    /// transaction on.
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
 
@@ -196,6 +224,14 @@ impl<'a> FirestoreTransaction<'a> {
         Ok(result)
     }
 
+    /// Discards every write queued on the transaction and consumes it.
+    ///
+    /// Unlike [`finish`](Self::finish), this tells Firestore to release the transaction's locks
+    /// immediately, via the `Rollback` request, rather than waiting for the transaction to
+    /// expire on its own.
+    ///
+    /// Returns an error if the `Rollback` request fails; the queued writes are discarded locally
+    /// either way.
     pub async fn rollback(mut self) -> FirestoreResult<()> {
         self.finished = true;
         let request = gcloud_sdk::tonic::Request::new(RollbackRequest {
@@ -215,6 +251,17 @@ impl<'a> FirestoreTransaction<'a> {
         Ok(())
     }
 
+    /// Marks the transaction finished locally, without telling Firestore, so it can be retried.
+    ///
+    /// Unlike [`rollback`](Self::rollback), this sends no request: it exists for the retry loop
+    /// in [`FirestoreDb::run_transaction_with_options`], which needs the transaction ID to
+    /// survive so the next attempt can reopen it in [`FirestoreTransactionMode::ReadWriteRetry`]
+    /// mode. Calling this outside a retry leaves the transaction open on the server until
+    /// Firestore expires it on its own; call [`rollback`](Self::rollback) instead.
+    ///
+    /// # Errors
+    /// Never fails; returns `FirestoreResult<()>` for symmetry with [`commit`](Self::commit) and
+    /// [`rollback`](Self::rollback).
     pub fn finish(&mut self) -> FirestoreResult<()> {
         self.finished = true;
         self.data.transaction_span.in_scope(|| {
@@ -223,16 +270,23 @@ impl<'a> FirestoreTransaction<'a> {
         Ok(())
     }
 
+    /// Returns whether the transaction has no queued writes yet.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
+    /// Returns the transaction's underlying data without consuming it.
     #[inline]
     pub fn transaction_data(&self) -> &FirestoreTransactionData {
         &self.data
     }
 
+    /// Reattaches a [`FirestoreTransactionData`] captured by [`into_data`](Self::into_data) to
+    /// `db`, resuming the same transaction.
+    ///
+    /// The rebuilt value's drop warning is armed again, so commit, rollback or finish it before
+    /// it goes out of scope.
     pub fn from_data(
         db: &'a FirestoreDb,
         data: FirestoreTransactionData,
@@ -245,6 +299,11 @@ impl<'a> FirestoreTransaction<'a> {
         }
     }
 
+    /// Detaches the transaction's data from its `db` borrow, consuming self.
+    ///
+    /// Neither commits nor rolls back. Use this to carry a transaction across an `.await`
+    /// boundary or a function call that cannot hold the `&FirestoreDb` borrow, and reattach it
+    /// later with [`from_data`](Self::from_data).
     #[inline]
     pub fn into_data(mut self) -> FirestoreTransactionData {
         self.finished = true;
@@ -282,10 +341,26 @@ impl<'a> Drop for FirestoreTransaction<'a> {
 }
 
 impl FirestoreDb {
+    /// Opens a new read-write transaction with default options.
+    ///
+    /// Equivalent to `begin_transaction_with_options(FirestoreTransactionOptions::new())`; see
+    /// [`begin_transaction_with_options`](Self::begin_transaction_with_options) for the caller's
+    /// obligations and the failure mode, and [`run_transaction`](Self::run_transaction) for a
+    /// version that commits and retries for you.
     pub async fn begin_transaction(&self) -> FirestoreResult<FirestoreTransaction<'_>> {
         Self::begin_transaction_with_options(self, FirestoreTransactionOptions::new()).await
     }
 
+    /// Opens a new transaction with `options`, borrowing `self` for the transaction's lifetime.
+    ///
+    /// The returned [`FirestoreTransaction`] must be committed, rolled back or finished
+    /// explicitly - dropping it without doing so only logs a warning and leaves the transaction
+    /// open on the server until Firestore's own expiry closes it. Prefer
+    /// [`run_transaction_with_options`](Self::run_transaction_with_options) unless you need
+    /// direct control over commit and retry.
+    ///
+    /// Returns an error if converting a read-only `options.mode`'s consistency selector fails,
+    /// or if the `BeginTransaction` request itself fails.
     pub async fn begin_transaction_with_options(
         &self,
         options: FirestoreTransactionOptions,
@@ -293,6 +368,69 @@ impl FirestoreDb {
         FirestoreTransaction::new(self, options).await
     }
 
+    /// Runs `func` inside a transaction, retrying and committing automatically.
+    ///
+    /// Equivalent to [`run_transaction_with_options`](Self::run_transaction_with_options) with
+    /// [`FirestoreTransactionOptions::new()`]. `func` receives a [`FirestoreDb`] bound to the
+    /// transaction's read consistency and the open [`FirestoreTransaction`]; queue writes on the
+    /// latter through [`FirestoreTransactionOps`] (`update_object`, `delete_by_id`, `transform`,
+    /// ...) or a fluent chain's `add_to_transaction`. A Firestore transaction cannot create a
+    /// document with a server-generated ID, so `update_object` with an explicit document ID -
+    /// not an insert - is how a transaction creates one.
+    ///
+    /// On a transient failure - `func` returning [`BackoffError::Transient`], or the commit
+    /// itself hitting a retryable [`FirestoreError::DatabaseError`] - the whole transaction is
+    /// retried from the start with exponential backoff, up to `options.max_elapsed_time`. `func`
+    /// must therefore be safe to run more than once for the same call: read the state it needs
+    /// from the transaction-scoped `db` argument on every invocation rather than closing over
+    /// state read before the transaction started, and avoid side effects inside the closure that
+    /// are not themselves safe to repeat, such as an external HTTP call. A convenience of this:
+    /// `?` on a plain [`FirestoreResult`] inside the closure already converts to
+    /// `BackoffError::Transient` for free, through `backoff::Error`'s blanket `From` impl, so the
+    /// ordinary error paths already retry; return `Err(BackoffError::Permanent(err))` explicitly
+    /// for an error that must not be retried. A permanent error rolls the transaction back and is
+    /// returned wrapped in [`FirestoreError::ErrorInTransaction`].
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use firestore::*;
+    /// use futures::FutureExt;
+    /// use serde::{Deserialize, Serialize};
+    ///
+    /// #[derive(Debug, Clone, Deserialize, Serialize)]
+    /// struct Counter {
+    ///     value: i64,
+    /// }
+    ///
+    /// # async fn example(db: FirestoreDb) -> FirestoreResult<()> {
+    /// db.run_transaction(|db, transaction| {
+    ///     async move {
+    ///         let mut counter: Counter = db
+    ///             .fluent()
+    ///             .select()
+    ///             .by_id_in("counters")
+    ///             .obj()
+    ///             .one("visits")
+    ///             .await?
+    ///             .unwrap_or(Counter { value: 0 });
+    ///
+    ///         counter.value += 1;
+    ///
+    ///         db.fluent()
+    ///             .update()
+    ///             .in_col("counters")
+    ///             .document_id("visits")
+    ///             .object(&counter)
+    ///             .add_to_transaction(transaction)?;
+    ///
+    ///         Ok(())
+    ///     }
+    ///     .boxed()
+    /// })
+    /// .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn run_transaction<T, FN, E>(&self, func: FN) -> FirestoreResult<T>
     where
         for<'b> FN: Fn(
@@ -305,6 +443,15 @@ impl FirestoreDb {
             .await
     }
 
+    /// Same as [`run_transaction`](Self::run_transaction), with explicit `options`.
+    ///
+    /// `options.max_elapsed_time` bounds how long the retry loop described on
+    /// [`run_transaction`](Self::run_transaction) keeps retrying before giving up.
+    ///
+    /// Returns an error if the first `BeginTransaction` call fails - the transaction never
+    /// opened, so nothing is rolled back - or if `func` returns [`BackoffError::Permanent`], or
+    /// if retries are exhausted; in the latter two cases the error is
+    /// [`FirestoreError::ErrorInTransaction`] and a rollback is attempted before it is returned.
     pub async fn run_transaction_with_options<T, FN, E>(
         &self,
         func: FN,

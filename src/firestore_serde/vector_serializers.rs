@@ -1,3 +1,9 @@
+//! Support for storing a `Vec<f64>` as a native Firestore vector value, for nearest-neighbour
+//! vector search.
+//!
+//! [`FirestoreVector`] needs no attribute - its derived `Serialize` and manual `Deserialize`
+//! already route through [`serialize_vector_for_firestore`].
+
 use crate::errors::FirestoreError;
 use crate::firestore_serde::serializer::FirestoreValueSerializer;
 use crate::FirestoreValue;
@@ -10,14 +16,17 @@ pub(crate) const FIRESTORE_VECTOR_TYPE_TAG_TYPE: &str = "FirestoreVector";
 pub struct FirestoreVector(pub Vec<f64>);
 
 impl FirestoreVector {
+    /// Wraps `vec` as a Firestore vector value.
     pub fn new(vec: Vec<f64>) -> Self {
         FirestoreVector(vec)
     }
 
+    /// Returns the wrapped components, consuming the vector.
     pub fn into_vec(self) -> Vec<f64> {
         self.0
     }
 
+    /// Returns a reference to the wrapped components.
     pub fn as_vec(&self) -> &Vec<f64> {
         &self.0
     }
@@ -38,6 +47,14 @@ where
     }
 }
 
+/// Serializes `value` as a Firestore vector value, the shape Firestore's nearest-neighbour
+/// queries expect.
+///
+/// Called internally once [`FirestoreVector`]'s derived `Serialize` has tagged the value; not
+/// meant to be called directly, since its `FirestoreValueSerializer` parameter cannot be
+/// constructed outside this crate.
+///
+/// Returns an error only if `value`'s own `Serialize` impl fails.
 pub fn serialize_vector_for_firestore<T: ?Sized + Serialize>(
     firestore_value_serializer: FirestoreValueSerializer,
     value: &T,

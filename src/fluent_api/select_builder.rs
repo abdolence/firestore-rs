@@ -55,7 +55,6 @@ where
         + Sync
         + 'static,
 {
-    /// Creates a new `FirestoreSelectInitialBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D) -> Self {
         Self {
@@ -67,12 +66,6 @@ where
     /// Specifies which fields of the documents should be returned by the query (projection).
     ///
     /// If not set, all fields are returned.
-    ///
-    /// # Arguments
-    /// * `return_only_fields`: An iterator of field paths to return.
-    ///
-    /// # Returns
-    /// The builder instance with the projection mask set.
     #[inline]
     pub fn fields<I>(self, return_only_fields: I) -> Self
     where
@@ -91,13 +84,6 @@ where
     }
 
     /// Specifies the collection or collection group to query documents from.
-    ///
-    /// # Arguments
-    /// * `collection`: The ID of the collection or a [`FirestoreQueryCollection`] enum
-    ///   specifying a single collection or a collection group.
-    ///
-    /// # Returns
-    /// A [`FirestoreSelectDocBuilder`] to further configure the query (filters, ordering, etc.).
     #[inline]
     pub fn from<C>(self, collection: C) -> FirestoreSelectDocBuilder<'a, D>
     where
@@ -109,12 +95,6 @@ where
     }
 
     /// Specifies that documents should be fetched by their IDs from a specific collection.
-    ///
-    /// # Arguments
-    /// * `collection`: The ID of the collection where the documents reside.
-    ///
-    /// # Returns
-    /// A [`FirestoreSelectByIdBuilder`] to specify the document IDs and other options.
     #[inline]
     pub fn by_id_in<S: AsRef<str>>(self, collection: S) -> FirestoreSelectByIdBuilder<'a, D> {
         FirestoreSelectByIdBuilder::new(
@@ -153,19 +133,12 @@ where
         + Sync
         + 'static,
 {
-    /// Creates a new `FirestoreSelectDocBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
         Self { db, params }
     }
 
     /// Specifies the parent document path for querying a sub-collection.
-    ///
-    /// # Arguments
-    /// * `parent`: The full path to the parent document.
-    ///
-    /// # Returns
-    /// The builder instance with the parent path set.
     #[inline]
     pub fn parent<S>(self, parent: S) -> Self
     where
@@ -178,12 +151,6 @@ where
     }
 
     /// Sets the maximum number of documents to return.
-    ///
-    /// # Arguments
-    /// * `value`: The limit.
-    ///
-    /// # Returns
-    /// The builder instance with the limit set.
     #[inline]
     pub fn limit(self, value: u32) -> Self {
         Self {
@@ -193,12 +160,6 @@ where
     }
 
     /// Sets the number of documents to skip before returning results.
-    ///
-    /// # Arguments
-    /// * `value`: The offset.
-    ///
-    /// # Returns
-    /// The builder instance with the offset set.
     #[inline]
     pub fn offset(self, value: u32) -> Self {
         Self {
@@ -210,12 +171,6 @@ where
     /// Specifies the order in which to sort the query results.
     ///
     /// Can be called multiple times to order by multiple fields.
-    ///
-    /// # Arguments
-    /// * `fields`: An iterator of [`FirestoreQueryOrder`] specifying fields and directions.
-    ///
-    /// # Returns
-    /// The builder instance with the ordering set.
     #[inline]
     pub fn order_by<I>(self, fields: I) -> Self
     where
@@ -231,12 +186,6 @@ where
     }
 
     /// Sets the starting point for the query results using a cursor.
-    ///
-    /// # Arguments
-    /// * `cursor`: A [`FirestoreQueryCursor`] defining the start point.
-    ///
-    /// # Returns
-    /// The builder instance with the start cursor set.
     #[inline]
     pub fn start_at(self, cursor: FirestoreQueryCursor) -> Self {
         Self {
@@ -246,12 +195,6 @@ where
     }
 
     /// Sets the ending point for the query results using a cursor.
-    ///
-    /// # Arguments
-    /// * `cursor`: A [`FirestoreQueryCursor`] defining the end point.
-    ///
-    /// # Returns
-    /// The builder instance with the end cursor set.
     #[inline]
     pub fn end_at(self, cursor: FirestoreQueryCursor) -> Self {
         Self {
@@ -262,9 +205,6 @@ where
 
     /// Configures the query to search all collections with the specified ID
     /// under the parent path (for collection group queries).
-    ///
-    /// # Returns
-    /// The builder instance configured for a collection group query.
     #[inline]
     pub fn all_descendants(self) -> Self {
         Self {
@@ -277,12 +217,6 @@ where
     ///
     /// The `filter` argument is a closure that receives a [`FirestoreQueryFilterBuilder`]
     /// and should return an `Option<FirestoreQueryFilter>`.
-    ///
-    /// # Arguments
-    /// * `filter`: A closure to build the query filter.
-    ///
-    /// # Returns
-    /// The builder instance with the filter applied.
     #[inline]
     pub fn filter<FN>(self, filter: FN) -> Self
     where
@@ -299,9 +233,6 @@ where
     /// Requests an explanation of the query execution plan from Firestore.
     ///
     /// The explanation metrics will be available in the metadata of the query response.
-    ///
-    /// # Returns
-    /// The builder instance with explain options enabled.
     #[inline]
     pub fn explain(self) -> FirestoreSelectDocBuilder<'a, D> {
         Self {
@@ -313,15 +244,6 @@ where
     }
 
     /// Configures a vector similarity search (find nearest neighbors).
-    ///
-    /// # Arguments
-    /// * `field_name`: The path to the vector field.
-    /// * `vector`: The query vector.
-    /// * `measure`: The distance measure to use.
-    /// * `neighbors_limit`: The maximum number of neighbors to return.
-    ///
-    /// # Returns
-    /// The builder instance configured for a vector search.
     #[inline]
     pub fn find_nearest<F>(
         self,
@@ -342,12 +264,6 @@ where
     }
 
     /// Configures a vector similarity search with detailed options.
-    ///
-    /// # Arguments
-    /// * `options`: [`FirestoreFindNearestOptions`] specifying the vector search parameters.
-    ///
-    /// # Returns
-    /// The builder instance configured for a vector search.
     #[inline]
     pub fn find_nearest_with_options(
         self,
@@ -360,12 +276,6 @@ where
     }
 
     /// Requests an explanation of the query execution plan with specific options.
-    ///
-    /// # Arguments
-    /// * `options`: [`FirestoreExplainOptions`] specifying the analysis options.
-    ///
-    /// # Returns
-    /// The builder instance with the specified explain options.
     #[inline]
     pub fn explain_with_options(
         self,
@@ -383,12 +293,6 @@ where
     /// breakdowns, which makes them useful to attribute cost to a specific feature
     /// or tenant. They override any session wide default configured with
     /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
-    ///
-    /// # Arguments
-    /// * `request_tags`: An iterator of tags to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request tags set.
     #[inline]
     pub fn request_tags<I>(self, request_tags: I) -> Self
     where
@@ -399,12 +303,6 @@ where
     }
 
     /// Attaches request options to this query.
-    ///
-    /// # Arguments
-    /// * `options`: The [`FirestoreRequestOptions`] to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request options set.
     #[inline]
     pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
         Self {
@@ -414,12 +312,6 @@ where
     }
 
     /// Specifies that the query results should be deserialized into a specific Rust type `T`.
-    ///
-    /// # Type Parameters
-    /// * `T`: The type to deserialize documents into. Must implement `serde::Deserialize`.
-    ///
-    /// # Returns
-    /// A [`FirestoreSelectObjBuilder`] for executing the query and streaming deserialized objects.
     #[inline]
     pub fn obj<T>(self) -> FirestoreSelectObjBuilder<'a, D, T>
     where
@@ -433,18 +325,12 @@ where
     ///
     /// Partitioned queries are used to divide a large dataset into smaller chunks
     /// that can be processed in parallel.
-    ///
-    /// # Returns
-    /// A [`FirestorePartitionQueryDocBuilder`] to configure and stream partitions.
     #[inline]
     pub fn partition_query(self) -> FirestorePartitionQueryDocBuilder<'a, D> {
         FirestorePartitionQueryDocBuilder::new(self.db, self.params.with_all_descendants(true))
     }
 
     /// Sets up a real-time listener for changes to the documents matching this query.
-    ///
-    /// # Returns
-    /// A [`FirestoreDocChangesListenerInitBuilder`] to configure and start the listener.
     #[inline]
     pub fn listen(self) -> FirestoreDocChangesListenerInitBuilder<'a, D> {
         let request_options = self.params.request_options.clone();
@@ -463,12 +349,6 @@ where
     ///
     /// The `aggregation` argument is a closure that receives a [`FirestoreAggregationBuilder`]
     /// and should return a `Vec<FirestoreAggregation>`.
-    ///
-    /// # Arguments
-    /// * `aggregation`: A closure to build the list of aggregations.
-    ///
-    /// # Returns
-    /// A [`FirestoreAggregatedQueryDocBuilder`] to execute the aggregation query.
     #[inline]
     pub fn aggregate<FN>(self, aggregation: FN) -> FirestoreAggregatedQueryDocBuilder<'a, D>
     where
@@ -483,42 +363,47 @@ where
         )
     }
 
-    /// Executes the configured query and retrieves all matching documents.
+    /// Sends the query to Firestore and returns every matching document.
     ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `Vec` of [`Document`]s.
+    /// Returns an error if the request fails.
+    ///
+    /// ```rust,no_run
+    /// use firestore::{FirestoreDb, FirestoreResult};
+    ///
+    /// # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error>> {
+    /// let documents = db
+    ///     .fluent()
+    ///     .select()
+    ///     .from("users")
+    ///     .limit(10)
+    ///     .query()
+    ///     .await?;
+    /// # let _: Vec<_> = documents;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn query(self) -> FirestoreResult<Vec<Document>> {
         self.db.query_doc(self.params).await
     }
 
-    /// Executes the configured query and returns a stream of matching documents.
+    /// Sends the query to Firestore and streams matching documents as they arrive.
     ///
-    /// Errors encountered during streaming will terminate the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of [`Document`]s.
+    /// An error while streaming terminates the stream early.
     pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, Document>> {
         self.db.stream_query_doc(self.params).await
     }
 
-    /// Executes the configured query and returns a stream of `FirestoreResult<Document>`.
-    ///
-    /// Errors encountered during streaming are yielded as `Err` items in the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<Document>`.
+    /// Sends the query to Firestore and streams a `FirestoreResult<Document>` per match, so one
+    /// failed document does not end the stream.
     pub async fn stream_query_with_errors<'b>(
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         self.db.stream_query_doc_with_errors(self.params).await
     }
 
-    /// Executes the query and returns a stream of documents along with their metadata.
+    /// Sends the query to Firestore and streams each matching document with its metadata.
     ///
     /// Errors are yielded as `Err` items in the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<FirestoreWithMetadata<Document>>`.
     pub async fn stream_query_with_metadata<'b>(
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<Document>>>> {
@@ -545,7 +430,6 @@ where
     T: Send,
     for<'de> T: Deserialize<'de>,
 {
-    /// Creates a new `FirestoreSelectObjBuilder`.
     pub(crate) fn new(
         db: &'a D,
         params: FirestoreQueryParams,
@@ -561,12 +445,6 @@ where
     ///
     /// They override any session wide default configured with
     /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
-    ///
-    /// # Arguments
-    /// * `request_tags`: An iterator of tags to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request tags set.
     #[inline]
     pub fn request_tags<I>(self, request_tags: I) -> Self
     where
@@ -577,12 +455,6 @@ where
     }
 
     /// Attaches request options to this query.
-    ///
-    /// # Arguments
-    /// * `options`: The [`FirestoreRequestOptions`] to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request options set.
     #[inline]
     pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
         Self {
@@ -591,20 +463,16 @@ where
         }
     }
 
-    /// Executes the query and deserializes all matching documents into a `Vec<T>`.
+    /// Sends the query to Firestore and deserializes every matching document into `T`.
     ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `Vec<T>`.
+    /// Returns an error if the request fails or a document does not deserialize into `T`.
     pub async fn query(self) -> FirestoreResult<Vec<T>> {
         self.db.query_obj(self.params).await
     }
 
-    /// Executes the query and returns a stream of deserialized objects `T`.
+    /// Sends the query to Firestore and streams matching documents deserialized into `T`.
     ///
-    /// Errors during streaming or deserialization will terminate the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `T`.
+    /// An error while streaming or deserializing terminates the stream early.
     pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, T>>
     where
         T: 'b,
@@ -612,12 +480,8 @@ where
         self.db.stream_query_obj(self.params).await
     }
 
-    /// Executes the query and returns a stream of `FirestoreResult<T>`.
-    ///
-    /// Errors during streaming or deserialization are yielded as `Err` items.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<T>`.
+    /// Sends the query to Firestore and streams a `FirestoreResult<T>` per match, so one failed
+    /// document or deserialization does not end the stream.
     pub async fn stream_query_with_errors<'b>(
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
@@ -627,12 +491,10 @@ where
         self.db.stream_query_obj_with_errors(self.params).await
     }
 
-    /// Executes the query and returns a stream of deserialized objects `T` along with their metadata.
+    /// Sends the query to Firestore and streams each matching document, deserialized into `T`,
+    /// with its metadata.
     ///
     /// Errors are yielded as `Err` items in the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<FirestoreWithMetadata<T>>`.
     pub async fn stream_query_with_metadata<'b>(
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<T>>>>
@@ -643,9 +505,6 @@ where
     }
 
     /// Configures the query as a partitioned query for deserialized objects.
-    ///
-    /// # Returns
-    /// A [`FirestorePartitionQueryObjBuilder`] to configure and stream partitions of `T`.
     pub fn partition_query(self) -> FirestorePartitionQueryObjBuilder<'a, D, T>
     where
         T: 'a, // Ensure T lives as long as the builder
@@ -670,7 +529,6 @@ impl<'a, D> FirestoreSelectByIdBuilder<'a, D>
 where
     D: FirestoreGetByIdSupport + FirestoreListenSupport + Send + Sync + Clone + 'static,
 {
-    /// Creates a new `FirestoreSelectByIdBuilder`.
     pub(crate) fn new(
         db: &'a D,
         collection: String,
@@ -685,12 +543,6 @@ where
     }
 
     /// Specifies the parent document path for selecting documents from a sub-collection.
-    ///
-    /// # Arguments
-    /// * `parent`: The full path to the parent document.
-    ///
-    /// # Returns
-    /// The builder instance with the parent path set.
     #[inline]
     pub fn parent<S>(self, parent: S) -> Self
     where
@@ -703,12 +555,6 @@ where
     }
 
     /// Specifies that the fetched documents should be deserialized into a specific Rust type `T`.
-    ///
-    /// # Type Parameters
-    /// * `T`: The type to deserialize documents into. Must implement `serde::Deserialize`.
-    ///
-    /// # Returns
-    /// A [`FirestoreSelectObjByIdBuilder`] for fetching and deserializing documents by ID.
     #[inline]
     pub fn obj<T>(self) -> FirestoreSelectObjByIdBuilder<'a, D, T>
     where
@@ -723,13 +569,10 @@ where
         )
     }
 
-    /// Fetches a single document by its ID.
+    /// Fetches a single document by `document_id`, sending the request to Firestore.
     ///
-    /// # Arguments
-    /// * `document_id`: The ID of the document to fetch.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing an `Option<Document>`. `None` if the document doesn't exist.
+    /// Returns `Ok(None)` if the document does not exist, and an error only if the request
+    /// itself fails.
     pub async fn one<S>(self, document_id: S) -> FirestoreResult<Option<Document>>
     where
         S: AsRef<str> + Send,
@@ -770,16 +613,10 @@ where
         }
     }
 
-    /// Fetches multiple documents by their IDs in a batch.
+    /// Fetches `document_ids` and streams a `(String, Option<Document>)` pair per ID, `None` for
+    /// an ID that does not exist.
     ///
-    /// Returns a stream of `(String, Option<Document>)` tuples, where the string is the document ID.
-    /// Errors during fetching will terminate the stream.
-    ///
-    /// # Arguments
-    /// * `document_ids`: An iterator of document IDs to fetch.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `(String, Option<Document>)`.
+    /// An error while fetching terminates the stream early.
     pub async fn batch<S, I>(
         self,
         document_ids: I,
@@ -808,15 +645,8 @@ where
         }
     }
 
-    /// Fetches multiple documents by their IDs in a batch, yielding `FirestoreResult` for each.
-    ///
-    /// Errors during fetching for individual documents are yielded as `Err` items in the stream.
-    ///
-    /// # Arguments
-    /// * `document_ids`: An iterator of document IDs to fetch.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<(String, Option<Document>)>`.
+    /// Fetches `document_ids` and streams a `FirestoreResult<(String, Option<Document>)>` per ID,
+    /// so one failed fetch does not end the stream.
     pub async fn batch_with_errors<S, I>(
         self,
         document_ids: I,
@@ -846,12 +676,6 @@ where
     }
 
     /// Sets up a real-time listener for changes to a specific set of documents by their IDs.
-    ///
-    /// # Arguments
-    /// * `document_ids`: An iterator of document IDs to listen to.
-    ///
-    /// # Returns
-    /// A [`FirestoreDocChangesListenerInitBuilder`] to configure and start the listener.
     pub fn batch_listen<S, I>(
         self,
         document_ids: I,
@@ -897,7 +721,6 @@ where
     T: Send,
     for<'de> T: Deserialize<'de>,
 {
-    /// Creates a new `FirestoreSelectObjByIdBuilder`.
     pub(crate) fn new(
         db: &'a D,
         collection: String,
@@ -913,13 +736,10 @@ where
         }
     }
 
-    /// Fetches a single document by its ID and deserializes it into type `T`.
+    /// Fetches a single document by `document_id` and deserializes it into `T`.
     ///
-    /// # Arguments
-    /// * `document_id`: The ID of the document to fetch.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing an `Option<T>`. `None` if the document doesn't exist.
+    /// Returns `Ok(None)` if the document does not exist, and an error if the request fails or
+    /// the document does not deserialize into `T`.
     pub async fn one<S>(self, document_id: S) -> FirestoreResult<Option<T>>
     where
         S: AsRef<str> + Send,
@@ -960,16 +780,10 @@ where
         }
     }
 
-    /// Fetches multiple documents by their IDs in a batch and deserializes them into type `T`.
+    /// Fetches `document_ids`, deserializes each into `T`, and streams a `(String, Option<T>)`
+    /// pair per ID, `None` for an ID that does not exist.
     ///
-    /// Returns a stream of `(String, Option<T>)` tuples.
-    /// Errors during fetching or deserialization will terminate the stream.
-    ///
-    /// # Arguments
-    /// * `document_ids`: An iterator of document IDs to fetch.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `(String, Option<T>)`.
+    /// An error while fetching or deserializing terminates the stream early.
     pub async fn batch<S, I>(
         self,
         document_ids: I,
@@ -999,15 +813,9 @@ where
         }
     }
 
-    /// Fetches multiple documents by IDs in a batch, deserializing them and yielding `FirestoreResult`.
-    ///
-    /// Errors during fetching or deserialization for individual documents are yielded as `Err` items.
-    ///
-    /// # Arguments
-    /// * `document_ids`: An iterator of document IDs to fetch.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<(String, Option<T>)>`.
+    /// Fetches `document_ids`, deserializes each into `T`, and streams a
+    /// `FirestoreResult<(String, Option<T>)>` per ID, so one failed fetch or deserialization does
+    /// not end the stream.
     pub async fn batch_with_errors<S, I>(
         self,
         document_ids: I,
@@ -1055,7 +863,6 @@ impl<'a, D> FirestorePartitionQueryDocBuilder<'a, D>
 where
     D: FirestoreQuerySupport,
 {
-    /// Creates a new `FirestorePartitionQueryDocBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
         Self {
@@ -1070,12 +877,6 @@ where
     /// Sets the desired parallelism for processing partitions.
     ///
     /// This hints at how many partitions might be processed concurrently by the caller.
-    ///
-    /// # Arguments
-    /// * `max_threads`: The desired level of parallelism.
-    ///
-    /// # Returns
-    /// The builder instance with the parallelism level set.
     #[inline]
     pub fn parallelism(self, max_threads: usize) -> Self {
         Self {
@@ -1085,12 +886,6 @@ where
     }
 
     /// Sets the desired number of partitions to divide the query into.
-    ///
-    /// # Arguments
-    /// * `count`: The number of partitions.
-    ///
-    /// # Returns
-    /// The builder instance with the partition count set.
     #[inline]
     pub fn partition_count(self, count: u32) -> Self {
         Self {
@@ -1102,12 +897,6 @@ where
     /// Sets the page size for retrieving partition cursors.
     ///
     /// This controls how many partition definitions are fetched in each request to the server.
-    ///
-    /// # Arguments
-    /// * `len`: The page size for partition cursors.
-    ///
-    /// # Returns
-    /// The builder instance with the partition page size set.
     #[inline]
     pub fn page_size(self, len: u32) -> Self {
         Self {
@@ -1116,12 +905,9 @@ where
         }
     }
 
-    /// Streams query partitions along with the documents within each partition.
+    /// Streams each partition of the query along with its documents.
     ///
     /// Errors are yielded as `Err` items in the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<(FirestorePartition, Document)>`.
     pub async fn stream_partitions_with_errors(
         self,
     ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(FirestorePartition, Document)>>> {
@@ -1160,7 +946,6 @@ where
     T: Send + 'a,
     for<'de> T: Deserialize<'de>,
 {
-    /// Creates a new `FirestorePartitionQueryObjBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D, params: FirestoreQueryParams) -> Self {
         Self {
@@ -1200,12 +985,9 @@ where
         }
     }
 
-    /// Streams query partitions along with the deserialized objects `T` within each partition.
+    /// Streams each partition of the query along with its documents, deserialized into `T`.
     ///
     /// Errors are yielded as `Err` items in the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<(FirestorePartition, T)>`.
     pub async fn stream_partitions_with_errors(
         self,
     ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(FirestorePartition, T)>>> {
@@ -1239,7 +1021,6 @@ impl<'a, D> FirestoreDocChangesListenerInitBuilder<'a, D>
 where
     D: FirestoreListenSupport + Clone + Send + Sync + 'static,
 {
-    /// Creates a new `FirestoreDocChangesListenerInitBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D, target_type: FirestoreTargetType) -> Self {
         Self {
@@ -1254,24 +1035,12 @@ where
     /// Sets labels for the listener.
     ///
     /// Labels are key-value pairs that can be used to identify or categorize listeners.
-    ///
-    /// # Arguments
-    /// * `labels`: A map of labels.
-    ///
-    /// # Returns
-    /// The builder instance with labels set.
     #[inline]
     pub fn labels(self, labels: HashMap<String, String>) -> Self {
         Self { labels, ..self }
     }
 
     /// Attaches request tags to the listen requests of this target.
-    ///
-    /// # Arguments
-    /// * `request_tags`: An iterator of tags to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request tags set.
     #[inline]
     pub fn request_tags<I>(self, request_tags: I) -> Self
     where
@@ -1282,12 +1051,6 @@ where
     }
 
     /// Attaches request options to the listen requests of this target.
-    ///
-    /// # Arguments
-    /// * `options`: The [`FirestoreRequestOptions`] to attach.
-    ///
-    /// # Returns
-    /// The builder instance with the request options set.
     #[inline]
     pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
         Self {
@@ -1297,12 +1060,6 @@ where
     }
 
     /// Sets the initial delay for retrying the listener connection on failure.
-    ///
-    /// # Arguments
-    /// * `delay`: The retry delay duration.
-    ///
-    /// # Returns
-    /// The builder instance with the retry delay set.
     #[inline]
     pub fn retry_delay(self, delay: std::time::Duration) -> Self {
         Self {
@@ -1311,20 +1068,9 @@ where
         }
     }
 
-    /// Adds the configured target to an existing [`FirestoreListener`].
-    ///
-    /// This method finalizes the listener target configuration and registers it
-    /// with the provided listener instance.
-    ///
-    /// # Arguments
-    /// * `target`: The specific target (e.g., document path, query) for the listener.
-    /// * `listener`: A mutable reference to the `FirestoreListener` to add this target to.
-    ///
-    /// # Type Parameters
-    /// * `S`: The type of storage used for persisting resume states for the listener.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` indicating success or failure of adding the target.
+    /// Registers this configured target with `listener`, via
+    /// [`FirestoreListener::add_target`](crate::FirestoreListener::add_target), which documents
+    /// the failure conditions.
     #[inline]
     pub fn add_target<S>(
         self,
@@ -1357,7 +1103,6 @@ impl<'a, D> FirestoreAggregatedQueryDocBuilder<'a, D>
 where
     D: FirestoreAggregatedQuerySupport,
 {
-    /// Creates a new `FirestoreAggregatedQueryDocBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D, params: FirestoreAggregatedQueryParams) -> Self {
         Self { db, params }
@@ -1366,12 +1111,6 @@ where
     /// Specifies that the aggregation results should be deserialized into a specific Rust type `T`.
     ///
     /// The structure of `T` should match the aliases defined in the aggregation.
-    ///
-    /// # Type Parameters
-    /// * `T`: The type to deserialize results into. Must implement `serde::Deserialize`.
-    ///
-    /// # Returns
-    /// A [`FirestoreAggregatedQueryObjBuilder`] for executing and deserializing results.
     #[inline]
     pub fn obj<T>(self) -> FirestoreAggregatedQueryObjBuilder<'a, D, T>
     where
@@ -1381,33 +1120,23 @@ where
         FirestoreAggregatedQueryObjBuilder::new(self.db, self.params)
     }
 
-    /// Executes the aggregation query and returns the results as raw documents.
+    /// Sends the aggregation query to Firestore and returns the results as documents, one field
+    /// per aggregation alias.
     ///
-    /// Each "document" in the result typically contains fields corresponding to the
-    /// aliases of the aggregations.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `Vec` of [`Document`]s representing aggregation results.
+    /// Returns an error if the request fails.
     pub async fn query(self) -> FirestoreResult<Vec<Document>> {
         self.db.aggregated_query_doc(self.params).await
     }
 
-    /// Executes the aggregation query and returns a stream of result documents.
+    /// Sends the aggregation query to Firestore and streams the result documents.
     ///
-    /// Errors terminate the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of [`Document`]s.
+    /// An error while streaming terminates the stream early.
     pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, Document>> {
         self.db.stream_aggregated_query_doc(self.params).await
     }
 
-    /// Executes the aggregation query and returns a stream of `FirestoreResult<Document>`.
-    ///
-    /// Errors are yielded as `Err` items in the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<Document>`.
+    /// Sends the aggregation query to Firestore and streams a `FirestoreResult<Document>` per
+    /// result, so one failure does not end the stream.
     pub async fn stream_query_with_errors<'b>(
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
@@ -1436,7 +1165,6 @@ where
     T: Send,
     for<'de> T: Deserialize<'de>,
 {
-    /// Creates a new `FirestoreAggregatedQueryObjBuilder`.
     #[inline]
     pub(crate) fn new(db: &'a D, params: FirestoreAggregatedQueryParams) -> Self {
         Self {
@@ -1446,30 +1174,22 @@ where
         }
     }
 
-    /// Executes the aggregation query and deserializes all results into a `Vec<T>`.
+    /// Sends the aggregation query to Firestore and deserializes the results into `Vec<T>`.
     ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `Vec<T>`.
+    /// Returns an error if the request fails or a result does not deserialize into `T`.
     pub async fn query(self) -> FirestoreResult<Vec<T>> {
         self.db.aggregated_query_obj(self.params).await
     }
 
-    /// Executes the aggregation query and returns a stream of deserialized objects `T`.
+    /// Sends the aggregation query to Firestore and streams the results deserialized into `T`.
     ///
-    /// Errors terminate the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `T`.
+    /// An error while streaming or deserializing terminates the stream early.
     pub async fn stream_query<'b>(self) -> FirestoreResult<BoxStream<'b, T>> {
         self.db.stream_aggregated_query_obj(self.params).await
     }
 
-    /// Executes the aggregation query and returns a stream of `FirestoreResult<T>`.
-    ///
-    /// Errors are yielded as `Err` items in the stream.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a `BoxStream` of `FirestoreResult<T>`.
+    /// Sends the aggregation query to Firestore and streams a `FirestoreResult<T>` per result, so
+    /// one failure or deserialization error does not end the stream.
     pub async fn stream_query_with_errors<'b>(
         self,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>

@@ -207,11 +207,6 @@ mod cache_query_engine;
 /// `FirestoreCache` listens to changes in Firestore for specified targets and updates
 /// a cache backend accordingly. It provides methods to load initial data, manage the
 /// listener lifecycle, and access the underlying cache backend.
-///
-/// # Type Parameters
-/// * `B`: The type of the cache backend, implementing [`FirestoreCacheBackend`].
-/// * `LS`: The type of storage for the listener's resume state, implementing
-///   [`FirestoreResumeStateStorage`](crate::FirestoreResumeStateStorage).
 pub struct FirestoreCache<B, LS>
 where
     B: FirestoreCacheBackend + Send + Sync + 'static,
@@ -348,15 +343,6 @@ where
     LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
 {
     /// Creates a new `FirestoreCache` with default options for the given name.
-    ///
-    /// # Arguments
-    /// * `name`: A unique name for this cache instance.
-    /// * `db`: A reference to the [`FirestoreDb`](crate::FirestoreDb) client.
-    /// * `backend`: The cache backend implementation.
-    /// * `listener_storage`: Storage for the listener's resume state.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing the new `FirestoreCache`.
     #[deprecated(
         since = "0.52.0",
         note = "Use the cache builder instead: `FirestoreCache::memory(&db)` or \
@@ -378,15 +364,6 @@ where
     }
 
     /// Creates a new `FirestoreCache` with the specified options.
-    ///
-    /// # Arguments
-    /// * `options`: [`FirestoreCacheOptions`] to configure the cache.
-    /// * `db`: A reference to the [`FirestoreDb`](crate::FirestoreDb) client.
-    /// * `backend`: The cache backend implementation.
-    /// * `listener_storage`: Storage for the listener's resume state.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing the new `FirestoreCache`.
     #[deprecated(
         since = "0.52.0",
         note = "Use the cache builder instead: `FirestoreCache::memory(&db)` or \
@@ -452,9 +429,6 @@ where
     /// Firestore targets to listen to, adds them to the internal listener, and then
     /// starts the listener. The listener will then call the backend's `on_listen_event`
     /// method for incoming changes.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or failure.
     pub async fn load(&self) -> Result<(), FirestoreError> {
         let backend_target_params = self
             .inner
@@ -496,9 +470,6 @@ where
     /// Reads through a cache that has been shut down do not fail: they behave as a cache miss, so
     /// `read_through_cache` falls back to Firestore. `read_cached_only` reports the miss as an
     /// error, as it does for anything else it cannot answer.
-    ///
-    /// # Returns
-    /// A `Result` indicating success or failure.
     pub async fn shutdown(&self) -> Result<(), FirestoreError> {
         self.inner.listener.lock().await.shutdown().await?;
         self.inner.backend.shutdown().await?;
@@ -631,12 +602,7 @@ where
         self.inner.backend.clone()
     }
 
-    /// Invalidates all data in the cache.
-    ///
-    /// This calls the `invalidate_all` method on the cache backend.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` indicating success or failure.
+    /// Invalidates all data in the cache, by calling the backend's `invalidate_all`.
     pub async fn invalidate_all(&self) -> FirestoreResult<()> {
         self.inner.backend.invalidate_all().await
     }
@@ -648,19 +614,10 @@ where
 /// cached Firestore data.
 #[async_trait]
 pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
-    /// Loads initial data or configuration for the cache.
+    /// Loads initial data or configuration for the cache, called from [`FirestoreCache::load()`].
     ///
-    /// This method is called when [`FirestoreCache::load()`] is invoked. It should
-    /// determine which Firestore targets the cache needs to listen to and return
-    /// them as a `Vec<FirestoreListenerTargetParams>`. These targets will be added
-    /// to the `FirestoreCache`'s internal listener.
-    ///
-    /// # Arguments
-    /// * `options`: The cache options.
-    /// * `db`: A reference to the Firestore database client.
-    ///
-    /// # Returns
-    /// A `Result` containing the listener target parameters or an error.
+    /// Returns the listener targets the cache needs to watch; [`FirestoreCache::load`] adds them
+    /// to its internal listener.
     async fn load(
         &self,
         options: &FirestoreCacheOptions,
@@ -668,30 +625,12 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError>;
 
     /// Invalidates all data stored in the cache.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` indicating success or failure.
     async fn invalidate_all(&self) -> FirestoreResult<()>;
 
-    /// Performs any necessary cleanup or shutdown procedures for the cache backend.
-    ///
-    /// This is called when [`FirestoreCache::shutdown()`] is invoked.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` indicating success or failure.
+    /// Releases the backend's resources, called from [`FirestoreCache::shutdown()`].
     async fn shutdown(&self) -> FirestoreResult<()>;
 
-    /// Handles a listen event from Firestore.
-    ///
-    /// This method is called by the `FirestoreCache`'s listener when a change
-    /// occurs for one of the listened targets. The backend should update its
-    /// cached data based on the event.
-    ///
-    /// # Arguments
-    /// * `event`: The [`FirestoreListenEvent`](crate::FirestoreListenEvent) received from Firestore.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` indicating success or failure of processing the event.
+    /// Updates the cached data for a listen event from one of the backend's watched targets.
     async fn on_listen_event(&self, event: FirestoreListenEvent) -> FirestoreResult<()>;
 
     /// A snapshot of the collections this backend currently caches.
@@ -1153,28 +1092,18 @@ fn affected_scopes<'a>(
 pub trait FirestoreCacheDocsByPathSupport {
     /// Retrieves a single document from the cache by its full Firestore path.
     ///
-    /// # Arguments
-    /// * `document_path`: The full path to the document (e.g., "projects/P/databases/D/documents/C/ID").
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing an `Option<FirestoreDocument>`.
-    /// `None` if the document is not found in the cache.
+    /// Returns `None` if the document is not cached, rather than an error - a cache miss is not
+    /// a failure.
     async fn get_doc_by_path(
         &self,
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>>;
 
-    /// Retrieves multiple documents from the cache by their full Firestore paths.
+    /// Retrieves multiple documents from the cache by their full Firestore paths, keyed by the
+    /// document ID (the path's last segment).
     ///
-    /// This default implementation iterates over `full_doc_ids` and calls `get_doc_by_path`
-    /// for each. Backends may provide a more optimized batch implementation.
-    ///
-    /// # Arguments
-    /// * `full_doc_ids`: A slice of full document paths.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a stream of `FirestoreResult<(String, Option<FirestoreDocument>)>`.
-    /// The `String` in the tuple is the document ID (last segment of the path).
+    /// The default implementation calls [`get_doc_by_path`](Self::get_doc_by_path) once per path;
+    /// backends may override it with a batched lookup.
     async fn get_docs_by_paths<'a>(
         &'a self,
         full_doc_ids: &'a [String],
@@ -1203,44 +1132,23 @@ pub trait FirestoreCacheDocsByPathSupport {
         })))
     }
 
-    /// Updates or inserts a document in the cache.
-    ///
-    /// The document's full path is typically derived from `document.name`.
-    ///
-    /// # Arguments
-    /// * `document`: The [`FirestoreDocument`](crate::FirestoreDocument) to update/insert.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` indicating success or failure.
+    /// Updates or inserts a document in the cache, keyed by `document.name`.
     async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()>;
 
-    /// Lists all documents in the cache for a given collection path.
+    /// Lists all documents the cache holds for a collection path.
     ///
-    /// # Arguments
-    /// * `collection_path`: The full path to the collection (e.g., "projects/P/databases/D/documents/C").
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a [`FirestoreCachedValue`]. If `UseCached`, it holds
-    /// a stream of `FirestoreResult<FirestoreDocument>`. If `SkipCache`, the caller
-    /// should fetch directly from Firestore.
+    /// Returns [`FirestoreCachedValue::SkipCache`] when the collection cannot be served from the
+    /// cache, so the caller falls back to reading it from Firestore directly.
     async fn list_all_docs<'b>(
         &self,
         collection_path: &str,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>;
 
-    /// Queries documents in the cache for a given collection path and query parameters.
+    /// Queries the cache for a collection path, applying `query`'s filters and ordering to the
+    /// cached data.
     ///
-    /// The backend is responsible for applying the filters and ordering defined in `query`
-    /// to its cached data.
-    ///
-    /// # Arguments
-    /// * `collection_path`: The full path to the collection.
-    /// * `query`: The [`FirestoreQueryParams`](crate::FirestoreQueryParams) to apply.
-    ///
-    /// # Returns
-    /// A `FirestoreResult` containing a [`FirestoreCachedValue`]. If `UseCached`, it holds
-    /// a stream of `FirestoreResult<FirestoreDocument>`. If `SkipCache`, the caller
-    /// should fetch directly from Firestore.
+    /// Returns [`FirestoreCachedValue::SkipCache`] when the query cannot be served from the
+    /// cache, so the caller falls back to Firestore directly.
     async fn query_docs<'b>(
         &self,
         collection_path: &str,

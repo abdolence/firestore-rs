@@ -3,8 +3,10 @@
 //! This module provides a fluent API to define aggregations like `COUNT`, `SUM`, and `AVG`
 //! to be performed over a set of documents matching a query.
 //!
-//! The main entry point is [`FirestoreAggregationBuilder`], which is typically
-//! accessed via a method on a select/query builder (e.g., [`FirestoreSelectDocBuilder::aggregate()`](crate::select_builder::FirestoreSelectDocBuilder::aggregate)).
+//! The main entry point is [`FirestoreAggregationBuilder`], passed into the closure given to
+//! `.aggregate()` on a select builder.
+//!
+//! [`FirestoreAggregationBuilder`]: crate::select_aggregation_builder::FirestoreAggregationBuilder
 
 use crate::{
     FirestoreAggregation, FirestoreAggregationOperator, FirestoreAggregationOperatorAvg,
@@ -18,25 +20,13 @@ use crate::{
 pub struct FirestoreAggregationBuilder {}
 
 impl FirestoreAggregationBuilder {
-    /// Creates a new `FirestoreAggregationBuilder`.
-    /// This is typically not called directly but obtained from a select/query builder.
     pub(crate) fn new() -> Self {
         Self {}
     }
 
-    /// Builds a `Vec` of [`FirestoreAggregation`] from a collection of aggregation expressions.
-    ///
-    /// This method takes an iterator of items that implement [`FirestoreAggregationExpr`]
-    /// (typically created using [`FirestoreAggregationBuilder::field()`] and its chained methods)
-    /// and collects them into a vector of aggregations.
-    ///
-    /// `Option<FirestoreAggregation>` expressions are filtered, so `None` values are ignored.
-    ///
-    /// # Arguments
-    /// * `aggregation_field_expr`: An iterator of aggregation expressions.
-    ///
-    /// # Returns
-    /// A `Vec<FirestoreAggregation>` ready to be used in an aggregation query.
+    /// Collects `aggregation_field_expr` - typically built with
+    /// [`FirestoreAggregationBuilder::field`] and its chained methods - into the aggregations for
+    /// a query, dropping `None` entries.
     #[inline]
     pub fn fields<I>(&self, aggregation_field_expr: I) -> Vec<FirestoreAggregation>
     where
@@ -49,16 +39,8 @@ impl FirestoreAggregationBuilder {
             .collect()
     }
 
-    /// Specifies an alias for the result of an aggregation.
-    ///
-    /// The result of the aggregation (e.g., the count, sum, or average) will be
-    /// returned under this alias in the query response.
-    ///
-    /// # Arguments
-    /// * `field_name`: The alias for the aggregation result.
-    ///
-    /// # Returns
-    /// A [`FirestoreAggregationFieldExpr`] to specify the type of aggregation (count, sum, avg).
+    /// Assigns `field_name` as the alias under which this aggregation's result is returned, then
+    /// call `count`, `sum` or `avg` to pick the operator.
     #[inline]
     pub fn field<S>(&self, field_name: S) -> FirestoreAggregationFieldExpr
     where
@@ -87,7 +69,6 @@ pub struct FirestoreAggregationFieldExpr {
 }
 
 impl FirestoreAggregationFieldExpr {
-    /// Creates a new `FirestoreAggregationFieldExpr` for the given alias.
     pub(crate) fn new(field_name: String) -> Self {
         Self { field_name }
     }
@@ -96,9 +77,6 @@ impl FirestoreAggregationFieldExpr {
     ///
     /// Counts the number of documents matching the query. The result is returned
     /// under the alias specified by `field_name`.
-    ///
-    /// # Returns
-    /// An `Option<FirestoreAggregation>` representing this count aggregation.
     #[inline]
     pub fn count(self) -> Option<FirestoreAggregation> {
         Some(FirestoreAggregation::new(self.field_name).with_operator(
@@ -111,12 +89,6 @@ impl FirestoreAggregationFieldExpr {
     /// Counts the number of documents matching the query, up to a specified limit.
     /// This can be more efficient than a full count if only an approximate count or
     /// a capped count is needed.
-    ///
-    /// # Arguments
-    /// * `up_to`: The maximum number to count up to.
-    ///
-    /// # Returns
-    /// An `Option<FirestoreAggregation>` representing this capped count aggregation.
     #[inline]
     pub fn count_up_to(self, up_to: usize) -> Option<FirestoreAggregation> {
         Some(FirestoreAggregation::new(self.field_name).with_operator(
@@ -131,12 +103,6 @@ impl FirestoreAggregationFieldExpr {
     /// Calculates the sum of the values of a specific numeric field across all
     /// documents matching the query. The result is returned under the alias
     /// specified by `field_name`.
-    ///
-    /// # Arguments
-    /// * `sum_on_field_name`: The dot-separated path to the numeric field whose values will be summed.
-    ///
-    /// # Returns
-    /// An `Option<FirestoreAggregation>` representing this sum aggregation.
     #[inline]
     pub fn sum<S>(self, sum_on_field_name: S) -> Option<FirestoreAggregation>
     where
@@ -154,12 +120,6 @@ impl FirestoreAggregationFieldExpr {
     /// Calculates the average of the values of a specific numeric field across all
     /// documents matching the query. The result is returned under the alias
     /// specified by `field_name`.
-    ///
-    /// # Arguments
-    /// * `avg_on_field_name`: The dot-separated path to the numeric field whose values will be averaged.
-    ///
-    /// # Returns
-    /// An `Option<FirestoreAggregation>` representing this average aggregation.
     #[inline]
     pub fn avg<S>(self, avg_on_field_name: S) -> Option<FirestoreAggregation>
     where

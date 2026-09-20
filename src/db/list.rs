@@ -510,6 +510,13 @@ fn list_params_supported(params: &FirestoreListDocParams) -> bool {
 }
 
 impl FirestoreDb {
+    /// Serves a `list` request from the cache when the session's cache mode allows it.
+    ///
+    /// Returns [`FirestoreCachedValue::SkipCache`] when there is no cache attached, the
+    /// collection is not preloaded, or `params` asks for ordering, a field projection or a page -
+    /// none of which the cached listing path supports. Returns an error only in
+    /// [`FirestoreDbSessionCacheMode::ReadCachedOnly`], when the cache cannot serve the request
+    /// completely and there is nowhere else to fall back to.
     #[cfg(feature = "caching")]
     #[inline]
     pub async fn list_docs_from_cache<'b>(

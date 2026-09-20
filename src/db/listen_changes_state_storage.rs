@@ -53,10 +53,15 @@ pub struct FirestoreTempFilesListenStateStorage {
 }
 
 impl FirestoreTempFilesListenStateStorage {
+    /// Stores resume tokens as files in the process's current directory.
+    ///
+    /// Prefer [`with_temp_dir`](Self::with_temp_dir) so tokens do not collect wherever the
+    /// process happens to run.
     pub fn new() -> Self {
         Self { temp_dir: None }
     }
 
+    /// Stores resume tokens as files under `temp_dir`, so they survive a process restart.
     pub fn with_temp_dir<P: AsRef<std::path::Path>>(temp_dir: P) -> Self {
         debug!(
             directory = ?temp_dir.as_ref(),
@@ -134,12 +139,14 @@ pub struct FirestoreMemListenStateStorage {
 }
 
 impl FirestoreMemListenStateStorage {
+    /// Stores resume tokens in memory. Nothing is kept across a process restart.
     pub fn new() -> Self {
         Self {
             tokens: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
+    /// Returns the resume token currently stored for a target, if any.
     pub async fn get_token(
         &self,
         target: &FirestoreListenerTarget,
