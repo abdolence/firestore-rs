@@ -12,8 +12,10 @@ struct MyTestStructure {
     some_string: String,
 }
 
-const FIRST_COLLECTION: &str = "test-caching-dynamic-first";
-const SECOND_COLLECTION: &str = "test-caching-dynamic-second";
+const FIRST_COLLECTION: FirestoreCollectionId =
+    FirestoreCollectionId::from_static("test-caching-dynamic-first");
+const SECOND_COLLECTION: FirestoreCollectionId =
+    FirestoreCollectionId::from_static("test-caching-dynamic-second");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -24,19 +26,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    // Collection names chosen at runtime are the injection case a validated id closes: an
-    // unchecked '/' here would retarget cache and query operations at a different collection.
-    let first_collection = FirestoreCollectionId::new(FIRST_COLLECTION)?;
-    let second_collection = FirestoreCollectionId::new(SECOND_COLLECTION)?;
-
-    for collection in [&first_collection, &second_collection] {
+    for collection in [&FIRST_COLLECTION, &SECOND_COLLECTION] {
         populate(&db, collection).await?;
     }
 
     // Build the cache knowing about one collection only.
     let cache = FirestoreCache::memory(&db)
         .name("example-dynamic-cache")
-        .preloaded_collection(&first_collection)
+        .preloaded_collection(&FIRST_COLLECTION)
         .build()
         .await?;
 
@@ -48,27 +45,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Not cached yet, so a cache-only listing refuses rather than returning an empty result that
     // would look like a complete one.
-    match list(&cached_db, &second_collection).await {
+    match list(&cached_db, &SECOND_COLLECTION).await {
         Ok(docs) => println!("Unexpectedly listed {} documents", docs.len()),
         Err(err) => println!("Not cached yet, as expected: {err}"),
     }
 
     // Add it at runtime: it is downloaded, published once complete, and the listener extended.
     cache
-        .add_collection(FirestoreCacheCollection::new(&second_collection).preload_all())
+        .add_collection(FirestoreCacheCollection::new(&SECOND_COLLECTION).preload_all())
         .await?;
 
     println!("Cached collections: {:?}", cache.cached_collections());
     println!(
         "Listing {SECOND_COLLECTION} from cache: {} documents",
-        list(&cached_db, &second_collection).await?.len()
+        list(&cached_db, &SECOND_COLLECTION).await?.len()
     );
 
     // Stop caching it again: the documents are dropped and the listener stops watching it.
-    cache.remove_collection(&second_collection).await?;
+    cache.remove_collection(&SECOND_COLLECTION).await?;
 
     println!("Cached collections: {:?}", cache.cached_collections());
-    match list(&cached_db, &second_collection).await {
+    match list(&cached_db, &SECOND_COLLECTION).await {
         Ok(docs) => println!("Unexpectedly listed {} documents", docs.len()),
         Err(err) => println!("No longer cached, as expected: {err}"),
     }
@@ -76,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // The other collection is untouched throughout.
     println!(
         "Listing {FIRST_COLLECTION} from cache: {} documents",
-        list(&cached_db, &first_collection).await?.len()
+        list(&cached_db, &FIRST_COLLECTION).await?.len()
     );
 
     // ---------------------------------------------------------------------------------------
@@ -87,10 +84,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // saying explicitly: the listener then watches exactly these documents, so unrelated changes
     // in the collection are never streamed here.
     let mut tracked = vec!["test-0".to_string(), "test-1".to_string()];
-    track_documents(&cache, &second_collection, &tracked).await?;
+    track_documents(&cache, &SECOND_COLLECTION, &tracked).await?;
     report_tracked(
         &cached_db,
-        &second_collection,
+        &SECOND_COLLECTION,
         &["test-0", "test-1", "test-2"],
     )
     .await?;
@@ -100,10 +97,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // and re-apply it, rather than trying to edit it in place.
     tracked.push("test-2".to_string());
     tracked.retain(|id| id != "test-0");
-    track_documents(&cache, &second_collection, &tracked).await?;
+    track_documents(&cache, &SECOND_COLLECTION, &tracked).await?;
     report_tracked(
         &cached_db,
-        &second_collection,
+        &SECOND_COLLECTION,
         &["test-0", "test-1", "test-2"],
     )
     .await?;

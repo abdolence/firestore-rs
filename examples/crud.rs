@@ -28,7 +28,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     const TEST_COLLECTION_NAME: FirestoreCollectionId = FirestoreCollectionId::from_static("test");
 
-    // Stands in for a document ID arriving from outside the process, such as a request path segment.
+    // `from_static` above is for a literal you control; `new` here stands in for an ID arriving
+    // from outside the process, such as a request path segment, so it is checked at runtime.
     let id = FirestoreDocumentId::new("test-1")?;
 
     let my_struct = MyTestStructure {

@@ -747,6 +747,9 @@ a compile error, not a runtime one:
 const USERS: FirestoreCollectionId = FirestoreCollectionId::from_static("users");
 ```
 
+Use `from_static` for a literal you control, checked at compile time with no `Result` to handle;
+use `new` for a value arriving at runtime, which returns a `FirestoreResult`.
+
 Both implement `AsRef<str>`, so a reference drops straight into any call that already takes a
 document or collection ID or name, with no conversion:
 
