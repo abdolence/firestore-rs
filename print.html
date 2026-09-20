@@ -1,0 +1,1398 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Firestore for Rust</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Library provides a simple API for Google Firestore based on the official gRPC API">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-e96d0476.css">
+        <link rel="stylesheet" href="css/chrome-d279d366.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-553f54b5.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-3f587e2e.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Firestore for Rust</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/abdolence/firestore-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="firestore-for-rust"><a class="header" href="#firestore-for-rust">Firestore for Rust</a></h1>
+<p>Library provides a simple API for Google Firestore based on the official gRPC API:</p>
+<ul>
+<li>Fluent high-level and strongly typed API, the only public API of this library;</li>
+<li>Create or update documents using Rust structures and Serde;</li>
+<li>Support for:
+<ul>
+<li>Querying/streaming docs/objects;</li>
+<li>Listing documents/objects (<code>stream_all</code> follows the page tokens for you);</li>
+<li>Listening changes from Firestore;</li>
+<li>Transactions;</li>
+<li>Aggregated queries: count, sum, avg;</li>
+<li>Streaming batch writes with automatic throttling to stay under the Firestore write rate limits;</li>
+<li>K-nearest neighbor (KNN) vector search with Euclidean, Cosine and Dot Product measures;</li>
+<li>Query cursors and partition queries;</li>
+<li>Collection group queries and listing collection IDs;</li>
+<li>Server side document transforms: increment, array append/remove, server timestamp;</li>
+<li>Update/delete preconditions;</li>
+<li>Consistency selectors to read at a given time or inside a transaction;</li>
+<li>Explaining queries;</li>
+<li>Request tags to attribute Firestore usage;</li>
+</ul>
+</li>
+<li>Full async based on Tokio runtime;</li>
+<li>Macros that help you use your structure fields as Firestore field paths;</li>
+<li>Implements own Serde serializer to Firestore protobuf values;</li>
+<li>Support for multiple database IDs;</li>
+<li>Support for extended datatypes:
+<ul>
+<li>Firestore timestamp as a <code>FirestoreTimestamp</code> type or with <code>#[serde(with)]</code> attributes (based on <a href="https://github.com/BurntSushi/jiff">jiff</a>);</li>
+<li>Lat/Lng;</li>
+<li>References;</li>
+<li>Explicit nulls;</li>
+</ul>
+</li>
+<li>Caching support for collections and documents:
+<ul>
+<li>In-memory cache;</li>
+<li>Persistent cache;</li>
+</ul>
+</li>
+<li>Works with the Firestore emulator through <code>FIRESTORE_EMULATOR_HOST</code>, no credentials needed;</li>
+<li>Google client based on <a href="https://github.com/abdolence/gcloud-sdk-rs">gcloud-sdk library</a>
+that automatically detects GCE environment or application default accounts for local development;</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h1>
+<p>Cargo.toml:</p>
+<pre><code class="language-toml">[dependencies]
+firestore = "0.52"
+</code></pre>
+<h2 id="crypto-provider-error"><a class="header" href="#crypto-provider-error">Crypto provider error</a></h2>
+<p>Depends on your other dependencies you may see the error like:</p>
+<pre><code class="language-text">no process-level CryptoProvider available -- call CryptoProvider::install_default() before this point 
+</code></pre>
+<p>This is because the TLS providers are not installed by default and you can choose different.
+The easiest way to fix is just to include one of the provider, for example:</p>
+<pre><code class="language-toml">[dependencies]
+rustls = "0.23"
+</code></pre>
+<p>If you have multiple you may need to call <code>CryptoProvider::install_default()</code> before using the Firestore client, e.g.:</p>
+<pre><code class="language-rust ignore">rustls::crypto::ring::default_provider().install_default().expect("Failed to install rustls crypto provider");</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="examples"><a class="header" href="#examples">Examples</a></h1>
+<p>All examples available in the <a href="https://github.com/abdolence/firestore-rs/tree/master/examples">examples</a> directory.</p>
+<p>To run an example with environment variables:</p>
+<pre><code class="language-bash">PROJECT_ID=&lt;your-google-project-id&gt; cargo run --example crud
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="firestore-database-client-instance-and-lifecycle"><a class="header" href="#firestore-database-client-instance-and-lifecycle">Firestore database client instance and lifecycle</a></h1>
+<p>To create a new instance of Firestore client you need to provide at least a GCP project ID.
+It is not recommended creating a new client for each request, so it is recommended to create a client once and reuse it
+whenever possible.
+Cloning instances is much cheaper than creating a new one.</p>
+<p>The client is created using the <code>Firestore::new</code> method:</p>
+<pre><code class="language-rust no_run"><span class="boring">fn config_env_var(name: &amp;str) -&gt; Result&lt;String, String&gt; {
+</span><span class="boring">    std::env::var(name).map_err(|e| format!("{name}: {e}"))
+</span><span class="boring">}
+</span><span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>use firestore::*;
+
+// Create an instance
+let db = FirestoreDb::new( &amp; config_env_var("PROJECT_ID") ? ).await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>This is the recommended way to create a new instance of the client, since it
+automatically detects the environment and uses credentials, service accounts, Workload Identity on GCP, etc.
+Look at the section below <a href="#google-authentication">Google authentication</a> for more details.</p>
+<p>In cases if you need to create a new instance explicitly specifying a key file, you can use:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">fn config_env_var(name: &amp;str) -&gt; Result&lt;String, String&gt; {
+</span><span class="boring">    std::env::var(name).map_err(|e| format!("{name}: {e}"))
+</span><span class="boring">}
+</span><span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>FirestoreDb::with_options_service_account_key_file(
+  FirestoreDbOptions::new(config_env_var("PROJECT_ID") ?.to_string()),
+  "/tmp/key.json".into()
+).await?
+<span class="boring">;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>or if you need even more flexibility you can use a preconfigured token source and scopes with:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">fn config_env_var(name: &amp;str) -&gt; Result&lt;String, String&gt; {
+</span><span class="boring">    std::env::var(name).map_err(|e| format!("{name}: {e}"))
+</span><span class="boring">}
+</span><span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>FirestoreDb::with_options_token_source(
+  FirestoreDbOptions::new(config_env_var("PROJECT_ID") ?.to_string()),
+  gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
+  gcloud_sdk::TokenSourceType::File("/tmp/key.json".into())
+).await?
+<span class="boring">;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Firebase supports <a href="https://cloud.google.com/firestore/docs/manage-databases">multiple databases per project now</a>,
+so you can specify the database ID in the options:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>FirestoreDb::with_options(
+  FirestoreDbOptions::new("your-project-id".to_string())
+    .with_database_id("your-database-id".to_string())
+  )
+.await?
+<span class="boring">;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="fluent-api"><a class="header" href="#fluent-api">Fluent API</a></h1>
+<p>The Fluent API is the only public API of this library. Everything starts from <code>db.fluent()</code>:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure {
+</span><span class="boring">    some_id: String,
+</span><span class="boring">    some_string: String,
+</span><span class="boring">    one_more_string: String,
+</span><span class="boring">    some_num: u64,
+</span><span class="boring">}
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>use firestore::*;
+
+const TEST_COLLECTION_NAME: FirestoreCollectionId =
+    FirestoreCollectionId::from_static("test");
+
+let my_struct = MyTestStructure {
+  some_id: "test-1".to_string(),
+  some_string: "Test".to_string(),
+  one_more_string: "Test2".to_string(),
+  some_num: 42,
+};
+
+// Create
+let object_returned: MyTestStructure = db.fluent()
+  .insert()
+  .into(TEST_COLLECTION_NAME)
+  .document_id( &amp; my_struct.some_id)
+  .object( &amp; my_struct)
+  .execute()
+  .await?;
+
+// Update or Create 
+// (Firestore supports creating documents with update if you provide the document ID).
+let object_updated: MyTestStructure = db.fluent()
+  .update()
+  .fields(paths!(MyTestStructure::{some_num, one_more_string}))
+  .in_col(TEST_COLLECTION_NAME)
+  .document_id( &amp; my_struct.some_id)
+  .object( &amp; MyTestStructure {
+      some_num: my_struct.some_num + 1,
+      one_more_string: "updated-value".to_string(),
+        ..my_struct.clone()
+   })
+  .execute()
+  .await?;
+
+// Get object by id
+let find_it_again: Option&lt;MyTestStructure&gt; = db.fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .one( &amp; my_struct.some_id)
+  .await?;
+
+// Delete data
+db.fluent()
+  .delete()
+  .from(TEST_COLLECTION_NAME)
+  .document_id( &amp; my_struct.some_id)
+  .execute()
+  .await?;
+
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>The low level “support” traits were made crate private in v0.52.0. If you used them, see the
+<a href="https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md">migration guide</a> for the fluent replacement of every removed method.</p>
+<p>Alongside it, the library provides core functionality that is public API in its own right:</p>
+<ul>
+<li>Batch writes: <code>db.create_simple_batch_writer()</code>, <code>db.create_streaming_batch_writer()</code></li>
+<li>Transactions: <code>db.begin_transaction()</code>, <code>db.run_transaction()</code>, and the
+<code>FirestoreTransactionOps</code> trait implemented by both <code>FirestoreTransaction</code> and
+<code>FirestoreTransactionData</code></li>
+<li>Listeners: <code>db.create_listener()</code>, and the <code>FirestoreResumeStateStorage</code> trait for custom
+resume token storage</li>
+<li>Caching: the <code>FirestoreCacheBackend</code> / <code>FirestoreCacheDocsByPathSupport</code> traits for custom cache
+backends</li>
+<li>Dynamic documents: <code>FirestoreDb::serialize_map_to_doc()</code>, <code>FirestoreDb::serialize_to_doc()</code> and
+<code>FirestoreDb::deserialize_doc_to()</code>, used together with the fluent <code>.document(...)</code> builders</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="querying"><a class="header" href="#querying">Querying</a></h1>
+<p>The library supports rich querying API with filters, ordering, pagination, etc.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use futures::stream::BoxStream;
+</span><span class="boring">use futures::TryStreamExt;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure {
+</span><span class="boring">    some_id: String,
+</span><span class="boring">    some_string: String,
+</span><span class="boring">    one_more_string: String,
+</span><span class="boring">    some_num: u64,
+</span><span class="boring">    created_at: FirestoreTimestamp,
+</span><span class="boring">}
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test-query";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>// Query as a stream our data
+let object_stream: BoxStream&lt;FirestoreResult&lt;MyTestStructure&gt; &gt; = db.fluent()
+  .select()
+  .fields(paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at})) // Optionally select the fields needed
+  .from(TEST_COLLECTION_NAME)
+  .filter( | q| { // Fluent filter API example
+      q.for_all([
+        q.field(path!(MyTestStructure::some_num)).is_not_null(),
+        q.field(path!(MyTestStructure::some_string)).eq("Test"),
+        // Sometimes you have optional filters
+        Some("Test2")
+          .and_then( | value | q.field(path ! (MyTestStructure::one_more_string)).eq(value)),        
+      ])
+  })
+  .order_by([(
+    path!(MyTestStructure::some_num),
+    FirestoreQueryDirection::Descending,
+  )])
+  .obj() // Reading documents as structures using Serde gRPC deserializer
+  .stream_query_with_errors()
+  .await?;
+
+let as_vec: Vec&lt;MyTestStructure&gt; = object_stream.try_collect().await?;
+println!("{:?}", as_vec);
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Use:</p>
+<ul>
+<li><code>q.for_all</code> for AND conditions</li>
+<li><code>q.for_any</code> for OR conditions (Firestore has just recently added support for OR conditions)</li>
+</ul>
+<p>You can nest <code>q.for_all</code>/<code>q.for_any</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="get-and-batch-get-support"><a class="header" href="#get-and-batch-get-support">Get and batch get support</a></h1>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use futures::stream::BoxStream;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure {
+</span><span class="boring">    some_id: String,
+</span><span class="boring">}
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb, my_struct: MyTestStructure) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>
+let find_it_again: Option&lt;MyTestStructure&gt; = db.fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .one( &amp; my_struct.some_id)
+  .await?;
+
+let object_stream: BoxStream&lt;(String, Option&lt;MyTestStructure&gt;) &gt; = db.fluent()
+  .select()
+  .by_id_in(TEST_COLLECTION_NAME)
+  .obj()
+  .batch(vec!["test-0", "test-5"])
+  .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="timestamps-support"><a class="header" href="#timestamps-support">Timestamps support</a></h1>
+<p>By default, date/time values serialize as a string to Firestore (while
+deserialization works from Timestamps and Strings). To store them as native
+Firestore timestamps there are three options.</p>
+<ul>
+<li>Using <code>std::time::SystemTime</code> directly, with no attribute and no wrapping type,
+since it is recognised automatically:</li>
+</ul>
+<pre><code class="language-rust"><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">use std::time::SystemTime;
+</span>#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {
+    created_at: SystemTime,
+    updated_at: Option&lt;SystemTime&gt;
+}</code></pre>
+<p>It works in the queries as well:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::SystemTime;
+</span><span class="boring">#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+</span><span class="boring">struct MyTestStructure { created_at: SystemTime }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span><span class="boring">db.fluent().select().from(TEST_COLLECTION_NAME).filter(|q| { q.for_all([
+</span>   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(SystemTime::now())
+<span class="boring">]) }).obj::&lt;MyTestStructure&gt;().query().await?;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Note that <code>SystemTime</code> cannot carry the instants before the Unix epoch, since
+serde itself refuses them.</p>
+<ul>
+<li>Using the type <code>FirestoreTimestamp</code>, which needs no attributes:</li>
+</ul>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span>#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {
+    created_at: FirestoreTimestamp,
+    updated_at: Option&lt;FirestoreTimestamp&gt;
+}</code></pre>
+<p>It can be created with <code>FirestoreTimestamp::now()</code>, parsed from a string, and
+converted from/to <code>std::time::SystemTime</code>:</p>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::SystemTime;
+</span><span class="boring">fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let now = FirestoreTimestamp::now();
+let from_system_time: FirestoreTimestamp = SystemTime::now().try_into()?;
+let back_to_system_time: SystemTime = now.into();
+<span class="boring">let _ = (from_system_time, back_to_system_time);
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Use it in your queries as well, for example:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+</span><span class="boring">struct MyTestStructure { created_at: FirestoreTimestamp }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span><span class="boring">db.fluent().select().from(TEST_COLLECTION_NAME).filter(|q| { q.for_all([
+</span>   q.field(path!(MyTestStructure::created_at)).less_than_or_equal(FirestoreTimestamp::now())
+<span class="boring">]) }).obj::&lt;MyTestStructure&gt;().query().await?;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<ul>
+<li>Or, if you prefer to keep a plain instant in your model, use
+<code>FirestoreInstant</code> (an alias for <code>jiff::Timestamp</code>) with <code>#[serde(with)]</code>
+attributes:</li>
+</ul>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span>#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {
+    #[serde(with = "firestore::serialize_as_timestamp")]
+    created_at: FirestoreInstant,
+
+    #[serde(default)]
+    #[serde(with = "firestore::serialize_as_optional_timestamp")]
+    updated_at: Option&lt;FirestoreInstant&gt;,
+}</code></pre>
+<p>Firestore stores the timestamps with microsecond precision and discards the
+nanoseconds on write. <code>FirestoreTimestamp</code> truncates to that precision in all of
+its constructors and conversions, so its values survive a round trip unchanged.
+A <code>FirestoreInstant</code> or a <code>SystemTime</code> carrying nanoseconds does not, since those
+are the standard types this library cannot change.</p>
+<p>All of them change the representation only for Firestore serialization.
+<code>FirestoreTimestamp</code> and <code>FirestoreInstant</code> still serialize as a string to JSON,
+so the same model can be reused for JSON and Firestore, while a plain <code>SystemTime</code>
+keeps the default serde representation.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="nested-collections"><a class="header" href="#nested-collections">Nested collections</a></h1>
+<p>You can work with nested collections specifying path/location to a parent for documents.
+<code>parent_path</code> and the builder’s <code>at</code> also validate the collection name they are given, so a
+<code>FirestoreCollectionId</code> or a bad raw <code>&amp;str</code> is caught in the same call rather than at the server.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use futures::stream::BoxStream;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyParentStructure { some_id: String }
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyChildStructure { some_id: String }
+</span><span class="boring">const TEST_PARENT_COLLECTION_NAME: &amp;str = "nested-test";
+</span><span class="boring">const TEST_CHILD_COLLECTION_NAME: &amp;str = "test-childs";
+</span><span class="boring">async fn example(
+</span><span class="boring">    db: FirestoreDb,
+</span><span class="boring">    parent_struct: MyParentStructure,
+</span><span class="boring">    child_struct: MyChildStructure,
+</span><span class="boring">) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>
+// Creating a parent doc
+db.fluent()
+  .insert()
+  .into(TEST_PARENT_COLLECTION_NAME)
+  .document_id(&amp;parent_struct.some_id)
+  .object(&amp;parent_struct)
+  .execute::&lt;()&gt;()
+  .await?;
+
+// The doc path where we store our children
+let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id)?;
+
+// Create a child doc
+db.fluent()
+  .insert()
+  .into(TEST_CHILD_COLLECTION_NAME)
+  .document_id(&amp;child_struct.some_id)
+  .parent(&amp;parent_path)
+  .object(&amp;child_struct)
+  .execute::&lt;()&gt;()
+  .await?;
+
+// Listing children
+println!("Listing all children");
+
+let objs_stream: BoxStream&lt;MyChildStructure&gt; = db.fluent()
+  .list()
+  .from(TEST_CHILD_COLLECTION_NAME)
+  .parent( &amp; parent_path)
+  .obj()
+  .stream_all()
+  .await?;
+
+<span class="boring">let _ = objs_stream;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Complete example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/nested_collections.rs">here</a>.</p>
+<p>You can nest multiple levels of collections using <code>at()</code>:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">const TEST_PARENT_COLLECTION_NAME: &amp;str = "nested-test";
+</span><span class="boring">const TEST_CHILD_COLLECTION_NAME: &amp;str = "test-childs";
+</span><span class="boring">const TEST_GRANDCHILD_COLLECTION_NAME: &amp;str = "test-grandchilds";
+</span><span class="boring">fn example(db: &amp;FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let parent_path =
+db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
+  .at(TEST_CHILD_COLLECTION_NAME, "child-id")?
+  .at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id")?;
+<span class="boring">let _ = parent_path;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="transactions"><a class="header" href="#transactions">Transactions</a></h1>
+<p>To manage transactions manually you can use <code>db.begin_transaction()</code>, and
+then the Fluent API to add the operations needed in the transaction.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_id: String, some_string: String }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let mut transaction = db.begin_transaction().await?;
+
+db.fluent()
+  .update()
+  .fields(paths!(MyTestStructure::{
+       some_string
+     }))
+  .in_col(TEST_COLLECTION_NAME)
+  .document_id("test-0")
+  .object( &amp; MyTestStructure {
+    some_id: format!("test-0"),
+    some_string: "UpdatedTest".to_string(),
+  })
+  .add_to_transaction( &amp; mut transaction) ?;
+
+db.fluent()
+  .delete()
+  .from(TEST_COLLECTION_NAME)
+  .document_id("test-5")
+  .add_to_transaction( &amp; mut transaction) ?;
+
+transaction.commit().await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>You may also execute transactions that automatically retry with exponential backoff using <code>run_transaction</code>.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { test_string: String }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">const TEST_DOCUMENT_ID: &amp;str = "test_doc_id";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>    db.run_transaction( | db, transaction| {
+      Box::pin(async move {
+      let mut test_structure: MyTestStructure = db
+        .fluent()
+        .select()
+        .by_id_in(TEST_COLLECTION_NAME)
+        .obj()
+        .one(TEST_DOCUMENT_ID)
+        .await?
+        .expect("Missing document");
+
+      // Perform some kind of operation that depends on the state of the document
+      test_structure.test_string += "a";
+
+      db.fluent()
+        .update()
+        .fields(paths!(MyTestStructure::{
+          test_string
+         }))
+        .in_col(TEST_COLLECTION_NAME)
+        .document_id(TEST_DOCUMENT_ID)
+        .object(&amp;test_structure)
+        .add_to_transaction(transaction) ?;
+
+        Ok(())
+      })
+})
+  .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>See the complete example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/read-write-transactions.rs">here</a>.</p>
+<p>Please note that Firestore doesn’t support creating documents in the transactions (generating
+document IDs automatically), so you need to use <code>update()</code> to implicitly create documents and specifying your own IDs.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="reading-firestore-document-metadata-as-struct-fields"><a class="header" href="#reading-firestore-document-metadata-as-struct-fields">Reading Firestore document metadata as struct fields</a></h1>
+<p>Firestore provides additional generated fields for each of document you create:</p>
+<ul>
+<li><code>_firestore_id</code>: Generated document ID (when it is not specified from the client);</li>
+<li><code>_firestore_created</code>: The time at which the document was created;</li>
+<li><code>_firestore_updated</code>: The time at which the document was last changed;</li>
+</ul>
+<p>To be able to read them the library makes them available
+as system fields for the Serde deserializer with reserved names,
+so you can specify them in your structures as:</p>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span>#[derive(Debug, Clone, Deserialize, Serialize)]
+struct MyTestStructure {
+    #[serde(alias = "_firestore_id")]
+    id: Option&lt;String&gt;,
+    #[serde(alias = "_firestore_created")]
+    created_at: Option&lt;FirestoreTimestamp&gt;,
+    #[serde(alias = "_firestore_updated")]
+    updated_at: Option&lt;FirestoreTimestamp&gt;,
+    some_string: String,
+    one_more_string: String,
+    some_num: u64,
+}</code></pre>
+<p>Complete example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/generated-document-id.rs">here</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="working-on-dynamicdocument-level"><a class="header" href="#working-on-dynamicdocument-level">Working on dynamic/document level</a></h1>
+<p>Sometimes having static structure may restrict you from working with dynamic data,
+so there is a way to use Fluent API to work with documents without introducing structures at all.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let object_returned = db
+.fluent()
+.insert()
+.into(TEST_COLLECTION_NAME)
+.document_id("test-1")
+.document(FirestoreDb::serialize_map_to_doc("",
+    [
+      ("some_id", "test-id".into()),
+      ("some_string", "test-value".into()),
+      ("some_num", 42.into()),
+      (
+      "embedded_obj",
+        FirestoreValue::from_map([
+          ("inner_some_id", "inner-id-value".into()),
+          ("inner_some_string", "inner-some-value".into()),
+        ]),
+      ),
+      ("created_at", FirestoreTimestamp::now().into()),
+    ])?
+)
+.execute()
+.await?;
+
+<span class="boring">let _ = object_returned;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/dynamic_doc_level_crud.rs">here</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="document-transformations"><a class="header" href="#document-transformations">Document transformations</a></h1>
+<p>The library supports server side document transformations in transactions and batch writes:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_num: i32, some_array: Vec&lt;i32&gt; }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb, my_obj: MyTestStructure) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span><span class="boring">let mut transaction = db.begin_transaction().await?;
+</span>
+// Only transformation
+db.fluent()
+.update()
+.in_col(TEST_COLLECTION_NAME)
+.document_id("test-4")
+.transforms(|t| { // Transformations
+    t.fields([
+      t.field(path!(MyTestStructure::some_num)).increment(10),
+      t.field(path!(MyTestStructure::some_array)).append_missing_elements([4, 5]),
+      t.field(path!(MyTestStructure::some_array)).remove_all_from_array([3]),
+    ])
+})
+.only_transform()
+.add_to_transaction( &amp; mut transaction) ?; // or add_to_batch
+
+// Update and transform (in this order and atomically):
+db.fluent()
+.update()
+.in_col(TEST_COLLECTION_NAME)
+.document_id("test-5")
+.object(&amp;my_obj) // Updating the objects with the fields here
+.transforms(|t| { // Transformations after the update
+    t.fields([
+      t.field(path!(MyTestStructure::some_num)).increment(10),
+    ])
+})
+.add_to_transaction(&amp;mut transaction) ?; // or add_to_batch
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="listening-the-document-changes-on-firestore"><a class="header" href="#listening-the-document-changes-on-firestore">Listening the document changes on Firestore</a></h1>
+<p>To help to work with asynchronous event listener the library supports high level API for
+listening the events from Firestore on a separate thread:</p>
+<p>The listener implementation needs to be provided with a storage for the last received token for specified targets to be
+able to resume listening the changes from the last handled token and to avoid receiving all previous changes.</p>
+<p>The library provides basic implementations for storing the tokens but you can implement your own more sophisticated
+storage if needed:</p>
+<ul>
+<li><code>FirestoreTempFilesListenStateStorage</code> - resume tokens stored as temporary files on local FS;</li>
+<li><code>FirestoreMemListenStateStorage</code> - in memory storage backed by HashMap (with this implementation if you restart your
+app, you will receive all notifications again);</li>
+</ul>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_id: String }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test-listen";
+</span><span class="boring">const TEST_TARGET_ID_BY_QUERY: FirestoreListenerTarget = FirestoreListenerTarget::new(42_u32);
+</span><span class="boring">const TEST_TARGET_ID_BY_DOC_IDS: FirestoreListenerTarget = FirestoreListenerTarget::new(17_u32);
+</span><span class="boring">async fn example(db: FirestoreDb, doc_id1: String, doc_id2: String) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>
+let mut listener = db.create_listener(
+    FirestoreTempFilesListenStateStorage::new() // or FirestoreMemListenStateStorage or your own implementation 
+).await?;
+
+// Adding query listener
+db.fluent()
+.select()
+.from(TEST_COLLECTION_NAME)
+.listen()
+.add_target(TEST_TARGET_ID_BY_QUERY, &amp;mut listener) ?;
+
+// Adding docs listener by IDs
+db.fluent()
+.select()
+.by_id_in(TEST_COLLECTION_NAME)
+.batch_listen([doc_id1, doc_id2])
+.add_target(TEST_TARGET_ID_BY_DOC_IDS, &amp;mut listener) ?;
+
+listener
+.start( | event| async move {
+    match event {
+        FirestoreListenEvent::DocumentChange( ref doc_change) =&gt; {
+            println ! ("Doc changed: {:?}", doc_change);
+            
+            if let Some(doc) = &amp; doc_change.document {
+              let obj: MyTestStructure =
+              FirestoreDb::deserialize_doc_to::&lt;MyTestStructure &gt; (doc)
+              .expect("Deserialized object");
+              println ! ("As object: {:?}", obj);
+            }
+        }
+        _ =&gt; {
+          println ! ("Received a listen response event to handle: {:?}", event);
+        }
+    }
+
+  Ok(())
+})
+.await?;
+
+// Wait some events like Ctrl-C, signals, etc
+// &lt;put-your-implementation-for-wait-here&gt;
+
+// and then shutdown
+listener.shutdown().await?;
+
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>See complete example in examples directory.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="explicit-null-value-serialization"><a class="header" href="#explicit-null-value-serialization">Explicit null value serialization</a></h1>
+<p>By default, all Option&lt;&gt; serialized as absent fields, which is convenient for many cases.
+However sometimes you need to have explicit nulls.</p>
+<p>To help with that there are additional attributes implemented for <code>serde(with)</code>:</p>
+<ul>
+<li>For any type:</li>
+</ul>
+<pre><code class="language-rust"><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure {
+</span>#[serde(default)]
+#[serde(with = "firestore::serialize_as_null")]
+test_null: Option&lt;String&gt;,
+<span class="boring">}</span></code></pre>
+<ul>
+<li>For Firestore timestamps attribute:</li>
+</ul>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure {
+</span>#[serde(default)]
+#[serde(with = "firestore::serialize_as_null_timestamp")]
+test_null: Option&lt;FirestoreInstant&gt;,
+<span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="select-aggregate-functions"><a class="header" href="#select-aggregate-functions">Select aggregate functions</a></h1>
+<p>The library supports the aggregation functions for the queries:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyAggTestStructure { counter: usize }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let objs: Vec&lt;MyAggTestStructure&gt; = db.fluent()
+  .select()
+  .from(TEST_COLLECTION_NAME)
+  .aggregate(|a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
+  .obj()
+  .query()
+  .await?;
+<span class="boring">let _ = objs;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="updatedelete-preconditions"><a class="header" href="#updatedelete-preconditions">Update/delete preconditions</a></h1>
+<p>The library supports the preconditions:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_num: u64 }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span><span class="boring">let object_updated: MyTestStructure = db.fluent()
+</span><span class="boring">  .update()
+</span><span class="boring">  .fields(paths!(MyTestStructure::{some_num}))
+</span><span class="boring">  .in_col(TEST_COLLECTION_NAME)
+</span>  .precondition(FirestoreWritePrecondition::Exists(true))
+<span class="boring">  .document_id("test-1")
+</span><span class="boring">  .object(&amp;MyTestStructure { some_num: 1 })
+</span><span class="boring">  .execute()
+</span><span class="boring">  .await?;
+</span><span class="boring">let _ = object_updated;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="explaining-the-query"><a class="header" href="#explaining-the-query">Explaining the query</a></h1>
+<p>The library supports the query explanation:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+  .select()
+  .from(TEST_COLLECTION_NAME)
+  .explain()
+  // or use explain_with_options if you want to provide additional options like analyze which run query to gather additional statistics 
+  // .explain_with_options(FirestoreExplainOptions::new().with_analyze(true))
+  .stream_query_with_metadata()
+  .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="request-tags"><a class="header" href="#request-tags">Request tags</a></h1>
+<p>Firestore supports attaching request tags to requests. They are reported by Firestore
+in its monitoring and billing breakdowns, which makes them useful to attribute reads
+and writes to a specific feature, tenant or background job.</p>
+<p>Tags can be set per operation for queries, aggregations, listings and listeners:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_id: String }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+  .select()
+  .from(TEST_COLLECTION_NAME)
+  .request_tags(["nightly-report"])
+  // or use request_options if you want to provide the options structure directly
+  // .request_options(FirestoreRequestOptions::from_tags(["nightly-report"]))
+  .obj::&lt;MyTestStructure&gt;()
+  .query()
+  .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Or session wide, for every request issued through a client instance. This is also how
+you attach tags to the CRUD operations (insert/update/delete/get):</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_id: String }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb, my_struct: MyTestStructure) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let tagged_db = db.clone_with_request_tags(["nightly-report"]);
+
+tagged_db.fluent()
+  .insert()
+  .into(TEST_COLLECTION_NAME)
+  .document_id(&amp;my_struct.some_id)
+  .object(&amp;my_struct)
+  .execute::&lt;MyTestStructure&gt;()
+  .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Transactions and batch writers accept them through their options:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use futures::FutureExt;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_id: String }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.run_transaction_with_options(
+    |db, _transaction| {
+        async move {
+            db.fluent()
+                .select()
+                .by_id_in(TEST_COLLECTION_NAME)
+                .obj::&lt;MyTestStructure&gt;()
+                .one("test-1")
+                .await?;
+
+            Ok(())
+        }
+        .boxed()
+    },
+    FirestoreTransactionOptions::new()
+        .with_request_options(FirestoreRequestOptions::from_tags(["checkout"])),
+).await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>A per operation value replaces the session wide default rather than merging with it.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="document-and-collection-ids"><a class="header" href="#document-and-collection-ids">Document and collection IDs</a></h1>
+<p><code>FirestoreDocumentId</code> and <code>FirestoreCollectionId</code> are validated newtypes for IDs that arrive from
+outside your process - a request path segment, a JSON body, a runtime-chosen collection name.
+Construct one where the ID enters your system; a <code>/</code>, an empty string, or <code>.</code>/<code>..</code> is rejected
+there instead of silently reaching Firestore or, in the case of a collection name, retargeting the
+operation at a different collection.</p>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span><span class="boring">fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+</span>let id = FirestoreDocumentId::new("user-42")?;
+let collection = FirestoreCollectionId::new("users")?;
+<span class="boring">let _ = (id, collection);
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>A name known up front - the sort of thing you would today write as <code>const NAME: &amp;str = "..."</code> -
+can be declared as a validated <code>const</code> or <code>static</code> with <code>from_static</code>. An invalid literal there is
+a compile error, not a runtime one:</p>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span>const USERS: FirestoreCollectionId = FirestoreCollectionId::from_static("users");</code></pre>
+<p>Use <code>from_static</code> for a literal you control, checked at compile time with no <code>Result</code> to handle;
+use <code>new</code> for a value arriving at runtime, which returns a <code>FirestoreResult</code>.</p>
+<p>Both implement <code>AsRef&lt;str&gt;</code>, so a reference drops straight into any call that already takes a
+document or collection ID or name, with no conversion:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_id: String }
+</span><span class="boring">async fn example(
+</span><span class="boring">    db: FirestoreDb,
+</span><span class="boring">    collection: FirestoreCollectionId,
+</span><span class="boring">    id: FirestoreDocumentId,
+</span><span class="boring">) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+  .select()
+  .by_id_in(&amp;collection)
+  .obj::&lt;MyTestStructure&gt;()
+  .one(&amp;id)
+  .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Store the validated type in your own structs instead of a bare <code>String</code> to carry the proof along
+with the value; it deserializes through the same validation, so a <code>CreateSession</code> built from an
+untrusted request body rejects a bad ID before it reaches Firestore:</p>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span>#[derive(Debug, Clone, Deserialize, Serialize)]
+struct CreateSession {
+    user_id: FirestoreDocumentId,
+}</code></pre>
+<p>See <code>examples/crud.rs</code> and <code>examples/nested_collections.rs</code> for a document ID and a
+<code>parent_path</code>/<code>at</code> pair built from validated IDs, and <code>examples/dynamic_doc_level_crud.rs</code> /
+<code>examples/caching_dynamic_collections.rs</code> for a collection name chosen at runtime.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="caching"><a class="header" href="#caching">Caching</a></h1>
+<p>The library supports caching for collections and documents. A Firestore listener keeps the cache
+up to date when documents change, so updates are propagated across distributed instances
+automatically.</p>
+<p>This avoids reading, and paying for, the same documents repeatedly. It is particularly useful for
+dictionaries, configuration and other data that changes rarely, and can reduce both cost and
+latency noticeably.</p>
+<p>Caching is opt-in through cargo features:</p>
+<ul>
+<li><code>caching-memory</code> for an in-memory cache, implemented with the
+<a href="https://github.com/moka-rs/moka">moka cache library</a>;</li>
+<li><code>caching-persistent</code> for a persistent, disk backed cache, implemented with
+<a href="https://github.com/cberner/redb">redb</a> and protobuf.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="usage-1"><a href="#usage-1" class="header">Usage</a></h1>
+<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_id: String }
+</span><span class="boring">fn config_env_var(name: &amp;str) -&gt; Result&lt;String, String&gt; {
+</span><span class="boring">    std::env::var(name).map_err(|e| format!("{name}: {e}"))
+</span><span class="boring">}
+</span><span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>// Create an instance
+let db = FirestoreDb::new(&amp;config_env_var("PROJECT_ID")?).await?;
+
+// Build the cache. This creates an internal Firestore listener, preloads the configured
+// collections and starts listening for changes.
+let cache = FirestoreCache::memory(&amp;db)
+    .preloaded_collection("test-caching")
+    .build()
+    .await?;
+
+// Read through the cache: served from the cache when possible, from Firestore otherwise.
+let my_struct: Option&lt;MyTestStructure&gt; = db.read_through_cache(&amp;cache)
+    .fluent()
+    .select()
+    .by_id_in("test-caching")
+    .obj()
+    .one("test-1")
+    .await?;
+
+// Read only from the cache, never contacting Firestore.
+let my_struct: Option&lt;MyTestStructure&gt; = db.read_cached_only(&amp;cache)
+    .fluent()
+    .select()
+    .by_id_in("test-caching")
+    .obj()
+    .one("test-1")
+    .await?;
+
+cache.shutdown().await?;
+<span class="boring">let _ = my_struct;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>For a persistent cache, use <code>FirestoreCache::persistent(&amp;db)</code> and give it a directory with
+<code>.data_dir("/var/cache/my-app")</code>, which keeps the cache database and the listener resume tokens
+together.</p>
+<p>Listener target IDs are assigned automatically starting at 1000. If your application runs its own
+listeners, move the cache’s range with <code>.listener_target_base(...)</code> or pin individual collections
+with <code>.collection_with(name, |c| c.listener_target(...))</code>.</p>
+<p>Because <code>load</code> and <code>shutdown</code> take <code>&amp;self</code>, a built cache can be shared directly as
+<code>Arc&lt;FirestoreMemoryCache&gt;</code> in your application state. <code>FirestoreMemoryCache</code> and
+<code>FirestorePersistentCache</code> are aliases that save you from spelling out the generic parameters.</p>
+<p><code>shutdown</code> stops the listener and releases the backend’s resources: the in-memory cache drops its
+documents, and the persistent cache closes its database file, so another cache can be opened over
+the same directory.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="caching-named-documents"><a href="#caching-named-documents" class="header">Caching Named Documents</a></h1>
+<h2 id="caching-named-documents-instead-of-a-whole-collection"><a class="header" href="#caching-named-documents-instead-of-a-whole-collection">Caching named documents instead of a whole collection</a></h2>
+<p><code>.collection(name)</code> subscribes the listener to the <strong>entire</strong> collection, even though it does not
+preload it - “lazy” only means the initial download is skipped. When you know which documents you
+care about, say so:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let cache = FirestoreCache::memory(&amp;db)
+    .collection_with("configs", |c| c.documents(["site", "billing"]).preload_all())
+    .build()
+    .await?;
+<span class="boring">let _ = cache;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>The listener then watches exactly those documents, so unrelated changes in the collection are never
+streamed to your process or written into the cache, and preloading reads just those IDs. This is
+the shape to reach for with configuration, feature flags and reference data.</p>
+<p>Such a collection is never listable, whatever its load mode: it holds a chosen subset, so <code>list</code>
+and <code>query</code> would return a partial answer that looks complete.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="changing-cached-collections-at-runtime"><a href="#changing-cached-collections-at-runtime" class="header">Changing Cached Collections at Runtime</a></h1>
+<h2 id="changing-the-cached-collections-at-runtime"><a class="header" href="#changing-the-cached-collections-at-runtime">Changing the cached collections at runtime</a></h2>
+<p>The set of cached collections does not have to be fixed when the cache is built:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(cache: FirestoreMemoryCache) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>cache.add_collection(FirestoreCacheCollection::new("currencies").preload_all()).await?;
+
+cache.remove_collection("currencies").await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p><code>add_collection</code> downloads the collection first if it is preloaded, publishes it only once it is
+complete, and then extends the listener - so a listing never observes it half filled, and nothing
+written during the download is missed. <code>remove_collection</code> does the reverse, and also forgets the
+collection’s resume token so its listener target ID cannot be reused against a different query.
+Use <code>remove_collection_at</code> for a sub-collection, whose absolute path a bare name cannot address.</p>
+<p><code>FirestoreDb</code> handles created earlier with <code>read_through_cache</code> or <code>read_cached_only</code> pick both up
+immediately: they share the cache’s backend rather than a copy of it. A cache can also be built
+with no collections at all and populated entirely at runtime.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="choosing-a-cache-mode-1"><a href="#choosing-a-cache-mode-1" class="header">Choosing a Cache Mode</a></h1>
+<h2 id="choosing-a-cache-mode"><a class="header" href="#choosing-a-cache-mode">Choosing a cache mode</a></h2>
+<ul>
+<li><code>db.read_through_cache(&amp;cache)</code> serves what it can from the cache and goes to Firestore for the
+rest. This is the mode to reach for by default.</li>
+<li><code>db.read_cached_only(&amp;cache)</code> never contacts Firestore. Reads by ID return <code>None</code> on a miss, and
+requests the cache cannot answer completely return an error.</li>
+</ul>
+<p>Which operations use the cache:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Operation</th><th>Cached</th></tr>
+</thead>
+<tbody>
+<tr><td>Read by ID, batch read by IDs</td><td>yes, for any cached collection</td></tr>
+<tr><td>Listing all documents in a collection</td><td>only for <strong>preloaded</strong> collections</td></tr>
+<tr><td>Querying a collection (filtering, ordering, cursors)</td><td>only for <strong>preloaded</strong> collections, and only for supported queries</td></tr>
+<tr><td>Paged listing, queries with metadata, aggregations, transactions, writes</td><td>never</td></tr>
+</tbody>
+</table>
+</div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="load-modes-and-preloading"><a href="#load-modes-and-preloading" class="header">Load Modes and Preloading</a></h1>
+<h2 id="load-modes-and-why-listings-need-preloading"><a class="header" href="#load-modes-and-why-listings-need-preloading">Load modes, and why listings need preloading</a></h2>
+<ul>
+<li><code>PreloadNone</code> (<code>.collection(name)</code>): don’t preload anything, just fill the cache while working;</li>
+<li><code>PreloadAllDocs</code> (<code>.collection_with(name, |c| c.preload_all())</code>): preload all documents in the
+collection;</li>
+<li><code>PreloadAllIfEmpty</code> (<code>.collection_with(name, |c| c.preload_all_if_empty())</code>): preload all
+documents only if the cache is empty. This is useful for the persistent cache; for the memory
+cache it is the same as <code>PreloadAllDocs</code>, since an in-memory cache always starts empty.</li>
+</ul>
+<p><code>.preloaded_collection(name)</code> picks the appropriate preloading mode for the backend.</p>
+<p>A lazily filled collection holds only the documents that happened to be read through it.
+Answering a <code>list</code> or <code>query</code> from it would return a subset that looks like a complete answer, so
+the library refuses to do so: <code>read_through_cache</code> quietly falls back to Firestore, and
+<code>read_cached_only</code> returns an error naming the collection. If partial results are genuinely
+acceptable, opt in with
+<code>.incomplete_collection_policy(FirestoreCacheIncompleteCollectionPolicy::PartialResults)</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-the-cache-is-updated-1"><a href="#how-the-cache-is-updated-1" class="header">How the Cache Is Updated</a></h1>
+<h2 id="how-the-cache-is-updated"><a class="header" href="#how-the-cache-is-updated">How the cache is updated</a></h2>
+<ul>
+<li>When you read a document by ID through the cache and it is not there, it is fetched from
+Firestore and cached;</li>
+<li>The Firestore listener updates the cache when a document changes, whether the change came from
+your application or from elsewhere;</li>
+<li>Preloading at startup.</li>
+</ul>
+<p>Cached results are eventually consistent: they reflect the last state the listener delivered, so a
+write may take a moment to show up. Do not cache data that must be read at strong consistency.</p>
+<p>Firestore also reports how many documents a target matches. When that disagrees with what a
+preloaded collection holds - which means changes were missed, typically deletes that happened while
+the listener was disconnected - the cache drops the collection and has Firestore replay it. The
+count is only compared when it can be trusted: a collection the cache expires entries from, or
+fills lazily, is never checked this way.</p>
+<p>When Firestore resets or removes a listener target - after a reconnect, or when a stored resume
+token has expired - the cache drops what it holds for that collection and Firestore replays it.
+While that replay is in progress the collection stops answering <code>list</code> and <code>query</code> from the cache:
+<code>read_through_cache</code> falls back to Firestore, and <code>read_cached_only</code> returns a <code>CacheError</code> rather
+than a listing that looks complete but is not.</p>
+<p>Full examples are available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/caching_memory_collections.rs">here</a>
+and <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/caching_persistent_collections.rs">here</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="google-authentication"><a class="header" href="#google-authentication">Google authentication</a></h1>
+<p>Looks for credentials in the following places, preferring the first location found:</p>
+<ul>
+<li>A JSON file whose path is specified by the GOOGLE_APPLICATION_CREDENTIALS environment variable.</li>
+<li>A JSON file in a location known to the gcloud command-line tool using <code>gcloud auth application-default login</code>.</li>
+<li>On Google Compute Engine, it fetches credentials from the metadata server.</li>
+</ul>
+<h2 id="local-development"><a class="header" href="#local-development">Local development</a></h2>
+<p>Don’t confuse <code>gcloud auth login</code> with <code>gcloud auth application-default login</code> for local development,
+since the first authorize only <code>gcloud</code> tool to access the Cloud Platform.</p>
+<p>The latter obtains user access credentials via a web flow and puts them in the well-known location for Application
+Default Credentials (ADC).
+This command is useful when you are developing code that would normally use a service account but need to run the code
+in a local development environment where it’s easier to provide user credentials.
+So to work for local development you need to use <code>gcloud auth application-default login</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="working-with-docker-images"><a class="header" href="#working-with-docker-images">Working with docker images</a></h1>
+<p>When you design your Dockerfile make sure you either installed Root CA certificates or use base images that already
+include them.
+If you don’t have certs installed you usually observe the errors such as:</p>
+<pre><code class="language-text">SystemError(FirestoreSystemError { public: FirestoreErrorPublicGenericDetails { code: "GrpcStatus(tonic::transport::Error(Transport, hyper::Error(Connect, Custom { kind: InvalidData, error: InvalidCertificateData(\"invalid peer certificate: UnknownIssuer\") })))" }, message: "GCloud system error: Tonic/gRPC error: transport error" })
+</code></pre>
+<p>For example for Debian based images, this usually can be fixed using this package:</p>
+<pre><code class="language-text">RUN apt-get install -y ca-certificates
+</code></pre>
+<p>Also, I recommend considering using <a href="https://github.com/GoogleContainerTools/distroless">Google Distroless images</a> since
+they are secure, already include Root CA certs, and are optimised for size.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="firestore-emulator"><a class="header" href="#firestore-emulator">Firestore emulator</a></h1>
+<p>To work with the Google Firestore emulator you can use the environment variable:</p>
+<pre><code class="language-bash">export FIRESTORE_EMULATOR_HOST="localhost:8080"
+</code></pre>
+<p>or specify it as an option using <code>FirestoreDb::with_options()</code>.</p>
+<p>When <code>FIRESTORE_EMULATOR_HOST</code> is set, the library does not look up the Google
+credentials and uses a stub token instead, since the emulator does not
+authenticate the requests. This means you do not need any credentials
+configured to develop against it. Specifying a token source explicitly, with
+<code>FirestoreDb::with_options_token_source()</code> for example, still takes precedence.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="tls-related-features"><a class="header" href="#tls-related-features">TLS related features</a></h1>
+<p>Cargo provides support for different TLS features for dependencies:</p>
+<ul>
+<li><code>tls-roots</code>: default feature to support native TLS roots</li>
+<li><code>tls-webpki-roots</code>: feature to switch to webpki crate roots</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="testing-your-own-code"><a class="header" href="#testing-your-own-code">Testing your own code</a></h1>
+<p>The Fluent API is built on <code>FirestoreDb</code> directly, so there is no built-in way to substitute a
+fake database into <code>db.fluent()</code>. There are two approaches that work well.</p>
+<h2 id="abstract-at-your-own-boundary"><a class="header" href="#abstract-at-your-own-boundary">Abstract at your own boundary</a></h2>
+<p>Define a trait for what your code needs and implement it over a type holding a <code>FirestoreDb</code>.
+Your business logic then depends on your trait, and tests provide their own implementation. This
+keeps Firestore concerns in one place and needs nothing special from this library:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use firestore::errors::FirestoreError;
+</span><span class="boring">#[derive(Debug, serde::Deserialize)]
+</span><span class="boring">struct User;
+</span><span class="boring">#[derive(Debug)]
+</span><span class="boring">struct MyError;
+</span><span class="boring">impl From&lt;FirestoreError&gt; for MyError {
+</span><span class="boring">    fn from(_: FirestoreError) -&gt; Self {
+</span><span class="boring">        MyError
+</span><span class="boring">    }
+</span><span class="boring">}
+</span>#[async_trait::async_trait]
+trait UserRepository {
+    async fn find_user(&amp;self, id: &amp;str) -&gt; Result&lt;Option&lt;User&gt;, MyError&gt;;
+}
+
+struct FirestoreUserRepository {
+    db: FirestoreDb,
+}
+
+#[async_trait::async_trait]
+impl UserRepository for FirestoreUserRepository {
+    async fn find_user(&amp;self, id: &amp;str) -&gt; Result&lt;Option&lt;User&gt;, MyError&gt; {
+        Ok(self.db
+            .fluent()
+            .select()
+            .by_id_in("users")
+            .obj()
+            .one(id)
+            .await?)
+    }
+}
+
+// In tests, implement `UserRepository` with an in-memory HashMap.</code></pre>
+<h2 id="run-against-the-firestore-emulator"><a class="header" href="#run-against-the-firestore-emulator">Run against the Firestore emulator</a></h2>
+<p>For tests that should exercise real query, listener and transaction behaviour, point the library
+at the <a href="https://firebase.google.com/docs/emulator-suite">Firestore emulator</a>:</p>
+<pre><code class="language-bash">export FIRESTORE_EMULATOR_HOST="localhost:8080"
+</code></pre>
+<p>No credentials are needed in that mode. This is how the caching and transaction behaviour of this
+library itself is verified, and it catches things a hand-written fake cannot.</p>
+<blockquote>
+<p><strong>Changed in 0.52</strong>: the low level <code>*Support</code> traits are no longer public, so code written to be
+generic over them no longer compiles. Note that they could never be used with the Fluent API
+from outside the crate anyway, since the builders’ constructors are crate private. See the
+<a href="https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md">migration guide</a>.</p>
+</blockquote>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-609e4cb8.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+
+    </div>
+    </body>
+</html>
