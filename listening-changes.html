@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Listening the Document Changes - Firestore for Rust</title>
+        <title>Listening the document changes - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-553f54b5.js";
+            window.path_to_searchindex_js = "searchindex-1c0f7621.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3f587e2e.js"></script>
+        <script src="toc-6cdd47ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -197,53 +197,53 @@ app, you will receive all notifications again);</li>
 </span><span class="boring">const TEST_TARGET_ID_BY_QUERY: FirestoreListenerTarget = FirestoreListenerTarget::new(42_u32);
 </span><span class="boring">const TEST_TARGET_ID_BY_DOC_IDS: FirestoreListenerTarget = FirestoreListenerTarget::new(17_u32);
 </span><span class="boring">async fn example(db: FirestoreDb, doc_id1: String, doc_id2: String) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>
-let mut listener = db.create_listener(
-    FirestoreTempFilesListenStateStorage::new() // or FirestoreMemListenStateStorage or your own implementation 
-).await?;
+</span>let mut listener = db
+    .create_listener(
+        FirestoreTempFilesListenStateStorage::new(), // or FirestoreMemListenStateStorage or your own implementation
+    )
+    .await?;
 
 // Adding query listener
 db.fluent()
-.select()
-.from(TEST_COLLECTION_NAME)
-.listen()
-.add_target(TEST_TARGET_ID_BY_QUERY, &amp;mut listener) ?;
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .listen()
+    .add_target(TEST_TARGET_ID_BY_QUERY, &amp;mut listener)?;
 
 // Adding docs listener by IDs
 db.fluent()
-.select()
-.by_id_in(TEST_COLLECTION_NAME)
-.batch_listen([doc_id1, doc_id2])
-.add_target(TEST_TARGET_ID_BY_DOC_IDS, &amp;mut listener) ?;
+    .select()
+    .by_id_in(TEST_COLLECTION_NAME)
+    .batch_listen([doc_id1, doc_id2])
+    .add_target(TEST_TARGET_ID_BY_DOC_IDS, &amp;mut listener)?;
 
 listener
-.start( | event| async move {
-    match event {
-        FirestoreListenEvent::DocumentChange( ref doc_change) =&gt; {
-            println ! ("Doc changed: {:?}", doc_change);
-            
-            if let Some(doc) = &amp; doc_change.document {
-              let obj: MyTestStructure =
-              FirestoreDb::deserialize_doc_to::&lt;MyTestStructure &gt; (doc)
-              .expect("Deserialized object");
-              println ! ("As object: {:?}", obj);
+    .start(|event| async move {
+        match event {
+            FirestoreListenEvent::DocumentChange(ref doc_change) =&gt; {
+                println!("Doc changed: {:?}", doc_change);
+
+                if let Some(doc) = &amp;doc_change.document {
+                    let obj: MyTestStructure =
+                        FirestoreDb::deserialize_doc_to::&lt;MyTestStructure&gt;(doc)
+                            .expect("Deserialized object");
+                    println!("As object: {:?}", obj);
+                }
+            }
+            _ =&gt; {
+                println!("Received a listen response event to handle: {:?}", event);
             }
         }
-        _ =&gt; {
-          println ! ("Received a listen response event to handle: {:?}", event);
-        }
-    }
 
-  Ok(())
-})
-.await?;
+        Ok(())
+    })
+    .await?;
 
 // Wait some events like Ctrl-C, signals, etc
 // &lt;put-your-implementation-for-wait-here&gt;
 
 // and then shutdown
 listener.shutdown().await?;
-
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>See complete example in examples directory.</p>
@@ -252,11 +252,11 @@ listener.shutdown().await?;
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="document-transformations.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="explain-query.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="null-serialization.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="dynamic-documents.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -266,11 +266,11 @@ listener.shutdown().await?;
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="document-transformations.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="explain-query.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="null-serialization.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="dynamic-documents.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

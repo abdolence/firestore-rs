@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Nested Collections - Firestore for Rust</title>
+        <title>Nested collections - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-553f54b5.js";
+            window.path_to_searchindex_js = "searchindex-1c0f7621.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3f587e2e.js"></script>
+        <script src="toc-6cdd47ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -195,40 +195,39 @@
 </span><span class="boring">    parent_struct: MyParentStructure,
 </span><span class="boring">    child_struct: MyChildStructure,
 </span><span class="boring">) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>
-// Creating a parent doc
+</span>// Creating a parent doc
 db.fluent()
-  .insert()
-  .into(TEST_PARENT_COLLECTION_NAME)
-  .document_id(&amp;parent_struct.some_id)
-  .object(&amp;parent_struct)
-  .execute::&lt;()&gt;()
-  .await?;
+    .insert()
+    .into(TEST_PARENT_COLLECTION_NAME)
+    .document_id(&amp;parent_struct.some_id)
+    .object(&amp;parent_struct)
+    .execute::&lt;()&gt;()
+    .await?;
 
 // The doc path where we store our children
 let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id)?;
 
 // Create a child doc
 db.fluent()
-  .insert()
-  .into(TEST_CHILD_COLLECTION_NAME)
-  .document_id(&amp;child_struct.some_id)
-  .parent(&amp;parent_path)
-  .object(&amp;child_struct)
-  .execute::&lt;()&gt;()
-  .await?;
+    .insert()
+    .into(TEST_CHILD_COLLECTION_NAME)
+    .document_id(&amp;child_struct.some_id)
+    .parent(&amp;parent_path)
+    .object(&amp;child_struct)
+    .execute::&lt;()&gt;()
+    .await?;
 
 // Listing children
 println!("Listing all children");
 
-let objs_stream: BoxStream&lt;MyChildStructure&gt; = db.fluent()
-  .list()
-  .from(TEST_CHILD_COLLECTION_NAME)
-  .parent( &amp; parent_path)
-  .obj()
-  .stream_all()
-  .await?;
-
+let objs_stream: BoxStream&lt;MyChildStructure&gt; = db
+    .fluent()
+    .list()
+    .from(TEST_CHILD_COLLECTION_NAME)
+    .parent(&amp;parent_path)
+    .obj()
+    .stream_all()
+    .await?;
 <span class="boring">let _ = objs_stream;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
@@ -239,10 +238,10 @@ let objs_stream: BoxStream&lt;MyChildStructure&gt; = db.fluent()
 </span><span class="boring">const TEST_CHILD_COLLECTION_NAME: &amp;str = "test-childs";
 </span><span class="boring">const TEST_GRANDCHILD_COLLECTION_NAME: &amp;str = "test-grandchilds";
 </span><span class="boring">fn example(db: &amp;FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
-</span>let parent_path =
-db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
-  .at(TEST_CHILD_COLLECTION_NAME, "child-id")?
-  .at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id")?;
+</span>let parent_path = db
+    .parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
+    .at(TEST_CHILD_COLLECTION_NAME, "child-id")?
+    .at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id")?;
 <span class="boring">let _ = parent_path;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
@@ -251,7 +250,7 @@ db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="timestamps.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="get-and-batch-get.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -265,7 +264,7 @@ db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="timestamps.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="get-and-batch-get.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

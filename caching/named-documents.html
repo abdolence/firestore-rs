@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Caching Named Documents - Firestore for Rust</title>
+        <title>Caching named documents - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-553f54b5.js";
+            window.path_to_searchindex_js = "../searchindex-1c0f7621.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-3f587e2e.js"></script>
+        <script src="../toc-6cdd47ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -184,7 +184,9 @@ care about, say so:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
 </span>let cache = FirestoreCache::memory(&amp;db)
-    .collection_with("configs", |c| c.documents(["site", "billing"]).preload_all())
+    .collection_with("configs", |c| {
+        c.documents(["site", "billing"]).preload_all()
+    })
     .build()
     .await?;
 <span class="boring">let _ = cache;

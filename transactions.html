@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-553f54b5.js";
+            window.path_to_searchindex_js = "searchindex-1c0f7621.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3f587e2e.js"></script>
+        <script src="toc-6cdd47ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -189,23 +189,23 @@ then the Fluent API to add the operations needed in the transaction.</p>
 </span>let mut transaction = db.begin_transaction().await?;
 
 db.fluent()
-  .update()
-  .fields(paths!(MyTestStructure::{
-       some_string
-     }))
-  .in_col(TEST_COLLECTION_NAME)
-  .document_id("test-0")
-  .object( &amp; MyTestStructure {
-    some_id: format!("test-0"),
-    some_string: "UpdatedTest".to_string(),
-  })
-  .add_to_transaction( &amp; mut transaction) ?;
+    .update()
+    .fields(paths!(MyTestStructure::{
+      some_string
+    }))
+    .in_col(TEST_COLLECTION_NAME)
+    .document_id("test-0")
+    .object(&amp;MyTestStructure {
+        some_id: format!("test-0"),
+        some_string: "UpdatedTest".to_string(),
+    })
+    .add_to_transaction(&amp;mut transaction)?;
 
 db.fluent()
-  .delete()
-  .from(TEST_COLLECTION_NAME)
-  .document_id("test-5")
-  .add_to_transaction( &amp; mut transaction) ?;
+    .delete()
+    .from(TEST_COLLECTION_NAME)
+    .document_id("test-5")
+    .add_to_transaction(&amp;mut transaction)?;
 
 transaction.commit().await?;
 <span class="boring">Ok(())
@@ -218,34 +218,34 @@ transaction.commit().await?;
 </span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
 </span><span class="boring">const TEST_DOCUMENT_ID: &amp;str = "test_doc_id";
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>    db.run_transaction( | db, transaction| {
-      Box::pin(async move {
-      let mut test_structure: MyTestStructure = db
-        .fluent()
-        .select()
-        .by_id_in(TEST_COLLECTION_NAME)
-        .obj()
-        .one(TEST_DOCUMENT_ID)
-        .await?
-        .expect("Missing document");
+</span>db.run_transaction(|db, transaction| {
+    Box::pin(async move {
+        let mut test_structure: MyTestStructure = db
+            .fluent()
+            .select()
+            .by_id_in(TEST_COLLECTION_NAME)
+            .obj()
+            .one(TEST_DOCUMENT_ID)
+            .await?
+            .expect("Missing document");
 
-      // Perform some kind of operation that depends on the state of the document
-      test_structure.test_string += "a";
+        // Perform some kind of operation that depends on the state of the document
+        test_structure.test_string += "a";
 
-      db.fluent()
-        .update()
-        .fields(paths!(MyTestStructure::{
-          test_string
-         }))
-        .in_col(TEST_COLLECTION_NAME)
-        .document_id(TEST_DOCUMENT_ID)
-        .object(&amp;test_structure)
-        .add_to_transaction(transaction) ?;
+        db.fluent()
+            .update()
+            .fields(paths!(MyTestStructure::{
+             test_string
+            }))
+            .in_col(TEST_COLLECTION_NAME)
+            .document_id(TEST_DOCUMENT_ID)
+            .object(&amp;test_structure)
+            .add_to_transaction(transaction)?;
 
         Ok(())
-      })
+    })
 })
-  .await?;
+.await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>See the complete example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/read-write-transactions.rs">here</a>.</p>
@@ -260,7 +260,7 @@ document IDs automatically), so you need to use <code>update()</code> to implici
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="document-metadata.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="document-transformations.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -274,7 +274,7 @@ document IDs automatically), so you need to use <code>update()</code> to implici
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="document-metadata.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="document-transformations.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

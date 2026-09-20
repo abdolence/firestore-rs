@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Update/Delete Preconditions - Firestore for Rust</title>
+        <title>Update/delete preconditions - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-553f54b5.js";
+            window.path_to_searchindex_js = "searchindex-1c0f7621.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3f587e2e.js"></script>
+        <script src="toc-6cdd47ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -182,19 +182,22 @@
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::{Deserialize, Serialize};
 </span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
-</span><span class="boring">struct MyTestStructure { some_num: u64 }
+</span><span class="boring">struct MyTestStructure {
+</span><span class="boring">    some_num: u64,
+</span><span class="boring">}
 </span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span><span class="boring">let object_updated: MyTestStructure = db.fluent()
-</span><span class="boring">  .update()
-</span><span class="boring">  .fields(paths!(MyTestStructure::{some_num}))
-</span><span class="boring">  .in_col(TEST_COLLECTION_NAME)
-</span>  .precondition(FirestoreWritePrecondition::Exists(true))
-<span class="boring">  .document_id("test-1")
-</span><span class="boring">  .object(&amp;MyTestStructure { some_num: 1 })
-</span><span class="boring">  .execute()
-</span><span class="boring">  .await?;
-</span><span class="boring">let _ = object_updated;
+</span>let object_updated: MyTestStructure = db
+    .fluent()
+    .update()
+    .fields(paths!(MyTestStructure::{some_num}))
+    .in_col(TEST_COLLECTION_NAME)
+    .precondition(FirestoreWritePrecondition::Exists(true))
+    .document_id("test-1")
+    .object(&amp;MyTestStructure { some_num: 1 })
+    .execute()
+    .await?;
+<span class="boring">let _ = object_updated;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 

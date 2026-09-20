@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-553f54b5.js";
+            window.path_to_searchindex_js = "../searchindex-1c0f7621.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-3f587e2e.js"></script>
+        <script src="../toc-6cdd47ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -197,7 +197,8 @@ let cache = FirestoreCache::memory(&amp;db)
     .await?;
 
 // Read through the cache: served from the cache when possible, from Firestore otherwise.
-let my_struct: Option&lt;MyTestStructure&gt; = db.read_through_cache(&amp;cache)
+let my_struct: Option&lt;MyTestStructure&gt; = db
+    .read_through_cache(&amp;cache)
     .fluent()
     .select()
     .by_id_in("test-caching")
@@ -206,7 +207,8 @@ let my_struct: Option&lt;MyTestStructure&gt; = db.read_through_cache(&amp;cache)
     .await?;
 
 // Read only from the cache, never contacting Firestore.
-let my_struct: Option&lt;MyTestStructure&gt; = db.read_cached_only(&amp;cache)
+let my_struct: Option&lt;MyTestStructure&gt; = db
+    .read_cached_only(&amp;cache)
     .fluent()
     .select()
     .by_id_in("test-caching")

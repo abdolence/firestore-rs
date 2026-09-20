@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Changing Cached Collections at Runtime - Firestore for Rust</title>
+        <title>Changing cached collections at runtime - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-553f54b5.js";
+            window.path_to_searchindex_js = "../searchindex-1c0f7621.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-3f587e2e.js"></script>
+        <script src="../toc-6cdd47ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,7 +181,9 @@
 <p>The set of cached collections does not have to be fixed when the cache is built:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example(cache: FirestoreMemoryCache) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>cache.add_collection(FirestoreCacheCollection::new("currencies").preload_all()).await?;
+</span>cache
+    .add_collection(FirestoreCacheCollection::new("currencies").preload_all())
+    .await?;
 
 cache.remove_collection("currencies").await?;
 <span class="boring">Ok(())

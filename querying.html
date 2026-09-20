@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-553f54b5.js";
+            window.path_to_searchindex_js = "searchindex-1c0f7621.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3f587e2e.js"></script>
+        <script src="toc-6cdd47ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -194,26 +194,27 @@
 </span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test-query";
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
 </span>// Query as a stream our data
-let object_stream: BoxStream&lt;FirestoreResult&lt;MyTestStructure&gt; &gt; = db.fluent()
-  .select()
-  .fields(paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at})) // Optionally select the fields needed
-  .from(TEST_COLLECTION_NAME)
-  .filter( | q| { // Fluent filter API example
-      q.for_all([
-        q.field(path!(MyTestStructure::some_num)).is_not_null(),
-        q.field(path!(MyTestStructure::some_string)).eq("Test"),
-        // Sometimes you have optional filters
-        Some("Test2")
-          .and_then( | value | q.field(path ! (MyTestStructure::one_more_string)).eq(value)),        
-      ])
-  })
-  .order_by([(
-    path!(MyTestStructure::some_num),
-    FirestoreQueryDirection::Descending,
-  )])
-  .obj() // Reading documents as structures using Serde gRPC deserializer
-  .stream_query_with_errors()
-  .await?;
+let object_stream: BoxStream&lt;FirestoreResult&lt;MyTestStructure&gt;&gt; = db
+    .fluent()
+    .select()
+    .fields(
+        paths!(MyTestStructure::{some_id, some_num, some_string, one_more_string, created_at}),
+    ) // Optionally select the fields needed
+    .from(TEST_COLLECTION_NAME)
+    .filter(|q| {
+        // Fluent filter API example
+        q.for_all([
+            q.field(path!(MyTestStructure::some_num)).is_not_null(),
+            q.field(path!(MyTestStructure::some_string)).eq("Test"),
+            // Sometimes you have optional filters
+            Some("Test2")
+                .and_then(|value| q.field(path!(MyTestStructure::one_more_string)).eq(value)),
+        ])
+    })
+    .order(|o| o.fields([o.field(path!(MyTestStructure::some_num)).desc()]))
+    .obj() // Reading documents as structures using Serde gRPC deserializer
+    .stream_query_with_errors()
+    .await?;
 
 let as_vec: Vec&lt;MyTestStructure&gt; = object_stream.try_collect().await?;
 println!("{:?}", as_vec);
@@ -225,6 +226,65 @@ println!("{:?}", as_vec);
 <li><code>q.for_any</code> for OR conditions (Firestore has just recently added support for OR conditions)</li>
 </ul>
 <p>You can nest <code>q.for_all</code>/<code>q.for_any</code>.</p>
+<h2 id="ordering"><a class="header" href="#ordering">Ordering</a></h2>
+<p><code>.order()</code> takes a closure that receives an order builder and returns a <code>Vec</code>, the same shape as
+<code>.filter()</code> and <code>.transforms()</code>. List multiple fields to sort by more than one, in priority order:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure {
+</span><span class="boring">    some_id: String,
+</span><span class="boring">    some_num: u64,
+</span><span class="boring">}
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test-query";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let ordered: Vec&lt;MyTestStructure&gt; = db
+    .fluent()
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .order(|o| {
+        o.fields([
+            o.field(path!(MyTestStructure::some_num)).desc(),
+            o.field(path!(MyTestStructure::some_id)).asc(),
+        ])
+    })
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = ordered;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>An entry can be conditional, since <code>field(..).asc()</code>/<code>.desc()</code> return <code>Option&lt;FirestoreQueryOrder&gt;</code>
+and <code>None</code> is dropped:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure {
+</span><span class="boring">    some_id: String,
+</span><span class="boring">    some_num: u64,
+</span><span class="boring">}
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test-query";
+</span><span class="boring">async fn example(db: FirestoreDb, sort_by_num: bool) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let ordered: Vec&lt;MyTestStructure&gt; = db
+    .fluent()
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .order(|o| {
+        o.fields([sort_by_num.then(|| o.field(path!(MyTestStructure::some_num)).desc())])
+    })
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = ordered;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Each call to <code>.order()</code> replaces any ordering set by a previous call; it does not add to it. An
+empty result (every entry conditional and every condition false) clears the ordering entirely.</p>
+<p>If the query also uses <code>start_at</code>/<code>end_at</code>, the cursor’s value count must match the number of
+ordered fields - this is not enforced by the library, so a mismatch is a runtime error from
+Firestore rather than a compile-time one.</p>
+<p><code>.order_by([(path!(..), FirestoreQueryDirection::Descending)])</code> still works but is deprecated in
+favor of <code>.order()</code>.</p>
 
                     </main>
 

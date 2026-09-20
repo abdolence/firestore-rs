@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Request Tags - Firestore for Rust</title>
+        <title>Request tags - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-553f54b5.js";
+            window.path_to_searchindex_js = "searchindex-1c0f7621.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3f587e2e.js"></script>
+        <script src="toc-6cdd47ad.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -189,14 +189,14 @@ and writes to a specific feature, tenant or background job.</p>
 </span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
 </span>db.fluent()
-  .select()
-  .from(TEST_COLLECTION_NAME)
-  .request_tags(["nightly-report"])
-  // or use request_options if you want to provide the options structure directly
-  // .request_options(FirestoreRequestOptions::from_tags(["nightly-report"]))
-  .obj::&lt;MyTestStructure&gt;()
-  .query()
-  .await?;
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .request_tags(["nightly-report"])
+    // or use request_options if you want to provide the options structure directly
+    // .request_options(FirestoreRequestOptions::from_tags(["nightly-report"]))
+    .obj::&lt;MyTestStructure&gt;()
+    .query()
+    .await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>Or session wide, for every request issued through a client instance. This is also how
@@ -209,13 +209,14 @@ you attach tags to the CRUD operations (insert/update/delete/get):</p>
 </span><span class="boring">async fn example(db: FirestoreDb, my_struct: MyTestStructure) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
 </span>let tagged_db = db.clone_with_request_tags(["nightly-report"]);
 
-tagged_db.fluent()
-  .insert()
-  .into(TEST_COLLECTION_NAME)
-  .document_id(&amp;my_struct.some_id)
-  .object(&amp;my_struct)
-  .execute::&lt;MyTestStructure&gt;()
-  .await?;
+tagged_db
+    .fluent()
+    .insert()
+    .into(TEST_COLLECTION_NAME)
+    .document_id(&amp;my_struct.some_id)
+    .object(&amp;my_struct)
+    .execute::&lt;MyTestStructure&gt;()
+    .await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>Transactions and batch writers accept them through their options:</p>
@@ -242,7 +243,8 @@ tagged_db.fluent()
     },
     FirestoreTransactionOptions::new()
         .with_request_options(FirestoreRequestOptions::from_tags(["checkout"])),
-).await?;
+)
+.await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>A per operation value replaces the session wide default rather than merging with it.</p>
@@ -251,11 +253,11 @@ tagged_db.fluent()
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="explain-query.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="docker.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="document-collection-ids.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="testing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -265,11 +267,11 @@ tagged_db.fluent()
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="explain-query.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="docker.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="document-collection-ids.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="testing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
