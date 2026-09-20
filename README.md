@@ -56,8 +56,6 @@ firestore = "0.54"
 
 ```rust,no_run
 use firestore::*;
-use futures::stream::BoxStream;
-use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -112,8 +110,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .one(&my_struct.some_id)
         .await?;
 
-    // Query as a stream
-    let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db.fluent()
+    // Query
+    let as_vec: Vec<MyTestStructure> = db.fluent()
         .select()
         .fields(paths!(MyTestStructure::{some_id, some_num, some_string}))
         .from(TEST_COLLECTION_NAME)
@@ -128,10 +126,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             FirestoreQueryDirection::Descending,
         )])
         .obj()
-        .stream_query_with_errors()
+        .query()
         .await?;
-
-    let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
 
     // Delete data
     db.fluent()

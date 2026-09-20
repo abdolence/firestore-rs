@@ -10,8 +10,6 @@
 //! ```rust,no_run
 //! use firestore::*;
 //! use serde::{Deserialize, Serialize};
-//! use futures::stream::BoxStream;
-//! use futures::TryStreamExt;
 //!
 //! #[derive(Debug, Clone, Deserialize, Serialize)]
 //! struct MyTestStructure {
@@ -41,8 +39,8 @@
 //!     .execute()
 //!     .await?;
 //!
-//! // Query as a stream, selecting fields by compile-time checked paths
-//! let object_stream: BoxStream<FirestoreResult<MyTestStructure>> = db.fluent()
+//! // Query, selecting fields by compile-time checked paths
+//! let as_vec: Vec<MyTestStructure> = db.fluent()
 //!     .select()
 //!     .fields(paths!(MyTestStructure::{some_id, some_num, some_string}))
 //!     .from(TEST_COLLECTION_NAME)
@@ -52,10 +50,8 @@
 //!     ]))
 //!     .order_by([(path!(MyTestStructure::some_num), FirestoreQueryDirection::Descending)])
 //!     .obj()
-//!     .stream_query_with_errors()
+//!     .query()
 //!     .await?;
-//!
-//! let as_vec: Vec<MyTestStructure> = object_stream.try_collect().await?;
 //!
 //! db.fluent()
 //!     .delete()
