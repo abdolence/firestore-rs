@@ -1,47 +1,47 @@
 # Table of Contents
 
-[Intro and Motivation](./intro.md)
+[Intro and motivation](./intro.md)
 
-# Getting Started
+# Getting started
 
-- [Getting Started](./getting-started.md)
-- [Client Instance and Lifecycle](./client.md)
+- [Quick start](./getting-started.md)
+- [Client instance and lifecycle](./client.md)
 
-# Working with Data
+# Working with data
 
 - [Fluent API](./fluent-api.md)
 - [Querying](./querying.md)
-- [Get and Batch Get](./get-and-batch-get.md)
-- [Nested Collections](./nested-collections.md)
+- [Get and batch get](./get-and-batch-get.md)
+- [Nested collections](./nested-collections.md)
 - [Transactions](./transactions.md)
-- [Document Transformations](./document-transformations.md)
-- [Select Aggregate Functions](./aggregations.md)
-- [Update/Delete Preconditions](./preconditions.md)
-- [Explaining the Query](./explain-query.md)
-- [Listening the Document Changes](./listening-changes.md)
-- [Working on Dynamic/Document Level](./dynamic-documents.md)
+- [Document transformations](./document-transformations.md)
+- [Select aggregate functions](./aggregations.md)
+- [Update/delete preconditions](./preconditions.md)
+- [Explaining the query](./explain-query.md)
+- [Listening the document changes](./listening-changes.md)
+- [Working on dynamic/document level](./dynamic-documents.md)
 
-# Data Modelling
+# Data modelling
 
-- [Timestamps Support](./timestamps.md)
-- [Document Metadata as Struct Fields](./document-metadata.md)
-- [Explicit Null Value Serialization](./null-serialization.md)
-- [Document and Collection IDs](./document-collection-ids.md)
+- [Timestamps support](./timestamps.md)
+- [Document metadata as struct fields](./document-metadata.md)
+- [Explicit null value serialization](./null-serialization.md)
+- [Document and collection IDs](./document-collection-ids.md)
 
 # Caching
 
 - [Caching](./caching.md)
     - [Usage](./caching/usage.md)
-    - [Caching Named Documents](./caching/named-documents.md)
-    - [Changing Cached Collections at Runtime](./caching/dynamic-collections.md)
-    - [Choosing a Cache Mode](./caching/modes.md)
-    - [Load Modes and Preloading](./caching/load-modes.md)
-    - [How the Cache Is Updated](./caching/updates.md)
+    - [Caching named documents](./caching/named-documents.md)
+    - [Changing cached collections at runtime](./caching/dynamic-collections.md)
+    - [Choosing a cache mode](./caching/modes.md)
+    - [Load modes and preloading](./caching/load-modes.md)
+    - [How the cache is updated](./caching/updates.md)
 
-# Environment and Operations
+# Environment and operations
 
-- [Google Authentication](./auth.md)
-- [Firestore Emulator](./emulator.md)
-- [Docker Images and TLS](./docker.md)
-- [Request Tags](./request-tags.md)
-- [Testing Your Own Code](./testing.md)
+- [Google authentication](./auth.md)
+- [Firestore emulator](./emulator.md)
+- [Docker images and TLS](./docker.md)
+- [Request tags](./request-tags.md)
+- [Testing your own code](./testing.md)

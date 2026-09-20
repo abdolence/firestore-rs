@@ -1,4 +1,4 @@
-# Docker Images and TLS
+# Docker images and TLS
 
 When you design your Dockerfile make sure you either installed Root CA certificates or use base images that already
 include them.
