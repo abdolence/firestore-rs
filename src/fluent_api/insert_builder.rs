@@ -37,8 +37,8 @@ where
     /// # Returns
     /// A [`FirestoreInsertDocIdBuilder`] to specify the document ID or have it auto-generated.
     #[inline]
-    pub fn into(self, collection_id: &str) -> FirestoreInsertDocIdBuilder<'a, D> {
-        FirestoreInsertDocIdBuilder::new(self.db, collection_id.to_string())
+    pub fn into<S: AsRef<str>>(self, collection_id: S) -> FirestoreInsertDocIdBuilder<'a, D> {
+        FirestoreInsertDocIdBuilder::new(self.db, collection_id.as_ref().to_string())
     }
 }
 

@@ -4,6 +4,8 @@
 //! - Create or update documents using Rust structures and Serde;
 //! - Support for querying / streaming / listing / listening changes / aggregated queries of documents from Firestore;
 //! - Fluent high-level and strongly typed API - the only public API of this library;
+//! - Validated [`FirestoreDocumentId`] and [`FirestoreCollectionId`] newtypes for document and
+//!   collection IDs arriving from outside your process;
 //! - Full async based on Tokio runtime;
 //! - Macro that helps you use JSON paths as references to your structure fields;
 //! - Implements own Serde serializer to Firestore gRPC values;

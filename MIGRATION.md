@@ -1,5 +1,25 @@
 # Migration guide
 
+## 0.55
+
+v0.55.0 adds validated `FirestoreDocumentId` and `FirestoreCollectionId` newtypes and, along with
+them, tightens the checks every document and collection ID already went through. Inputs that were
+previously accepted now return `FirestoreError::InvalidParametersError`:
+
+| Input | Before | After |
+|---|---|---|
+| Document ID empty, `"."`, or `".."` | built a path | `Err` (`field: "document_id"`) |
+| Collection ID empty, `"."`, `".."`, or containing `/` | built a path (a `/` retargeted the operation at a different collection) | `Err` (`field: "collection_id"`) |
+| `insert().document_id("")` | silently auto-generated a document ID, the same as not calling `.document_id(...)` | `Err`; call `.generate_document_id()` instead |
+
+A collection ID containing `/` used to reach the server and come back as
+`FirestoreError::DatabaseError`; it is now rejected on the client as
+`FirestoreError::InvalidParametersError` before any request is sent. Code that matches on the
+error variant for this case needs to match the new one.
+
+The reserved `__*__` namespace (for example `__id7__`) is unaffected - it is still accepted, since
+those documents exist and are readable through Datastore-mode integer IDs.
+
 ## 0.52
 
 v0.52.0 makes the low level API crate private, so the Fluent API is the only public entry point.

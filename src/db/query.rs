@@ -139,6 +139,11 @@ impl FirestoreDb {
                 | FirestoreDbSessionCacheMode::ReadThroughCache(ref cache) =
                     self.session_params.cache_mode
                 {
+                    // The collection id is concatenated into the cache key below; an unvalidated
+                    // `/` would mis-key the cache into another collection's bucket even though the
+                    // server-bound query itself sends the collection as a separate field.
+                    crate::db::validate_path_segment(collection_id, "collection_id")?;
+
                     let span = span!(
                         Level::DEBUG,
                         "Firestore Query Cached",

@@ -79,10 +79,10 @@ where
     /// # Returns
     /// A [`FirestoreUpdateDocObjBuilder`] to specify the document ID and data.
     #[inline]
-    pub fn in_col(self, collection_id: &str) -> FirestoreUpdateDocObjBuilder<'a, D> {
+    pub fn in_col<S: AsRef<str>>(self, collection_id: S) -> FirestoreUpdateDocObjBuilder<'a, D> {
         FirestoreUpdateDocObjBuilder::new(
             self.db,
-            collection_id.to_string(),
+            collection_id.as_ref().to_string(),
             self.update_only_fields,
         )
     }

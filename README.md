@@ -335,7 +335,9 @@ keeps the default serde representation.
 
 ## Nested collections
 
-You can work with nested collections specifying path/location to a parent for documents:
+You can work with nested collections specifying path/location to a parent for documents.
+`parent_path` and the builder's `at` also validate the collection name they are given, so a
+`FirestoreCollectionId` or a bad raw `&str` is caught in the same call rather than at the server.
 
 ```rust
 
@@ -723,6 +725,57 @@ db.run_transaction_with_options(
 ```
 
 A per operation value replaces the session wide default rather than merging with it.
+
+## Document and collection IDs
+
+`FirestoreDocumentId` and `FirestoreCollectionId` are validated newtypes for IDs that arrive from
+outside your process - a request path segment, a JSON body, a runtime-chosen collection name.
+Construct one where the ID enters your system; a `/`, an empty string, or `.`/`..` is rejected
+there instead of silently reaching Firestore or, in the case of a collection name, retargeting the
+operation at a different collection.
+
+```rust
+let id = FirestoreDocumentId::new("user-42")?;
+let collection = FirestoreCollectionId::new("users")?;
+```
+
+A name known up front - the sort of thing you would today write as `const NAME: &str = "..."` -
+can be declared as a validated `const` or `static` with `from_static`. An invalid literal there is
+a compile error, not a runtime one:
+
+```rust
+const USERS: FirestoreCollectionId = FirestoreCollectionId::from_static("users");
+```
+
+Use `from_static` for a literal you control, checked at compile time with no `Result` to handle;
+use `new` for a value arriving at runtime, which returns a `FirestoreResult`.
+
+Both implement `AsRef<str>`, so a reference drops straight into any call that already takes a
+document or collection ID or name, with no conversion:
+
+```rust
+db.fluent()
+  .select()
+  .by_id_in(&collection)
+  .obj::<MyTestStructure>()
+  .one(&id)
+  .await?;
+```
+
+Store the validated type in your own structs instead of a bare `String` to carry the proof along
+with the value; it deserializes through the same validation, so a `CreateSession` built from an
+untrusted request body rejects a bad ID before it reaches Firestore:
+
+```rust
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct CreateSession {
+    user_id: FirestoreDocumentId,
+}
+```
+
+See `examples/crud.rs` and `examples/nested_collections.rs` for a document ID and a
+`parent_path`/`at` pair built from validated IDs, and `examples/dynamic_doc_level_crud.rs` /
+`examples/caching_dynamic_collections.rs` for a collection name chosen at runtime.
 
 ## Google authentication
 

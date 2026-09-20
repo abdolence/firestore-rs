@@ -220,7 +220,7 @@ pub struct FirestoreInvalidParametersError {
 
 impl Display for FirestoreInvalidParametersError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "Data not found error occurred: {}", self.public)
+        write!(f, "{}", self.public)
     }
 }
 

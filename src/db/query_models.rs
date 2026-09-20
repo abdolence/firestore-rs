@@ -5,7 +5,7 @@
 use crate::errors::{
     FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
 };
-use crate::{FirestoreRequestOptions, FirestoreValue, FirestoreVector};
+use crate::{FirestoreCollectionId, FirestoreRequestOptions, FirestoreValue, FirestoreVector};
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::Builder;
 
@@ -33,6 +33,18 @@ impl ToString for FirestoreQueryCollection {
 impl From<&str> for FirestoreQueryCollection {
     fn from(collection_id_str: &str) -> Self {
         FirestoreQueryCollection::Single(collection_id_str.to_string())
+    }
+}
+
+impl From<FirestoreCollectionId> for FirestoreQueryCollection {
+    fn from(collection_id: FirestoreCollectionId) -> Self {
+        FirestoreQueryCollection::Single(collection_id.as_str().to_string())
+    }
+}
+
+impl From<&FirestoreCollectionId> for FirestoreQueryCollection {
+    fn from(collection_id: &FirestoreCollectionId) -> Self {
+        FirestoreQueryCollection::Single(collection_id.as_str().to_string())
     }
 }
 

@@ -26,10 +26,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_COLLECTION_NAME: &str = "test";
+    const TEST_COLLECTION_NAME: FirestoreCollectionId = FirestoreCollectionId::from_static("test");
+
+    // `from_static` above is for a literal you control; `new` here stands in for an ID arriving
+    // from outside the process, such as a request path segment, so it is checked at runtime.
+    let id = FirestoreDocumentId::new("test-1")?;
 
     let my_struct = MyTestStructure {
-        some_id: "test-1".to_string(),
+        some_id: id.as_str().to_string(),
         some_string: "Test".to_string(),
         one_more_string: "Test2".to_string(),
         some_num: 41,
@@ -39,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     db.fluent()
         .delete()
         .from(TEST_COLLECTION_NAME)
-        .document_id(&my_struct.some_id)
+        .document_id(&id)
         .execute()
         .await?;
 
@@ -48,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .fluent()
         .insert()
         .into(TEST_COLLECTION_NAME)
-        .document_id(&my_struct.some_id)
+        .document_id(&id)
         .object(&my_struct)
         .execute()
         .await?;
@@ -61,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .select()
         .by_id_in(TEST_COLLECTION_NAME)
         .obj()
-        .one(&my_struct.some_id)
+        .one(&id)
         .await?;
 
     println!("Get by id {obj_by_id:?}");
@@ -71,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .update()
         .fields(paths!(MyTestStructure::{some_num, one_more_string}))
         .in_col(TEST_COLLECTION_NAME)
-        .document_id(&my_struct.some_id)
+        .document_id(&id)
         .object(&MyTestStructure {
             some_num: my_struct.some_num + 1,
             one_more_string: "updated-value".to_string(),

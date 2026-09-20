@@ -1,10 +1,26 @@
 use crate::db::support::FirestoreCreateSupport;
+use crate::db::validate_path_segment;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
 use serde::{Deserialize, Serialize};
 use tracing::*;
+
+/// Validates the IDs for a create request before it reaches the server.
+///
+/// `document_id` is validated only when `Some`: `None` means "let Firestore generate one", and
+/// that empty placeholder must not be rejected as an invalid document ID.
+fn validate_create_doc_ids<S: AsRef<str>>(
+    collection_id: &str,
+    document_id: Option<&S>,
+) -> FirestoreResult<()> {
+    validate_path_segment(collection_id, "collection_id")?;
+    if let Some(document_id) = document_id {
+        validate_path_segment(document_id.as_ref(), "document_id")?;
+    }
+    Ok(())
+}
 
 #[async_trait]
 impl FirestoreCreateSupport for FirestoreDb {
@@ -39,6 +55,8 @@ impl FirestoreCreateSupport for FirestoreDb {
     where
         S: AsRef<str> + Send,
     {
+        validate_create_doc_ids(collection_id, document_id.as_ref())?;
+
         let span = span!(
             Level::DEBUG,
             "Firestore Create Document",
@@ -137,5 +155,33 @@ impl FirestoreCreateSupport for FirestoreDb {
             .await?;
 
         Self::deserialize_doc_to(&doc)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_invalid_collection_id() {
+        assert!(validate_create_doc_ids::<String>("users", None).is_ok());
+        assert!(validate_create_doc_ids::<String>("a/b", None).is_err());
+        assert!(validate_create_doc_ids::<String>("", None).is_err());
+    }
+
+    #[test]
+    fn validates_document_id_only_when_some() {
+        assert!(validate_create_doc_ids("users", Some(&"user-1".to_string())).is_ok());
+        assert!(validate_create_doc_ids("users", Some(&"a/b".to_string())).is_err());
+        assert!(
+            validate_create_doc_ids("users", Some(&"".to_string())).is_err(),
+            "an explicit empty document_id must not silently auto-generate"
+        );
+    }
+
+    #[test]
+    fn none_document_id_is_always_valid() {
+        // `None` means "let Firestore generate an ID"; it must never be validated as an ID.
+        assert!(validate_create_doc_ids::<String>("users", None).is_ok());
     }
 }

@@ -55,13 +55,14 @@ impl ParentPathBuilder {
     /// Returns [`FirestoreError::InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError)
     /// if the `document_id` is invalid (e.g., contains `/`).
     #[inline]
-    pub fn at<S>(self, collection_name: &str, document_id: S) -> FirestoreResult<Self>
+    pub fn at<C, S>(self, collection_name: C, document_id: S) -> FirestoreResult<Self>
     where
+        C: AsRef<str>,
         S: AsRef<str>,
     {
         Ok(Self::new(safe_document_path(
             self.value.as_str(),
-            collection_name,
+            collection_name.as_ref(),
             document_id.as_ref(),
         )?))
     }

@@ -116,8 +116,12 @@ where
     /// # Returns
     /// A [`FirestoreSelectByIdBuilder`] to specify the document IDs and other options.
     #[inline]
-    pub fn by_id_in(self, collection: &str) -> FirestoreSelectByIdBuilder<'a, D> {
-        FirestoreSelectByIdBuilder::new(self.db, collection.to_string(), self.return_only_fields)
+    pub fn by_id_in<S: AsRef<str>>(self, collection: S) -> FirestoreSelectByIdBuilder<'a, D> {
+        FirestoreSelectByIdBuilder::new(
+            self.db,
+            collection.as_ref().to_string(),
+            self.return_only_fields,
+        )
     }
 }
 
