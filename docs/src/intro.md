@@ -19,7 +19,6 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
     - Consistency selectors to read at a given time or inside a transaction;
     - Explaining queries;
     - Request tags to attribute Firestore usage;
-- Validated `FirestoreDocumentId` and `FirestoreCollectionId` types that reject a malformed ID before it reaches Firestore;
 - Full async based on Tokio runtime;
 - Macros that help you use your structure fields as Firestore field paths;
 - Implements own Serde serializer to Firestore protobuf values;
@@ -28,7 +27,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
     - Firestore timestamp as a `FirestoreTimestamp` type or with `#[serde(with)]` attributes (based on [jiff](https://github.com/BurntSushi/jiff));
     - Lat/Lng;
     - References;
-    - Explicit nulls with `#[serde(with = "firestore::serialize_as_null")]`;
+    - Explicit nulls;
 - Caching support for collections and documents:
     - In-memory cache;
     - Persistent cache;
