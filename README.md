@@ -82,6 +82,24 @@ To run an example with environment variables:
 PROJECT_ID=<your-google-project-id> cargo run --example crud
 ```
 
+## Google authentication
+
+Looks for credentials in the following places, preferring the first location found:
+
+- A JSON file whose path is specified by the GOOGLE_APPLICATION_CREDENTIALS environment variable.
+- A JSON file in a location known to the gcloud command-line tool using `gcloud auth application-default login`.
+- On Google Compute Engine, it fetches credentials from the metadata server.
+
+For local development don't confuse `gcloud auth login` with `gcloud auth application-default login`,
+since the first authorize only `gcloud` tool to access the Cloud Platform.
+See [Google authentication](https://firestore-rust.abdolence.dev/auth.html) for the details.
+
+## How this library is tested
+
+There are integration tests in the tests directory that runs for every commit against the real
+Firestore instance allocated for testing purposes. Be aware not to introduce huge document reads/updates
+and collection isolation from other tests.
+
 ## Licence
 
 Apache Software License (ASL)

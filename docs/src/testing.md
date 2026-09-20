@@ -62,9 +62,3 @@ library itself is verified, and it catches things a hand-written fake cannot.
 > generic over them no longer compiles. Note that they could never be used with the Fluent API
 > from outside the crate anyway, since the builders' constructors are crate private. See the
 > [migration guide](https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md).
-
-## How this library is tested
-
-There are integration tests in the tests directory that runs for every commit against the real
-Firestore instance allocated for testing purposes. Be aware not to introduce huge document reads/updates
-and collection isolation from other tests.
