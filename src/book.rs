@@ -9,9 +9,6 @@ mod intro {}
 #[doc = include_str!("../docs/src/getting-started.md")]
 mod getting_started {}
 
-#[doc = include_str!("../docs/src/examples.md")]
-mod examples {}
-
 #[doc = include_str!("../docs/src/client.md")]
 mod client {}
 
@@ -98,9 +95,6 @@ mod docker {}
 
 #[doc = include_str!("../docs/src/emulator.md")]
 mod emulator {}
-
-#[doc = include_str!("../docs/src/tls.md")]
-mod tls {}
 
 #[doc = include_str!("../docs/src/testing.md")]
 mod testing {}
