@@ -20,6 +20,25 @@ error variant for this case needs to match the new one.
 The reserved `__*__` namespace (for example `__id7__`) is unaffected - it is still accepted, since
 those documents exist and are readable through Datastore-mode integer IDs.
 
+### Ordering
+
+`.order_by([(path!(T::field), FirestoreQueryDirection::Descending)])` is deprecated in favor of a
+closure builder, matching `.filter()` and `.transforms()`:
+
+```rust,ignore
+// before
+.order_by([(path!(MyTestStructure::some_num), FirestoreQueryDirection::Descending)])
+// after
+.order(|o| o.fields([o.field(path!(MyTestStructure::some_num)).desc()]))
+```
+
+`.order_by(...)` keeps working and is not scheduled for removal in 0.x.
+
+One behavior differs: an empty ordering built through `.order()` (every entry conditional and
+every condition false) clears the query's ordering entirely, the same as never calling `.order()`.
+`.order_by([])` instead sets the ordering to an empty list, which is not equivalent for a listing
+query - an empty list disables the collection cache's fast path, while no ordering at all does not.
+
 ## 0.52
 
 v0.52.0 makes the low level API crate private, so the Fluent API is the only public entry point.

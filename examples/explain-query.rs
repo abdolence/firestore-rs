@@ -80,10 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     .and_then(|value| q.field(path!(MyTestStructure::one_more_string)).eq(value)),
             ])
         })
-        .order_by([(
-            path!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Descending,
-        )])
+        .order(|o| o.fields([o.field(path!(MyTestStructure::some_num)).desc()]))
         .explain()
         //.explain_with_options(FirestoreExplainOptions::new().with_analyze(true)) or with analyze
         .obj()

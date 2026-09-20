@@ -1,4 +1,4 @@
-# Working with docker images
+# Docker images and TLS
 
 When you design your Dockerfile make sure you either installed Root CA certificates or use base images that already
 include them.
@@ -16,3 +16,8 @@ RUN apt-get install -y ca-certificates
 
 Also, I recommend considering using [Google Distroless images](https://github.com/GoogleContainerTools/distroless) since
 they are secure, already include Root CA certs, and are optimised for size.
+
+## TLS features
+Cargo provides support for different TLS features for dependencies:
+- `tls-roots`: default feature to support native TLS roots
+- `tls-webpki-roots`: feature to switch to webpki crate roots

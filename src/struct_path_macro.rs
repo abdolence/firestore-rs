@@ -1,6 +1,6 @@
 /// Builds the Firestore field path for one field of `Struct` as a `String`.
 ///
-/// Use it wherever a fluent call takes a field path, such as a query filter or an `order_by`
+/// Use it wherever a fluent call takes a field path, such as a query filter or an `.order()`
 /// clause. Reach into a nested struct with `.`: `path!(Parent::child.field)`. The path is built
 /// from the token stream at compile time, so a renamed field shows up as a compile error at the
 /// call site instead of a query that silently matches nothing.

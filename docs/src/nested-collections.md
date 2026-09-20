@@ -19,40 +19,39 @@ You can work with nested collections specifying path/location to a parent for do
 #     parent_struct: MyParentStructure,
 #     child_struct: MyChildStructure,
 # ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-
 // Creating a parent doc
 db.fluent()
-  .insert()
-  .into(TEST_PARENT_COLLECTION_NAME)
-  .document_id(&parent_struct.some_id)
-  .object(&parent_struct)
-  .execute::<()>()
-  .await?;
+    .insert()
+    .into(TEST_PARENT_COLLECTION_NAME)
+    .document_id(&parent_struct.some_id)
+    .object(&parent_struct)
+    .execute::<()>()
+    .await?;
 
 // The doc path where we store our children
 let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id)?;
 
 // Create a child doc
 db.fluent()
-  .insert()
-  .into(TEST_CHILD_COLLECTION_NAME)
-  .document_id(&child_struct.some_id)
-  .parent(&parent_path)
-  .object(&child_struct)
-  .execute::<()>()
-  .await?;
+    .insert()
+    .into(TEST_CHILD_COLLECTION_NAME)
+    .document_id(&child_struct.some_id)
+    .parent(&parent_path)
+    .object(&child_struct)
+    .execute::<()>()
+    .await?;
 
 // Listing children
 println!("Listing all children");
 
-let objs_stream: BoxStream<MyChildStructure> = db.fluent()
-  .list()
-  .from(TEST_CHILD_COLLECTION_NAME)
-  .parent( & parent_path)
-  .obj()
-  .stream_all()
-  .await?;
-
+let objs_stream: BoxStream<MyChildStructure> = db
+    .fluent()
+    .list()
+    .from(TEST_CHILD_COLLECTION_NAME)
+    .parent(&parent_path)
+    .obj()
+    .stream_all()
+    .await?;
 # let _ = objs_stream;
 # Ok(())
 # }
@@ -68,10 +67,10 @@ You can nest multiple levels of collections using `at()`:
 # const TEST_CHILD_COLLECTION_NAME: &str = "test-childs";
 # const TEST_GRANDCHILD_COLLECTION_NAME: &str = "test-grandchilds";
 # fn example(db: &FirestoreDb) -> Result<(), Box<dyn std::error::Error>> {
-let parent_path =
-db.parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
-  .at(TEST_CHILD_COLLECTION_NAME, "child-id")?
-  .at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id")?;
+let parent_path = db
+    .parent_path(TEST_PARENT_COLLECTION_NAME, "parent-id")?
+    .at(TEST_CHILD_COLLECTION_NAME, "child-id")?
+    .at(TEST_GRANDCHILD_COLLECTION_NAME, "grand-child-id")?;
 # let _ = parent_path;
 # Ok(())
 # }

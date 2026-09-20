@@ -42,11 +42,11 @@ document or collection ID or name, with no conversion:
 #     id: FirestoreDocumentId,
 # ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 db.fluent()
-  .select()
-  .by_id_in(&collection)
-  .obj::<MyTestStructure>()
-  .one(&id)
-  .await?;
+    .select()
+    .by_id_in(&collection)
+    .obj::<MyTestStructure>()
+    .one(&id)
+    .await?;
 # Ok(())
 # }
 ```

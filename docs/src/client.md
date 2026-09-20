@@ -15,7 +15,7 @@ The client is created using the `Firestore::new` method:
 use firestore::*;
 
 // Create an instance
-let db = FirestoreDb::new( & config_env_var("PROJECT_ID") ? ).await?;
+let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 # Ok(())
 # }
 ```
@@ -33,9 +33,10 @@ In cases if you need to create a new instance explicitly specifying a key file, 
 # }
 # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 FirestoreDb::with_options_service_account_key_file(
-  FirestoreDbOptions::new(config_env_var("PROJECT_ID") ?.to_string()),
-  "/tmp/key.json".into()
-).await?
+    FirestoreDbOptions::new(config_env_var("PROJECT_ID")?.to_string()),
+    "/tmp/key.json".into(),
+)
+.await?
 # ;
 # Ok(())
 # }
@@ -50,10 +51,11 @@ or if you need even more flexibility you can use a preconfigured token source an
 # }
 # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 FirestoreDb::with_options_token_source(
-  FirestoreDbOptions::new(config_env_var("PROJECT_ID") ?.to_string()),
-  gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
-  gcloud_sdk::TokenSourceType::File("/tmp/key.json".into())
-).await?
+    FirestoreDbOptions::new(config_env_var("PROJECT_ID")?.to_string()),
+    gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
+    gcloud_sdk::TokenSourceType::File("/tmp/key.json".into()),
+)
+.await?
 # ;
 # Ok(())
 # }
@@ -66,9 +68,9 @@ so you can specify the database ID in the options:
 # use firestore::*;
 # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 FirestoreDb::with_options(
-  FirestoreDbOptions::new("your-project-id".to_string())
-    .with_database_id("your-database-id".to_string())
-  )
+    FirestoreDbOptions::new("your-project-id".to_string())
+        .with_database_id("your-database-id".to_string()),
+)
 .await?
 # ;
 # Ok(())

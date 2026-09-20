@@ -5,7 +5,9 @@ The set of cached collections does not have to be fixed when the cache is built:
 ```rust,no_run
 # use firestore::*;
 # async fn example(cache: FirestoreMemoryCache) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-cache.add_collection(FirestoreCacheCollection::new("currencies").preload_all()).await?;
+cache
+    .add_collection(FirestoreCacheCollection::new("currencies").preload_all())
+    .await?;
 
 cache.remove_collection("currencies").await?;
 # Ok(())

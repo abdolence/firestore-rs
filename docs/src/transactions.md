@@ -13,23 +13,23 @@ then the Fluent API to add the operations needed in the transaction.
 let mut transaction = db.begin_transaction().await?;
 
 db.fluent()
-  .update()
-  .fields(paths!(MyTestStructure::{
-       some_string
-     }))
-  .in_col(TEST_COLLECTION_NAME)
-  .document_id("test-0")
-  .object( & MyTestStructure {
-    some_id: format!("test-0"),
-    some_string: "UpdatedTest".to_string(),
-  })
-  .add_to_transaction( & mut transaction) ?;
+    .update()
+    .fields(paths!(MyTestStructure::{
+      some_string
+    }))
+    .in_col(TEST_COLLECTION_NAME)
+    .document_id("test-0")
+    .object(&MyTestStructure {
+        some_id: format!("test-0"),
+        some_string: "UpdatedTest".to_string(),
+    })
+    .add_to_transaction(&mut transaction)?;
 
 db.fluent()
-  .delete()
-  .from(TEST_COLLECTION_NAME)
-  .document_id("test-5")
-  .add_to_transaction( & mut transaction) ?;
+    .delete()
+    .from(TEST_COLLECTION_NAME)
+    .document_id("test-5")
+    .add_to_transaction(&mut transaction)?;
 
 transaction.commit().await?;
 # Ok(())
@@ -46,34 +46,34 @@ You may also execute transactions that automatically retry with exponential back
 # const TEST_COLLECTION_NAME: &str = "test";
 # const TEST_DOCUMENT_ID: &str = "test_doc_id";
 # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    db.run_transaction( | db, transaction| {
-      Box::pin(async move {
-      let mut test_structure: MyTestStructure = db
-        .fluent()
-        .select()
-        .by_id_in(TEST_COLLECTION_NAME)
-        .obj()
-        .one(TEST_DOCUMENT_ID)
-        .await?
-        .expect("Missing document");
+db.run_transaction(|db, transaction| {
+    Box::pin(async move {
+        let mut test_structure: MyTestStructure = db
+            .fluent()
+            .select()
+            .by_id_in(TEST_COLLECTION_NAME)
+            .obj()
+            .one(TEST_DOCUMENT_ID)
+            .await?
+            .expect("Missing document");
 
-      // Perform some kind of operation that depends on the state of the document
-      test_structure.test_string += "a";
+        // Perform some kind of operation that depends on the state of the document
+        test_structure.test_string += "a";
 
-      db.fluent()
-        .update()
-        .fields(paths!(MyTestStructure::{
-          test_string
-         }))
-        .in_col(TEST_COLLECTION_NAME)
-        .document_id(TEST_DOCUMENT_ID)
-        .object(&test_structure)
-        .add_to_transaction(transaction) ?;
+        db.fluent()
+            .update()
+            .fields(paths!(MyTestStructure::{
+             test_string
+            }))
+            .in_col(TEST_COLLECTION_NAME)
+            .document_id(TEST_DOCUMENT_ID)
+            .object(&test_structure)
+            .add_to_transaction(transaction)?;
 
         Ok(())
-      })
+    })
 })
-  .await?;
+.await?;
 # Ok(())
 # }
 ```

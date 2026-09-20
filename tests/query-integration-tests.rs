@@ -78,10 +78,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     .eq("some_string"),
             ])
         })
-        .order_by([(
-            path!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Descending,
-        )])
+        .order(|o| o.fields([o.field(path!(MyTestStructure::some_num)).desc()]))
         .obj()
         .stream_query()
         .await?;
@@ -101,10 +98,7 @@ async fn crud_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     .eq("some_string-1"),
             ])
         })
-        .order_by([(
-            path!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Descending,
-        )])
+        .order(|o| o.fields([o.field(path!(MyTestStructure::some_num)).desc()]))
         .obj()
         .stream_query()
         .await?;

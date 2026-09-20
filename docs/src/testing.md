@@ -33,7 +33,8 @@ struct FirestoreUserRepository {
 #[async_trait::async_trait]
 impl UserRepository for FirestoreUserRepository {
     async fn find_user(&self, id: &str) -> Result<Option<User>, MyError> {
-        Ok(self.db
+        Ok(self
+            .db
             .fluent()
             .select()
             .by_id_in("users")

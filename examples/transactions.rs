@@ -76,10 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .fluent()
         .select()
         .from(TEST_COLLECTION_NAME)
-        .order_by([(
-            path!(MyTestStructure::some_id),
-            FirestoreQueryDirection::Descending,
-        )])
+        .order(|o| o.fields([o.field(path!(MyTestStructure::some_id)).desc()]))
         .obj()
         .query()
         .await?;

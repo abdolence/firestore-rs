@@ -193,10 +193,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
                 .field(path!(MyTestStructure::some_num))
                 .greater_than_or_equal(5)])
         })
-        .order_by([(
-            path!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Descending,
-        )])
+        .order(|o| o.fields([o.field(path!(MyTestStructure::some_num)).desc()]))
         .obj::<MyTestStructure>()
         .stream_query_with_errors()
         .await?;

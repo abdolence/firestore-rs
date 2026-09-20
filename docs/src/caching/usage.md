@@ -20,7 +20,8 @@ let cache = FirestoreCache::memory(&db)
     .await?;
 
 // Read through the cache: served from the cache when possible, from Firestore otherwise.
-let my_struct: Option<MyTestStructure> = db.read_through_cache(&cache)
+let my_struct: Option<MyTestStructure> = db
+    .read_through_cache(&cache)
     .fluent()
     .select()
     .by_id_in("test-caching")
@@ -29,7 +30,8 @@ let my_struct: Option<MyTestStructure> = db.read_through_cache(&cache)
     .await?;
 
 // Read only from the cache, never contacting Firestore.
-let my_struct: Option<MyTestStructure> = db.read_cached_only(&cache)
+let my_struct: Option<MyTestStructure> = db
+    .read_cached_only(&cache)
     .fluent()
     .select()
     .by_id_in("test-caching")

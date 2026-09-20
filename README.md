@@ -121,10 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 q.field(path!(MyTestStructure::some_string)).eq("Test"),
             ])
         })
-        .order_by([(
-            path!(MyTestStructure::some_num),
-            FirestoreQueryDirection::Descending,
-        )])
+        .order(|o| o.fields([o.field(path!(MyTestStructure::some_num)).desc()]))
         .obj()
         .query()
         .await?;
