@@ -30,29 +30,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("PROJECT_ID")?).await?;
 
-    const TEST_PARENT_COLLECTION_NAME: &str = "nested-test";
     const TEST_CHILD_COLLECTION_NAME: &str = "test-childs";
 
     println!("Creating a parent doc/collection");
 
+    // Validated once here; parent_path below takes both by reference and checks them again for
+    // free, so a bad collection name or ID cannot silently retarget the sub-collection path.
+    let parent_collection_id = FirestoreCollectionId::new("nested-test")?;
+    let parent_id = FirestoreDocumentId::new("test-parent")?;
+
     let parent_struct = MyParentStructure {
-        some_id: "test-parent".to_string(),
+        some_id: parent_id.as_str().to_string(),
         some_string: "Test".to_string(),
     };
 
     // Remove if it already exist
     db.fluent()
         .delete()
-        .from(TEST_PARENT_COLLECTION_NAME)
-        .document_id(&parent_struct.some_id)
+        .from(&parent_collection_id)
+        .document_id(&parent_id)
         .execute()
         .await?;
 
     // Creating a parent doc
     db.fluent()
         .insert()
-        .into(TEST_PARENT_COLLECTION_NAME)
-        .document_id(&parent_struct.some_id)
+        .into(&parent_collection_id)
+        .document_id(&parent_id)
         .object(&parent_struct)
         .execute::<()>()
         .await?;
@@ -64,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
 
     // The doc path where we store our childs
-    let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id)?;
+    let parent_path = db.parent_path(&parent_collection_id, &parent_id)?;
 
     // Remove child doc if exists
     db.fluent()
