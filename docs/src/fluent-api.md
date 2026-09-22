@@ -75,7 +75,8 @@ The low level "support" traits were made crate private in v0.52.0. If you used t
 
 Alongside it, the library provides core functionality that is public API in its own right:
 
-- Batch writes: `db.create_simple_batch_writer()`, `db.create_streaming_batch_writer()`
+- [Batch writes](./batch-writes.md): `db.create_simple_batch_writer()`,
+  `db.create_streaming_batch_writer()`
 - Transactions: `db.begin_transaction()`, `db.run_transaction()`, and the
   `FirestoreTransactionOps` trait implemented by both `FirestoreTransaction` and
   `FirestoreTransactionData`

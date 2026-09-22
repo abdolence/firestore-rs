@@ -30,6 +30,9 @@ mod nested_collections {}
 #[doc = include_str!("../docs/src/transactions.md")]
 mod transactions {}
 
+#[doc = include_str!("../docs/src/batch-writes.md")]
+mod batch_writes {}
+
 #[doc = include_str!("../docs/src/document-metadata.md")]
 mod document_metadata {}
 

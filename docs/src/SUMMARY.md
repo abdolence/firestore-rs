@@ -14,6 +14,7 @@
 - [Get and batch get](./get-and-batch-get.md)
 - [Nested collections](./nested-collections.md)
 - [Transactions](./transactions.md)
+- [Batch writes](./batch-writes.md)
 - [Document transformations](./document-transformations.md)
 - [Select aggregate functions](./aggregations.md)
 - [Update/delete preconditions](./preconditions.md)

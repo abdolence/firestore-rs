@@ -1,6 +1,7 @@
 # Document transformations
 
-The library supports server side document transformations in transactions and batch writes:
+The library supports server side document transformations in [transactions](./transactions.md) and
+[batch writes](./batch-writes.md):
 
 ```rust,no_run
 # use firestore::*;
