@@ -132,5 +132,5 @@ ID. Use `update()` with an explicit `document_id` to create one instead.
 
 For writes the fluent builders do not cover, queue them directly on `FirestoreBatch`:
 `update_object`, `delete_by_id` and `transform`, plus `_at` variants for an explicit parent path.
-Each takes an optional [write precondition](./preconditions.md) that fails just that one write if
-the document's current state does not match it.
+Each takes an optional [write precondition](./preconditions.md). On the simple writer a failed
+precondition fails just that one write; on the streaming writer it fails the whole stream.
