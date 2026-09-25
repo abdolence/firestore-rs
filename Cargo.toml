@@ -57,6 +57,7 @@ rand = "0.10"
 regex = "1.13"
 
 [dev-dependencies]
+h2 = "0.4"
 cargo-husky = { version = "1.5", default-features = false, features = ["run-for-all", "prepush-hook", "run-cargo-fmt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["full"] }

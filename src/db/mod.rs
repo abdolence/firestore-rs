@@ -56,6 +56,9 @@ pub(crate) use support::*;
 mod transaction_ops;
 use transaction_ops::*;
 
+#[cfg(test)]
+mod transaction_test_server;
+
 mod session_params;
 pub use session_params::*;
 

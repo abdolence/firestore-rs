@@ -17,6 +17,9 @@ use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, 
 use std::time::Duration;
 use tracing::*;
 
+#[cfg(test)]
+mod commit_tests;
+
 #[derive(Debug, Clone)]
 pub struct FirestoreTransactionData {
     transaction_id: FirestoreTransactionId,
@@ -179,9 +182,8 @@ impl<'a> FirestoreTransaction<'a> {
     /// them. A transaction with no queued writes still commits successfully - useful for a
     /// read-only transaction that only needed a consistent snapshot.
     ///
-    /// Returns an error if the `Commit` request fails; a [`FirestoreError::DatabaseError`] with
-    /// `retry_possible` set is what [`FirestoreDb::run_transaction`] retries the whole
-    /// transaction on.
+    /// Returns an error if the `Commit` request fails. Only `ABORTED` sets `retry_possible`:
+    /// other failures can leave the commit outcome unknown and must not repeat the transaction.
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
 
@@ -200,7 +202,22 @@ impl<'a> FirestoreTransaction<'a> {
                 .resolve_request_options(self.request_options.as_ref()),
         });
 
-        let response = self.db.client().get().commit(request).await?.into_inner();
+        let response = self
+            .db
+            .client()
+            .get()
+            .commit(request)
+            .await
+            .map_err(|status| {
+                // Transport failures can arrive after the writes were committed.
+                let retry_possible = status.code() == gcloud_sdk::tonic::Code::Aborted;
+                let mut error = FirestoreError::from(status);
+                if let FirestoreError::DatabaseError(ref mut error) = error {
+                    error.retry_possible = retry_possible;
+                }
+                error
+            })?
+            .into_inner();
 
         let result = FirestoreTransactionResponse::new(
             response
@@ -379,7 +396,7 @@ impl FirestoreDb {
     /// not an insert - is how a transaction creates one.
     ///
     /// On a transient failure - `func` returning [`BackoffError::Transient`], or the commit
-    /// itself hitting a retryable [`FirestoreError::DatabaseError`] - the whole transaction is
+    /// returning `ABORTED` - the whole transaction is
     /// retried from the start with exponential backoff, up to `options.max_elapsed_time`. `func`
     /// must therefore be safe to run more than once for the same call: read the state it needs
     /// from the transaction-scoped `db` argument on every invocation rather than closing over
