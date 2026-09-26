@@ -46,6 +46,58 @@ pub(crate) struct FirestoreIndexExistingState {
     pub fields: Vec<ProtoField>,
 }
 
+/// The owned group's listing converted into the domain model, once, for both the existing-state
+/// log and [`plan_index_changes`].
+///
+/// A listed composite index the domain model cannot represent is carried in
+/// `unrecognised_indexes` rather than dropped. A listed field always converts, because each of its
+/// halves carries its own outcome (see [`FirestoreListedField`]).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct FirestoreIndexListing {
+    pub indexes: Vec<FirestoreListedCompositeIndex>,
+    pub fields: Vec<FirestoreListedField>,
+    pub unrecognised_indexes: Vec<FirestoreUnrecognisedIndexItem>,
+}
+
+impl From<FirestoreIndexExistingState> for FirestoreIndexListing {
+    fn from(existing: FirestoreIndexExistingState) -> Self {
+        let mut listing = FirestoreIndexListing {
+            fields: existing.fields.into_iter().map(Into::into).collect(),
+            ..Default::default()
+        };
+        for proto in existing.indexes {
+            let name = proto.name.clone();
+            match FirestoreListedCompositeIndex::try_from(proto) {
+                Ok(listed) => listing.indexes.push(listed),
+                Err(err) => listing
+                    .unrecognised_indexes
+                    .push(FirestoreUnrecognisedIndexItem {
+                        name,
+                        reason: describe_error(&err),
+                    }),
+            }
+        }
+        listing
+    }
+}
+
+impl FirestoreIndexListing {
+    /// Listed fields carrying an explicit (or unrecognised) index override, as opposed to one
+    /// inherited from the ancestor.
+    pub(crate) fn field_overrides(&self) -> impl Iterator<Item = &FirestoreListedField> {
+        self.fields.iter().filter(|f| {
+            !matches!(
+                f.index_override,
+                None | Some(FirestoreFieldOverrideOutcome::Inherited)
+            )
+        })
+    }
+
+    pub(crate) fn ttl_fields(&self) -> impl Iterator<Item = &FirestoreListedField> {
+        self.fields.iter().filter(|f| f.ttl.is_some())
+    }
+}
+
 impl From<FirestoreIndexQueryScope> for ProtoQueryScope {
     fn from(scope: FirestoreIndexQueryScope) -> Self {
         match scope {
@@ -623,7 +675,7 @@ fn describe_error(err: &FirestoreError) -> String {
     }
 }
 
-/// Compares a declared [`FirestoreIndexParams`] against `existing`, the already-fetched listed
+/// Compares a declared [`FirestoreIndexParams`] against `listing`, the already-fetched listed
 /// state of the one collection group it owns.
 ///
 /// Re-validates `params` itself, the same structural check the fluent `.plan()`/`.sync()`
@@ -638,36 +690,18 @@ fn describe_error(err: &FirestoreError) -> String {
 /// intends.
 pub(crate) fn plan_index_changes(
     params: &FirestoreIndexParams,
-    existing: &FirestoreIndexExistingState,
+    listing: &FirestoreIndexListing,
 ) -> FirestoreResult<FirestoreIndexPlan> {
     crate::validate_index_params(params)?;
 
-    let mut plan = FirestoreIndexPlan::default();
+    let mut plan = FirestoreIndexPlan {
+        unrecognised: listing.unrecognised_indexes.clone(),
+        ..Default::default()
+    };
 
-    let listed_indexes: Vec<FirestoreListedCompositeIndex> = existing
-        .indexes
-        .iter()
-        .filter_map(
-            |proto| match FirestoreListedCompositeIndex::try_from(proto.clone()) {
-                Ok(listed) => Some(listed),
-                Err(err) => {
-                    plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
-                        name: proto.name.clone(),
-                        reason: describe_error(&err),
-                    });
-                    None
-                }
-            },
-        )
-        .collect();
-
-    let listed_fields: Vec<FirestoreListedField> = existing
-        .fields
-        .iter()
-        .cloned()
-        .map(FirestoreListedField::from)
-        .collect();
-    for listed in &listed_fields {
+    let listed_indexes = &listing.indexes;
+    let listed_fields = &listing.fields;
+    for listed in listed_fields {
         if let Some(FirestoreFieldOverrideOutcome::Unrecognised(reason)) = &listed.index_override {
             plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
                 name: listed.name.clone(),
@@ -721,9 +755,9 @@ pub(crate) fn plan_index_changes(
             }
         }
     }
-    for (position, listed) in listed_indexes.into_iter().enumerate() {
+    for (position, listed) in listed_indexes.iter().enumerate() {
         if !matched_listed_index[position] {
-            plan.undeclared_indexes.push(listed);
+            plan.undeclared_indexes.push(listed.clone());
         }
     }
 
@@ -765,7 +799,7 @@ pub(crate) fn plan_index_changes(
             }
         }
     }
-    for listed in &listed_fields {
+    for listed in listed_fields {
         let Some(FirestoreFieldOverrideOutcome::Explicit(explicit)) = &listed.index_override else {
             continue;
         };
@@ -800,7 +834,7 @@ pub(crate) fn plan_index_changes(
             }
         }
     }
-    for listed in &listed_fields {
+    for listed in listed_fields {
         if matches!(listed.ttl, Some(FirestoreFieldTtlOutcome::Configured(_)))
             && !declared_ttl_paths.contains(listed.field_path.as_str())
         {
@@ -924,7 +958,7 @@ pub(crate) mod tests {
     fn empty_declaration_against_no_listed_state_plans_nothing() {
         let params = users_params();
         let existing = FirestoreIndexExistingState::default();
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan, FirestoreIndexPlan::default());
     }
 
@@ -935,7 +969,7 @@ pub(crate) mod tests {
                 asc_field("country"),
                 desc_field("created_at"),
             ])]);
-        let plan = plan_index_changes(&params, &FirestoreIndexExistingState::default()).unwrap();
+        let plan = plan_index_changes(&params, &FirestoreIndexListing::default()).unwrap();
         assert_eq!(plan.create_indexes, params.composite_indexes);
         assert!(plan.unchanged.is_empty());
     }
@@ -960,7 +994,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.create_indexes.is_empty());
         assert!(plan.undeclared_indexes.is_empty());
@@ -1017,7 +1051,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.create_indexes.is_empty());
         assert!(
@@ -1058,7 +1092,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(
             plan.undeclared_indexes.is_empty(),
@@ -1086,7 +1120,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(plan.undeclared_indexes.len(), 1);
     }
@@ -1119,7 +1153,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(plan.undeclared_indexes.len(), 1);
     }
@@ -1141,7 +1175,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.pending, vec![declared]);
         assert!(plan.unchanged.is_empty());
     }
@@ -1163,7 +1197,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.needs_repair, vec![declared]);
         assert!(plan.undeclared_indexes.is_empty());
     }
@@ -1257,7 +1291,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert!(plan.update_fields.is_empty());
         assert!(plan.undeclared_fields.is_empty());
     }
@@ -1270,7 +1304,7 @@ pub(crate) mod tests {
         };
         let params = users_params().with_field_overrides(vec![declared.clone()]);
         let existing = FirestoreIndexExistingState::default();
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.update_fields, vec![declared]);
     }
 
@@ -1293,7 +1327,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&users_params(), &existing).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into()).unwrap();
         assert_eq!(
             plan.undeclared_fields,
             vec![FirestoreListedField::from(listed_field)]
@@ -1327,7 +1361,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert!(plan.update_fields.is_empty());
     }
 
@@ -1361,7 +1395,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert!(
             plan.update_fields.is_empty(),
             "a write must never be planned over configuration this crate cannot read"
@@ -1400,7 +1434,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert!(
             plan.update_fields.is_empty(),
             "a write must never be planned over an in-flight revert"
@@ -1414,7 +1448,7 @@ pub(crate) mod tests {
     #[test]
     fn ttl_field_with_no_listed_config_is_enabled() {
         let params = users_params().with_ttl_fields(vec!["expires_at".to_string()]);
-        let plan = plan_index_changes(&params, &FirestoreIndexExistingState::default()).unwrap();
+        let plan = plan_index_changes(&params, &FirestoreIndexListing::default()).unwrap();
         assert_eq!(plan.enable_ttl, vec!["expires_at".to_string()]);
     }
 
@@ -1435,7 +1469,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert!(
             plan.enable_ttl.is_empty(),
             "an unrecognised listed TTL state must never be planned for enabling"
@@ -1454,7 +1488,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert!(plan.enable_ttl.is_empty());
     }
 
@@ -1466,7 +1500,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.unchanged_ttl, vec!["expires_at".to_string()]);
     }
 
@@ -1477,7 +1511,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&users_params(), &existing).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into()).unwrap();
         assert_eq!(
             plan.undeclared_ttl,
             vec![FirestoreListedField::from(listed_field)]
@@ -1522,7 +1556,7 @@ pub(crate) mod tests {
             indexes: vec![listed.clone()],
             fields: vec![],
         };
-        let plan = plan_index_changes(&users_params(), &existing).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into()).unwrap();
         assert_eq!(plan.unrecognised.len(), 1);
         assert_eq!(plan.unrecognised[0].name, listed.name);
         assert!(plan.undeclared_indexes.is_empty());
@@ -1548,7 +1582,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&users_params(), &existing).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into()).unwrap();
         assert_eq!(plan.unrecognised.len(), 1);
         assert_eq!(plan.unrecognised[0].name, listed_field.name);
         assert!(plan.undeclared_ttl.is_empty());
@@ -1582,7 +1616,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(
             plan.undeclared_indexes.is_empty(),
@@ -1610,7 +1644,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(
             plan.undeclared_indexes.len(),
@@ -1650,7 +1684,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.undeclared_indexes.is_empty());
     }
@@ -1674,7 +1708,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(
             plan.undeclared_indexes.len(),
@@ -1732,7 +1766,7 @@ pub(crate) mod tests {
             indexes: vec![non_default_duplicate.clone(), default_shaped.clone()],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.create_indexes.is_empty());
         assert_eq!(plan.undeclared_indexes.len(), 1);
@@ -1760,7 +1794,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&users_params(), &existing).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into()).unwrap();
         assert!(
             plan.undeclared_fields.is_empty(),
             "an inherited index config is not an explicit override to prune"
@@ -1791,7 +1825,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&users_params(), &existing).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into()).unwrap();
         assert!(
             plan.undeclared_fields.is_empty(),
             "a field already reverting must not be planned for another revert"
@@ -1812,7 +1846,7 @@ pub(crate) mod tests {
             indexes: vec![listed.clone()],
             fields: vec![],
         };
-        let plan = plan_index_changes(&users_params(), &existing).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into()).unwrap();
         assert_eq!(plan.unrecognised.len(), 1);
         assert_eq!(plan.unrecognised[0].name, listed.name);
         assert!(plan.undeclared_indexes.is_empty());
@@ -1833,7 +1867,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&users_params(), &existing).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into()).unwrap();
         assert_eq!(plan.unrecognised.len(), 1);
     }
 
@@ -1881,7 +1915,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert!(
             plan.update_fields.is_empty(),
             "the valid override half must still be matched"
@@ -1913,7 +1947,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert!(
             plan.enable_ttl.is_empty(),
             "the valid TTL half must still be matched"
@@ -1940,7 +1974,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.pending_ttl, vec!["expires_at".to_string()]);
         assert!(plan.enable_ttl.is_empty());
     }
@@ -1960,7 +1994,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.needs_repair_ttl, vec!["expires_at".to_string()]);
         assert!(plan.enable_ttl.is_empty());
     }
@@ -1982,7 +2016,7 @@ pub(crate) mod tests {
             indexes: vec![listed.clone()],
             fields: vec![],
         };
-        let plan = plan_index_changes(&users_params(), &existing).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into()).unwrap();
         assert_eq!(plan.undeclared_indexes.len(), 1);
         assert_eq!(plan.undeclared_indexes[0].name, listed.name);
     }
@@ -1994,7 +2028,7 @@ pub(crate) mod tests {
         // already.
         let params = users_params()
             .with_composite_indexes(vec![FirestoreCompositeIndex::new(vec![asc_field("a")])]);
-        let err = plan_index_changes(&params, &FirestoreIndexExistingState::default()).unwrap_err();
+        let err = plan_index_changes(&params, &FirestoreIndexListing::default()).unwrap_err();
         assert!(err.to_string().contains("at least two fields"));
     }
 }

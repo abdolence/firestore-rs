@@ -3,16 +3,17 @@
 //! Firestore Admin API, on the same authenticated channel the data API uses
 //! ([`GoogleApiClient::get_with`](gcloud_sdk::GoogleApiClient::get_with)).
 
-use crate::db::admin::index_diff::{plan_index_changes, FirestoreIndexExistingState};
+use crate::db::admin::index_diff::{
+    plan_index_changes, FirestoreIndexExistingState, FirestoreIndexListing,
+};
 use crate::db::admin::index_models::write_section;
 use crate::db::support::FirestoreIndexSupport;
 use crate::errors::{FirestoreError, FirestoreErrorPublicGenericDetails, FirestoreSystemError};
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreDb, FirestoreFieldOverride,
-    FirestoreFieldOverrideOutcome, FirestoreIndexParams, FirestoreIndexPlan,
-    FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreInstant,
-    FirestoreListedCompositeIndex, FirestoreListedField, FirestoreOperationWaitOptions,
-    FirestoreResult,
+    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSyncOptions, FirestoreIndexSyncReport,
+    FirestoreInstant, FirestoreListedCompositeIndex, FirestoreListedField,
+    FirestoreOperationWaitOptions, FirestoreResult,
 };
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field as proto_field;
@@ -105,77 +106,35 @@ enum CreateIndexOutcome {
     AlreadyExists,
 }
 
-/// The owned group's existing indexes, field overrides and TTL fields, as domain values, grouped
-/// for one log event instead of one per item. Reuses the same per-item `Display` impls the plan
-/// and report use (via [`write_section`]), so this listing and those never disagree on how an
-/// item reads. An item this crate's domain model cannot convert is left out here silently -
-/// [`plan_index_changes`] surfaces it in the plan's `unrecognised` list instead.
-struct ExistingState {
-    indexes: Vec<FirestoreListedCompositeIndex>,
-    field_overrides: Vec<FirestoreListedField>,
-    ttl_fields: Vec<FirestoreListedField>,
-}
-
-impl ExistingState {
-    fn from_raw(existing: &FirestoreIndexExistingState) -> Self {
-        let indexes = existing
-            .indexes
-            .iter()
-            .filter_map(|proto| FirestoreListedCompositeIndex::try_from(proto.clone()).ok())
-            .collect();
-        let listed_fields: Vec<FirestoreListedField> = existing
-            .fields
-            .iter()
-            .cloned()
-            .map(FirestoreListedField::from)
-            .collect();
-        let field_overrides = listed_fields
-            .iter()
-            .filter(|f| {
-                !matches!(
-                    f.index_override,
-                    None | Some(FirestoreFieldOverrideOutcome::Inherited)
-                )
-            })
-            .cloned()
-            .collect();
-        let ttl_fields = listed_fields
-            .iter()
-            .filter(|f| f.ttl.is_some())
-            .cloned()
-            .collect();
-        Self {
-            indexes,
-            field_overrides,
-            ttl_fields,
-        }
-    }
-}
-
-impl std::fmt::Display for ExistingState {
+/// The owned group's existing state as one grouped block, reusing the per-item `Display` impls
+/// the plan and report use (via [`write_section`]), so this listing and those never disagree on
+/// how an item reads. A listed index the domain model cannot represent is left out here; the plan
+/// lists it, with its reason, under `unrecognised`.
+impl std::fmt::Display for FirestoreIndexListing {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let field_overrides: Vec<&FirestoreListedField> = self.field_overrides().collect();
+        let ttl_fields: Vec<&FirestoreListedField> = self.ttl_fields().collect();
         writeln!(
             f,
             "Existing state: {} indexes, {} field overrides, {} TTL fields",
             self.indexes.len(),
-            self.field_overrides.len(),
-            self.ttl_fields.len(),
+            field_overrides.len(),
+            ttl_fields.len(),
         )?;
         write_section(f, "indexes", &self.indexes)?;
-        write_section(f, "field_overrides", &self.field_overrides)?;
-        write_section(f, "ttl_fields", &self.ttl_fields)
+        write_section(f, "field_overrides", &field_overrides)?;
+        write_section(f, "ttl_fields", &ttl_fields)
     }
 }
 
 /// Logs the owned group's existing state as one grouped event, before anything is planned.
-fn log_existing_state(group: &FirestoreCollectionId, existing: &FirestoreIndexExistingState) {
-    let state = ExistingState::from_raw(existing);
+fn log_existing_state(group: &FirestoreCollectionId, listing: &FirestoreIndexListing) {
     info!(
         collection_group = group.as_str(),
-        composite_indexes = state.indexes.len(),
-        field_overrides = state.field_overrides.len(),
-        ttl_fields = state.ttl_fields.len(),
-        "{state}",
+        composite_indexes = listing.indexes.len(),
+        field_overrides = listing.field_overrides().count(),
+        ttl_fields = listing.ttl_fields().count(),
+        "{listing}",
     );
 }
 
@@ -322,7 +281,7 @@ impl FirestoreDb {
     async fn list_existing_state(
         &self,
         group: &FirestoreCollectionId,
-    ) -> FirestoreResult<(String, FirestoreIndexExistingState)> {
+    ) -> FirestoreResult<(String, FirestoreIndexListing)> {
         let group_path = self.collection_group_path(group);
         let span = span!(
             Level::INFO,
@@ -379,7 +338,10 @@ impl FirestoreDb {
                 "Listed the collection group's indexes and fields.",
             );
 
-            Ok::<_, FirestoreError>(FirestoreIndexExistingState { indexes, fields })
+            Ok::<_, FirestoreError>(FirestoreIndexListing::from(FirestoreIndexExistingState {
+                indexes,
+                fields,
+            }))
         }
         .instrument(span.clone())
         .await?;
@@ -396,8 +358,8 @@ impl FirestoreDb {
         params: &FirestoreIndexParams,
         prune: bool,
     ) -> FirestoreResult<(String, FirestoreIndexPlan)> {
-        let (group_path, existing) = self.list_existing_state(&params.collection_group).await?;
-        log_existing_state(&params.collection_group, &existing);
+        let (group_path, listing) = self.list_existing_state(&params.collection_group).await?;
+        log_existing_state(&params.collection_group, &listing);
 
         let diff_span = span!(
             Level::INFO,
@@ -405,7 +367,7 @@ impl FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
-        let mut plan = diff_span.in_scope(|| plan_index_changes(params, &existing))?;
+        let mut plan = diff_span.in_scope(|| plan_index_changes(params, &listing))?;
         plan.prune = prune;
         let elapsed = FirestoreInstant::now().duration_since(began);
         diff_span.record("/firestore/response_time", elapsed.as_millis());
@@ -1577,7 +1539,7 @@ mod tests {
             indexes: vec![replayed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing).unwrap();
+        let plan = plan_index_changes(&params, &existing.into()).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.undeclared_indexes.is_empty());
     }
