@@ -486,3 +486,21 @@ pub trait FirestoreIndexSupport {
         options: FirestoreIndexSyncOptions,
     ) -> FirestoreResult<FirestoreIndexSyncReport>;
 }
+
+/// Deletes every document in one or more collection groups, at any depth, across the whole
+/// database, via Firestore's `BulkDeleteDocuments` admin RPC.
+///
+/// The fluent `.execute()` terminal on
+/// [`FirestoreBulkDeleteBuilder`](crate::delete_builder::FirestoreBulkDeleteBuilder) is today's
+/// only caller, and it validates `params` before calling in - but an implementation must not rely
+/// on that: `bulk_delete_documents` validates `params` again on its own.
+#[cfg(feature = "admin")]
+#[async_trait]
+pub trait FirestoreBulkDeleteSupport {
+    /// Starts the bulk delete, and - when [`FirestoreBulkDeleteParams::wait`] is set - waits for
+    /// it to reach a terminal state before returning.
+    async fn bulk_delete_documents(
+        &self,
+        params: FirestoreBulkDeleteParams,
+    ) -> FirestoreResult<FirestoreBulkDeleteResult>;
+}

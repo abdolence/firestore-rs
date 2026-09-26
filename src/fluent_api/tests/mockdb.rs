@@ -637,3 +637,70 @@ impl FirestoreIndexSupport for MockIndexDatabase {
         Ok(FirestoreIndexSyncReport::default())
     }
 }
+
+/// A mock that records the params a `db.fluent().delete().bulk()...` chain builds, instead of
+/// sending anything to Firestore. Implements [`FirestoreDeleteSupport`] only because
+/// [`FirestoreDeleteInitialBuilder`](crate::delete_builder::FirestoreDeleteInitialBuilder)
+/// requires it structurally to reach `.bulk()`; nothing in a bulk-delete test calls a plain
+/// single-document delete, so those methods are never exercised.
+///
+/// A separate type from [`MockDatabase`] for the same reason as [`MockIndexDatabase`]: that one is
+/// constructed everywhere as the unit literal `MockDatabase {}`.
+#[cfg(feature = "admin")]
+#[derive(Clone, Default)]
+pub struct MockBulkDeleteDatabase {
+    captured: std::sync::Arc<std::sync::Mutex<Option<FirestoreBulkDeleteParams>>>,
+}
+
+#[cfg(feature = "admin")]
+impl MockBulkDeleteDatabase {
+    /// The params captured by the last `bulk_delete_documents` call, if any.
+    pub fn captured(&self) -> Option<FirestoreBulkDeleteParams> {
+        self.captured.lock().unwrap().clone()
+    }
+}
+
+#[cfg(feature = "admin")]
+#[async_trait]
+impl FirestoreDeleteSupport for MockBulkDeleteDatabase {
+    async fn delete_by_id<S>(
+        &self,
+        _collection_id: &str,
+        _document_id: S,
+        _precondition: Option<FirestoreWritePrecondition>,
+    ) -> FirestoreResult<()>
+    where
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn delete_by_id_at<S>(
+        &self,
+        _parent: &str,
+        _collection_id: &str,
+        _document_id: S,
+        _precondition: Option<FirestoreWritePrecondition>,
+    ) -> FirestoreResult<()>
+    where
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+}
+
+#[cfg(feature = "admin")]
+#[async_trait]
+impl FirestoreBulkDeleteSupport for MockBulkDeleteDatabase {
+    async fn bulk_delete_documents(
+        &self,
+        params: FirestoreBulkDeleteParams,
+    ) -> FirestoreResult<FirestoreBulkDeleteResult> {
+        *self.captured.lock().unwrap() = Some(params.clone());
+        Ok(FirestoreBulkDeleteResult {
+            operation_name: "mock-operation".to_string(),
+            collection_groups: params.collection_groups,
+            ..Default::default()
+        })
+    }
+}

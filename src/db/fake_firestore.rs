@@ -1,7 +1,9 @@
 use crate::db::FirestoreEmulatorTokenSource;
 use crate::{FirestoreDb, FirestoreDbOptions};
 #[cfg(feature = "admin")]
-use gcloud_sdk::google::firestore::admin::v1::{Field as ProtoField, Index as ProtoIndex};
+use gcloud_sdk::google::firestore::admin::v1::{
+    BulkDeleteDocumentsMetadata, Field as ProtoField, Index as ProtoIndex,
+};
 use gcloud_sdk::google::firestore::v1::{
     get_document_request, BeginTransactionResponse, CommitResponse, GetDocumentRequest,
 };
@@ -130,6 +132,32 @@ pub(super) fn done_operation_response(name: &str) -> FakeResponse {
             result: Some(operation::Result::Response(
                 gcloud_sdk::prost_types::Any::default(),
             )),
+        }
+        .encode_to_vec(),
+    )
+}
+
+/// A `BulkDeleteDocuments` long-running operation carrying `metadata`, pending or done - the
+/// fixture a bulk-delete wait test needs that [`pending_operation_response`]/
+/// [`done_operation_response`] cannot provide, since those never attach metadata.
+#[cfg(feature = "admin")]
+pub(super) fn bulk_delete_operation_response(
+    name: &str,
+    done: bool,
+    metadata: BulkDeleteDocumentsMetadata,
+) -> FakeResponse {
+    FakeResponse::Message(
+        Operation {
+            name: name.to_string(),
+            metadata: Some(gcloud_sdk::prost_types::Any {
+                type_url:
+                    "type.googleapis.com/google.firestore.admin.v1.BulkDeleteDocumentsMetadata"
+                        .to_string(),
+                value: metadata.encode_to_vec(),
+            }),
+            done,
+            result: done
+                .then(|| operation::Result::Response(gcloud_sdk::prost_types::Any::default())),
         }
         .encode_to_vec(),
     )
