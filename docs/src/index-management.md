@@ -244,9 +244,8 @@ sharing the same database; the library filters listed items down to the owned gr
 computing anything, since a raw `ListIndexes` on one group's parent has been observed to return
 every group's indexes.
 
-`.sync()` additionally logs a `Firestore Index Apply` span with one child span per applied action,
-and a `Firestore Index Wait` span when waiting is requested, with one child span per operation
-polled.
+`.sync()` also logs a `Firestore Index Apply` span with one child span per applied action, and a
+`Firestore Index Wait` span when waiting is requested, with one child span per operation polled.
 
 ## The Firestore emulator
 
@@ -257,8 +256,8 @@ emulator.
 
 ## IAM roles
 
-`.plan()` needs only `roles/datastore.viewer`. `.sync()` additionally needs
-`roles/datastore.indexAdmin`, to create, update and delete indexes and fields.
+`.plan()` needs only `roles/datastore.viewer`. `.sync()` needs `roles/datastore.indexAdmin` too,
+to create, update and delete indexes and fields.
 
 ## Running the tests against a real project
 
