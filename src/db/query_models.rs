@@ -380,7 +380,7 @@ impl From<FirestoreQueryOrder> for structured_query::Order {
 }
 
 /// The direction for ordering query results.
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub enum FirestoreQueryDirection {
     /// Sort results in ascending order.
     Ascending,

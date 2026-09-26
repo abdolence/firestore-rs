@@ -26,7 +26,7 @@ pub enum FirestoreIndexQueryScope {
 }
 
 /// How a single field participates in an index.
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum FirestoreIndexFieldMode {
     /// Sortable and comparable in the given direction.
     Order(FirestoreQueryDirection),
@@ -37,22 +37,6 @@ pub enum FirestoreIndexFieldMode {
         /// The dimension every indexed vector in this field must have.
         dimension: u32,
     },
-}
-
-impl std::hash::Hash for FirestoreIndexFieldMode {
-    // `FirestoreQueryDirection` does not implement `Hash`, so this cannot be derived; keep the
-    // match arms in sync with the derived `PartialEq`/`Eq` above if a variant is added.
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending) => 0u8.hash(state),
-            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending) => 1u8.hash(state),
-            FirestoreIndexFieldMode::ArrayContains => 2u8.hash(state),
-            FirestoreIndexFieldMode::Vector { dimension } => {
-                3u8.hash(state);
-                dimension.hash(state);
-            }
-        }
-    }
 }
 
 /// One field of a composite index: its path and how it participates.
