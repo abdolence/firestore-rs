@@ -591,7 +591,7 @@ impl From<gcloud_sdk::prost::EncodeError> for FirestoreError {
     }
 }
 
-#[cfg(feature = "caching-persistent")]
+#[cfg(any(feature = "caching-persistent", feature = "admin"))]
 impl From<gcloud_sdk::prost::DecodeError> for FirestoreError {
     fn from(err: gcloud_sdk::prost::DecodeError) -> Self {
         FirestoreError::SerializeError(FirestoreSerializationError::new(
