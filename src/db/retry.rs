@@ -24,7 +24,23 @@ impl FirestoreDb {
 }
 
 /// How long to wait before retry number `retries + 1`: a random delay of up to `2^retries`
-/// seconds.
+/// seconds, saturating rather than overflowing for large `retries`.
 pub(crate) fn retry_delay(retries: usize) -> Duration {
-    Duration::from_millis(rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1))
+    let max_millis = 2u64
+        .saturating_pow(u32::try_from(retries).unwrap_or(u32::MAX))
+        .saturating_mul(1000);
+    Duration::from_millis(rand::rng().random_range(0..=max_millis))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_delay_saturates_for_any_retry_count() {
+        assert!(retry_delay(0) <= Duration::from_secs(1));
+        for retries in [63, 64, 1000, usize::MAX] {
+            retry_delay(retries);
+        }
+    }
 }
