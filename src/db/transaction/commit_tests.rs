@@ -17,14 +17,17 @@ enum CommitOutcome {
 }
 
 /// `begin_failure` is the one allowed `BeginTransaction` failure, as (attempt number, code).
+/// Returns the transaction result, the number of callback runs, and one `Commit(<transaction>)`
+/// entry per `Commit` RPC, in order.
 async fn run_transaction(
     commits: &[CommitOutcome],
     begin_failure: Option<(u32, Code)>,
     transient_callback: bool,
-) -> (FirestoreResult<usize>, usize, usize) {
+) -> (FirestoreResult<usize>, usize, Vec<String>) {
     let commit_results = Mutex::new(VecDeque::from(commits.to_vec()));
     let begin_count = AtomicU32::new(0);
-    let server = FakeFirestore::start(move |method, bytes| {
+    // One retry keeps a persistently failing commit, and its backoff, short.
+    let server = FakeFirestore::start_with_max_retries(1, move |method, bytes| {
         if method.ends_with("/BeginTransaction") {
             let count = begin_count.fetch_add(1, Ordering::SeqCst) + 1;
             let code = begin_failure
@@ -52,7 +55,8 @@ async fn run_transaction(
                 CommitOutcome::Status(code) => FakeResponse::Status(code),
                 CommitOutcome::Drop => FakeResponse::Drop,
             };
-            (format!("Commit({outcome:?})"), response)
+            let transaction = u32::from_be_bytes(request.transaction.try_into().unwrap());
+            (format!("Commit({transaction})"), response)
         } else {
             assert!(method.ends_with("/Rollback"));
             // A failed cleanup must not replace the original commit error.
@@ -91,20 +95,18 @@ async fn run_transaction(
     .await
     .expect("transaction did not finish");
     let callbacks = *callbacks.lock().unwrap();
-    let commit_attempts = server
+    let commits = server
         .calls()
-        .iter()
+        .into_iter()
         .filter(|call| call.starts_with("Commit"))
-        .count();
-    (result, callbacks, commit_attempts)
+        .collect();
+    (result, callbacks, commits)
 }
 
 #[tokio::test]
 async fn ambiguous_commit_stops_without_repeating_the_callback() {
     for outcome in [
-        CommitOutcome::Status(Code::Unavailable),
         CommitOutcome::Status(Code::Cancelled),
-        CommitOutcome::Status(Code::ResourceExhausted),
         CommitOutcome::Status(Code::DeadlineExceeded),
         CommitOutcome::Status(Code::Unknown),
         CommitOutcome::Drop,
@@ -115,7 +117,7 @@ async fn ambiguous_commit_stops_without_repeating_the_callback() {
                 commits.push(CommitOutcome::Status(Code::Aborted));
             }
             commits.push(outcome);
-            let (result, callbacks, commit_count) = run_transaction(&commits, None, false).await;
+            let (result, callbacks, commits_seen) = run_transaction(&commits, None, false).await;
             let FirestoreError::DatabaseError(error) = result.unwrap_err() else {
                 panic!("{outcome:?} commit outcome replaced by a later callback error");
             };
@@ -127,7 +129,7 @@ async fn ambiguous_commit_stops_without_repeating_the_callback() {
                 assert_eq!(error.public.code, format!("{code:?}"));
             }
             assert_eq!(
-                (callbacks, commit_count),
+                (callbacks, commits_seen.len()),
                 (commits.len(), commits.len()),
                 "{outcome:?}"
             );
@@ -152,6 +154,42 @@ async fn precommit_failures_keep_their_own_retry_policy() {
         let (result, callbacks, commits_seen) =
             run_transaction(&commits, begin_failure, transient_callback).await;
         assert_eq!(result.unwrap(), 3);
-        assert_eq!((callbacks, commits_seen), (3, want_commits));
+        assert_eq!((callbacks, commits_seen.len()), (3, want_commits));
+    }
+}
+
+#[tokio::test]
+async fn unavailable_commit_is_resent_with_the_same_transaction() {
+    for code in [Code::Unavailable, Code::ResourceExhausted] {
+        let commits = [CommitOutcome::Status(code), CommitOutcome::Ok];
+        let (result, callbacks, commits_seen) = run_transaction(&commits, None, false).await;
+        assert_eq!(result.unwrap(), 1, "{code:?}");
+        assert_eq!(callbacks, 1, "{code:?}");
+        assert_eq!(commits_seen, ["Commit(1)", "Commit(1)"], "{code:?}");
+    }
+}
+
+// Firestore answers a Commit for a transaction that already committed with ABORTED, so after a
+// resent Commit an ABORTED cannot tell a lost success from a real conflict.
+#[tokio::test]
+async fn resent_commit_failures_do_not_rerun_the_callback() {
+    for (first, last) in [
+        (Code::Unavailable, Code::Unavailable),
+        (Code::ResourceExhausted, Code::ResourceExhausted),
+        (Code::Unavailable, Code::Aborted),
+    ] {
+        let commits = [CommitOutcome::Status(first), CommitOutcome::Status(last)];
+        let (result, callbacks, commits_seen) = run_transaction(&commits, None, false).await;
+        let Err(FirestoreError::DatabaseError(error)) = result else {
+            panic!("{first:?} then {last:?}: expected the commit error, got {result:?}");
+        };
+        assert_eq!(error.public.code, format!("{last:?}"));
+        assert!(!error.retry_possible, "{first:?} then {last:?}");
+        assert_eq!(callbacks, 1, "{first:?} then {last:?}");
+        assert_eq!(
+            commits_seen,
+            ["Commit(1)", "Commit(1)"],
+            "{first:?} then {last:?}"
+        );
     }
 }

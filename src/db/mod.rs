@@ -59,6 +59,8 @@ pub(crate) use support::*;
 mod transaction_ops;
 use transaction_ops::*;
 
+mod retry;
+
 #[cfg(test)]
 mod fake_firestore;
 
