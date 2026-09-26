@@ -1,3 +1,4 @@
+use crate::db::retry::retry_delay;
 use crate::db::safe_document_path;
 use crate::errors::*;
 use crate::FirestoreInstant;
@@ -9,7 +10,6 @@ use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
-use rand::RngExt;
 use serde::Deserialize;
 use tracing::*;
 
@@ -463,14 +463,9 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                    if db_err.retryable_read(matches!(
-                        self.session_params.consistency_selector,
-                        Some(FirestoreConsistencySelector::Transaction(_))
-                    )) && retries < self.get_options().max_retries =>
+                    if self.read_retry_possible(db_err, retries) =>
                         {
-                            let sleep_duration = tokio::time::Duration::from_millis(
-                                rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1),
-                            );
+                            let sleep_duration = retry_delay(retries);
                             span.in_scope(|| {
                                 warn!(
                                     err = %db_err,

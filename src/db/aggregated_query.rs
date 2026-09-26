@@ -1,5 +1,6 @@
 #![allow(clippy::derive_partial_eq_without_eq)] // Since we may not be able to implement Eq for the changes coming from Firestore protos
 
+use crate::db::retry::retry_delay;
 use crate::db::support::FirestoreAggregatedQuerySupport;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreError, FirestoreQueryParams, FirestoreResult};
@@ -11,7 +12,6 @@ use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
-use rand::RngExt;
 use rsb_derive::*;
 use serde::Deserialize;
 use tracing::*;
@@ -303,14 +303,9 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                    if db_err.retryable_read(matches!(
-                        self.session_params.consistency_selector,
-                        Some(crate::FirestoreConsistencySelector::Transaction(_))
-                    )) && retries < self.inner.options.max_retries =>
+                    if self.read_retry_possible(db_err, retries) =>
                         {
-                            let sleep_duration = tokio::time::Duration::from_millis(
-                                rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1),
-                            );
+                            let sleep_duration = retry_delay(retries);
                             warn!(
                                 err = %db_err,
                                 current_retry = retries + 1,
@@ -376,14 +371,9 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                    if db_err.retryable_read(matches!(
-                        self.session_params.consistency_selector,
-                        Some(crate::FirestoreConsistencySelector::Transaction(_))
-                    )) && retries < self.inner.options.max_retries =>
+                    if self.read_retry_possible(db_err, retries) =>
                         {
-                            let sleep_duration = tokio::time::Duration::from_millis(
-                                rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1),
-                            );
+                            let sleep_duration = retry_delay(retries);
                             warn!(
                                 err = %db_err,
                                 current_retry = retries + 1,

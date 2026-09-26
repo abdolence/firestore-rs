@@ -1,4 +1,4 @@
-use crate::db::FirestoreDbInner;
+use crate::db::retry::retry_delay;
 use crate::FirestoreInstant;
 use crate::*;
 use async_trait::async_trait;
@@ -9,11 +9,9 @@ use futures::StreamExt;
 use futures::TryFutureExt;
 use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
-use rand::RngExt;
 use rsb_derive::*;
 use serde::Deserialize;
 use std::future;
-use std::sync::Arc;
 use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
@@ -259,15 +257,14 @@ impl FirestoreDb {
     ) -> BoxFuture<'b, FirestoreResult<FirestoreListDocResult>> {
         match self.create_list_doc_request(params) {
             Ok(list_request) => {
-                Self::list_doc_with_retries_inner(self.inner.clone(), list_request, retries, span)
-                    .boxed()
+                Self::list_doc_with_retries_inner(self.clone(), list_request, retries, span).boxed()
             }
             Err(err) => futures::future::err(err).boxed(),
         }
     }
 
     fn list_doc_with_retries_inner<'b>(
-        db_inner: Arc<FirestoreDbInner>,
+        db: FirestoreDb,
         list_request: ListDocumentsRequest,
         retries: usize,
         span: Span,
@@ -275,7 +272,7 @@ impl FirestoreDb {
         async move {
             let begin_utc: FirestoreInstant = FirestoreInstant::now();
 
-            match db_inner.client.get()
+            match db.client().get()
                 .list_documents(
                     gcloud_sdk::tonic::Request::new(list_request.clone())
                 )
@@ -311,26 +308,21 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                    if db_err.retryable_read(matches!(
-                        list_request.consistency_selector,
-                        Some(list_documents_request::ConsistencySelector::Transaction(_))
-                    )) && retries < db_inner.options.max_retries =>
+                    if db.read_retry_possible(db_err, retries) =>
                         {
-                            let sleep_duration = tokio::time::Duration::from_millis(
-                                rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1),
-                            );
+                            let sleep_duration = retry_delay(retries);
 
                             warn!(
                                 err = %db_err,
                                 current_retry = retries + 1,
-                                max_retries = db_inner.options.max_retries,
+                                max_retries = db.get_options().max_retries,
                                 delay = sleep_duration.as_millis(),
                                 "Failed to list documents. Retrying up to the specified number of times.",
                             );
 
                             tokio::time::sleep(sleep_duration).await;
 
-                            Self::list_doc_with_retries_inner(db_inner, list_request, retries + 1, span).await
+                            Self::list_doc_with_retries_inner(db, list_request, retries + 1, span).await
                         }
                     _ => Err(err),
                 },
@@ -352,17 +344,17 @@ impl FirestoreDb {
             }
         }
         let list_request = self.create_list_doc_request(params.clone())?;
-        Self::stream_list_doc_with_retries_inner(self.inner.clone(), list_request)
+        Self::stream_list_doc_with_retries_inner(self.clone(), list_request)
     }
 
     fn stream_list_doc_with_retries_inner<'b>(
-        db_inner: Arc<FirestoreDbInner>,
+        db: FirestoreDb,
         list_request: ListDocumentsRequest,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Document>>> {
         let stream: BoxStream<FirestoreResult<Document>> = Box::pin(
             futures::stream::unfold(
-                (db_inner, Some(list_request)),
-                move |(db_inner, list_request)| async move {
+                (db, Some(list_request)),
+                move |(db, list_request)| async move {
                     if let Some(mut list_request) = list_request {
                         let span = span!(
                             Level::DEBUG,
@@ -371,7 +363,7 @@ impl FirestoreDb {
                             "/firestore/response_time" = field::Empty
                         );
                         match Self::list_doc_with_retries_inner(
-                            db_inner.clone(),
+                            db.clone(),
                             list_request.clone(),
                             0,
                             span,
@@ -381,14 +373,14 @@ impl FirestoreDb {
                             Ok(results) => {
                                 if let Some(next_page_token) = results.page_token.clone() {
                                     list_request.page_token = next_page_token;
-                                    Some((Ok(results), (db_inner, Some(list_request))))
+                                    Some((Ok(results), (db, Some(list_request))))
                                 } else {
-                                    Some((Ok(results), (db_inner, None)))
+                                    Some((Ok(results), (db, None)))
                                 }
                             }
                             Err(err) => {
                                 error!(%err, "Error occurred while consuming documents.");
-                                Some((Err(err), (db_inner, None)))
+                                Some((Err(err), (db, None)))
                             }
                         }
                     } else {
@@ -478,9 +470,7 @@ impl FirestoreDb {
                     FirestoreError::DatabaseError(ref db_err)
                     if db_err.retry_possible && retries < self.inner.options.max_retries =>
                         {
-                            let sleep_duration = tokio::time::Duration::from_millis(
-                                rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1),
-                            );
+                            let sleep_duration = retry_delay(retries);
                             warn!(
                                 err = %db_err,
                                 current_retry = retries + 1,
