@@ -8,8 +8,8 @@ use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
     FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreIndexField,
     FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSupport,
-    FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreIndexWait,
-    FirestoreOperationWaitOptions, FirestoreQueryDirection, FirestoreResult,
+    FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreOperationWaitOptions,
+    FirestoreQueryDirection, FirestoreResult,
 };
 use std::time::Duration;
 
@@ -179,13 +179,11 @@ where
             .with_ttl_fields(self.ttl_fields);
         crate::validate_index_params(&params)?;
 
-        let wait = match self.wait {
-            Some(options) => FirestoreIndexWait::UntilReady(options),
-            None => FirestoreIndexWait::NoWait,
+        let options = FirestoreIndexSyncOptions::new().with_prune(self.prune);
+        let options = match self.wait {
+            Some(wait) => options.with_wait(wait),
+            None => options,
         };
-        let options = FirestoreIndexSyncOptions::new()
-            .with_prune(self.prune)
-            .with_wait(wait);
 
         Ok((db, params, options))
     }
@@ -556,8 +554,8 @@ mod tests {
     use crate::{
         path, FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
         FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreIndexField,
-        FirestoreIndexFieldMode, FirestoreIndexSyncOptions, FirestoreIndexWait,
-        FirestoreOperationWaitOptions, FirestoreQueryDirection,
+        FirestoreIndexFieldMode, FirestoreIndexSyncOptions, FirestoreOperationWaitOptions,
+        FirestoreQueryDirection,
     };
     use std::time::Duration;
 
@@ -672,11 +670,9 @@ mod tests {
         assert_eq!(params.ttl_fields, vec!["expires_at".to_string()]);
         assert_eq!(
             options,
-            FirestoreIndexSyncOptions::new().with_prune(true).with_wait(
-                FirestoreIndexWait::UntilReady(FirestoreOperationWaitOptions::new(
-                    Duration::from_secs(600)
-                ))
-            )
+            FirestoreIndexSyncOptions::new()
+                .with_prune(true)
+                .with_wait(FirestoreOperationWaitOptions::new(Duration::from_secs(600)))
         );
     }
 
@@ -691,12 +687,7 @@ mod tests {
             .unwrap();
 
         let (_, options) = mock.captured().unwrap();
-        assert_eq!(
-            options,
-            FirestoreIndexSyncOptions::new()
-                .with_prune(false)
-                .with_wait(FirestoreIndexWait::NoWait)
-        );
+        assert_eq!(options, FirestoreIndexSyncOptions::new().with_prune(false));
     }
 
     #[tokio::test]

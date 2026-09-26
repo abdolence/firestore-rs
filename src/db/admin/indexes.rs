@@ -9,7 +9,7 @@ use crate::errors::{FirestoreError, FirestoreErrorPublicGenericDetails, Firestor
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreDb, FirestoreFieldOverride,
     FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSyncOptions, FirestoreIndexSyncReport,
-    FirestoreIndexWait, FirestoreInstant, FirestoreListedCompositeIndex, FirestoreListedField,
+    FirestoreInstant, FirestoreListedCompositeIndex, FirestoreListedField,
     FirestoreOperationWaitOptions, FirestoreResult,
 };
 use async_trait::async_trait;
@@ -862,7 +862,7 @@ impl FirestoreIndexSupport for FirestoreDb {
             "Firestore Index Sync",
             "/firestore/collection_group" = params.collection_group.as_str(),
             "/firestore/prune" = options.prune,
-            "/firestore/wait" = matches!(options.wait, FirestoreIndexWait::UntilReady(_)),
+            "/firestore/wait" = options.wait.is_some(),
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
@@ -870,7 +870,7 @@ impl FirestoreIndexSupport for FirestoreDb {
             let (group_path, plan) = self.plan_against_server(&params, options.prune).await?;
             let (report, pending_operations) =
                 self.apply_plan(&group_path, &plan, options.prune).await?;
-            if let FirestoreIndexWait::UntilReady(wait_options) = &options.wait {
+            if let Some(wait_options) = &options.wait {
                 self.wait_for_operations(pending_operations, wait_options)
                     .await?;
             }
@@ -989,8 +989,19 @@ mod tests {
         panic!("unexpected write RPC in a read-only scenario: {method}")
     }
 
+    /// Serializes every test in this module against every other. `tracing`'s per-callsite
+    /// interest cache is shared process-wide rather than per-thread, and every test here shares
+    /// the same "Firestore Index *" span callsites (there is only one `span!(...,
+    /// "Firestore Index Sync", ...)` call site in the source, for example); with two of these
+    /// tests' `FirestoreDb` calls in flight on different threads at once, that shared cache has
+    /// been observed to report one thread's spans as filtered out, dropping a span or an event
+    /// this module's tests assert on. No test here is slow enough for the lost parallelism to
+    /// matter.
+    static MODULE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[tokio::test]
     async fn missing_index_is_created() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
@@ -1018,6 +1029,7 @@ mod tests {
 
     #[tokio::test]
     async fn unchanged_index_causes_no_writes() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
@@ -1043,6 +1055,7 @@ mod tests {
 
     #[tokio::test]
     async fn without_prune_undeclared_index_is_kept_and_reported() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
@@ -1069,6 +1082,7 @@ mod tests {
 
     #[tokio::test]
     async fn with_prune_undeclared_index_is_deleted() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, bytes| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
@@ -1118,6 +1132,7 @@ mod tests {
 
     #[tokio::test]
     async fn only_the_owned_group_is_ever_listed() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, bytes| match method {
             LIST_INDEXES => {
                 let request =
@@ -1148,6 +1163,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_polls_until_done() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let polls = StdArc::new(AtomicU32::new(0));
         let polls_in_handler = polls.clone();
         let fake = FakeFirestore::start(move |method, _| match method {
@@ -1170,10 +1186,10 @@ mod tests {
         })
         .await;
 
-        let options = FirestoreIndexSyncOptions::new().with_wait(FirestoreIndexWait::UntilReady(
+        let options = FirestoreIndexSyncOptions::new().with_wait(
             FirestoreOperationWaitOptions::new(Duration::from_secs(5))
                 .with_poll_interval(Duration::from_millis(5)),
-        ));
+        );
         let report = fake
             .db
             .sync_indexes(params_with_index(), options)
@@ -1187,6 +1203,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_timeout_returns_an_error_naming_the_operation() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
@@ -1202,10 +1219,10 @@ mod tests {
         })
         .await;
 
-        let options = FirestoreIndexSyncOptions::new().with_wait(FirestoreIndexWait::UntilReady(
+        let options = FirestoreIndexSyncOptions::new().with_wait(
             FirestoreOperationWaitOptions::new(Duration::from_millis(20))
                 .with_poll_interval(Duration::from_millis(5)),
-        ));
+        );
         let err = fake
             .db
             .sync_indexes(params_with_index(), options)
@@ -1218,6 +1235,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_operation_surfaces_as_an_error() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
@@ -1237,9 +1255,8 @@ mod tests {
         })
         .await;
 
-        let options = FirestoreIndexSyncOptions::new().with_wait(FirestoreIndexWait::UntilReady(
-            FirestoreOperationWaitOptions::new(Duration::from_secs(5)),
-        ));
+        let options = FirestoreIndexSyncOptions::new()
+            .with_wait(FirestoreOperationWaitOptions::new(Duration::from_secs(5)));
         let err = fake
             .db
             .sync_indexes(params_with_index(), options)
@@ -1251,6 +1268,7 @@ mod tests {
 
     #[tokio::test]
     async fn already_exists_on_create_counts_as_unchanged() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
@@ -1274,6 +1292,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_emulator_skips_index_management_entirely() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| no_writes_allowed(method)).await;
 
         let emulator_db = FirestoreDb {
@@ -1399,6 +1418,7 @@ mod tests {
 
     #[tokio::test]
     async fn only_the_owned_groups_index_is_ever_considered_among_real_database_indexes() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let indexes = decode_captured_indexes(include_str!("testdata/latestbit-list-indexes.json"));
         assert_eq!(
             indexes.len(),
@@ -1450,6 +1470,7 @@ mod tests {
 
     #[tokio::test]
     async fn prune_never_deletes_anything_outside_the_owned_group() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let indexes = decode_captured_indexes(include_str!("testdata/latestbit-list-indexes.json"));
         let fake = FakeFirestore::start(move |method, bytes| match method {
             LIST_INDEXES => (
@@ -1538,6 +1559,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_field_listed_in_both_filters_is_merged_into_one() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         use gcloud_sdk::google::firestore::admin::v1::field;
         let override_field = field_resource(
             "tags",
@@ -1615,6 +1637,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_default_group_field_is_ignored() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let leaked = ProtoField {
             name:
                 "projects/fake-firestore/databases/(default)/collectionGroups/__default__/fields/*"
@@ -1651,6 +1674,7 @@ mod tests {
 
     #[tokio::test]
     async fn all_fields_apply_and_prune_round_trip() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         use gcloud_sdk::google::firestore::admin::v1::field;
 
         let stored: StdArc<Mutex<Option<ProtoField>>> = StdArc::new(Mutex::new(None));
@@ -1740,11 +1764,15 @@ mod tests {
             let buffer = buffer.clone();
             move || SharedBufferWriter(buffer.clone())
         };
+        // Scoped to this crate's own target: `cargo test` runs many tests concurrently, and an
+        // unfiltered DEBUG level captures every other test's h2/tower/hyper transport chatter
+        // into this buffer too, which has been observed to crowd out or reorder the lines this
+        // test asserts on.
         let subscriber = tracing_subscriber::fmt()
             .with_writer(make_writer)
             .with_ansi(false)
             .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-            .with_max_level(Level::DEBUG)
+            .with_env_filter(tracing_subscriber::EnvFilter::new("firestore=debug"))
             .finish();
         (subscriber, buffer)
     }
@@ -1766,6 +1794,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_logs_the_span_tree_and_the_named_lines() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
@@ -1819,6 +1848,7 @@ mod tests {
 
     #[tokio::test]
     async fn plan_logs_no_execution() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),

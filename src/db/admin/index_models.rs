@@ -215,13 +215,13 @@ pub struct FirestoreListedCompositeIndex {
 /// every sync.
 ///
 /// [`ProtoField`]: gcloud_sdk::google::firestore::admin::v1::Field
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreFieldOverrideOutcome {
-    /// No explicit override: the field carries no `index_config` at all, or one inherited from
-    /// an ancestor field (`uses_ancestor_config`). Neither is an override a declaration can be
-    /// compared against.
-    #[default]
-    None,
+    /// The field carries an `index_config`, but it is inherited from an ancestor field
+    /// (`uses_ancestor_config`), not an explicit override. Not an override a declaration can be
+    /// compared against - the same as [`FirestoreListedField::index_override`] being `None`
+    /// (no `index_config` at all), which is why the diff treats the two alike.
+    Inherited,
     /// An explicit, non-inherited override.
     Explicit {
         /// The field's explicit single-field index set. Empty is an explicit exemption, the same
@@ -238,18 +238,16 @@ pub enum FirestoreFieldOverrideOutcome {
     Unrecognised(String),
 }
 
-/// A field resource's TTL configuration, as read from a listed [`ProtoField`].
+/// A field resource's TTL configuration, as read from a listed [`ProtoField`] that carries one.
 ///
 /// [`ProtoField`]: gcloud_sdk::google::firestore::admin::v1::Field
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreFieldTtlOutcome {
-    /// The field carries no `ttl_config`.
-    #[default]
-    None,
     /// TTL is configured, in the given lifecycle state.
     Configured(FirestoreFieldTtlState),
     /// The listed `ttl_config` carries a state this crate's domain model cannot represent.
-    /// Carries why, for [`FirestoreUnrecognisedIndexItem::reason`].
+    /// Carries why, for [`FirestoreUnrecognisedIndexItem::reason`]. Report-only, the same as any
+    /// other unrecognised item: the planner never enables, disables or otherwise acts on it.
     Unrecognised(String),
 }
 
@@ -261,10 +259,11 @@ pub struct FirestoreListedField {
     pub name: String,
     /// The field's path within a document, parsed from `name`.
     pub field_path: String,
-    /// The field's single-field index configuration.
-    pub index_override: FirestoreFieldOverrideOutcome,
-    /// The field's TTL configuration.
-    pub ttl: FirestoreFieldTtlOutcome,
+    /// The field's single-field index configuration, or `None` when the field carries no
+    /// `index_config` at all.
+    pub index_override: Option<FirestoreFieldOverrideOutcome>,
+    /// The field's TTL configuration, or `None` when the field carries no `ttl_config` at all.
+    pub ttl: Option<FirestoreFieldTtlOutcome>,
 }
 
 /// One listed index or field resource this crate's domain model cannot represent, kept for
@@ -316,16 +315,6 @@ pub struct FirestoreOperationWaitOptions {
     pub poll_interval: Duration,
 }
 
-/// Whether, and how long, `.sync()` waits for changes it starts to finish.
-#[derive(Debug, PartialEq, Clone, Default)]
-pub enum FirestoreIndexWait {
-    /// Returns as soon as changes are requested, without waiting for them to complete.
-    #[default]
-    NoWait,
-    /// Waits for every started change to reach a terminal state.
-    UntilReady(FirestoreOperationWaitOptions),
-}
-
 /// Options controlling how `.sync()` reconciles a declared [`FirestoreIndexParams`] with
 /// Firestore.
 #[derive(Debug, PartialEq, Clone, Builder)]
@@ -335,9 +324,10 @@ pub struct FirestoreIndexSyncOptions {
     /// items are only reported.
     #[default = "false"]
     pub prune: bool,
-    /// Whether, and how long, to wait for started changes to finish.
-    #[default = "FirestoreIndexWait::NoWait"]
-    pub wait: FirestoreIndexWait,
+    /// Whether, and how long, to wait for started changes to finish. `None` returns as soon as
+    /// changes are requested; `Some` waits for every started change to reach a terminal state.
+    #[default = "None"]
+    pub wait: Option<FirestoreOperationWaitOptions>,
 }
 
 /// The outcome of comparing a declared [`FirestoreIndexParams`] against one collection group's
@@ -740,8 +730,8 @@ impl Display for FirestoreListedField {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.field_path)?;
         match &self.index_override {
-            FirestoreFieldOverrideOutcome::None => {}
-            FirestoreFieldOverrideOutcome::Explicit { indexes, reverting } => {
+            None | Some(FirestoreFieldOverrideOutcome::Inherited) => {}
+            Some(FirestoreFieldOverrideOutcome::Explicit { indexes, reverting }) => {
                 if indexes.is_empty() {
                     write!(f, " EXEMPT")?;
                 } else {
@@ -758,14 +748,14 @@ impl Display for FirestoreListedField {
                     write!(f, " (reverting)")?;
                 }
             }
-            FirestoreFieldOverrideOutcome::Unrecognised(reason) => {
+            Some(FirestoreFieldOverrideOutcome::Unrecognised(reason)) => {
                 write!(f, " override unrecognised: {reason}")?;
             }
         }
         match &self.ttl {
-            FirestoreFieldTtlOutcome::None => {}
-            FirestoreFieldTtlOutcome::Configured(state) => write!(f, " ttl={state}")?,
-            FirestoreFieldTtlOutcome::Unrecognised(reason) => {
+            None => {}
+            Some(FirestoreFieldTtlOutcome::Configured(state)) => write!(f, " ttl={state}")?,
+            Some(FirestoreFieldTtlOutcome::Unrecognised(reason)) => {
                 write!(f, " ttl unrecognised: {reason}")?;
             }
         }

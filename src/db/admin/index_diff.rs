@@ -396,17 +396,15 @@ impl TryFrom<field::TtlConfig> for FirestoreFieldTtlState {
     }
 }
 
-/// Converts one field resource's index-override half. `None` covers both "no `index_config` at
-/// all" and "`index_config` is inherited from an ancestor field" (`uses_ancestor_config`), since
-/// neither is an explicit override `plan_index_changes` can compare against a declaration.
-/// Infallible: a config this crate cannot represent becomes
+/// Converts one field resource's index-override half, when it carries an `index_config` at all -
+/// see [`From<ProtoField> for FirestoreListedField`] below for the `None` case (no `index_config`
+/// at all). Infallible: a config this crate cannot represent becomes
 /// [`Unrecognised`](FirestoreFieldOverrideOutcome::Unrecognised) rather than failing the
-/// conversion, so it stays independent of the TTL half - see
-/// [`From<ProtoField> for FirestoreListedField`] below.
+/// conversion, so it stays independent of the TTL half.
 impl From<field::IndexConfig> for FirestoreFieldOverrideOutcome {
     fn from(config: field::IndexConfig) -> Self {
         if config.uses_ancestor_config {
-            return FirestoreFieldOverrideOutcome::None;
+            return FirestoreFieldOverrideOutcome::Inherited;
         }
         let reverting = config.reverting;
         match config
@@ -421,21 +419,15 @@ impl From<field::IndexConfig> for FirestoreFieldOverrideOutcome {
     }
 }
 
-impl From<Option<field::IndexConfig>> for FirestoreFieldOverrideOutcome {
-    fn from(config: Option<field::IndexConfig>) -> Self {
-        config.map_or(FirestoreFieldOverrideOutcome::None, Self::from)
-    }
-}
-
-/// Converts one field resource's TTL half. Infallible for the same reason as
-/// [`From<field::IndexConfig> for FirestoreFieldOverrideOutcome`]: an unrecognisable state becomes
-/// [`Unrecognised`](FirestoreFieldTtlOutcome::Unrecognised) rather than failing the whole field.
-impl From<Option<field::TtlConfig>> for FirestoreFieldTtlOutcome {
-    fn from(config: Option<field::TtlConfig>) -> Self {
-        match config.map(FirestoreFieldTtlState::try_from) {
-            None => FirestoreFieldTtlOutcome::None,
-            Some(Ok(state)) => FirestoreFieldTtlOutcome::Configured(state),
-            Some(Err(err)) => FirestoreFieldTtlOutcome::Unrecognised(describe_error(&err)),
+/// Converts one field resource's TTL half, when it carries a `ttl_config` at all. Infallible for
+/// the same reason as [`From<field::IndexConfig> for FirestoreFieldOverrideOutcome`]: an
+/// unrecognisable state becomes [`Unrecognised`](FirestoreFieldTtlOutcome::Unrecognised) rather
+/// than failing the whole field.
+impl From<field::TtlConfig> for FirestoreFieldTtlOutcome {
+    fn from(config: field::TtlConfig) -> Self {
+        match FirestoreFieldTtlState::try_from(config) {
+            Ok(state) => FirestoreFieldTtlOutcome::Configured(state),
+            Err(err) => FirestoreFieldTtlOutcome::Unrecognised(describe_error(&err)),
         }
     }
 }
@@ -455,8 +447,8 @@ impl From<ProtoField> for FirestoreListedField {
         FirestoreListedField {
             name: field.name,
             field_path,
-            index_override: field.index_config.into(),
-            ttl: field.ttl_config.into(),
+            index_override: field.index_config.map(Into::into),
+            ttl: field.ttl_config.map(Into::into),
         }
     }
 }
@@ -555,7 +547,8 @@ fn field_override_matches(
     declared: &FirestoreFieldOverride,
     listed: &FirestoreListedField,
 ) -> bool {
-    let FirestoreFieldOverrideOutcome::Explicit { indexes, .. } = &listed.index_override else {
+    let Some(FirestoreFieldOverrideOutcome::Explicit { indexes, .. }) = &listed.index_override
+    else {
         return false;
     };
     override_index_set(&declared.indexes) == override_index_set(indexes)
@@ -616,13 +609,13 @@ pub(crate) fn plan_index_changes(
         .map(FirestoreListedField::from)
         .collect();
     for listed in &listed_fields {
-        if let FirestoreFieldOverrideOutcome::Unrecognised(reason) = &listed.index_override {
+        if let Some(FirestoreFieldOverrideOutcome::Unrecognised(reason)) = &listed.index_override {
             plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
                 name: listed.name.clone(),
                 reason: reason.clone(),
             });
         }
-        if let FirestoreFieldTtlOutcome::Unrecognised(reason) = &listed.ttl {
+        if let Some(FirestoreFieldTtlOutcome::Unrecognised(reason)) = &listed.ttl {
             plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
                 name: listed.name.clone(),
                 reason: reason.clone(),
@@ -684,7 +677,7 @@ pub(crate) fn plan_index_changes(
         let listed = listed_fields.iter().find(|f| {
             matches!(
                 f.index_override,
-                FirestoreFieldOverrideOutcome::Explicit { .. }
+                Some(FirestoreFieldOverrideOutcome::Explicit { .. })
             ) && f.field_path == declared.target.as_str()
         });
         let up_to_date = listed
@@ -695,7 +688,8 @@ pub(crate) fn plan_index_changes(
         }
     }
     for listed in &listed_fields {
-        let FirestoreFieldOverrideOutcome::Explicit { reverting, .. } = listed.index_override
+        let Some(FirestoreFieldOverrideOutcome::Explicit { reverting, .. }) =
+            &listed.index_override
         else {
             continue;
         };
@@ -712,12 +706,13 @@ pub(crate) fn plan_index_changes(
         let listed_ttl = listed_fields
             .iter()
             .find(|f| f.field_path == *declared_path)
-            .map(|f| &f.ttl);
+            .and_then(|f| f.ttl.as_ref());
         match listed_ttl {
-            None
-            | Some(FirestoreFieldTtlOutcome::None | FirestoreFieldTtlOutcome::Unrecognised(_)) => {
-                plan.enable_ttl.push(declared_path.clone())
-            }
+            None => plan.enable_ttl.push(declared_path.clone()),
+            // Report-only, the same as every other unrecognised item: this crate cannot tell
+            // what an unrecognised TTL state actually means on the server, so it must not
+            // overwrite it by planning an enable.
+            Some(FirestoreFieldTtlOutcome::Unrecognised(_)) => {}
             Some(FirestoreFieldTtlOutcome::Configured(FirestoreFieldTtlState::Creating)) => {
                 plan.pending_ttl.push(declared_path.clone())
             }
@@ -728,7 +723,7 @@ pub(crate) fn plan_index_changes(
         }
     }
     for listed in &listed_fields {
-        if matches!(listed.ttl, FirestoreFieldTtlOutcome::Configured(_))
+        if matches!(listed.ttl, Some(FirestoreFieldTtlOutcome::Configured(_)))
             && !declared_ttl_paths.contains(listed.field_path.as_str())
         {
             plan.undeclared_ttl.push(listed.clone());
@@ -1219,6 +1214,34 @@ mod tests {
     }
 
     #[test]
+    fn declared_ttl_field_with_unrecognised_listed_state_is_report_only() {
+        // Report-only, the same as any other unrecognised item: planning an enable here would
+        // overwrite a server-side TTL state this crate does not understand.
+        let params = users_params().with_ttl_fields(vec!["expires_at".to_string()]);
+        let listed_field = field_resource(
+            "expires_at",
+            None,
+            Some(field::TtlConfig {
+                state: field::ttl_config::State::Unspecified as i32,
+                expiration_offset: None,
+            }),
+        );
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![],
+            fields: vec![listed_field.clone()],
+        };
+        let plan = plan_index_changes(&params, &existing).unwrap();
+        assert!(
+            plan.enable_ttl.is_empty(),
+            "an unrecognised listed TTL state must never be planned for enabling"
+        );
+        assert!(plan.pending_ttl.is_empty());
+        assert!(plan.needs_repair_ttl.is_empty());
+        assert_eq!(plan.unrecognised.len(), 1);
+        assert_eq!(plan.unrecognised[0].name, listed_field.name);
+    }
+
+    #[test]
     fn ttl_field_already_configured_needs_no_change() {
         let params = users_params().with_ttl_fields(vec!["expires_at".to_string()]);
         let listed_field = field_resource("expires_at", None, Some(active_ttl_config()));
@@ -1683,9 +1706,9 @@ mod tests {
 
     #[test]
     fn validation_runs_inside_plan_index_changes_too() {
-        // Round B's `FirestoreIndexSupport` implementations call `plan_index_changes` directly;
-        // this pins that it validates `params` itself rather than trusting a caller to have done
-        // so already.
+        // `FirestoreIndexSupport` implementations call `plan_index_changes` directly; this
+        // pins that it validates `params` itself rather than trusting a caller to have done so
+        // already.
         let params = users_params()
             .with_composite_indexes(vec![FirestoreCompositeIndex::new(vec![asc_field("a")])]);
         let err = plan_index_changes(&params, &FirestoreIndexExistingState::default()).unwrap_err();
