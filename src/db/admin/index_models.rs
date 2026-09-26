@@ -152,25 +152,28 @@ pub struct FirestoreIndexParams {
     pub ttl_fields: Vec<String>,
 }
 
+/// How long a long-running Firestore operation is polled for before giving up.
+///
+/// Not index-specific: anything that starts a long-running operation and waits for it to reach a
+/// terminal state (index/TTL sync today, a planned bulk-delete API) takes this same options type.
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreOperationWaitOptions {
+    /// The maximum time to wait before returning an error naming the operations still pending.
+    pub timeout: Duration,
+    /// The interval between polls.
+    #[default = "Duration::from_secs(5)"]
+    pub poll_interval: Duration,
+}
+
 /// Whether, and how long, `.sync()` waits for changes it starts to finish.
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum FirestoreIndexWait {
     /// Returns as soon as changes are requested, without waiting for them to complete.
     #[default]
     NoWait,
-    /// Waits for every started change to reach a terminal state, polling at `poll_interval`, up
-    /// to `timeout`.
-    UntilReady {
-        /// The maximum time to wait before returning an error naming the operations still
-        /// pending.
-        timeout: Duration,
-        /// The interval between polls.
-        poll_interval: Duration,
-    },
+    /// Waits for every started change to reach a terminal state.
+    UntilReady(FirestoreOperationWaitOptions),
 }
-
-/// The default interval `.wait_until_ready()` polls at when `.poll_interval()` is not also set.
-pub const FIRESTORE_INDEX_DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Options controlling how `.sync()` reconciles a declared [`FirestoreIndexParams`] with
 /// Firestore.

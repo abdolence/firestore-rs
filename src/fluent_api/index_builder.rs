@@ -8,8 +8,8 @@ use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
     FirestoreFieldOverrideIndex, FirestoreIndexField, FirestoreIndexFieldMode,
     FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSupport, FirestoreIndexSyncOptions,
-    FirestoreIndexSyncReport, FirestoreIndexWait, FirestoreQueryDirection, FirestoreResult,
-    FIRESTORE_INDEX_DEFAULT_POLL_INTERVAL,
+    FirestoreIndexSyncReport, FirestoreIndexWait, FirestoreOperationWaitOptions,
+    FirestoreQueryDirection, FirestoreResult,
 };
 use std::time::Duration;
 
@@ -62,8 +62,7 @@ where
     field_overrides: Vec<FirestoreFieldOverride>,
     ttl_fields: Vec<String>,
     prune: bool,
-    wait_timeout: Option<Duration>,
-    poll_interval: Option<Duration>,
+    wait: Option<FirestoreOperationWaitOptions>,
 }
 
 impl<'a, D> FirestoreIndexesBuilder<'a, D>
@@ -79,8 +78,7 @@ where
             field_overrides: Vec::new(),
             ttl_fields: Vec::new(),
             prune: false,
-            wait_timeout: None,
-            poll_interval: None,
+            wait: None,
         }
     }
 
@@ -148,29 +146,26 @@ where
     }
 
     /// Waits for created indexes and enabled TTL to reach a terminal state before `.sync()`
-    /// returns, up to `timeout`. Without this, `.sync()` returns once changes are requested.
+    /// returns, up to `timeout`, polling at the default interval. Without this, `.sync()` returns
+    /// once changes are requested.
     #[inline]
     pub fn wait_until_ready(self, timeout: Duration) -> Self {
-        Self {
-            wait_timeout: Some(timeout),
-            ..self
-        }
+        self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))
     }
 
-    /// Sets the interval between polls while waiting. Has no effect without
-    /// [`wait_until_ready`](Self::wait_until_ready).
+    /// Waits for created indexes and enabled TTL to reach a terminal state before `.sync()`
+    /// returns, per `options`. Without this, `.sync()` returns once changes are requested.
     #[inline]
-    pub fn poll_interval(self, interval: Duration) -> Self {
+    pub fn wait_until_ready_with_options(self, options: FirestoreOperationWaitOptions) -> Self {
         Self {
-            poll_interval: Some(interval),
+            wait: Some(options),
             ..self
         }
     }
 
     /// Validates the declaration and assembles the params and options the trait methods take.
     ///
-    /// Kept separate from `plan`/`sync` so the two terminals share one validation path and one
-    /// place that decides the default poll interval.
+    /// Kept separate from `plan`/`sync` so the two terminals share one validation path.
     fn build_params(
         self,
     ) -> FirestoreResult<(&'a D, FirestoreIndexParams, FirestoreIndexSyncOptions)> {
@@ -182,13 +177,8 @@ where
             .with_ttl_fields(self.ttl_fields);
         crate::validate_index_params(&params)?;
 
-        let wait = match self.wait_timeout {
-            Some(timeout) => FirestoreIndexWait::UntilReady {
-                timeout,
-                poll_interval: self
-                    .poll_interval
-                    .unwrap_or(FIRESTORE_INDEX_DEFAULT_POLL_INTERVAL),
-            },
+        let wait = match self.wait {
+            Some(options) => FirestoreIndexWait::UntilReady(options),
             None => FirestoreIndexWait::NoWait,
         };
         let options = FirestoreIndexSyncOptions::new()
@@ -516,7 +506,8 @@ mod tests {
     use crate::{
         path, FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
         FirestoreFieldOverrideIndex, FirestoreIndexField, FirestoreIndexFieldMode,
-        FirestoreIndexSyncOptions, FirestoreIndexWait, FirestoreQueryDirection,
+        FirestoreIndexSyncOptions, FirestoreIndexWait, FirestoreOperationWaitOptions,
+        FirestoreQueryDirection,
     };
     use std::time::Duration;
 
@@ -632,10 +623,9 @@ mod tests {
         assert_eq!(
             options,
             FirestoreIndexSyncOptions::new().with_prune(true).with_wait(
-                FirestoreIndexWait::UntilReady {
-                    timeout: Duration::from_secs(600),
-                    poll_interval: crate::FIRESTORE_INDEX_DEFAULT_POLL_INTERVAL,
-                }
+                FirestoreIndexWait::UntilReady(FirestoreOperationWaitOptions::new(
+                    Duration::from_secs(600)
+                ))
             )
         );
     }
