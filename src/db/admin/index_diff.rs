@@ -73,7 +73,7 @@ impl From<FirestoreIndexExistingState> for FirestoreIndexListing {
                     .unrecognised_indexes
                     .push(FirestoreUnrecognisedIndexItem {
                         name,
-                        reason: describe_error(&err),
+                        reason: err.unrecognised_reason(),
                     }),
             }
         }
@@ -474,7 +474,7 @@ impl From<field::IndexConfig> for FirestoreFieldOverrideOutcome {
                     reverting,
                 })
             }
-            Err(err) => FirestoreFieldOverrideOutcome::Unrecognised(describe_error(&err)),
+            Err(err) => FirestoreFieldOverrideOutcome::Unrecognised(err.unrecognised_reason()),
         }
     }
 }
@@ -487,7 +487,7 @@ impl From<field::TtlConfig> for FirestoreFieldTtlOutcome {
     fn from(config: field::TtlConfig) -> Self {
         match FirestoreFieldTtlState::try_from(config) {
             Ok(state) => FirestoreFieldTtlOutcome::Configured(state),
-            Err(err) => FirestoreFieldTtlOutcome::Unrecognised(describe_error(&err)),
+            Err(err) => FirestoreFieldTtlOutcome::Unrecognised(err.unrecognised_reason()),
         }
     }
 }
@@ -665,13 +665,15 @@ fn field_override_matches(
     override_index_set(&declared.indexes) == override_index_set(&explicit.indexes)
 }
 
-/// Describes a [`FirestoreError`] the way an unrecognised listed item's `reason` should read: a
-/// plain description of what was wrong with the server data, not a client-facing "invalid
-/// parameters" message (the item was never a parameter the caller supplied).
-fn describe_error(err: &FirestoreError) -> String {
-    match err {
-        FirestoreError::InvalidParametersError(details) => details.public.error.clone(),
-        other => other.to_string(),
+impl FirestoreError {
+    /// Describes this error the way an unrecognised listed item's `reason` should read: a plain
+    /// description of what was wrong with the server data, not a client-facing "invalid
+    /// parameters" message (the item was never a parameter the caller supplied).
+    fn unrecognised_reason(&self) -> String {
+        match self {
+            FirestoreError::InvalidParametersError(details) => details.public.error.clone(),
+            other => other.to_string(),
+        }
     }
 }
 
