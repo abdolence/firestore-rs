@@ -10,11 +10,10 @@ use crate::db::split_document_path;
 use crate::errors::FirestoreError;
 use crate::{
     FirestoreCompositeIndex, FirestoreFieldOverride, FirestoreFieldOverrideIndex,
-    FirestoreFieldOverrideOutcome, FirestoreFieldOverrideTarget, FirestoreFieldTtlOutcome,
-    FirestoreFieldTtlState, FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexParams,
-    FirestoreIndexPlan, FirestoreIndexQueryScope, FirestoreIndexState,
-    FirestoreListedCompositeIndex, FirestoreListedField, FirestoreQueryDirection, FirestoreResult,
-    FirestoreUnrecognisedIndexItem,
+    FirestoreFieldOverrideOutcome, FirestoreFieldTtlOutcome, FirestoreFieldTtlState,
+    FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan,
+    FirestoreIndexQueryScope, FirestoreIndexState, FirestoreListedCompositeIndex,
+    FirestoreListedField, FirestoreQueryDirection, FirestoreResult, FirestoreUnrecognisedIndexItem,
 };
 use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
     vector_config, ArrayConfig as ProtoArrayConfig, Order as ProtoOrder, ValueMode,
@@ -399,7 +398,7 @@ impl TryFrom<field::TtlConfig> for FirestoreFieldTtlState {
 
 /// Converts one field resource's index-override half. `None` covers both "no `index_config` at
 /// all" and "`index_config` is inherited from an ancestor field" (`uses_ancestor_config`), since
-/// neither is an explicit override [`plan_index_changes`] can compare against a declaration.
+/// neither is an explicit override `plan_index_changes` can compare against a declaration.
 /// Infallible: a config this crate cannot represent becomes
 /// [`Unrecognised`](FirestoreFieldOverrideOutcome::Unrecognised) rather than failing the
 /// conversion, so it stays independent of the TTL half - see
@@ -445,7 +444,7 @@ impl From<Option<field::TtlConfig>> for FirestoreFieldTtlOutcome {
 /// carry their own outcome (see [`FirestoreFieldOverrideOutcome`] and [`FirestoreFieldTtlOutcome`]),
 /// so a field resource with a valid override alongside an unrecognisable TTL state - or the
 /// reverse - keeps its valid half instead of losing it to a whole-field conversion failure.
-/// [`plan_index_changes`] reads each `Unrecognised` half into the plan's own `unrecognised` list.
+/// `plan_index_changes` reads each `Unrecognised` half into the plan's own `unrecognised` list.
 ///
 /// The field path is the resource name's last segment (`.../collectionGroups/{group}/fields/{path}`),
 /// the same shape `split_document_path` already splits a document path on, so that helper is
@@ -637,8 +636,10 @@ pub(crate) fn plan_index_changes(
         .collect();
     for declared in &params.field_overrides {
         let listed = listed_fields.iter().find(|f| {
-            matches!(f.index_override, FirestoreFieldOverrideOutcome::Explicit { .. })
-                && f.field_path == declared.target.as_str()
+            matches!(
+                f.index_override,
+                FirestoreFieldOverrideOutcome::Explicit { .. }
+            ) && f.field_path == declared.target.as_str()
         });
         let up_to_date = listed
             .map(|f| field_override_matches(declared, f))
@@ -667,7 +668,8 @@ pub(crate) fn plan_index_changes(
             .find(|f| f.field_path == *declared_path)
             .map(|f| &f.ttl);
         match listed_ttl {
-            None | Some(FirestoreFieldTtlOutcome::None | FirestoreFieldTtlOutcome::Unrecognised(_)) => {
+            None
+            | Some(FirestoreFieldTtlOutcome::None | FirestoreFieldTtlOutcome::Unrecognised(_)) => {
                 plan.enable_ttl.push(declared_path.clone())
             }
             Some(FirestoreFieldTtlOutcome::Configured(FirestoreFieldTtlState::Creating)) => {
@@ -693,7 +695,7 @@ pub(crate) fn plan_index_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FirestoreCollectionId;
+    use crate::{FirestoreCollectionId, FirestoreFieldOverrideTarget};
 
     fn users_params() -> FirestoreIndexParams {
         FirestoreIndexParams::new(FirestoreCollectionId::from_static("users"))

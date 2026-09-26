@@ -8,6 +8,5 @@ mod index_models;
 pub use index_models::*;
 
 mod index_diff;
-pub(crate) use index_diff::{plan_index_changes, FirestoreIndexExistingState};
 
 mod indexes;
