@@ -812,7 +812,7 @@ pub(crate) fn plan_index_changes(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{FirestoreCollectionId, FirestoreFieldOverrideTarget};
 
@@ -834,7 +834,10 @@ mod tests {
         )
     }
 
-    fn listed_index(
+    /// A listed composite index with `fields`, `scope` and `state`, at a fixed placeholder
+    /// resource name. `pub(crate)` so other admin test modules can build a listed index without
+    /// their own copy of this shape.
+    pub(crate) fn listed_index(
         fields: Vec<ProtoIndexField>,
         scope: ProtoQueryScope,
         state: ProtoState,
@@ -860,7 +863,8 @@ mod tests {
         }
     }
 
-    fn order_field(path: &str, order: ProtoOrder) -> ProtoIndexField {
+    /// `pub(crate)` alongside [`listed_index`], for the same reuse reason.
+    pub(crate) fn order_field(path: &str, order: ProtoOrder) -> ProtoIndexField {
         proto_field(path, ValueMode::Order(order as i32))
     }
 
@@ -1159,7 +1163,10 @@ mod tests {
         assert!(plan.undeclared_indexes.is_empty());
     }
 
-    fn field_resource(
+    /// A listed field resource for `path` under the fixed placeholder group used throughout this
+    /// module's tests. `pub(crate)` alongside [`listed_index`] and [`order_field`], for the same
+    /// reuse reason.
+    pub(crate) fn field_resource(
         path: &str,
         index_config: Option<field::IndexConfig>,
         ttl_config: Option<field::TtlConfig>,
