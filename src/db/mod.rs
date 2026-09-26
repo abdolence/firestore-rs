@@ -5,6 +5,11 @@
 mod path_ids;
 pub use path_ids::*;
 
+#[cfg(feature = "admin")]
+mod admin;
+#[cfg(feature = "admin")]
+pub use admin::*;
+
 mod get;
 
 mod create;

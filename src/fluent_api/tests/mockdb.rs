@@ -595,3 +595,45 @@ impl FirestoreAggregatedQuerySupport for MockDatabase {
         unreachable!()
     }
 }
+
+/// A mock that records the params and options a `db.fluent().indexes()...` chain builds, instead
+/// of sending anything to Firestore.
+///
+/// A separate type from [`MockDatabase`] because that one is constructed everywhere as the unit
+/// literal `MockDatabase {}`; giving it capturing state would break every one of those call
+/// sites the moment this module compiles.
+#[cfg(feature = "admin")]
+#[derive(Clone, Default)]
+pub struct MockIndexDatabase {
+    captured:
+        std::sync::Arc<std::sync::Mutex<Option<(FirestoreIndexParams, FirestoreIndexSyncOptions)>>>,
+}
+
+#[cfg(feature = "admin")]
+impl MockIndexDatabase {
+    /// The params and options captured by the last `plan_indexes`/`sync_indexes` call, if any.
+    pub fn captured(&self) -> Option<(FirestoreIndexParams, FirestoreIndexSyncOptions)> {
+        self.captured.lock().unwrap().clone()
+    }
+}
+
+#[cfg(feature = "admin")]
+#[async_trait]
+impl FirestoreIndexSupport for MockIndexDatabase {
+    async fn plan_indexes(
+        &self,
+        params: FirestoreIndexParams,
+    ) -> FirestoreResult<FirestoreIndexPlan> {
+        *self.captured.lock().unwrap() = Some((params, FirestoreIndexSyncOptions::new()));
+        Ok(FirestoreIndexPlan::default())
+    }
+
+    async fn sync_indexes(
+        &self,
+        params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
+    ) -> FirestoreResult<FirestoreIndexSyncReport> {
+        *self.captured.lock().unwrap() = Some((params, options));
+        Ok(FirestoreIndexSyncReport::default())
+    }
+}
