@@ -82,6 +82,16 @@ name = "caching_persistent_collections"
 path = "examples/caching_persistent_collections.rs"
 required-features = ["caching-persistent"]
 
+[[example]]
+name = "index-management"
+path = "examples/index-management.rs"
+required-features = ["admin"]
+
+[[example]]
+name = "index-whitelist"
+path = "examples/index-whitelist.rs"
+required-features = ["admin"]
+
 [[test]]
 name = "caching_memory_test"
 path = "tests/caching_memory_test.rs"
