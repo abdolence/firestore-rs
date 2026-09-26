@@ -365,11 +365,7 @@ where
             .into_iter()
             .map(FirestoreCollectionId::new)
             .collect::<FirestoreResult<Vec<_>>>()?;
-        let params = FirestoreBulkDeleteParams::new(collection_groups);
-        let params = match self.wait {
-            Some(wait) => params.with_wait(wait),
-            None => params,
-        };
+        let params = FirestoreBulkDeleteParams::new(collection_groups).opt_wait(self.wait);
         crate::validate_bulk_delete_params(&params)?;
         self.db.bulk_delete_documents(params).await
     }

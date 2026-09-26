@@ -179,11 +179,9 @@ where
             .with_ttl_fields(self.ttl_fields);
         crate::validate_index_params(&params)?;
 
-        let options = FirestoreIndexSyncOptions::new().with_prune(self.prune);
-        let options = match self.wait {
-            Some(wait) => options.with_wait(wait),
-            None => options,
-        };
+        let options = FirestoreIndexSyncOptions::new()
+            .with_prune(self.prune)
+            .opt_wait(self.wait);
 
         Ok((db, params, options))
     }
