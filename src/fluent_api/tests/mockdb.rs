@@ -623,8 +623,9 @@ impl FirestoreIndexSupport for MockIndexDatabase {
     async fn plan_indexes(
         &self,
         params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
     ) -> FirestoreResult<FirestoreIndexPlan> {
-        *self.captured.lock().unwrap() = Some((params, FirestoreIndexSyncOptions::new()));
+        *self.captured.lock().unwrap() = Some((params, options));
         Ok(FirestoreIndexPlan::default())
     }
 

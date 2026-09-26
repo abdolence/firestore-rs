@@ -473,10 +473,12 @@ pub trait FirestoreListenSupport {
 #[cfg(feature = "admin")]
 #[async_trait]
 pub trait FirestoreIndexSupport {
-    /// Reports what [`sync_indexes`](Self::sync_indexes) would change, without writing anything.
+    /// Reports what [`sync_indexes`](Self::sync_indexes) would change with the same `options`,
+    /// without writing anything. Only `options.prune` affects the plan; `options.wait` is ignored.
     async fn plan_indexes(
         &self,
         params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
     ) -> FirestoreResult<FirestoreIndexPlan>;
 
     /// Reconciles Firestore with `params`, according to `options`.

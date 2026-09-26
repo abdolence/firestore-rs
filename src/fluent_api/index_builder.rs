@@ -188,10 +188,12 @@ where
         Ok((db, params, options))
     }
 
-    /// Reports what [`sync`](Self::sync) would change, without writing anything.
+    /// Reports what [`sync`](Self::sync) would change, without writing anything. With
+    /// [`prune_undeclared`](Self::prune_undeclared), the plan lists the undeclared items a
+    /// pruning sync would delete, revert or disable; without it, the ones it would keep.
     pub async fn plan(self) -> FirestoreResult<FirestoreIndexPlan> {
-        let (db, params, _options) = self.build_params()?;
-        db.plan_indexes(params).await
+        let (db, params, options) = self.build_params()?;
+        db.plan_indexes(params, options).await
     }
 
     /// Reconciles Firestore with this declaration.
@@ -674,6 +676,21 @@ mod tests {
                 .with_prune(true)
                 .with_wait(FirestoreOperationWaitOptions::new(Duration::from_secs(600)))
         );
+    }
+
+    #[tokio::test]
+    async fn plan_passes_prune_undeclared_through() {
+        let mock = MockIndexDatabase::default();
+        FirestoreExprBuilder { db: &mock }
+            .indexes()
+            .collection_group("users")
+            .prune_undeclared()
+            .plan()
+            .await
+            .unwrap();
+
+        let (_, options) = mock.captured().unwrap();
+        assert!(options.prune);
     }
 
     #[tokio::test]

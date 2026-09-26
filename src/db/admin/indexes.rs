@@ -150,11 +150,13 @@ fn log_plan(group: &FirestoreCollectionId, plan: &FirestoreIndexPlan) {
         enable_ttl = plan.enable_ttl.len(),
         unchanged = plan.unchanged.len(),
         pending = plan.pending.len(),
-        undeclared_indexes = plan.undeclared_indexes.len(),
-        undeclared_fields = plan.undeclared_fields.len(),
-        undeclared_ttl = plan.undeclared_ttl.len(),
+        delete_indexes = plan.delete_indexes.len(),
+        revert_fields = plan.revert_fields.len(),
+        disable_ttl = plan.disable_ttl.len(),
+        kept_undeclared_indexes = plan.kept_undeclared_indexes.len(),
+        kept_undeclared_fields = plan.kept_undeclared_fields.len(),
+        kept_undeclared_ttl = plan.kept_undeclared_ttl.len(),
         unrecognised = plan.unrecognised.len(),
-        prune = plan.prune,
         "{plan}",
     );
 
@@ -351,8 +353,8 @@ impl FirestoreDb {
     }
 
     /// Lists the owned group's existing state, logs it, computes the plan, and logs it - the
-    /// step `.plan()` and `.sync()` share. `prune` only changes how [`log_plan`] phrases an
-    /// undeclared item; the plan itself does not depend on it.
+    /// step `.plan()` and `.sync()` share, so a plan made with the same `prune` is exactly what
+    /// the sync applies.
     async fn plan_against_server(
         &self,
         params: &FirestoreIndexParams,
@@ -367,8 +369,7 @@ impl FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
-        let mut plan = diff_span.in_scope(|| plan_index_changes(params, &listing))?;
-        plan.prune = prune;
+        let plan = diff_span.in_scope(|| plan_index_changes(params, &listing, prune))?;
         let elapsed = FirestoreInstant::now().duration_since(began);
         diff_span.record("/firestore/response_time", elapsed.as_millis());
 
@@ -625,7 +626,6 @@ impl FirestoreDb {
         &self,
         group_path: &str,
         plan: &FirestoreIndexPlan,
-        prune: bool,
     ) -> FirestoreResult<(FirestoreIndexSyncReport, Vec<PendingOperation>)> {
         let mut report = FirestoreIndexSyncReport {
             unchanged: plan.unchanged.clone(),
@@ -634,13 +634,11 @@ impl FirestoreDb {
             pending_ttl: plan.pending_ttl.clone(),
             needs_repair_ttl: plan.needs_repair_ttl.clone(),
             unrecognised: plan.unrecognised.clone(),
+            kept_undeclared_indexes: plan.kept_undeclared_indexes.clone(),
+            kept_undeclared_fields: plan.kept_undeclared_fields.clone(),
+            kept_undeclared_ttl: plan.kept_undeclared_ttl.clone(),
             ..Default::default()
         };
-        if !prune {
-            report.kept_undeclared_indexes = plan.undeclared_indexes.clone();
-            report.kept_undeclared_fields = plan.undeclared_fields.clone();
-            report.kept_undeclared_ttl = plan.undeclared_ttl.clone();
-        }
 
         let span = span!(
             Level::INFO,
@@ -672,21 +670,19 @@ impl FirestoreDb {
                 pending_operations.push(op);
                 report.enabled_ttl.push(path.clone());
             }
-            if prune {
-                for listed in &plan.undeclared_indexes {
-                    self.apply_delete_index(group_path, listed).await?;
-                    report.deleted_indexes.push(listed.clone());
-                }
-                for listed in &plan.undeclared_fields {
-                    let op = self.apply_revert_field_override(group_path, listed).await?;
-                    pending_operations.push(op);
-                    report.reverted_fields.push(listed.clone());
-                }
-                for listed in &plan.undeclared_ttl {
-                    let op = self.apply_disable_ttl(group_path, listed).await?;
-                    pending_operations.push(op);
-                    report.disabled_ttl.push(listed.clone());
-                }
+            for listed in &plan.delete_indexes {
+                self.apply_delete_index(group_path, listed).await?;
+                report.deleted_indexes.push(listed.clone());
+            }
+            for listed in &plan.revert_fields {
+                let op = self.apply_revert_field_override(group_path, listed).await?;
+                pending_operations.push(op);
+                report.reverted_fields.push(listed.clone());
+            }
+            for listed in &plan.disable_ttl {
+                let op = self.apply_disable_ttl(group_path, listed).await?;
+                pending_operations.push(op);
+                report.disabled_ttl.push(listed.clone());
             }
             Ok(())
         }
@@ -829,6 +825,7 @@ impl FirestoreIndexSupport for FirestoreDb {
     async fn plan_indexes(
         &self,
         params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
     ) -> FirestoreResult<FirestoreIndexPlan> {
         crate::validate_index_params(&params)?;
         if self.inner.is_emulator {
@@ -843,11 +840,12 @@ impl FirestoreIndexSupport for FirestoreDb {
             Level::INFO,
             "Firestore Index Plan",
             "/firestore/collection_group" = params.collection_group.as_str(),
+            "/firestore/prune" = options.prune,
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
         let plan = async {
-            let (_, plan) = self.plan_against_server(&params, false).await?;
+            let (_, plan) = self.plan_against_server(&params, options.prune).await?;
             info!(
                 collection_group = params.collection_group.as_str(),
                 "plan() reports what sync() would change; nothing was applied.",
@@ -886,8 +884,7 @@ impl FirestoreIndexSupport for FirestoreDb {
         let began = FirestoreInstant::now();
         let report = async {
             let (group_path, plan) = self.plan_against_server(&params, options.prune).await?;
-            let (report, pending_operations) =
-                self.apply_plan(&group_path, &plan, options.prune).await?;
+            let (report, pending_operations) = self.apply_plan(&group_path, &plan).await?;
             if let Some(wait_options) = &options.wait {
                 self.wait_for_operations(pending_operations, wait_options)
                     .await?;
@@ -1110,6 +1107,81 @@ mod tests {
         assert!(fake.calls().contains(&"DeleteIndex".to_string()));
     }
 
+    /// One undeclared composite index, one undeclared exempt override on `legacy_field`, and one
+    /// undeclared active TTL on `expires_at`, all in the owned group.
+    fn undeclared_items_listing(method: &str) -> (String, FakeResponse) {
+        use gcloud_sdk::google::firestore::admin::v1::field;
+        match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_declared_index(
+                    &format!("{GROUP_PATH}/indexes/legacy"),
+                    ProtoState::Ready,
+                )]),
+            ),
+            LIST_FIELDS => (
+                "ListFields".to_string(),
+                list_fields_response(vec![
+                    field_resource(
+                        "legacy_field",
+                        Some(field::IndexConfig {
+                            indexes: vec![],
+                            uses_ancestor_config: false,
+                            ancestor_field: String::new(),
+                            reverting: false,
+                        }),
+                        None,
+                    ),
+                    field_resource(
+                        "expires_at",
+                        None,
+                        Some(field::TtlConfig {
+                            state: field::ttl_config::State::Active as i32,
+                            expiration_offset: None,
+                        }),
+                    ),
+                ]),
+            ),
+            other => no_writes_allowed(other),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plan_with_prune_lists_what_a_pruning_sync_would_remove() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| undeclared_items_listing(method)).await;
+
+        let pruning = fake
+            .db
+            .plan_indexes(
+                FirestoreIndexParams::new(group()),
+                FirestoreIndexSyncOptions::new().with_prune(true),
+            )
+            .await
+            .unwrap();
+        assert_eq!(pruning.delete_indexes.len(), 1);
+        assert_eq!(pruning.revert_fields.len(), 1);
+        assert_eq!(pruning.disable_ttl.len(), 1);
+        assert!(pruning.kept_undeclared_indexes.is_empty());
+        assert!(pruning.kept_undeclared_fields.is_empty());
+        assert!(pruning.kept_undeclared_ttl.is_empty());
+
+        let keeping = fake
+            .db
+            .plan_indexes(
+                FirestoreIndexParams::new(group()),
+                FirestoreIndexSyncOptions::new(),
+            )
+            .await
+            .unwrap();
+        assert!(keeping.delete_indexes.is_empty());
+        assert!(keeping.revert_fields.is_empty());
+        assert!(keeping.disable_ttl.is_empty());
+        assert_eq!(keeping.kept_undeclared_indexes.len(), 1);
+        assert_eq!(keeping.kept_undeclared_fields.len(), 1);
+        assert_eq!(keeping.kept_undeclared_ttl.len(), 1);
+    }
+
     #[test]
     fn ensure_owned_resource_rejects_a_name_outside_the_group() {
         let err = ensure_owned_resource(
@@ -1154,7 +1226,10 @@ mod tests {
 
         let plan = fake
             .db
-            .plan_indexes(FirestoreIndexParams::new(group()))
+            .plan_indexes(
+                FirestoreIndexParams::new(group()),
+                FirestoreIndexSyncOptions::new(),
+            )
             .await
             .unwrap();
         assert_eq!(plan, FirestoreIndexPlan::default());
@@ -1305,7 +1380,10 @@ mod tests {
             session_params: fake.db.get_session_params().clone().into(),
         };
 
-        let plan = emulator_db.plan_indexes(params_with_index()).await.unwrap();
+        let plan = emulator_db
+            .plan_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
         assert_eq!(plan, FirestoreIndexPlan::default());
 
         let report = emulator_db
@@ -1437,18 +1515,21 @@ mod tests {
 
         let plan = fake
             .db
-            .plan_indexes(FirestoreIndexParams::new(
-                FirestoreCollectionId::from_static("firestore-rs-index-sync-test"),
-            ))
+            .plan_indexes(
+                FirestoreIndexParams::new(FirestoreCollectionId::from_static(
+                    "firestore-rs-index-sync-test",
+                )),
+                FirestoreIndexSyncOptions::new(),
+            )
             .await
             .unwrap();
 
         assert_eq!(
-            plan.undeclared_indexes.len(),
+            plan.kept_undeclared_indexes.len(),
             1,
             "only the owned group's own index must be considered, not the other seven"
         );
-        let only = &plan.undeclared_indexes[0];
+        let only = &plan.kept_undeclared_indexes[0];
         assert!(only
             .name
             .contains("firestore-rs-index-sync-test/indexes/CICAgJiHlpgK"));
@@ -1539,9 +1620,9 @@ mod tests {
             indexes: vec![replayed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into()).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
-        assert!(plan.undeclared_indexes.is_empty());
+        assert!(plan.kept_undeclared_indexes.is_empty());
     }
 
     #[tokio::test]
@@ -1610,7 +1691,11 @@ mod tests {
             }])
             .with_ttl_fields(vec!["tags".to_string()]);
 
-        let plan = fake.db.plan_indexes(params).await.unwrap();
+        let plan = fake
+            .db
+            .plan_indexes(params, FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
         assert!(
             plan.update_fields.is_empty(),
             "the override half must already match"
@@ -1651,11 +1736,14 @@ mod tests {
 
         let plan = fake
             .db
-            .plan_indexes(FirestoreIndexParams::new(group()))
+            .plan_indexes(
+                FirestoreIndexParams::new(group()),
+                FirestoreIndexSyncOptions::new(),
+            )
             .await
             .unwrap();
-        assert!(plan.undeclared_fields.is_empty());
-        assert!(plan.undeclared_ttl.is_empty());
+        assert!(plan.kept_undeclared_fields.is_empty());
+        assert!(plan.kept_undeclared_ttl.is_empty());
         assert!(plan.unrecognised.is_empty());
     }
 
@@ -1714,7 +1802,11 @@ mod tests {
             FirestoreFieldOverrideTarget::AllFields
         );
 
-        let replan = fake.db.plan_indexes(params).await.unwrap();
+        let replan = fake
+            .db
+            .plan_indexes(params, FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
         assert!(
             replan.update_fields.is_empty(),
             "the wildcard override must now match"
@@ -1864,7 +1956,10 @@ mod tests {
         {
             let _guard = tracing::subscriber::set_default(subscriber);
             fake.db
-                .plan_indexes(FirestoreIndexParams::new(group()))
+                .plan_indexes(
+                    FirestoreIndexParams::new(group()),
+                    FirestoreIndexSyncOptions::new(),
+                )
                 .await
                 .unwrap();
         }
@@ -1903,7 +1998,10 @@ mod tests {
         let (subscriber, buffer) = capturing_subscriber();
         {
             let _guard = tracing::subscriber::set_default(subscriber);
-            fake.db.plan_indexes(params_with_index()).await.unwrap();
+            fake.db
+                .plan_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+                .await
+                .unwrap();
         }
         let output = captured_text(&buffer);
 
@@ -1928,7 +2026,10 @@ mod tests {
         let (subscriber, buffer) = capturing_subscriber();
         {
             let _guard = tracing::subscriber::set_default(subscriber);
-            fake.db.plan_indexes(params_with_index()).await.unwrap();
+            fake.db
+                .plan_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+                .await
+                .unwrap();
         }
         let output = captured_text(&buffer);
 

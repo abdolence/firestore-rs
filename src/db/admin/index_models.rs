@@ -339,10 +339,14 @@ pub struct FirestoreIndexSyncOptions {
 }
 
 /// The outcome of comparing a declared [`FirestoreIndexParams`] against one collection group's
-/// existing indexes, field overrides and TTL configuration.
+/// existing indexes, field overrides and TTL configuration, under the given
+/// [`FirestoreIndexSyncOptions::prune`] setting.
 ///
 /// Returned by the fluent `.plan()` terminal, and by `.sync()`'s internal planning step before it
-/// writes anything.
+/// writes anything. Every undeclared item lands in exactly one of two lists: the one `.sync()`
+/// acts on when pruning (`delete_indexes`, `revert_fields`, `disable_ttl`), or the one it keeps
+/// and only reports otherwise (`kept_undeclared_*`). So a plan made with `.prune_undeclared()`
+/// shows exactly what a pruning sync would do.
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct FirestoreIndexPlan {
     /// Declared composite indexes that match nothing listed; `.sync()` creates these.
@@ -354,8 +358,12 @@ pub struct FirestoreIndexPlan {
     /// Declared composite indexes matched to a listed index in state `NEEDS_REPAIR`. These are
     /// reported only; `.sync()` never deletes or recreates them.
     pub needs_repair: Vec<FirestoreCompositeIndex>,
-    /// Listed composite indexes with no declared match, in the owned collection group.
-    pub undeclared_indexes: Vec<FirestoreListedCompositeIndex>,
+    /// Listed composite indexes with no declared match, in the owned collection group, that
+    /// `.sync()` deletes because `prune` is set.
+    pub delete_indexes: Vec<FirestoreListedCompositeIndex>,
+    /// Listed composite indexes with no declared match, in the owned collection group, kept
+    /// because `prune` is not set.
+    pub kept_undeclared_indexes: Vec<FirestoreListedCompositeIndex>,
     /// Declared field overrides whose listed configuration differs from the declaration, or is
     /// absent; `.sync()` writes these.
     pub update_fields: Vec<FirestoreFieldOverride>,
@@ -365,8 +373,12 @@ pub struct FirestoreIndexPlan {
     /// override, and only the *next* sync writes it back. `.sync()` never writes over one of
     /// these - doing so would race Firestore's own in-flight change.
     pub reverting_fields: Vec<FirestoreListedField>,
-    /// Listed field overrides with no declared match, in the owned collection group.
-    pub undeclared_fields: Vec<FirestoreListedField>,
+    /// Listed field overrides with no declared match, in the owned collection group, that
+    /// `.sync()` reverts to the ancestor's configuration because `prune` is set.
+    pub revert_fields: Vec<FirestoreListedField>,
+    /// Listed field overrides with no declared match, in the owned collection group, kept because
+    /// `prune` is not set.
+    pub kept_undeclared_fields: Vec<FirestoreListedField>,
     /// Declared TTL fields with no TTL configuration listed; `.sync()` enables these.
     pub enable_ttl: Vec<String>,
     /// Declared TTL fields matched to a listed TTL configuration already in state `ACTIVE`.
@@ -375,17 +387,15 @@ pub struct FirestoreIndexPlan {
     pub pending_ttl: Vec<String>,
     /// Declared TTL fields matched to a listed TTL configuration in state `NEEDS_REPAIR`.
     pub needs_repair_ttl: Vec<String>,
-    /// Listed TTL fields with no declaration, in the owned collection group.
-    pub undeclared_ttl: Vec<FirestoreListedField>,
+    /// Listed TTL fields with no declaration, in the owned collection group, that `.sync()`
+    /// disables because `prune` is set.
+    pub disable_ttl: Vec<FirestoreListedField>,
+    /// Listed TTL fields with no declaration, in the owned collection group, kept because `prune`
+    /// is not set.
+    pub kept_undeclared_ttl: Vec<FirestoreListedField>,
     /// Listed indexes or fields this crate's domain model cannot represent; never planned for
     /// deletion or revert, even when pruning.
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
-    /// Whether `Display` should describe the undeclared items above as what `.sync()` would
-    /// delete, revert or disable, or as what it would merely keep and report. Not part of the
-    /// plan itself - `plan_index_changes` never sets it - only of how `FirestoreDb` prints one:
-    /// `false` for `.plan()` (which takes no prune setting) and the real value for `.sync()`'s
-    /// internal planning step.
-    pub(crate) prune: bool,
 }
 
 /// The result of `.sync()`: what it changed, what it left alone, and what it found undeclared.
@@ -827,18 +837,16 @@ impl Display for FirestoreUnrecognisedIndexItem {
 
 impl Display for FirestoreIndexPlan {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let prune_has_work = self.prune
-            && (!self.undeclared_indexes.is_empty()
-                || !self.undeclared_fields.is_empty()
-                || !self.undeclared_ttl.is_empty());
         let anything_to_report = !self.create_indexes.is_empty()
             || !self.update_fields.is_empty()
             || !self.reverting_fields.is_empty()
             || !self.enable_ttl.is_empty()
-            || prune_has_work
-            || !self.undeclared_indexes.is_empty()
-            || !self.undeclared_fields.is_empty()
-            || !self.undeclared_ttl.is_empty()
+            || !self.delete_indexes.is_empty()
+            || !self.revert_fields.is_empty()
+            || !self.disable_ttl.is_empty()
+            || !self.kept_undeclared_indexes.is_empty()
+            || !self.kept_undeclared_fields.is_empty()
+            || !self.kept_undeclared_ttl.is_empty()
             || !self.needs_repair.is_empty()
             || !self.needs_repair_ttl.is_empty()
             || !self.unrecognised.is_empty();
@@ -861,28 +869,25 @@ impl Display for FirestoreIndexPlan {
             "reverting_field_overrides (revert in progress, no write planned)",
             &self.reverting_fields,
         )?;
+        write_section(f, "disable_ttl", &self.disable_ttl)?;
         write_section(f, "enable_ttl", &self.enable_ttl)?;
-        if self.prune {
-            write_section(f, "delete_indexes", &self.undeclared_indexes)?;
-            write_section(f, "revert_field_overrides", &self.undeclared_fields)?;
-            write_section(f, "disable_ttl", &self.undeclared_ttl)?;
-        } else {
-            write_section(
-                f,
-                "kept_undeclared_indexes (prune_undeclared() would delete)",
-                &self.undeclared_indexes,
-            )?;
-            write_section(
-                f,
-                "kept_undeclared_fields (prune_undeclared() would revert)",
-                &self.undeclared_fields,
-            )?;
-            write_section(
-                f,
-                "kept_undeclared_ttl (prune_undeclared() would disable)",
-                &self.undeclared_ttl,
-            )?;
-        }
+        write_section(f, "delete_indexes", &self.delete_indexes)?;
+        write_section(f, "revert_field_overrides", &self.revert_fields)?;
+        write_section(
+            f,
+            "kept_undeclared_indexes (prune_undeclared() would delete)",
+            &self.kept_undeclared_indexes,
+        )?;
+        write_section(
+            f,
+            "kept_undeclared_fields (prune_undeclared() would revert)",
+            &self.kept_undeclared_fields,
+        )?;
+        write_section(
+            f,
+            "kept_undeclared_ttl (prune_undeclared() would disable)",
+            &self.kept_undeclared_ttl,
+        )?;
         write_section(f, "needs_repair", &self.needs_repair)?;
         write_section(f, "needs_repair_ttl", &self.needs_repair_ttl)?;
         write_section(f, "unrecognised, never pruned", &self.unrecognised)?;

@@ -233,7 +233,7 @@ async fn all_fields_override_on_a_single_group(
         .await?;
     println!("[Q4] plan after revert:\n{after_revert}");
     assert!(
-        after_revert.undeclared_fields.is_empty(),
+        after_revert.kept_undeclared_fields.is_empty(),
         "the group must carry no leftover override after the revert",
     );
     Ok(())
@@ -327,14 +327,18 @@ async fn plan_is_read_only_and_scoped_to_the_owned_group(
     println!("[fast] plan() against {SYNC_GROUP:?}:\n{plan}");
 
     let group_marker = format!("/collectionGroups/{SYNC_GROUP}/");
-    for listed in &plan.undeclared_indexes {
+    for listed in &plan.kept_undeclared_indexes {
         assert!(
             listed.name.contains(&group_marker),
             "plan() must never surface an index from another group: {}",
             listed.name
         );
     }
-    for listed in plan.undeclared_fields.iter().chain(&plan.undeclared_ttl) {
+    for listed in plan
+        .kept_undeclared_fields
+        .iter()
+        .chain(&plan.kept_undeclared_ttl)
+    {
         assert!(
             listed.name.contains(&group_marker),
             "plan() must never surface a field from another group: {}",
