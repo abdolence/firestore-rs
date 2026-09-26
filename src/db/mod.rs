@@ -348,26 +348,35 @@ impl FirestoreDb {
     /// (even if the document is not found) indicates that the database is reachable
     /// and the client is authenticated.
     ///
+    /// A single attempt, deliberately not retried: the only thing worth knowing from a ping is
+    /// whether the database answers right now, and a backoff retry would hide that behind a
+    /// delay instead of reporting it.
+    ///
     /// # Errors
     /// May return network or authentication errors if the database is unreachable.
     pub async fn ping(&self) -> FirestoreResult<()> {
-        // Reading non-existing document just to check that database is available to read
-        self.get_doc_by_path(
-            "-ping-".to_string(),             // A document ID that is unlikely to exist
-            self.get_database_path().clone(), // Use the root database path for this check
-            None,                             // No specific consistency required
-        )
-        .await
-        .map(|_| ()) // If it's Ok(None) or Ok(Some(_)), it's a success for ping
-        .or_else(|err| {
-            // If the error is DataNotFoundError, it's still a successful ping.
-            // Other errors (network, auth) are real failures.
-            if matches!(err, FirestoreError::DataNotFoundError(_)) {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        })
+        // A resource name under `{database}/documents/`, built directly rather than through
+        // `get_doc_by_path`: that helper answers a cache hit, or a `ReadCachedOnly` cache miss,
+        // without ever reaching the server, which would let ping report a stale or misconfigured
+        // cache as a reachable database.
+        let document_path = safe_document_path(self.get_documents_path(), "-ping-", "-ping-")?;
+
+        let request = GetDocumentRequest {
+            name: document_path,
+            consistency_selector: None,
+            request_options: self.resolve_request_options(None),
+            mask: None,
+        };
+
+        match self.client().get().get_document(request).await {
+            Ok(_) => Ok(()),
+            // NOT_FOUND on a document that is never written is exactly what a reachable,
+            // authenticated database returns; any other error is a real connectivity failure.
+            Err(status) => match FirestoreError::from(status) {
+                FirestoreError::DataNotFoundError(_) => Ok(()),
+                err => Err(err),
+            },
+        }
     }
 
     /// Returns the full database path string (e.g., "projects/my-project/databases/(default)").
@@ -669,6 +678,37 @@ pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_ping_reads_a_document_under_the_documents_path() {
+        use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
+        use gcloud_sdk::prost::Message as _;
+        use gcloud_sdk::tonic::Code;
+
+        // The request name is logged as the "call", rather than asserted on inside the handler:
+        // a failed assertion there would panic the server's task and leave the client waiting
+        // on a response that never comes, instead of failing the test.
+        let server = FakeFirestore::start(|_, request_bytes| {
+            let request = GetDocumentRequest::decode(request_bytes).unwrap();
+            (request.name, FakeResponse::Status(Code::NotFound))
+        })
+        .await;
+
+        server.db.ping().await.expect(
+            "NOT_FOUND on a document that was never written means the database is reachable",
+        );
+
+        let calls = server.calls();
+        assert_eq!(calls.len(), 1);
+        let (parent, _) = split_document_path(&calls[0]);
+        let (documents_path, _) = split_document_path(parent);
+        assert!(
+            calls[0].starts_with(&format!("{documents_path}/"))
+                && documents_path.ends_with("/documents"),
+            "ping must read a document under the database's /documents/ path, got {:?}",
+            calls[0]
+        );
+    }
 
     #[tokio::test]
     async fn test_emulator_token_source() {
