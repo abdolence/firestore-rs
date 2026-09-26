@@ -49,43 +49,79 @@ impl OperationAction for BulkDeleteAction<'_> {
     }
 }
 
-/// Decodes a long-running operation's metadata as `BulkDeleteDocumentsMetadata`. Not checked
-/// against `any.type_url`: the generated proto type carries no [`prost::Name`] impl to check it
-/// against, and every operation this crate polls here is one it itself started, so the wire shape
-/// is already known.
-fn decode_metadata(any: &Any) -> Option<BulkDeleteDocumentsMetadata> {
-    BulkDeleteDocumentsMetadata::decode(any.value.as_slice()).ok()
-}
-
-fn progress_from(proto: Option<ProtoProgress>) -> Option<FirestoreBulkDeleteProgress> {
-    proto.map(|p| FirestoreBulkDeleteProgress {
-        estimated_work: p.estimated_work,
-        completed_work: p.completed_work,
-    })
-}
-
-/// Folds one polled `BulkDeleteDocumentsMetadata` into `result`, logging the snapshot time the
-/// first time it is observed - it does not change once the server reports it, so logging it again
-/// on every later poll would only repeat the same line.
-fn apply_metadata(
-    label: &str,
-    result: &mut FirestoreBulkDeleteResult,
-    metadata: &BulkDeleteDocumentsMetadata,
-) {
-    if result.snapshot_time.is_none() {
-        if let Some(ts) = metadata.snapshot_time {
-            if let Ok(instant) = crate::timestamp_utils::from_timestamp(ts) {
-                info!(
-                    collection_groups = label,
-                    snapshot_time = %instant,
-                    "Firestore reported the bulk delete's snapshot time.",
-                );
-                result.snapshot_time = Some(instant);
-            }
+impl From<ProtoProgress> for FirestoreBulkDeleteProgress {
+    fn from(progress: ProtoProgress) -> Self {
+        FirestoreBulkDeleteProgress {
+            estimated_work: progress.estimated_work,
+            completed_work: progress.completed_work,
         }
     }
-    result.documents = progress_from(metadata.progress_documents);
-    result.bytes = progress_from(metadata.progress_bytes);
+}
+
+/// One `BulkDeleteDocumentsMetadata` report in domain types. Each part is `None` when that report
+/// left it out.
+struct BulkDeleteMetadata {
+    snapshot_time: Option<FirestoreInstant>,
+    documents: Option<FirestoreBulkDeleteProgress>,
+    bytes: Option<FirestoreBulkDeleteProgress>,
+}
+
+/// Decodes a long-running operation's metadata as `BulkDeleteDocumentsMetadata`. Not checked
+/// against `type_url`: the generated proto type carries no [`prost::Name`] impl to check it
+/// against, and every operation this crate reads here is one it itself started.
+impl TryFrom<Any> for BulkDeleteMetadata {
+    type Error = FirestoreError;
+
+    fn try_from(any: Any) -> FirestoreResult<Self> {
+        let metadata = BulkDeleteDocumentsMetadata::decode(any.value.as_slice())?;
+        Ok(BulkDeleteMetadata {
+            snapshot_time: metadata
+                .snapshot_time
+                .map(crate::timestamp_utils::from_timestamp)
+                .transpose()?,
+            documents: metadata.progress_documents.map(Into::into),
+            bytes: metadata.progress_bytes.map(Into::into),
+        })
+    }
+}
+
+impl FirestoreBulkDeleteResult {
+    /// Folds one operation's metadata into this result. A part the report leaves out keeps what
+    /// an earlier report said, so missing metadata never erases known progress or invents any.
+    /// Metadata that cannot be decoded is logged at `warn` and counts as not reported; it never
+    /// decides whether the bulk delete succeeded, which is the operation's own `error`.
+    fn record_metadata(&mut self, label: &str, operation_name: &str, metadata: Option<Any>) {
+        let Some(any) = metadata else {
+            return;
+        };
+        let reported = match BulkDeleteMetadata::try_from(any) {
+            Ok(reported) => reported,
+            Err(err) => {
+                warn!(
+                    %err,
+                    operation = operation_name,
+                    collection_groups = label,
+                    "Could not decode the bulk delete's metadata; treating its progress as not reported.",
+                );
+                return;
+            }
+        };
+        if let (None, Some(snapshot_time)) = (self.snapshot_time, reported.snapshot_time) {
+            // The snapshot time never changes once reported, so it is logged once.
+            info!(
+                collection_groups = label,
+                snapshot_time = %snapshot_time,
+                "Firestore reported the bulk delete's snapshot time.",
+            );
+            self.snapshot_time = Some(snapshot_time);
+        }
+        if reported.documents.is_some() {
+            self.documents = reported.documents;
+        }
+        if reported.bytes.is_some() {
+            self.bytes = reported.bytes;
+        }
+    }
 }
 
 impl FirestoreDb {
@@ -93,7 +129,7 @@ impl FirestoreDb {
         &self,
         label: &str,
         collection_ids: Vec<String>,
-    ) -> FirestoreResult<(String, Option<BulkDeleteDocumentsMetadata>)> {
+    ) -> FirestoreResult<(String, Option<Any>)> {
         let span = span!(
             Level::INFO,
             "Start Bulk Delete",
@@ -115,8 +151,7 @@ impl FirestoreDb {
                         collection_groups = label,
                         "Started a bulk delete.",
                     );
-                    let metadata = operation.metadata.as_ref().and_then(decode_metadata);
-                    Ok((operation.name, metadata))
+                    Ok((operation.name, operation.metadata))
                 }
                 Err(status) => {
                     error!(
@@ -154,16 +189,14 @@ impl FirestoreDb {
         let began = FirestoreInstant::now();
         let label = operation.action.label;
         let outcome = self
-            .wait_for_operations(&[operation], options, |_, polled| {
-                if let Some(metadata) = polled.metadata.as_ref().and_then(decode_metadata) {
-                    debug!(
-                        collection_groups = label,
-                        documents = ?progress_from(metadata.progress_documents),
-                        bytes = ?progress_from(metadata.progress_bytes),
-                        "Bulk delete progress.",
-                    );
-                    apply_metadata(label, result, &metadata);
-                }
+            .wait_for_operations(&[operation], options, |started, polled| {
+                result.record_metadata(label, &started.name, polled.metadata.clone());
+                debug!(
+                    collection_groups = label,
+                    documents = ?result.documents,
+                    bytes = ?result.bytes,
+                    "Bulk delete progress.",
+                );
             })
             .instrument(span.clone())
             .await;
@@ -220,9 +253,7 @@ impl FirestoreBulkDeleteSupport for FirestoreDb {
                 collection_groups: params.collection_groups.clone(),
                 ..Default::default()
             };
-            if let Some(metadata) = &started_metadata {
-                apply_metadata(&label, &mut result, metadata);
-            }
+            result.record_metadata(&label, &operation_name, started_metadata);
             if let Some(wait_options) = &params.wait {
                 let started = StartedOperation {
                     name: operation_name,
@@ -268,6 +299,7 @@ mod tests {
     use gcloud_sdk::google::firestore::admin::v1::{
         BulkDeleteDocumentsRequest, Progress as ProtoProgress,
     };
+    use gcloud_sdk::google::longrunning::{operation, Operation};
     use gcloud_sdk::tonic::Code;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc as StdArc;
@@ -513,6 +545,149 @@ mod tests {
             .unwrap_or_else(|| panic!("no partial result logged in:\n{output}"));
         assert!(result_line.contains("WARN"), "{result_line}");
         assert!(result_line.contains("documents 4/10"), "{result_line}");
+    }
+
+    fn wait_params() -> FirestoreBulkDeleteParams {
+        FirestoreBulkDeleteParams::new(groups()).with_wait(
+            FirestoreOperationWaitOptions::new(Duration::from_secs(5))
+                .with_poll_interval(Duration::from_millis(5)),
+        )
+    }
+
+    fn documents_progress(completed_work: i64, estimated_work: i64) -> ProtoProgress {
+        ProtoProgress {
+            estimated_work,
+            completed_work,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_done_operation_without_metadata_reports_no_progress() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            BULK_DELETE => (
+                "BulkDeleteDocuments".to_string(),
+                pending_operation_response(OPERATION_NAME),
+            ),
+            GET_OPERATION => (
+                "GetOperation".to_string(),
+                done_operation_response(OPERATION_NAME),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let result = fake.db.bulk_delete_documents(wait_params()).await.unwrap();
+
+        assert_eq!(result.documents, None);
+        assert_eq!(result.bytes, None);
+        assert_eq!(result.snapshot_time, None);
+        let shown = result.to_string();
+        assert!(!shown.contains("0/0"), "{shown}");
+        assert!(shown.contains("progress not reported"), "{shown}");
+    }
+
+    #[tokio::test]
+    async fn malformed_metadata_is_logged_and_reported_as_absent() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            BULK_DELETE => (
+                "BulkDeleteDocuments".to_string(),
+                pending_operation_response(OPERATION_NAME),
+            ),
+            GET_OPERATION => (
+                "GetOperation".to_string(),
+                FakeResponse::Message(
+                    Operation {
+                        name: OPERATION_NAME.to_string(),
+                        metadata: Some(gcloud_sdk::prost_types::Any {
+                            type_url: "type.googleapis.com/google.firestore.admin.v1.\
+                                       BulkDeleteDocumentsMetadata"
+                                .to_string(),
+                            // A length-delimited field 1 whose length runs past the end.
+                            value: vec![0x0a, 0x7f],
+                        }),
+                        done: true,
+                        result: Some(operation::Result::Response(
+                            gcloud_sdk::prost_types::Any::default(),
+                        )),
+                    }
+                    .encode_to_vec(),
+                ),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let (subscriber, buffer) = capturing_subscriber();
+        let result = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db.bulk_delete_documents(wait_params()).await.unwrap()
+        };
+        let output = captured_text(&buffer);
+
+        assert_eq!(result.documents, None);
+        let warning = output
+            .lines()
+            .find(|line| line.contains("WARN") && line.contains(OPERATION_NAME))
+            .unwrap_or_else(|| panic!("no warning naming the operation in:\n{output}"));
+        assert!(warning.contains("metadata"), "{warning}");
+    }
+
+    #[tokio::test]
+    async fn progress_from_an_earlier_poll_survives_a_poll_that_does_not_report_it() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let polls = StdArc::new(AtomicU32::new(0));
+        let polls_in_handler = polls.clone();
+        let fake = FakeFirestore::start(move |method, _| match method {
+            BULK_DELETE => (
+                "BulkDeleteDocuments".to_string(),
+                pending_operation_response(OPERATION_NAME),
+            ),
+            GET_OPERATION => {
+                let count = polls_in_handler.fetch_add(1, Ordering::SeqCst) + 1;
+                let response = match count {
+                    1 => bulk_delete_operation_response(
+                        OPERATION_NAME,
+                        false,
+                        BulkDeleteDocumentsMetadata {
+                            progress_documents: Some(documents_progress(4, 10)),
+                            ..Default::default()
+                        },
+                    ),
+                    2 => bulk_delete_operation_response(
+                        OPERATION_NAME,
+                        false,
+                        BulkDeleteDocumentsMetadata {
+                            progress_bytes: Some(documents_progress(100, 1000)),
+                            ..Default::default()
+                        },
+                    ),
+                    _ => done_operation_response(OPERATION_NAME),
+                };
+                (format!("GetOperation#{count}"), response)
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let result = fake.db.bulk_delete_documents(wait_params()).await.unwrap();
+
+        assert_eq!(polls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            result.documents,
+            Some(FirestoreBulkDeleteProgress {
+                estimated_work: 10,
+                completed_work: 4,
+            })
+        );
+        assert_eq!(
+            result.bytes,
+            Some(FirestoreBulkDeleteProgress {
+                estimated_work: 1000,
+                completed_work: 100,
+            })
+        );
     }
 
     #[tokio::test]

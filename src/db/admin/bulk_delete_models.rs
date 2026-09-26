@@ -15,9 +15,10 @@ use std::time::Duration;
 
 /// One collection group's document- or byte-deletion progress, as Firestore reports it in
 /// `BulkDeleteDocumentsMetadata`.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct FirestoreBulkDeleteProgress {
-    /// The amount of work Firestore estimated when the operation started.
+    /// The amount of work Firestore estimated when the operation started. `0` when Firestore
+    /// reported no estimate.
     pub estimated_work: i64,
     /// The amount of work completed so far.
     pub completed_work: i64,
@@ -25,7 +26,11 @@ pub struct FirestoreBulkDeleteProgress {
 
 impl Display for FirestoreBulkDeleteProgress {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}/{}", self.completed_work, self.estimated_work)
+        if self.estimated_work == 0 {
+            write!(f, "{}", self.completed_work)
+        } else {
+            write!(f, "{}/{}", self.completed_work, self.estimated_work)
+        }
     }
 }
 
@@ -83,11 +88,16 @@ impl Display for FirestoreBulkDeleteResult {
             self.operation_name,
             self.elapsed,
         )?;
-        if let Some(documents) = &self.documents {
-            write!(f, ", documents {documents}")?;
-        }
-        if let Some(bytes) = &self.bytes {
-            write!(f, ", bytes {bytes}")?;
+        match (&self.documents, &self.bytes) {
+            (None, None) => write!(f, ", progress not reported")?,
+            (documents, bytes) => {
+                if let Some(documents) = documents {
+                    write!(f, ", documents {documents}")?;
+                }
+                if let Some(bytes) = bytes {
+                    write!(f, ", bytes {bytes}")?;
+                }
+            }
         }
         if let Some(snapshot_time) = &self.snapshot_time {
             write!(f, ", snapshot_time {snapshot_time}")?;
@@ -134,6 +144,24 @@ mod tests {
 
     fn group(id: &str) -> FirestoreCollectionId {
         FirestoreCollectionId::new(id).unwrap()
+    }
+
+    #[test]
+    fn progress_without_an_estimate_shows_only_the_completed_work() {
+        let progress = FirestoreBulkDeleteProgress {
+            estimated_work: 0,
+            completed_work: 5,
+        };
+        assert_eq!(progress.to_string(), "5");
+    }
+
+    #[test]
+    fn progress_with_an_estimate_shows_both() {
+        let progress = FirestoreBulkDeleteProgress {
+            estimated_work: 10,
+            completed_work: 5,
+        };
+        assert_eq!(progress.to_string(), "5/10");
     }
 
     #[test]
