@@ -816,6 +816,11 @@ pub(crate) mod tests {
     use super::*;
     use crate::{FirestoreCollectionId, FirestoreFieldOverrideTarget};
 
+    /// The `users` group's resource path on [`FakeFirestore`](crate::db::fake_firestore), so a
+    /// listed item built here also belongs to the group a fake-server test's `FirestoreDb` owns.
+    pub(crate) const USERS_GROUP_PATH: &str =
+        "projects/fake-firestore/databases/(default)/collectionGroups/users";
+
     fn users_params() -> FirestoreIndexParams {
         FirestoreIndexParams::new(FirestoreCollectionId::from_static("users"))
     }
@@ -843,7 +848,7 @@ pub(crate) mod tests {
         state: ProtoState,
     ) -> ProtoIndex {
         ProtoIndex {
-            name: "projects/p/databases/(default)/collectionGroups/users/indexes/1".to_string(),
+            name: format!("{USERS_GROUP_PATH}/indexes/1"),
             query_scope: scope as i32,
             api_scope: ApiScope::AnyApi as i32,
             fields,
@@ -1172,7 +1177,7 @@ pub(crate) mod tests {
         ttl_config: Option<field::TtlConfig>,
     ) -> ProtoField {
         ProtoField {
-            name: format!("projects/p/databases/(default)/collectionGroups/users/fields/{path}"),
+            name: format!("{USERS_GROUP_PATH}/fields/{path}"),
             index_config,
             ttl_config,
         }
@@ -1510,7 +1515,9 @@ pub(crate) mod tests {
             ProtoState::Ready,
         );
         listed.api_scope = ApiScope::MongodbCompatibleApi as i32;
-        listed.name = "projects/p/databases/(default)/collectionGroups/users/indexes/9".to_string();
+        listed.name =
+            "projects/fake-firestore/databases/(default)/collectionGroups/users/indexes/9"
+                .to_string();
         let existing = FirestoreIndexExistingState {
             indexes: vec![listed.clone()],
             fields: vec![],
@@ -1689,8 +1696,9 @@ pub(crate) mod tests {
         ]);
         let params = users_params().with_composite_indexes(vec![declared.clone()]);
         let default_shaped = ProtoIndex {
-            name: "projects/p/databases/(default)/collectionGroups/users/indexes/default"
-                .to_string(),
+            name:
+                "projects/fake-firestore/databases/(default)/collectionGroups/users/indexes/default"
+                    .to_string(),
             ..listed_index(
                 vec![
                     order_field("a", ProtoOrder::Descending),
@@ -1705,7 +1713,7 @@ pub(crate) mod tests {
             )
         };
         let non_default_duplicate = ProtoIndex {
-            name: "projects/p/databases/(default)/collectionGroups/users/indexes/duplicate"
+            name: "projects/fake-firestore/databases/(default)/collectionGroups/users/indexes/duplicate"
                 .to_string(),
             ..listed_index(
                 vec![
@@ -1742,7 +1750,7 @@ pub(crate) mod tests {
                 )],
                 uses_ancestor_config: true,
                 ancestor_field:
-                    "projects/p/databases/(default)/collectionGroups/__default__/fields/*"
+                    "projects/fake-firestore/databases/(default)/collectionGroups/__default__/fields/*"
                         .to_string(),
                 reverting: false,
             }),

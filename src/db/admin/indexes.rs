@@ -947,6 +947,9 @@ impl FirestoreIndexSupport for FirestoreDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::admin::index_diff::tests::{
+        field_resource, listed_index, order_field, USERS_GROUP_PATH,
+    };
     use crate::db::fake_firestore::{
         done_operation_response, failed_operation_response, list_fields_response,
         list_indexes_response, pending_operation_response, FakeFirestore, FakeResponse,
@@ -972,7 +975,7 @@ mod tests {
     const UPDATE_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/UpdateField";
     const GET_OPERATION: &str = "/google.longrunning.Operations/GetOperation";
 
-    const GROUP_PATH: &str = "projects/fake-firestore/databases/(default)/collectionGroups/users";
+    const GROUP_PATH: &str = USERS_GROUP_PATH;
 
     fn group() -> FirestoreCollectionId {
         FirestoreCollectionId::from_static("users")
@@ -985,49 +988,26 @@ mod tests {
         )
     }
 
-    fn order_field(
-        path: &str,
-        order: gcloud_sdk::google::firestore::admin::v1::index::index_field::Order,
-    ) -> ProtoIndexField {
-        ProtoIndexField {
-            field_path: path.to_string(),
-            value_mode: Some(
-                gcloud_sdk::google::firestore::admin::v1::index::index_field::ValueMode::Order(
-                    order as i32,
-                ),
-            ),
-        }
-    }
-
-    /// A listed composite index matching `[a DESC, tags CONTAINS, __name__ ASC]`, in `state`.
-    fn listed_index(name: &str, state: ProtoState) -> ProtoIndex {
+    /// A listed `[a DESC, tags CONTAINS, __name__ ASC]` index at `name` in `state`: the stored
+    /// shape of [`declared_index`], under a resource name each test picks.
+    fn listed_declared_index(name: &str, state: ProtoState) -> ProtoIndex {
         use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
-            ArrayConfig, ValueMode,
+            ArrayConfig, Order, ValueMode,
         };
         ProtoIndex {
             name: name.to_string(),
-            query_scope: ProtoQueryScope::Collection as i32,
-            api_scope: ApiScope::AnyApi as i32,
-            fields: vec![
-                order_field(
-                    "a",
-                    gcloud_sdk::google::firestore::admin::v1::index::index_field::Order::Descending,
-                ),
-                ProtoIndexField {
-                    field_path: "tags".to_string(),
-                    value_mode: Some(ValueMode::ArrayConfig(ArrayConfig::Contains as i32)),
-                },
-                order_field(
-                    "__name__",
-                    gcloud_sdk::google::firestore::admin::v1::index::index_field::Order::Ascending,
-                ),
-            ],
-            state: state as i32,
-            density: 0,
-            multikey: false,
-            shard_count: 0,
-            unique: false,
-            search_index_options: None,
+            ..listed_index(
+                vec![
+                    order_field("a", Order::Descending),
+                    ProtoIndexField {
+                        field_path: "tags".to_string(),
+                        value_mode: Some(ValueMode::ArrayConfig(ArrayConfig::Contains as i32)),
+                    },
+                    order_field("__name__", Order::Ascending),
+                ],
+                ProtoQueryScope::Collection,
+                state,
+            )
         }
     }
 
@@ -1090,7 +1070,7 @@ mod tests {
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
-                list_indexes_response(vec![listed_index(
+                list_indexes_response(vec![listed_declared_index(
                     &format!("{GROUP_PATH}/indexes/1"),
                     ProtoState::Ready,
                 )]),
@@ -1116,7 +1096,7 @@ mod tests {
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
-                list_indexes_response(vec![listed_index(
+                list_indexes_response(vec![listed_declared_index(
                     &format!("{GROUP_PATH}/indexes/legacy"),
                     ProtoState::Ready,
                 )]),
@@ -1143,7 +1123,7 @@ mod tests {
         let fake = FakeFirestore::start(|method, bytes| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
-                list_indexes_response(vec![listed_index(
+                list_indexes_response(vec![listed_declared_index(
                     &format!("{GROUP_PATH}/indexes/legacy"),
                     ProtoState::Ready,
                 )]),
@@ -1602,18 +1582,6 @@ mod tests {
         assert!(plan.undeclared_indexes.is_empty());
     }
 
-    fn field_resource(
-        path: &str,
-        index_config: Option<gcloud_sdk::google::firestore::admin::v1::field::IndexConfig>,
-        ttl_config: Option<gcloud_sdk::google::firestore::admin::v1::field::TtlConfig>,
-    ) -> ProtoField {
-        ProtoField {
-            name: format!("{GROUP_PATH}/fields/{path}"),
-            index_config,
-            ttl_config,
-        }
-    }
-
     #[tokio::test]
     async fn a_field_listed_in_both_filters_is_merged_into_one() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
@@ -1732,7 +1700,6 @@ mod tests {
     #[tokio::test]
     async fn all_fields_apply_and_prune_round_trip() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        use gcloud_sdk::google::firestore::admin::v1::field;
 
         let stored: StdArc<Mutex<Option<ProtoField>>> = StdArc::new(Mutex::new(None));
 
@@ -1800,16 +1767,9 @@ mod tests {
         assert_eq!(prune_report.reverted_fields.len(), 1);
 
         assert!(
-            stored
-                .lock()
-                .unwrap()
-                .as_ref()
-                .and_then(|f| f.index_config.as_ref())
-                .is_none()
-                || stored.lock().unwrap().is_none(),
+            stored.lock().unwrap().is_none(),
             "the wildcard override must be reverted (index_config unset)",
         );
-        let _ = field::TtlConfig::default();
     }
 
     fn capturing_subscriber() -> (
@@ -1923,8 +1883,14 @@ mod tests {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![
-                    listed_index(&format!("{GROUP_PATH}/indexes/legacy-1"), ProtoState::Ready),
-                    listed_index(&format!("{GROUP_PATH}/indexes/legacy-2"), ProtoState::Ready),
+                    listed_declared_index(
+                        &format!("{GROUP_PATH}/indexes/legacy-1"),
+                        ProtoState::Ready,
+                    ),
+                    listed_declared_index(
+                        &format!("{GROUP_PATH}/indexes/legacy-2"),
+                        ProtoState::Ready,
+                    ),
                 ]),
             ),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
@@ -1962,7 +1928,7 @@ mod tests {
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
-                list_indexes_response(vec![listed_index(
+                list_indexes_response(vec![listed_declared_index(
                     &format!("{GROUP_PATH}/indexes/1"),
                     ProtoState::NeedsRepair,
                 )]),
