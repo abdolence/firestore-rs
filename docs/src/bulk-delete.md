@@ -8,23 +8,24 @@ feature](./index-management.md#enabling-the-admin-feature) for turning it on. Go
 documentation for the underlying operation is at
 <https://cloud.google.com/firestore/docs/manage-data/bulk-delete>.
 
-## Why the builder asks for collection groups, not a collection
+## Why the builder takes collection groups
 
 `.bulk()` takes `.collection_groups(...)`, and there is no `.parent()`: Google's
 `BulkDeleteDocuments` deletes every document in every collection with the given ID, at any depth,
-across the whole database, and a parent-scoped bulk delete is not an operation Firestore offers.
-Naming a collection group called `orders` deletes every `orders` collection under every document
-in the database, not just the one your code usually queries.
+across the whole database, and Firestore offers no parent-scoped bulk delete. Naming a collection
+group called `orders` deletes every `orders` collection under every document in the database,
+including ones your code never queries.
 
 ## What survives a bulk delete
 
 - documents written after the operation starts processing;
 - any collection whose ID does not match a named group, even nested under a deleted one.
 
-## It is non-transactional and runs in the background
+## Background and non-transactional
 
-A bulk delete is not a transaction: Firestore does not read a consistent snapshot across the whole
-delete, and other writes can interleave with it while it runs. `execute()` returns once the
+Firestore picks the documents to delete as of one snapshot time, which the result reports as
+`snapshot_time`. The deletes themselves are not one transaction, so other writes can interleave
+with them while the operation runs. `execute()` returns once the
 operation is requested unless you ask it to wait; either way the deletion itself continues on
 Firestore's side, independent of your process.
 
