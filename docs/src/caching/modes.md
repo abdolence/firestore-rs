@@ -1,4 +1,4 @@
-## Choosing a cache mode
+# Choosing a cache mode
 
 - `db.read_through_cache(&cache)` serves what it can from the cache and goes to Firestore for the
   rest. This is the mode to reach for by default.

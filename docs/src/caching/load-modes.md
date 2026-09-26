@@ -1,4 +1,4 @@
-## Load modes, and why listings need preloading
+# Load modes, and why listings need preloading
 
 - `PreloadNone` (`.collection(name)`): don't preload anything, just fill the cache while working;
 - `PreloadAllDocs` (`.collection_with(name, |c| c.preload_all())`): preload all documents in the

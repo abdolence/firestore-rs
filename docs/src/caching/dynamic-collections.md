@@ -1,4 +1,4 @@
-## Changing the cached collections at runtime
+# Changing the cached collections at runtime
 
 The set of cached collections does not have to be fixed when the cache is built:
 
