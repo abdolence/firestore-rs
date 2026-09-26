@@ -4,10 +4,11 @@
 //! without a server: [`plan_index_changes`] takes the state a `ListIndexes`/`ListFields` call
 //! already fetched and never performs I/O of its own.
 
+use crate::errors::FirestoreError;
 use crate::{
     FirestoreCompositeIndex, FirestoreFieldOverride, FirestoreFieldOverrideIndex,
     FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan,
-    FirestoreIndexQueryScope, FirestoreQueryDirection,
+    FirestoreIndexQueryScope, FirestoreQueryDirection, FirestoreResult,
 };
 use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
     vector_config, ArrayConfig as ProtoArrayConfig, Order as ProtoOrder, ValueMode,
@@ -38,62 +39,110 @@ pub struct FirestoreIndexExistingState {
     pub fields: Vec<ProtoField>,
 }
 
-fn proto_query_scope(scope: FirestoreIndexQueryScope) -> ProtoQueryScope {
-    match scope {
-        FirestoreIndexQueryScope::Collection => ProtoQueryScope::Collection,
-        FirestoreIndexQueryScope::AllDescendants => ProtoQueryScope::CollectionGroup,
-    }
-}
-
-fn domain_query_scope(scope: i32) -> Option<FirestoreIndexQueryScope> {
-    match ProtoQueryScope::try_from(scope).ok()? {
-        ProtoQueryScope::Collection => Some(FirestoreIndexQueryScope::Collection),
-        ProtoQueryScope::CollectionGroup => Some(FirestoreIndexQueryScope::AllDescendants),
-        ProtoQueryScope::Unspecified | ProtoQueryScope::CollectionRecursive => None,
-    }
-}
-
-fn value_mode_of(mode: &FirestoreIndexFieldMode) -> ValueMode {
-    match mode {
-        FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending) => {
-            ValueMode::Order(ProtoOrder::Ascending as i32)
-        }
-        FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending) => {
-            ValueMode::Order(ProtoOrder::Descending as i32)
-        }
-        FirestoreIndexFieldMode::ArrayContains => {
-            ValueMode::ArrayConfig(ProtoArrayConfig::Contains as i32)
-        }
-        FirestoreIndexFieldMode::Vector { dimension } => {
-            ValueMode::VectorConfig(ProtoVectorConfig {
-                dimension: *dimension as i32,
-                r#type: Some(vector_config::Type::Flat(vector_config::FlatIndex {})),
-            })
+impl From<FirestoreIndexQueryScope> for ProtoQueryScope {
+    fn from(scope: FirestoreIndexQueryScope) -> Self {
+        match scope {
+            FirestoreIndexQueryScope::Collection => ProtoQueryScope::Collection,
+            FirestoreIndexQueryScope::AllDescendants => ProtoQueryScope::CollectionGroup,
         }
     }
 }
 
-fn declared_field_to_proto(field: &FirestoreIndexField) -> ProtoIndexField {
-    ProtoIndexField {
-        field_path: field.field_path.clone(),
-        value_mode: Some(value_mode_of(&field.mode)),
+impl TryFrom<i32> for FirestoreIndexQueryScope {
+    type Error = FirestoreError;
+
+    fn try_from(scope: i32) -> Result<Self, Self::Error> {
+        match ProtoQueryScope::try_from(scope) {
+            Ok(ProtoQueryScope::Collection) => Ok(FirestoreIndexQueryScope::Collection),
+            Ok(ProtoQueryScope::CollectionGroup) => Ok(FirestoreIndexQueryScope::AllDescendants),
+            Ok(ProtoQueryScope::Unspecified | ProtoQueryScope::CollectionRecursive) | Err(_) => {
+                Err(FirestoreError::invalid_parameters(
+                    "query_scope",
+                    format!("{scope} is not a usable index query scope"),
+                ))
+            }
+        }
+    }
+}
+
+impl TryFrom<FirestoreIndexFieldMode> for ValueMode {
+    type Error = FirestoreError;
+
+    fn try_from(mode: FirestoreIndexFieldMode) -> Result<Self, Self::Error> {
+        Ok(match mode {
+            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending) => {
+                ValueMode::Order(ProtoOrder::Ascending as i32)
+            }
+            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending) => {
+                ValueMode::Order(ProtoOrder::Descending as i32)
+            }
+            FirestoreIndexFieldMode::ArrayContains => {
+                ValueMode::ArrayConfig(ProtoArrayConfig::Contains as i32)
+            }
+            FirestoreIndexFieldMode::Vector { dimension } => {
+                ValueMode::VectorConfig(ProtoVectorConfig {
+                    dimension: i32::try_from(dimension).map_err(|_| {
+                        FirestoreError::invalid_parameters(
+                            "dimension",
+                            format!(
+                                "vector dimension {dimension} exceeds the maximum representable value {}",
+                                i32::MAX
+                            ),
+                        )
+                    })?,
+                    r#type: Some(vector_config::Type::Flat(vector_config::FlatIndex {})),
+                })
+            }
+        })
+    }
+}
+
+impl TryFrom<FirestoreIndexField> for ProtoIndexField {
+    type Error = FirestoreError;
+
+    fn try_from(field: FirestoreIndexField) -> Result<Self, Self::Error> {
+        Ok(ProtoIndexField {
+            field_path: field.field_path,
+            value_mode: Some(ValueMode::try_from(field.mode)?),
+        })
     }
 }
 
 /// Converts a declared composite index to the proto shape `CreateIndex` sends. The result never
 /// carries a `__name__` field - the server appends it on creation with the implied direction.
-pub(crate) fn declared_index_to_proto(index: &FirestoreCompositeIndex) -> ProtoIndex {
-    ProtoIndex {
-        name: String::new(),
-        query_scope: proto_query_scope(index.query_scope) as i32,
-        api_scope: ApiScope::AnyApi as i32,
-        fields: index.fields.iter().map(declared_field_to_proto).collect(),
-        state: 0,
-        density: 0,
-        multikey: false,
-        shard_count: 0,
-        unique: false,
-        search_index_options: None,
+impl TryFrom<FirestoreCompositeIndex> for ProtoIndex {
+    type Error = FirestoreError;
+
+    fn try_from(index: FirestoreCompositeIndex) -> Result<Self, Self::Error> {
+        Ok(ProtoIndex {
+            query_scope: ProtoQueryScope::from(index.query_scope) as i32,
+            api_scope: ApiScope::AnyApi as i32,
+            fields: index
+                .fields
+                .into_iter()
+                .map(ProtoIndexField::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+            ..Default::default()
+        })
+    }
+}
+
+/// Converts a single-field index entry to the proto shape a [`field::IndexConfig`] carries.
+impl TryFrom<FirestoreFieldOverrideIndex> for ProtoIndex {
+    type Error = FirestoreError;
+
+    fn try_from(entry: FirestoreFieldOverrideIndex) -> Result<Self, Self::Error> {
+        Ok(ProtoIndex {
+            query_scope: ProtoQueryScope::from(entry.query_scope) as i32,
+            api_scope: ApiScope::AnyApi as i32,
+            // The field path is the owning `Field` resource's own path and may be omitted here,
+            // per the admin API docs for single-field indexes.
+            fields: vec![ProtoIndexField {
+                field_path: String::new(),
+                value_mode: Some(ValueMode::try_from(entry.mode)?),
+            }],
+            ..Default::default()
+        })
     }
 }
 
@@ -102,47 +151,25 @@ pub(crate) fn declared_index_to_proto(index: &FirestoreCompositeIndex) -> ProtoI
 /// Not called from this crate yet: the `FirestoreDb` implementation of `FirestoreIndexSupport`
 /// that builds `UpdateField` requests from it is added separately, once that trait has a real
 /// caller.
-#[allow(dead_code)]
-pub(crate) fn declared_override_to_index_config(
-    field_override: &FirestoreFieldOverride,
-) -> field::IndexConfig {
-    field::IndexConfig {
-        indexes: field_override
-            .indexes
-            .iter()
-            .map(single_field_override_to_proto)
-            .collect(),
-        uses_ancestor_config: false,
-        ancestor_field: String::new(),
-        reverting: false,
-    }
-}
+impl TryFrom<FirestoreFieldOverride> for field::IndexConfig {
+    type Error = FirestoreError;
 
-#[allow(dead_code)]
-fn single_field_override_to_proto(entry: &FirestoreFieldOverrideIndex) -> ProtoIndex {
-    ProtoIndex {
-        name: String::new(),
-        query_scope: proto_query_scope(entry.query_scope) as i32,
-        api_scope: ApiScope::AnyApi as i32,
-        // The field path is the owning `Field` resource's own path and may be omitted here, per
-        // the admin API docs for single-field indexes.
-        fields: vec![ProtoIndexField {
-            field_path: String::new(),
-            value_mode: Some(value_mode_of(&entry.mode)),
-        }],
-        state: 0,
-        density: 0,
-        multikey: false,
-        shard_count: 0,
-        unique: false,
-        search_index_options: None,
+    fn try_from(field_override: FirestoreFieldOverride) -> Result<Self, Self::Error> {
+        Ok(field::IndexConfig {
+            indexes: field_override
+                .indexes
+                .into_iter()
+                .map(ProtoIndex::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+            ..Default::default()
+        })
     }
 }
 
 /// The `Field.ttl_config` shape that enables TTL: an active configuration with no expiration
 /// offset, so the field's own timestamp value is the expiration time.
 ///
-/// Not called from this crate yet; see [`declared_override_to_index_config`] for why.
+/// Not called from this crate yet; see the [`field::IndexConfig`] conversion above for why.
 #[allow(dead_code)]
 pub(crate) fn ttl_field_config() -> field::TtlConfig {
     field::TtlConfig::default()
@@ -181,12 +208,15 @@ fn strip_implied_name_field(fields: &[ProtoIndexField]) -> &[ProtoIndexField] {
     }
 }
 
-fn composite_index_matches(declared: &FirestoreCompositeIndex, listed: &ProtoIndex) -> bool {
-    let declared_proto = declared_index_to_proto(declared);
-    declared_proto.query_scope == listed.query_scope
+fn composite_index_matches(
+    declared: &FirestoreCompositeIndex,
+    listed: &ProtoIndex,
+) -> FirestoreResult<bool> {
+    let declared_proto = ProtoIndex::try_from(declared.clone())?;
+    Ok(declared_proto.query_scope == listed.query_scope
         && declared_proto.api_scope == listed.api_scope
         && strip_implied_name_field(&declared_proto.fields)
-            == strip_implied_name_field(&listed.fields)
+            == strip_implied_name_field(&listed.fields))
 }
 
 fn field_path_of(field: &ProtoField) -> String {
@@ -206,31 +236,49 @@ enum ComparableFieldMode {
     Vector(u32),
 }
 
-fn comparable_declared_mode(mode: &FirestoreIndexFieldMode) -> ComparableFieldMode {
-    match mode {
-        FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending) => {
-            ComparableFieldMode::Ascending
+impl From<FirestoreIndexFieldMode> for ComparableFieldMode {
+    fn from(mode: FirestoreIndexFieldMode) -> Self {
+        match mode {
+            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending) => {
+                ComparableFieldMode::Ascending
+            }
+            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending) => {
+                ComparableFieldMode::Descending
+            }
+            FirestoreIndexFieldMode::ArrayContains => ComparableFieldMode::ArrayContains,
+            FirestoreIndexFieldMode::Vector { dimension } => ComparableFieldMode::Vector(dimension),
         }
-        FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending) => {
-            ComparableFieldMode::Descending
-        }
-        FirestoreIndexFieldMode::ArrayContains => ComparableFieldMode::ArrayContains,
-        FirestoreIndexFieldMode::Vector { dimension } => ComparableFieldMode::Vector(*dimension),
     }
 }
 
-fn comparable_listed_mode(mode: &ValueMode) -> Option<ComparableFieldMode> {
-    match mode {
-        ValueMode::Order(order) => match ProtoOrder::try_from(*order).ok()? {
-            ProtoOrder::Ascending => Some(ComparableFieldMode::Ascending),
-            ProtoOrder::Descending => Some(ComparableFieldMode::Descending),
-            ProtoOrder::Unspecified => None,
-        },
-        ValueMode::ArrayConfig(_) => Some(ComparableFieldMode::ArrayContains),
-        ValueMode::VectorConfig(vector) => {
-            Some(ComparableFieldMode::Vector(vector.dimension as u32))
+impl TryFrom<ValueMode> for ComparableFieldMode {
+    type Error = FirestoreError;
+
+    fn try_from(mode: ValueMode) -> Result<Self, Self::Error> {
+        match mode {
+            ValueMode::Order(order) => match ProtoOrder::try_from(order) {
+                Ok(ProtoOrder::Ascending) => Ok(ComparableFieldMode::Ascending),
+                Ok(ProtoOrder::Descending) => Ok(ComparableFieldMode::Descending),
+                Ok(ProtoOrder::Unspecified) | Err(_) => Err(FirestoreError::invalid_parameters(
+                    "value_mode",
+                    format!("order {order} is unspecified or unknown"),
+                )),
+            },
+            ValueMode::ArrayConfig(_) => Ok(ComparableFieldMode::ArrayContains),
+            ValueMode::VectorConfig(vector) => {
+                let dimension = u32::try_from(vector.dimension).map_err(|_| {
+                    FirestoreError::invalid_parameters(
+                        "dimension",
+                        format!("listed vector dimension {} is negative", vector.dimension),
+                    )
+                })?;
+                Ok(ComparableFieldMode::Vector(dimension))
+            }
+            ValueMode::SearchConfig(_) => Err(FirestoreError::invalid_parameters(
+                "value_mode",
+                "search config is not a comparable index mode",
+            )),
         }
-        ValueMode::SearchConfig(_) => None,
     }
 }
 
@@ -240,10 +288,20 @@ fn declared_override_set(
     field_override
         .indexes
         .iter()
-        .map(|entry| (entry.query_scope, comparable_declared_mode(&entry.mode)))
+        .map(|entry| {
+            (
+                entry.query_scope,
+                ComparableFieldMode::from(entry.mode.clone()),
+            )
+        })
         .collect()
 }
 
+/// Builds the set of `(query_scope, mode)` pairs Firestore has listed for one field.
+///
+/// A listed entry whose scope or mode this diff cannot represent - an unspecified scope, an
+/// unspecified order, or a search config - is skipped rather than failing the whole comparison:
+/// it simply cannot match any declared entry, which is the same outcome plan_index_changes needs.
 fn listed_override_set(
     config: &field::IndexConfig,
 ) -> HashSet<(FirestoreIndexQueryScope, ComparableFieldMode)> {
@@ -251,12 +309,12 @@ fn listed_override_set(
         .indexes
         .iter()
         .filter_map(|index| {
-            let scope = domain_query_scope(index.query_scope)?;
+            let scope = FirestoreIndexQueryScope::try_from(index.query_scope).ok()?;
             let mode = index
                 .fields
                 .first()
-                .and_then(|f| f.value_mode.as_ref())
-                .and_then(comparable_listed_mode)?;
+                .and_then(|f| f.value_mode.clone())
+                .and_then(|value_mode| ComparableFieldMode::try_from(value_mode).ok())?;
             Some((scope, mode))
         })
         .collect()
@@ -277,22 +335,29 @@ fn field_override_matches(declared: &FirestoreFieldOverride, listed: &ProtoField
 
 /// Compares a declared [`FirestoreIndexParams`] against `existing`, the already-fetched listed
 /// state of the one collection group it owns.
+///
+/// # Errors
+/// Returns [`FirestoreError::InvalidParametersError`] if a declared composite index carries a
+/// vector dimension that does not fit in the proto's `i32` - `validate_index_params` already
+/// rejects this at declaration time, so this only fires if that check was bypassed.
 pub fn plan_index_changes(
     params: &FirestoreIndexParams,
     existing: &FirestoreIndexExistingState,
-) -> FirestoreIndexPlan {
+) -> FirestoreResult<FirestoreIndexPlan> {
     let mut plan = FirestoreIndexPlan::default();
 
     let mut matched_listed_index = vec![false; existing.indexes.len()];
     for declared in &params.composite_indexes {
-        let found = existing
-            .indexes
-            .iter()
-            .enumerate()
-            .find(|(position, listed)| {
-                !matched_listed_index[*position] && composite_index_matches(declared, listed)
-            })
-            .map(|(position, _)| position);
+        let mut found = None;
+        for (position, listed) in existing.indexes.iter().enumerate() {
+            if matched_listed_index[position] {
+                continue;
+            }
+            if composite_index_matches(declared, listed)? {
+                found = Some(position);
+                break;
+            }
+        }
 
         match found {
             None => plan.create_indexes.push(declared.clone()),
@@ -360,7 +425,7 @@ pub fn plan_index_changes(
         }
     }
 
-    plan
+    Ok(plan)
 }
 
 #[cfg(test)]
@@ -425,7 +490,7 @@ mod tests {
                     .all_descendants(),
             ],
         };
-        let config = declared_override_to_index_config(&field_override);
+        let config = field::IndexConfig::try_from(field_override).unwrap();
         assert!(!config.uses_ancestor_config);
         assert_eq!(config.indexes.len(), 1);
         assert_eq!(
@@ -442,7 +507,7 @@ mod tests {
     fn empty_declaration_against_no_listed_state_plans_nothing() {
         let params = users_params();
         let existing = FirestoreIndexExistingState::default();
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert_eq!(plan, FirestoreIndexPlan::default());
     }
 
@@ -453,7 +518,7 @@ mod tests {
                 asc_field("country"),
                 desc_field("created_at"),
             ])]);
-        let plan = plan_index_changes(&params, &FirestoreIndexExistingState::default());
+        let plan = plan_index_changes(&params, &FirestoreIndexExistingState::default()).unwrap();
         assert_eq!(plan.create_indexes, params.composite_indexes);
         assert!(plan.unchanged.is_empty());
     }
@@ -478,7 +543,7 @@ mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.create_indexes.is_empty());
         assert!(plan.undeclared_indexes.is_empty());
@@ -509,7 +574,7 @@ mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
     }
 
@@ -533,7 +598,7 @@ mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(plan.undeclared_indexes.len(), 1);
     }
@@ -566,7 +631,7 @@ mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(plan.undeclared_indexes.len(), 1);
     }
@@ -588,7 +653,7 @@ mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert_eq!(plan.pending, vec![declared]);
         assert!(plan.unchanged.is_empty());
     }
@@ -610,7 +675,7 @@ mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert_eq!(plan.needs_repair, vec![declared]);
         assert!(plan.undeclared_indexes.is_empty());
     }
@@ -666,7 +731,7 @@ mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert!(plan.update_fields.is_empty());
         assert!(plan.undeclared_fields.is_empty());
     }
@@ -679,7 +744,7 @@ mod tests {
         };
         let params = users_params().with_field_overrides(vec![declared.clone()]);
         let existing = FirestoreIndexExistingState::default();
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert_eq!(plan.update_fields, vec![declared]);
     }
 
@@ -702,7 +767,7 @@ mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&users_params(), &existing);
+        let plan = plan_index_changes(&users_params(), &existing).unwrap();
         assert_eq!(plan.undeclared_fields, vec![listed_field]);
     }
 
@@ -733,14 +798,14 @@ mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert!(plan.update_fields.is_empty());
     }
 
     #[test]
     fn ttl_field_with_no_listed_config_is_enabled() {
         let params = users_params().with_ttl_fields(vec!["expires_at".to_string()]);
-        let plan = plan_index_changes(&params, &FirestoreIndexExistingState::default());
+        let plan = plan_index_changes(&params, &FirestoreIndexExistingState::default()).unwrap();
         assert_eq!(plan.enable_ttl, vec!["expires_at".to_string()]);
     }
 
@@ -752,7 +817,7 @@ mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing);
+        let plan = plan_index_changes(&params, &existing).unwrap();
         assert!(plan.enable_ttl.is_empty());
     }
 
@@ -763,7 +828,29 @@ mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&users_params(), &existing);
+        let plan = plan_index_changes(&users_params(), &existing).unwrap();
         assert_eq!(plan.undeclared_ttl, vec![listed_field]);
+    }
+
+    #[test]
+    fn vector_dimension_above_i32_range_is_rejected() {
+        let field = FirestoreIndexField::new(
+            "embedding".to_string(),
+            FirestoreIndexFieldMode::Vector {
+                dimension: u32::MAX,
+            },
+        );
+        let err = ProtoIndexField::try_from(field).unwrap_err();
+        assert!(matches!(err, FirestoreError::InvalidParametersError(_)));
+    }
+
+    #[test]
+    fn negative_listed_vector_dimension_is_rejected() {
+        let mode = ValueMode::VectorConfig(ProtoVectorConfig {
+            dimension: -1,
+            r#type: Some(vector_config::Type::Flat(vector_config::FlatIndex {})),
+        });
+        let err = ComparableFieldMode::try_from(mode).unwrap_err();
+        assert!(matches!(err, FirestoreError::InvalidParametersError(_)));
     }
 }
