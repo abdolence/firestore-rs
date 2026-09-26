@@ -795,7 +795,9 @@ pub(crate) fn plan_index_changes(
             Some(FirestoreFieldTtlOutcome::Configured(FirestoreFieldTtlState::NeedsRepair)) => {
                 plan.needs_repair_ttl.push(declared_path.clone())
             }
-            Some(FirestoreFieldTtlOutcome::Configured(FirestoreFieldTtlState::Active)) => {}
+            Some(FirestoreFieldTtlOutcome::Configured(FirestoreFieldTtlState::Active)) => {
+                plan.unchanged_ttl.push(declared_path.clone())
+            }
         }
     }
     for listed in &listed_fields {
@@ -1442,6 +1444,18 @@ mod tests {
         };
         let plan = plan_index_changes(&params, &existing).unwrap();
         assert!(plan.enable_ttl.is_empty());
+    }
+
+    #[test]
+    fn ttl_field_already_active_is_classified_unchanged_ttl() {
+        let params = users_params().with_ttl_fields(vec!["expires_at".to_string()]);
+        let listed_field = field_resource("expires_at", None, Some(active_ttl_config()));
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![],
+            fields: vec![listed_field],
+        };
+        let plan = plan_index_changes(&params, &existing).unwrap();
+        assert_eq!(plan.unchanged_ttl, vec!["expires_at".to_string()]);
     }
 
     #[test]

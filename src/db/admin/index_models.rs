@@ -369,6 +369,8 @@ pub struct FirestoreIndexPlan {
     pub undeclared_fields: Vec<FirestoreListedField>,
     /// Declared TTL fields with no TTL configuration listed; `.sync()` enables these.
     pub enable_ttl: Vec<String>,
+    /// Declared TTL fields matched to a listed TTL configuration already in state `ACTIVE`.
+    pub unchanged_ttl: Vec<String>,
     /// Declared TTL fields matched to a listed TTL configuration still in state `CREATING`.
     pub pending_ttl: Vec<String>,
     /// Declared TTL fields matched to a listed TTL configuration in state `NEEDS_REPAIR`.
@@ -398,6 +400,8 @@ pub struct FirestoreIndexSyncReport {
     pub updated_fields: Vec<FirestoreFieldOverride>,
     /// TTL fields enabled by this sync.
     pub enabled_ttl: Vec<String>,
+    /// Declared TTL fields already active before this sync ran.
+    pub unchanged_ttl: Vec<String>,
     /// Composite indexes matched to a listed index already in state `READY`.
     pub unchanged: Vec<FirestoreCompositeIndex>,
     /// Composite indexes matched to a listed index still in state `CREATING`.
@@ -844,9 +848,10 @@ impl Display for FirestoreIndexPlan {
         if !anything_to_report {
             return writeln!(
                 f,
-                "Firestore index plan: no changes ({} unchanged, {} pending)",
+                "Firestore index plan: no changes ({} unchanged, {} pending, {} ttl unchanged)",
                 self.unchanged.len(),
-                self.pending.len()
+                self.pending.len(),
+                self.unchanged_ttl.len()
             );
         }
 
@@ -883,12 +888,14 @@ impl Display for FirestoreIndexPlan {
         write_section(f, "needs_repair", &self.needs_repair)?;
         write_section(f, "needs_repair_ttl", &self.needs_repair_ttl)?;
         write_section(f, "unrecognised, never pruned", &self.unrecognised)?;
-        if !self.unchanged.is_empty() || !self.pending.is_empty() {
+        if !self.unchanged.is_empty() || !self.pending.is_empty() || !self.unchanged_ttl.is_empty()
+        {
             writeln!(
                 f,
-                "  unchanged: {}, pending: {}",
+                "  unchanged: {}, pending: {}, ttl unchanged: {}",
                 self.unchanged.len(),
-                self.pending.len()
+                self.pending.len(),
+                self.unchanged_ttl.len()
             )?;
         }
         Ok(())
@@ -901,6 +908,7 @@ impl Display for FirestoreIndexSyncReport {
         write_section(f, "created_indexes", &self.created_indexes)?;
         write_section(f, "updated_fields", &self.updated_fields)?;
         write_section(f, "enabled_ttl", &self.enabled_ttl)?;
+        write_section(f, "unchanged_ttl", &self.unchanged_ttl)?;
         write_section(f, "unchanged", &self.unchanged)?;
         write_section(f, "pending", &self.pending)?;
         write_section(f, "needs_repair", &self.needs_repair)?;
