@@ -41,8 +41,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     i.field(path!(Order::customer_id)).asc(),
                     i.field(path!(Order::placed_at)).desc(),
                 ]),
-                i.index([i.field(path!(Order::tags)).array_contains()])
-                    .all_descendants(),
+                i.index([
+                    i.field(path!(Order::tags)).array_contains(),
+                    i.field(path!(Order::placed_at)).desc(),
+                ])
+                .all_descendants(),
                 i.index([
                     i.field(path!(Order::customer_id)).asc(),
                     i.field(path!(Order::embedding)).vector(768),
