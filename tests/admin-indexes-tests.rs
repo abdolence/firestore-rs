@@ -3,13 +3,20 @@
 //! caller's own data depends on, and prunes both groups to an empty declaration at the end even
 //! when an earlier assertion fails.
 //!
+//! `plan_is_read_only_and_scoped_to_the_owned_group` makes no writes and runs in seconds, so it
+//! runs by default. Every other test here creates, updates or deletes real indexes, overrides or
+//! TTL policy in `GCP_PROJECT` and can take 10-15 minutes (a composite or vector index build is
+//! not instant even on an empty collection), so each carries `#[ignore]` and only runs on
+//! `cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture`.
+//!
 //! Safety net: `ListIndexes` scoped to one collection group's parent has been measured, against
 //! this same project, to answer with composite indexes belonging to *every* group in the
 //! database (see the fake-server tests in `src/db/admin/indexes.rs` that replay the exact
-//! response captured). The library now filters and defends against that on its own, but this
-//! test does not take that on faith: it snapshots every index outside its own two groups before
-//! touching anything, and asserts that snapshot is unchanged - not merely present, but identical
-//! in fields, scope and state - after every write this test makes, including the final cleanup.
+//! response captured). The library now filters and defends against that on its own, but the
+//! write-side test does not take that on faith: it snapshots every index outside its own two
+//! groups before touching anything, and asserts that snapshot is unchanged - not merely present,
+//! but identical in fields, scope and state - after every write it makes, including the final
+//! cleanup.
 
 use firestore::*;
 use gcloud_sdk::google::firestore::admin::v1::firestore_admin_client::FirestoreAdminClient;
@@ -233,6 +240,7 @@ async fn all_fields_override_on_a_single_group(
 }
 
 #[tokio::test]
+#[ignore = "creates and deletes real indexes in GCP_PROJECT; takes 10-15 minutes; run with --ignored"]
 async fn admin_index_management_against_real_firestore(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = setup().await?;
@@ -251,10 +259,10 @@ async fn admin_index_management_against_real_firestore(
 
     // Question 3: one channel serves both the data and admin APIs. `setup()`, the snapshot above
     // and every `.fluent()` call below already go through the same `FirestoreDb` built once from
-    // ADC; a plain document read on it here, interleaved with the admin calls, demonstrates the
-    // shared channel (including its `google-cloud-resource-prefix` header, set once when the
-    // channel was built) serves both without a second connection.
-    let ping_result = db.ping().await;
+    // ADC; a plain query on this test's own group here, interleaved with the admin calls,
+    // demonstrates the shared channel (including its `google-cloud-resource-prefix` header, set
+    // once when the channel was built) serves both without a second connection.
+    let data_read_result = db.fluent().select().from(SYNC_GROUP).query().await;
 
     let scenario = async {
         implied_name_direction_and_replan_is_a_no_op(&db).await?;
@@ -291,10 +299,57 @@ async fn admin_index_management_against_real_firestore(
     };
     println!("[safety] indexes outside the owned groups unchanged: {outside_unchanged:?}");
 
-    ping_result?;
+    data_read_result?;
     scenario?;
     cleanup_sync?;
     cleanup_probe?;
     outside_unchanged.map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { err.into() })?;
+    Ok(())
+}
+
+/// Read-only and fast (a single `plan()` call, seconds not minutes): needs only
+/// `roles/datastore.viewer` (`datastore.schemas.get`/`datastore.schemas.list`, the permissions
+/// that gate `ListIndexes`/`ListFields` - confirmed by listing that role's own permissions and
+/// Firestore's testable permissions for the project; `roles/datastore.indexAdmin`, needed by the
+/// write-side test above, grants the same two plus create/update/delete). Runs by default,
+/// unlike every other test in this file.
+#[tokio::test]
+async fn plan_is_read_only_and_scoped_to_the_owned_group(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let db = setup().await?;
+
+    let plan = db
+        .fluent()
+        .indexes()
+        .collection_group(SYNC_GROUP)
+        .plan()
+        .await?;
+    println!("[fast] plan() against {SYNC_GROUP:?}:\n{plan}");
+
+    let group_marker = format!("/collectionGroups/{SYNC_GROUP}/");
+    for listed in &plan.undeclared_indexes {
+        assert!(
+            listed.name.contains(&group_marker),
+            "plan() must never surface an index from another group: {}",
+            listed.name
+        );
+    }
+    for listed in plan.undeclared_fields.iter().chain(&plan.undeclared_ttl) {
+        assert!(
+            listed.name.contains(&group_marker),
+            "plan() must never surface a field from another group: {}",
+            listed.name
+        );
+    }
+
+    // Every real listed shape in this database converts cleanly under the current domain model;
+    // a MongoDB-compat, search or Datastore-mode index would be the known, accepted exception,
+    // but this project has none, so nothing here is expected to land in `unrecognised`.
+    assert!(
+        plan.unrecognised.is_empty(),
+        "unexpected unrecognised listed item(s): {:?}",
+        plan.unrecognised
+    );
+
     Ok(())
 }
