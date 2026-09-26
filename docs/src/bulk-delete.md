@@ -83,8 +83,13 @@ println!("{result}");
 The returned `FirestoreBulkDeleteResult` carries the operation name, the collection groups you
 asked for, and the elapsed time, plus, once you wait for it, the snapshot time Firestore used to
 decide what to delete and document and byte progress; without `.wait_until_done(...)`, the
-snapshot time and progress stay unset. It implements `Display`, so printing or logging it directly
-works with or without a tracing subscriber.
+snapshot time and progress stay unset and print as "progress not reported", never as `0/0`. It
+implements `Display`, so printing or logging it directly works with or without a tracing
+subscriber.
+
+A failed wait leaves the operation running on Firestore's side; the library logs the result built
+from what was polled so far at `warn` before returning the error, the same as index management's
+`.sync()` does for its own wait.
 
 ## Logs and spans
 
@@ -95,8 +100,11 @@ against five documents:
 ```text
 Started a bulk delete. operation=".../operations/CyA0..." action="bulk_delete" collection_groups="firestore-rs-bulk-delete-test"
 Firestore reported the bulk delete's snapshot time. snapshot_time=2026-09-26T19:50:00Z
-Bulk delete reached a terminal state. polls=3
+Operation reached a terminal state. action="bulk_delete" polls=3
 ```
+
+The third line comes from the same wait every long-running admin operation polls through, index
+sync included, which is why it names the operation generically rather than as a bulk delete.
 
 That run took about 11 seconds end to end, for 5 documents; budget for it running longer against
 more data.

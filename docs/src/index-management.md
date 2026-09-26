@@ -141,6 +141,20 @@ pruning is on; Firestore does not exempt it. A *declared* index matched to a lis
 `NEEDS_REPAIR` index is different: `.sync()` only ever reports that one, never deletes or
 recreates it automatically.
 
+`.prune_undeclared().plan()` previews a pruning sync without writing anything: `delete_indexes`,
+`revert_fields` and `disable_ttl` list exactly what a pruning `.sync()` would remove, and
+`kept_undeclared_indexes`, `kept_undeclared_fields` and `kept_undeclared_ttl` list what it would
+leave alone without `.prune_undeclared()`.
+
+## The order `.sync()` writes changes in
+
+`.sync()` applies one plan in a fixed order, stopping at the first write that fails: it creates
+missing composite indexes, writes declared field overrides, disables undeclared TTL fields,
+enables declared TTL fields, deletes undeclared composite indexes, and reverts undeclared field
+overrides. Creates come before deletes so a replaced index is never missing in between, and every
+TTL disable finishes before any TTL enable is sent, since Firestore allows only one TTL field per
+collection group.
+
 ## Waiting for changes to finish
 
 By default `.sync()` returns as soon as changes are requested; a created index or a newly enabled
@@ -164,6 +178,23 @@ db.fluent()
 `.wait_until_ready_with_options(...)` also sets the poll interval, 5 seconds by default. A
 composite or vector index build is not instant even on an empty collection; budget minutes, not
 seconds.
+
+A failed wait leaves the index and field writes already applied in place, since `.sync()` never
+rolls those back; it logs the report built so far at `warn` before returning the error, so what
+went through survives in the log even though the returned `Result` is an error.
+
+## A write to a field waits for its own earlier write in the same sync
+
+Two writes to the same field resource are never sent back to back: overlapping writes to one field
+are not known to be safe, so the later one waits for the earlier one to reach a terminal state
+first. This applies whenever one sync writes a field override and also enables or disables TTL on
+that same field, and to a TTL move in particular: disabling the old TTL field, then enabling the
+new one, waits for the disable to settle before the enable is sent. Writes to different fields are
+sent back to back, since Firestore accepts that.
+
+This wait uses `.wait_until_ready(timeout)`'s own timeout when you set one. Without it, `.sync()`
+still waits, under a default of 30 minutes, long enough for a field override's own single-field
+index build; there is no separate way to configure this default today.
 
 ## Indexing only chosen fields
 
@@ -228,18 +259,14 @@ Index management logs through `tracing`. One span covers a whole `.plan()` or `.
 (`Firestore Index Plan` or `Firestore Index Sync`), and nests child spans for listing, diffing,
 applying and, when `.wait_until_ready()` is set, waiting. Every span records its own elapsed time.
 
-An excerpt from a real `.plan()` call, against a project with one declared composite index and
-one field override, neither yet present in `firestore-rs-index-sync-test`:
+An excerpt from a real `.plan()` call against `firestore-rs-index-sync-test`, currently empty (no
+composite indexes, field overrides or TTL fields declared, and none listed for the group):
 
 ```text
-DEBUG Firestore Index Plan{/firestore/collection_group="firestore-rs-index-sync-test"}:Firestore Index List{...}: firestore::db::admin::indexes: Listed the collection group's indexes and fields. indexes=0 fields=0 skipped_indexes=7 skipped_fields=0
+DEBUG Firestore Index Plan{/firestore/collection_group="firestore-rs-index-sync-test" /firestore/prune=false}:Firestore Index List{...}: firestore::db::admin::indexes: Listed the collection group's indexes and fields. indexes=0 fields=0 skipped_indexes=7 skipped_fields=0
  INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Existing state: 0 indexes, 0 field overrides, 0 TTL fields collection_group="firestore-rs-index-sync-test" composite_indexes=0 field_overrides=0 ttl_fields=0
- INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Firestore index plan:
-  create_indexes: 1
-    [COLLECTION] (country ASC, created_at DESC)
-  update_field_overrides: 1
-    bio EXEMPT
- collection_group="firestore-rs-index-sync-test" create_indexes=1 update_fields=1 enable_ttl=0 unchanged=0 pending=0 undeclared_indexes=0 undeclared_fields=0 undeclared_ttl=0 unrecognised=0 prune=false
+ INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Firestore index plan: no changes (0 unchanged, 0 pending, 0 ttl unchanged)
+ collection_group="firestore-rs-index-sync-test" create_indexes=0 update_fields=0 enable_ttl=0 unchanged=0 pending=0 delete_indexes=0 revert_fields=0 disable_ttl=0 kept_undeclared_indexes=0 kept_undeclared_fields=0 kept_undeclared_ttl=0 unrecognised=0
  INFO Firestore Index Plan{...}: firestore::db::admin::indexes: plan() reports what sync() would change; nothing was applied. collection_group="firestore-rs-index-sync-test"
 ```
 
@@ -248,15 +275,36 @@ sharing the same database; the library filters listed items down to the owned gr
 computing anything, since a raw `ListIndexes` on one group's parent has been observed to return
 every group's indexes.
 
+The plan event's fields split undeclared items the same way pruning does: `delete_indexes`,
+`revert_fields` and `disable_ttl` are what a pruning sync would remove, and
+`kept_undeclared_indexes`, `kept_undeclared_fields` and `kept_undeclared_ttl` are what it would
+leave alone. This run has none of either, since the group carries nothing undeclared to begin
+with.
+
 `.sync()` also logs a `Firestore Index Apply` span with one child span per applied action, and a
 `Firestore Index Wait` span when waiting is requested, with one child span per operation polled.
+
+## Timings, unchanged TTL and the emulator marker on the report
+
+`FirestoreIndexSyncReport` carries a `timings` value alongside its lists: the whole call's
+duration, plus how long listing, applying and, when you waited, waiting each took. `Display`
+prints it as `timings: total <n> ms`, followed by `, list <n> ms`, `, apply <n> ms` and
+`, wait <n> ms` for whichever phases ran.
+
+`unchanged_ttl` reports declared TTL fields that were already active before this sync ran,
+separately from `enabled_ttl`, which is what this sync itself enabled.
+
+`skipped` is `Some(FirestoreIndexSyncSkipReason::Emulator)` when the sync ran against the emulator
+and did nothing, `None` once it has actually talked to Firestore. `.plan()` carries the same
+marker on `FirestoreIndexPlan::skipped`, so a plan made against the emulator prints as skipped
+rather than as "no changes needed" on a project the emulator never actually checked.
 
 ## The Firestore emulator
 
 `.plan()` and `.sync()` both skip when `FIRESTORE_EMULATOR_HOST` is set. The emulator answers
-`ListIndexes` with `UNIMPLEMENTED`, so both return an empty, default plan or report and log an
-`info` line saying so, instead of failing, so the same startup code runs unmodified against the
-emulator.
+`ListIndexes` with `UNIMPLEMENTED`, so both return an empty plan or report carrying the emulator
+`skipped` marker, and log an `info` line saying so, instead of failing, so the same startup code
+runs unmodified against the emulator.
 
 ## IAM roles
 
