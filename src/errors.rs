@@ -134,6 +134,14 @@ pub struct FirestoreDatabaseError {
     pub retry_possible: bool,
 }
 
+impl FirestoreDatabaseError {
+    pub(crate) fn retryable_read(&self, in_transaction: bool) -> bool {
+        // An aborted transaction must be retried as a whole, not by repeating
+        // a read with the invalid transaction ID.
+        self.retry_possible && !(in_transaction && self.public.code == "Aborted")
+    }
+}
+
 impl Display for FirestoreDatabaseError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(

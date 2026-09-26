@@ -463,7 +463,10 @@ impl FirestoreDb {
                 }
                 Err(err) => match err {
                     FirestoreError::DatabaseError(ref db_err)
-                    if db_err.retry_possible && retries < self.get_options().max_retries =>
+                    if db_err.retryable_read(matches!(
+                        self.session_params.consistency_selector,
+                        Some(FirestoreConsistencySelector::Transaction(_))
+                    )) && retries < self.get_options().max_retries =>
                         {
                             let sleep_duration = tokio::time::Duration::from_millis(
                                 rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1),
