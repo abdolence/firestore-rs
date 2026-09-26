@@ -91,6 +91,7 @@
 //! | `tls-webpki-roots` | TLS trust anchors bundled from the `webpki-roots` crate instead |
 //! | `caching-memory` | In-memory collection and document cache, kept current by a listener |
 //! | `caching-persistent` | The same cache backed by an on-disk database |
+//! | `admin` | Declarative index management: composite indexes, vector indexes, single-field overrides and TTL policy |
 //!
 //! Runnable examples for every topic:
 //! <https://github.com/abdolence/firestore-rs/tree/master/examples>

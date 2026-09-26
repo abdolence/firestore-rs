@@ -90,6 +90,10 @@ mod load_modes {}
 #[doc = include_str!("../docs/src/caching/updates.md")]
 mod updates {}
 
+#[cfg(feature = "admin")]
+#[doc = include_str!("../docs/src/index-management.md")]
+mod index_management {}
+
 #[doc = include_str!("../docs/src/auth.md")]
 mod auth {}
 
