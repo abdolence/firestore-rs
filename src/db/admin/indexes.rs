@@ -23,7 +23,6 @@ use gcloud_sdk::google::firestore::admin::v1::{
 };
 use gcloud_sdk::google::longrunning::operation::Result as LroResult;
 use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
-use gcloud_sdk::google::longrunning::GetOperationRequest;
 use gcloud_sdk::prost_types::FieldMask;
 use gcloud_sdk::tonic::Code;
 use std::collections::HashMap;
@@ -237,11 +236,15 @@ fn ensure_owned_resource(group_path: &str, kind: &str, name: &str) -> FirestoreR
 }
 
 impl FirestoreDb {
-    fn admin_client(&self) -> FirestoreAdminClient<gcloud_sdk::GoogleAuthMiddleware> {
+    /// Shared with bulk delete ([`crate::db::admin::bulk_delete`]): both build their client on
+    /// this same authenticated channel.
+    pub(crate) fn admin_client(&self) -> FirestoreAdminClient<gcloud_sdk::GoogleAuthMiddleware> {
         self.inner.client.get_with(FirestoreAdminClient::new)
     }
 
-    fn operations_client(&self) -> OperationsClient<gcloud_sdk::GoogleAuthMiddleware> {
+    /// Shared with [`crate::db::admin::operation_wait`], which both index sync and bulk delete
+    /// poll long-running operations through.
+    pub(crate) fn operations_client(&self) -> OperationsClient<gcloud_sdk::GoogleAuthMiddleware> {
         self.inner.client.get_with(OperationsClient::new)
     }
 
@@ -753,14 +756,7 @@ impl FirestoreDb {
         let outcome = async {
             loop {
                 polls += 1;
-                let operation = self
-                    .operations_client()
-                    .get_operation(GetOperationRequest {
-                        name: op.name.clone(),
-                    })
-                    .await
-                    .map_err(FirestoreError::from)?
-                    .into_inner();
+                let operation = self.get_operation(&op.name).await?;
                 debug!(
                     poll = polls,
                     operation = op.name.as_str(),
