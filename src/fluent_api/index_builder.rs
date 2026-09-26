@@ -133,10 +133,12 @@ where
 
     /// Also deletes or reverts anything listed for this group that this statement does not
     /// declare: undeclared composite indexes are deleted, undeclared field overrides are
-    /// reverted to automatic indexing, and undeclared TTL fields are disabled.
+    /// reverted to automatic indexing, and undeclared TTL fields are disabled. An undeclared
+    /// index in state `NEEDS_REPAIR` is deleted like any other undeclared index.
     ///
-    /// Without this, undeclared items are only reported. `NEEDS_REPAIR` indexes are never
-    /// deleted, pruned or not.
+    /// Without this, undeclared items are only reported. Either way, a *declared* index matched
+    /// to a listed `NEEDS_REPAIR` index is only ever reported: `.sync()` never deletes or
+    /// recreates it automatically.
     #[inline]
     pub fn prune_undeclared(self) -> Self {
         Self {
@@ -485,17 +487,47 @@ impl FirestoreFieldOverrideFieldBuilder {
     /// Replaces this field's automatic indexes with exactly the ones listed - typically built
     /// with [`FirestoreFieldOverrideBuilder::ascending`],
     /// [`descending`](FirestoreFieldOverrideBuilder::descending) or
-    /// [`array_contains`](FirestoreFieldOverrideBuilder::array_contains). See
+    /// [`array_contains`](FirestoreFieldOverrideBuilder::array_contains). Entries drop `None`,
+    /// the same as a composite index's fields, so one can be conditional. See
     /// [`FirestoreFieldOverride`] for why this replaces rather than extends the default set.
     #[inline]
     pub fn indexes<I>(self, indexes: I) -> FirestoreFieldOverride
     where
-        I: IntoIterator<Item = FirestoreFieldOverrideIndex>,
+        I: IntoIterator,
+        I::Item: FirestoreFieldOverrideIndexExpr,
     {
         FirestoreFieldOverride {
             field_path: self.field_path,
-            indexes: indexes.into_iter().collect(),
+            indexes: indexes
+                .into_iter()
+                .filter_map(FirestoreFieldOverrideIndexExpr::build_field_override_index)
+                .collect(),
         }
+    }
+}
+
+/// A trait for types that can be converted into a [`FirestoreFieldOverrideIndex`], implemented
+/// for `Option<T>` so one entry can be conditional, the same way a composite index's field is.
+pub trait FirestoreFieldOverrideIndexExpr {
+    /// Builds the [`FirestoreFieldOverrideIndex`]. Returns `None` if the expression declares no
+    /// index.
+    fn build_field_override_index(self) -> Option<FirestoreFieldOverrideIndex>;
+}
+
+impl FirestoreFieldOverrideIndexExpr for FirestoreFieldOverrideIndex {
+    #[inline]
+    fn build_field_override_index(self) -> Option<FirestoreFieldOverrideIndex> {
+        Some(self)
+    }
+}
+
+impl<T> FirestoreFieldOverrideIndexExpr for Option<T>
+where
+    T: FirestoreFieldOverrideIndexExpr,
+{
+    #[inline]
+    fn build_field_override_index(self) -> Option<FirestoreFieldOverrideIndex> {
+        self.and_then(FirestoreFieldOverrideIndexExpr::build_field_override_index)
     }
 }
 
@@ -722,6 +754,38 @@ mod tests {
             vec![FirestoreFieldOverride {
                 field_path: "bio".to_string(),
                 indexes: vec![],
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn optional_field_override_index_entries_drop_out() {
+        let mock = MockIndexDatabase::default();
+        FirestoreExprBuilder { db: &mock }
+            .indexes()
+            .collection_group("users")
+            .field_overrides(|f| {
+                f.fields([f.field(path!(User::tags)).indexes([
+                    Some(f.ascending()),
+                    None,
+                    Some(f.array_contains()),
+                ])])
+            })
+            .sync()
+            .await
+            .unwrap();
+
+        let (params, _) = mock.captured().unwrap();
+        assert_eq!(
+            params.field_overrides,
+            vec![FirestoreFieldOverride {
+                field_path: "tags".to_string(),
+                indexes: vec![
+                    FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::Order(
+                        FirestoreQueryDirection::Ascending
+                    )),
+                    FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains),
+                ],
             }]
         );
     }
