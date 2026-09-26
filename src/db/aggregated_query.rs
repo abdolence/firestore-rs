@@ -1,14 +1,10 @@
 #![allow(clippy::derive_partial_eq_without_eq)] // Since we may not be able to implement Eq for the changes coming from Firestore protos
 
-use crate::db::retry::retry_delay;
 use crate::db::support::FirestoreAggregatedQuerySupport;
 use crate::FirestoreInstant;
-use crate::{FirestoreDb, FirestoreError, FirestoreQueryParams, FirestoreResult};
+use crate::{FirestoreDb, FirestoreQueryParams, FirestoreResult};
 use async_trait::async_trait;
-use futures::future::BoxFuture;
 use futures::stream::BoxStream;
-use futures::FutureExt;
-use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
@@ -117,8 +113,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
             "/firestore/collection_name" = collection_str.as_str(),
             "/firestore/response_time" = field::Empty
         );
-        self.aggregated_query_doc_with_retries(params, 0, &span)
-            .await
+        self.aggregated_query_doc_with_retries(params, &span).await
     }
 
     async fn stream_aggregated_query_doc<'b>(
@@ -135,7 +130,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
         );
 
         let doc_stream = self
-            .stream_aggregated_query_doc_with_retries(params, 0, &span)
+            .stream_aggregated_query_doc_with_retries(params, &span)
             .await?;
 
         Ok(Box::pin(doc_stream.filter_map(|doc_res| {
@@ -164,7 +159,7 @@ impl FirestoreAggregatedQuerySupport for FirestoreDb {
         );
 
         let doc_stream = self
-            .stream_aggregated_query_doc_with_retries(params, 0, &span)
+            .stream_aggregated_query_doc_with_retries(params, &span)
             .await?;
 
         Ok(Box::pin(doc_stream.filter_map(|doc_res| {
@@ -234,8 +229,8 @@ impl FirestoreDb {
     fn create_aggregated_query_request(
         &self,
         params: FirestoreAggregatedQueryParams,
-    ) -> FirestoreResult<gcloud_sdk::tonic::Request<RunAggregationQueryRequest>> {
-        Ok(gcloud_sdk::tonic::Request::new(RunAggregationQueryRequest {
+    ) -> FirestoreResult<RunAggregationQueryRequest> {
+        Ok(RunAggregationQueryRequest {
             parent: params
                 .query_params
                 .parent
@@ -257,141 +252,86 @@ impl FirestoreDb {
                 }
             )),
             explain_options: None,
-        }))
+        })
     }
 
-    fn stream_aggregated_query_doc_with_retries<'a, 'b>(
-        &'a self,
+    async fn stream_aggregated_query_doc_with_retries<'b>(
+        &self,
         params: FirestoreAggregatedQueryParams,
-        retries: usize,
-        span: &'a Span,
-    ) -> BoxFuture<'a, FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>>> {
-        async move {
-            let query_request = self.create_aggregated_query_request(params.clone())?;
-            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
+        span: &Span,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<Option<Document>>>> {
+        let collection_id = params.query_params.collection_id.clone();
+        let query_request = self.create_aggregated_query_request(params)?;
+        let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
-            match self
-                .client()
-                .get()
-                .run_aggregation_query(query_request)
-                .map_err(|e| e.into())
-                .await
-            {
-                Ok(query_response) => {
-                    let query_stream = query_response
-                        .into_inner()
-                        .map_ok(Self::aggregated_response_to_doc)
-                        .map_err(|e| e.into())
-                        .boxed();
+        let query_stream = self
+            .run_aggregation_query_with_retries(&query_request, span)
+            .await?
+            .map_ok(Self::aggregated_response_to_doc)
+            .map_err(|e| e.into())
+            .boxed();
 
-                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
-                    let query_duration = end_query_utc.duration_since(begin_query_utc);
+        let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+        let query_duration = end_query_utc.duration_since(begin_query_utc);
 
-                    span.record(
-                        "/firestore/response_time",
-                        query_duration.as_millis(),
-                    );
-                    span.in_scope(|| {
-                        debug!(
-                            collection_id = ?params.query_params.collection_id,
-                            duration_milliseconds = query_duration.as_millis(),
-                            "Querying stream of documents in specified collection.",
-                        );
-                    });
+        span.record("/firestore/response_time", query_duration.as_millis());
+        span.in_scope(|| {
+            debug!(
+                ?collection_id,
+                duration_milliseconds = query_duration.as_millis(),
+                "Querying stream of documents in specified collection.",
+            );
+        });
 
-                    Ok(query_stream)
-                }
-                Err(err) => match err {
-                    FirestoreError::DatabaseError(ref db_err)
-                    if self.read_retry_possible(db_err, retries) =>
-                        {
-                            let sleep_duration = retry_delay(retries);
-                            warn!(
-                                err = %db_err,
-                                current_retry = retries + 1,
-                                max_retries = self.inner.options.max_retries,
-                                delay = sleep_duration.as_millis(),
-                                "Failed to run aggregation query. Retrying up to the specified number of times.",
-                            );
-
-                            tokio::time::sleep(sleep_duration).await;
-
-                            self.stream_aggregated_query_doc_with_retries(params, retries + 1, span)
-                                .await
-                        }
-                    _ => Err(err),
-                },
-            }
-        }
-            .boxed()
+        Ok(query_stream)
     }
 
-    fn aggregated_query_doc_with_retries<'a>(
-        &'a self,
+    async fn aggregated_query_doc_with_retries(
+        &self,
         params: FirestoreAggregatedQueryParams,
-        retries: usize,
-        span: &'a Span,
-    ) -> BoxFuture<'a, FirestoreResult<Vec<Document>>> {
-        async move {
-            let query_request = self.create_aggregated_query_request(params.clone())?;
-            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
+        span: &Span,
+    ) -> FirestoreResult<Vec<Document>> {
+        let collection_id = params.query_params.collection_id.clone();
+        let query_request = self.create_aggregated_query_request(params)?;
+        let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
-            match self
-                .client()
-                .get()
-                .run_aggregation_query(query_request)
-                .map_err(|e| e.into())
-                .await
-            {
-                Ok(query_response) => {
-                    let query_stream = query_response
-                        .into_inner()
-                        .map_ok(Self::aggregated_response_to_doc)
-                        .try_collect::<Vec<Option<Document>>>()
-                        .await?
-                        .into_iter()
-                        .flatten()
-                        .collect();
-                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
-                    let query_duration = end_query_utc.duration_since(begin_query_utc);
+        let docs = self
+            .run_aggregation_query_with_retries(&query_request, span)
+            .await?
+            .map_ok(Self::aggregated_response_to_doc)
+            .try_collect::<Vec<Option<Document>>>()
+            .await?
+            .into_iter()
+            .flatten()
+            .collect();
 
-                    span.record(
-                        "/firestore/response_time",
-                        query_duration.as_millis(),
-                    );
-                    span.in_scope(|| {
-                        debug!(
-                            collection_id = ?params.query_params.collection_id,
-                            duration_milliseconds = query_duration.as_millis(),
-                            "Querying documents in specified collection.",
-                        );
-                    });
+        let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+        let query_duration = end_query_utc.duration_since(begin_query_utc);
 
-                    Ok(query_stream)
-                }
-                Err(err) => match err {
-                    FirestoreError::DatabaseError(ref db_err)
-                    if self.read_retry_possible(db_err, retries) =>
-                        {
-                            let sleep_duration = retry_delay(retries);
-                            warn!(
-                                err = %db_err,
-                                current_retry = retries + 1,
-                                max_retries = self.inner.options.max_retries,
-                                delay = sleep_duration.as_millis(),
-                                "Failed to run aggregation query. Retrying up to the specified number of times.",
-                            );
+        span.record("/firestore/response_time", query_duration.as_millis());
+        span.in_scope(|| {
+            debug!(
+                ?collection_id,
+                duration_milliseconds = query_duration.as_millis(),
+                "Querying documents in specified collection.",
+            );
+        });
 
-                            tokio::time::sleep(sleep_duration).await;
+        Ok(docs)
+    }
 
-                            self.aggregated_query_doc_with_retries(params, retries + 1, span)
-                                .await
-                        }
-                    _ => Err(err),
-                },
-            }
-        }
-            .boxed()
+    async fn run_aggregation_query_with_retries(
+        &self,
+        query_request: &RunAggregationQueryRequest,
+        span: &Span,
+    ) -> FirestoreResult<gcloud_sdk::tonic::Streaming<RunAggregationQueryResponse>> {
+        self.retry_read(
+            span,
+            "run aggregation query",
+            query_request,
+            |mut client, request| async move { client.run_aggregation_query(request).await },
+        )
+        .await
     }
 
     fn aggregated_response_to_doc(mut agg_res: RunAggregationQueryResponse) -> Option<Document> {

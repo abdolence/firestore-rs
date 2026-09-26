@@ -346,7 +346,6 @@ impl FirestoreDb {
             "-ping-".to_string(),             // A document ID that is unlikely to exist
             self.get_database_path().clone(), // Use the root database path for this check
             None,                             // No specific consistency required
-            0,                                // No retries needed for a ping
         )
         .await
         .map(|_| ()) // If it's Ok(None) or Ok(Some(_)), it's a success for ping

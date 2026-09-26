@@ -1,12 +1,8 @@
-use crate::db::retry::retry_delay;
 use crate::FirestoreInstant;
 use crate::*;
 use async_trait::async_trait;
-use futures::future::BoxFuture;
 use futures::stream::BoxStream;
-use futures::FutureExt;
 use futures::StreamExt;
-use futures::TryFutureExt;
 use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
@@ -68,7 +64,8 @@ impl FirestoreListingSupport for FirestoreDb {
             "/firestore/response_time" = field::Empty
         );
 
-        self.list_doc_with_retries(params, 0, span).await
+        let list_request = self.create_list_doc_request(params)?;
+        self.list_doc_page(&list_request, &span).await
     }
 
     async fn stream_list_doc_with_errors<'b>(
@@ -142,8 +139,7 @@ impl FirestoreListingSupport for FirestoreDb {
             "/firestore/response_time" = field::Empty
         );
 
-        self.list_collection_ids_with_retries(params, 0, &span)
-            .await
+        self.list_collection_ids_page(&params, &span).await
     }
 
     async fn stream_list_collection_ids(
@@ -175,10 +171,7 @@ impl FirestoreListingSupport for FirestoreDb {
                         "/firestore/response_time" = field::Empty
                     );
 
-                    match self
-                        .list_collection_ids_with_retries(params.clone(), 0, &span)
-                        .await
-                    {
+                    match self.list_collection_ids_page(&params, &span).await {
                         Ok(results) => {
                             if let Some(next_page_token) = results.page_token.clone() {
                                 Some((Ok(results), Some(params.with_page_token(next_page_token))))
@@ -249,86 +242,41 @@ impl FirestoreDb {
         })
     }
 
-    fn list_doc_with_retries<'b>(
+    async fn list_doc_page(
         &self,
-        params: FirestoreListDocParams,
-        retries: usize,
-        span: Span,
-    ) -> BoxFuture<'b, FirestoreResult<FirestoreListDocResult>> {
-        match self.create_list_doc_request(params) {
-            Ok(list_request) => {
-                Self::list_doc_with_retries_inner(self.clone(), list_request, retries, span).boxed()
-            }
-            Err(err) => futures::future::err(err).boxed(),
-        }
-    }
+        list_request: &ListDocumentsRequest,
+        span: &Span,
+    ) -> FirestoreResult<FirestoreListDocResult> {
+        let begin_utc: FirestoreInstant = FirestoreInstant::now();
+        let list_inner = self
+            .retry_read(
+                span,
+                "list documents",
+                list_request,
+                |mut client, request| async move { client.list_documents(request).await },
+            )
+            .await?;
+        let result = FirestoreListDocResult::new(list_inner.documents).opt_page_token(
+            if !list_inner.next_page_token.is_empty() {
+                Some(list_inner.next_page_token)
+            } else {
+                None
+            },
+        );
+        let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+        let listing_duration = end_query_utc.duration_since(begin_utc);
 
-    fn list_doc_with_retries_inner<'b>(
-        db: FirestoreDb,
-        list_request: ListDocumentsRequest,
-        retries: usize,
-        span: Span,
-    ) -> BoxFuture<'b, FirestoreResult<FirestoreListDocResult>> {
-        async move {
-            let begin_utc: FirestoreInstant = FirestoreInstant::now();
+        span.record("/firestore/response_time", listing_duration.as_millis());
+        span.in_scope(|| {
+            debug!(
+                collection_id = list_request.collection_id.as_str(),
+                duration_milliseconds = listing_duration.as_millis(),
+                num_documents = result.documents.len(),
+                "Listed documents.",
+            );
+        });
 
-            match db.client().get()
-                .list_documents(
-                    gcloud_sdk::tonic::Request::new(list_request.clone())
-                )
-                .map_err(|e| e.into())
-                .await
-            {
-                Ok(listing_response) => {
-                    let list_inner = listing_response.into_inner();
-                    let result = FirestoreListDocResult::new(list_inner.documents).opt_page_token(
-                        if !list_inner.next_page_token.is_empty() {
-                            Some(list_inner.next_page_token)
-                        } else {
-                            None
-                        },
-                    );
-                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
-                    let listing_duration = end_query_utc.duration_since(begin_utc);
-
-                    span.record(
-                        "/firestore/response_time",
-                        listing_duration.as_millis(),
-                    );
-                    span.in_scope(|| {
-                        debug!(
-                            collection_id = list_request.collection_id.as_str(),
-                            duration_milliseconds = listing_duration.as_millis(),
-                            num_documents = result.documents.len(),
-                            "Listed documents.",
-                        );
-                    });
-
-                    Ok(result)
-                }
-                Err(err) => match err {
-                    FirestoreError::DatabaseError(ref db_err)
-                    if db.read_retry_possible(db_err, retries) =>
-                        {
-                            let sleep_duration = retry_delay(retries);
-
-                            warn!(
-                                err = %db_err,
-                                current_retry = retries + 1,
-                                max_retries = db.get_options().max_retries,
-                                delay = sleep_duration.as_millis(),
-                                "Failed to list documents. Retrying up to the specified number of times.",
-                            );
-
-                            tokio::time::sleep(sleep_duration).await;
-
-                            Self::list_doc_with_retries_inner(db, list_request, retries + 1, span).await
-                        }
-                    _ => Err(err),
-                },
-            }
-        }
-            .boxed()
+        Ok(result)
     }
 
     async fn stream_list_doc_with_retries<'b>(
@@ -362,14 +310,7 @@ impl FirestoreDb {
                             "/firestore/collection_name" = list_request.collection_id.as_str(),
                             "/firestore/response_time" = field::Empty
                         );
-                        match Self::list_doc_with_retries_inner(
-                            db.clone(),
-                            list_request.clone(),
-                            0,
-                            span,
-                        )
-                        .await
-                        {
+                        match db.list_doc_page(&list_request, &span).await {
                             Ok(results) => {
                                 if let Some(next_page_token) = results.page_token.clone() {
                                     list_request.page_token = next_page_token;
@@ -406,8 +347,8 @@ impl FirestoreDb {
     fn create_list_collection_ids_request(
         &self,
         params: &FirestoreListCollectionIdsParams,
-    ) -> FirestoreResult<gcloud_sdk::tonic::Request<ListCollectionIdsRequest>> {
-        Ok(gcloud_sdk::tonic::Request::new(ListCollectionIdsRequest {
+    ) -> FirestoreResult<ListCollectionIdsRequest> {
+        Ok(ListCollectionIdsRequest {
             parent: params
                 .parent
                 .as_ref()
@@ -422,73 +363,42 @@ impl FirestoreDb {
                 .map(|selector| selector.try_into())
                 .transpose()?,
             request_options: self.resolve_request_options(params.request_options.as_ref()),
-        }))
+        })
     }
 
-    fn list_collection_ids_with_retries<'a>(
-        &'a self,
-        params: FirestoreListCollectionIdsParams,
-        retries: usize,
-        span: &'a Span,
-    ) -> BoxFuture<'a, FirestoreResult<FirestoreListCollectionIdsResult>> {
-        async move {
-            let list_request = self.create_list_collection_ids_request(&params)?;
-            let begin_utc: FirestoreInstant = FirestoreInstant::now();
+    async fn list_collection_ids_page(
+        &self,
+        params: &FirestoreListCollectionIdsParams,
+        span: &Span,
+    ) -> FirestoreResult<FirestoreListCollectionIdsResult> {
+        let list_request = self.create_list_collection_ids_request(params)?;
+        let begin_utc: FirestoreInstant = FirestoreInstant::now();
+        let list_inner = self
+            .retry_read(
+                span,
+                "list collection IDs",
+                &list_request,
+                |mut client, request| async move { client.list_collection_ids(request).await },
+            )
+            .await?;
+        let result = FirestoreListCollectionIdsResult::new(list_inner.collection_ids)
+            .opt_page_token(if !list_inner.next_page_token.is_empty() {
+                Some(list_inner.next_page_token)
+            } else {
+                None
+            });
+        let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+        let listing_duration = end_query_utc.duration_since(begin_utc);
 
-            match self
-                .client()
-                .get()
-                .list_collection_ids(list_request)
-                .map_err(|e| e.into())
-                .await
-            {
-                Ok(listing_response) => {
-                    let list_inner = listing_response.into_inner();
-                    let result = FirestoreListCollectionIdsResult::new(list_inner.collection_ids)
-                        .opt_page_token(if !list_inner.next_page_token.is_empty() {
-                            Some(list_inner.next_page_token)
-                        } else {
-                            None
-                        });
-                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
-                    let listing_duration = end_query_utc.duration_since(begin_utc);
+        span.record("/firestore/response_time", listing_duration.as_millis());
+        span.in_scope(|| {
+            debug!(
+                duration_milliseconds = listing_duration.as_millis(),
+                "Listed collections.",
+            );
+        });
 
-                    span.record(
-                        "/firestore/response_time",
-                        listing_duration.as_millis(),
-                    );
-                    span.in_scope(|| {
-                        debug!(
-                            duration_milliseconds = listing_duration.as_millis(),
-                            "Listed collections.",
-                        );
-                    });
-
-                    Ok(result)
-                }
-                Err(err) => match err {
-                    FirestoreError::DatabaseError(ref db_err)
-                    if db_err.retry_possible && retries < self.inner.options.max_retries =>
-                        {
-                            let sleep_duration = retry_delay(retries);
-                            warn!(
-                                err = %db_err,
-                                current_retry = retries + 1,
-                                max_retries = self.inner.options.max_retries,
-                                delay = sleep_duration.as_millis(),
-                                "Failed to list collection IDs. Retrying up to the specified number of times.",
-                            );
-
-                            tokio::time::sleep(sleep_duration).await;
-
-                            self.list_collection_ids_with_retries(params, retries + 1, span)
-                                .await
-                        }
-                    _ => Err(err),
-                },
-            }
-        }
-            .boxed()
+        Ok(result)
     }
 }
 

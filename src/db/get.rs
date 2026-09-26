@@ -1,12 +1,9 @@
-use crate::db::retry::retry_delay;
 use crate::db::safe_document_path;
 use crate::errors::*;
 use crate::FirestoreInstant;
 use crate::*;
 use async_trait::async_trait;
-use futures::future::{BoxFuture, FutureExt};
 use futures::stream::BoxStream;
-use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
@@ -26,13 +23,8 @@ impl FirestoreGetByIdSupport for FirestoreDb {
         S: AsRef<str> + Send,
     {
         let document_path = safe_document_path(parent, collection_id, document_id.as_ref())?;
-        self.get_doc_by_path(
-            collection_id.to_string(),
-            document_path,
-            return_only_fields,
-            0,
-        )
-        .await
+        self.get_doc_by_path(collection_id.to_string(), document_path, return_only_fields)
+            .await
     }
 
     async fn get_doc<S>(
@@ -380,112 +372,81 @@ impl FirestoreGetByIdSupport for FirestoreDb {
 }
 
 impl FirestoreDb {
-    pub(crate) fn get_doc_by_path(
+    pub(crate) async fn get_doc_by_path(
         &self,
         collection_id: String,
         document_path: String,
         return_only_fields: Option<Vec<String>>,
-        retries: usize,
-    ) -> BoxFuture<'_, FirestoreResult<Document>> {
-        async move {
-            #[cfg(feature = "caching")]
+    ) -> FirestoreResult<Document> {
+        #[cfg(feature = "caching")]
+        {
+            if let FirestoreCachedValue::UseCached(doc) = self
+                .get_doc_from_cache(
+                    collection_id.as_str(),
+                    document_path.as_str(),
+                    &return_only_fields,
+                )
+                .await?
             {
-                if let FirestoreCachedValue::UseCached(doc) = self
-                    .get_doc_from_cache(
-                        collection_id.as_str(),
-                        document_path.as_str(),
-                        &return_only_fields,
-                    )
-                    .await?
-                {
-                    return Ok(doc);
-                }
-            }
-
-            let _return_only_fields_empty = return_only_fields.is_none();
-
-            let span = span!(
-                Level::DEBUG,
-                "Firestore Get Doc",
-                "/firestore/collection_name" = collection_id,
-                "/firestore/response_time" = field::Empty,
-                "/firestore/document_name" = document_path.as_str()
-            );
-            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
-
-            let request = gcloud_sdk::tonic::Request::new(GetDocumentRequest {
-                name: document_path.clone(),
-                consistency_selector: self
-                    .session_params
-                    .consistency_selector
-                    .as_ref()
-                    .map(|selector| selector.try_into())
-                    .transpose()?,
-                request_options: self.resolve_request_options(None),
-                mask: return_only_fields.map({
-                    |vf| gcloud_sdk::google::firestore::v1::DocumentMask {
-                        field_paths: vf.iter().map(|f| f.to_string()).collect(),
-                    }
-                }),
-            });
-
-            let response = self
-                .client()
-                .get()
-                .get_document(request)
-                .map_err(|e| e.into())
-                .await;
-
-            let end_query_utc: FirestoreInstant = FirestoreInstant::now();
-            let query_duration = end_query_utc.duration_since(begin_query_utc);
-
-            span.record(
-                "/firestore/response_time",
-                query_duration.as_millis(),
-            );
-
-            match response {
-                Ok(doc_response) => {
-                    span.in_scope(|| {
-                        debug!(
-                            document_path,
-                            duration_milliseconds = query_duration.as_millis(),
-                            "Read document.",
-                        );
-                    });
-
-                    let doc = doc_response.into_inner();
-                    #[cfg(feature = "caching")]
-                    if _return_only_fields_empty {
-                        self.offer_doc_update_to_cache(&doc).await?;
-                    }
-                    Ok(doc)
-                }
-                Err(err) => match err {
-                    FirestoreError::DatabaseError(ref db_err)
-                    if self.read_retry_possible(db_err, retries) =>
-                        {
-                            let sleep_duration = retry_delay(retries);
-                            span.in_scope(|| {
-                                warn!(
-                                    err = %db_err,
-                                    current_retry = retries + 1,
-                                    max_retries = self.get_options().max_retries,
-                                    delay = sleep_duration.as_millis(),
-                                    "Failed to get document. Retrying up to the specified number of times.",
-                                );
-                            });
-
-                            tokio::time::sleep(sleep_duration).await;
-
-                            self.get_doc_by_path(collection_id, document_path, None, retries + 1)
-                                .await
-                        }
-                    _ => Err(err),
-                },
+                return Ok(doc);
             }
         }
-            .boxed()
+
+        let _return_only_fields_empty = return_only_fields.is_none();
+
+        let span = span!(
+            Level::DEBUG,
+            "Firestore Get Doc",
+            "/firestore/collection_name" = collection_id,
+            "/firestore/response_time" = field::Empty,
+            "/firestore/document_name" = document_path.as_str()
+        );
+        let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
+
+        let request = GetDocumentRequest {
+            name: document_path.clone(),
+            consistency_selector: self
+                .session_params
+                .consistency_selector
+                .as_ref()
+                .map(|selector| selector.try_into())
+                .transpose()?,
+            request_options: self.resolve_request_options(None),
+            mask: return_only_fields.map({
+                |vf| gcloud_sdk::google::firestore::v1::DocumentMask {
+                    field_paths: vf.iter().map(|f| f.to_string()).collect(),
+                }
+            }),
+        };
+
+        let response = self
+            .retry_read(
+                &span,
+                "get document",
+                &request,
+                |mut client, request| async move { client.get_document(request).await },
+            )
+            .await;
+
+        let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+        let query_duration = end_query_utc.duration_since(begin_query_utc);
+
+        span.record("/firestore/response_time", query_duration.as_millis());
+
+        let doc = response?;
+        span.in_scope(|| {
+            debug!(
+                document_path,
+                duration_milliseconds = query_duration.as_millis(),
+                "Read document.",
+            );
+        });
+
+        #[cfg(feature = "caching")]
+        if _return_only_fields_empty {
+            self.offer_doc_update_to_cache(&doc).await?;
+        }
+        Ok(doc)
     }
 
     pub(crate) async fn get_docs_by_ids(
