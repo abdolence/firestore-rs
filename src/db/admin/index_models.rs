@@ -476,7 +476,9 @@ pub(crate) fn validate_index_params(params: &FirestoreIndexParams) -> FirestoreR
 /// [`FirestoreCollectionId::new`] accepts these IDs on purpose (see its module docs), because a
 /// bare document or collection reference to them is legitimate; only naming one as the group a
 /// whole statement *owns* is not.
-fn validate_collection_group(collection_group: &FirestoreCollectionId) -> FirestoreResult<()> {
+pub(crate) fn validate_collection_group(
+    collection_group: &FirestoreCollectionId,
+) -> FirestoreResult<()> {
     let id = collection_group.as_str();
     let is_reserved = id == "-" || (id.len() >= 4 && id.starts_with("__") && id.ends_with("__"));
     if is_reserved {

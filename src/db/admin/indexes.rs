@@ -6,7 +6,7 @@
 use crate::db::admin::index_diff::{
     plan_index_changes, FirestoreIndexExistingState, FirestoreIndexListing,
 };
-use crate::db::admin::index_models::write_section;
+use crate::db::admin::index_models::{validate_collection_group, write_section};
 use crate::db::admin::operation_wait::{OperationAction, StartedOperation};
 use crate::db::support::FirestoreIndexSupport;
 use crate::errors::FirestoreError;
@@ -153,22 +153,42 @@ fn log_plan(group: &FirestoreCollectionId, plan: &FirestoreIndexPlan) {
     }
 }
 
-/// Refuses to touch a resource that is not under `group_path`, independent of the filtering
-/// `list_existing_state` already applies to what it reports as undeclared in the first place.
-///
-/// The last line of defense before a delete or a revert: measured against the real service,
-/// 2026-09-26, `ListIndexes` scoped to one collection group's parent still answered with
-/// composite indexes belonging to other groups in the same database, so a resource's presence in
-/// a listing response is not enough on its own to trust it with `prune_undeclared()`.
-fn ensure_owned_resource(group_path: &str, kind: &str, name: &str) -> FirestoreResult<()> {
-    let prefix = format!("{group_path}/{kind}/");
-    if name.starts_with(prefix.as_str()) {
-        Ok(())
-    } else {
-        Err(FirestoreError::invalid_parameters(
-            "resource_name",
-            format!("refusing to touch {name}: not under the owned group {group_path}"),
-        ))
+/// The one collection group a statement owns: its ID, and its resource path in the database.
+struct OwnedGroup<'a> {
+    id: &'a FirestoreCollectionId,
+    path: String,
+}
+
+impl OwnedGroup<'_> {
+    /// The resource name of field `path` in this group: the key writes to one field are
+    /// sequenced on, and the name an `UpdateField` request carries.
+    fn field_resource(&self, path: &str) -> String {
+        format!("{}/fields/{path}", self.path)
+    }
+
+    /// Refuses to touch a resource that is not under this group, independent of the filtering
+    /// `list_existing_state` already applies to what it reports as undeclared in the first place.
+    ///
+    /// The last line of defense before a delete or a revert: measured against the real service,
+    /// 2026-09-26, `ListIndexes` scoped to one collection group's parent still answered with
+    /// composite indexes belonging to other groups in the same database, so a resource's presence
+    /// in a listing response is not enough on its own to trust it with `prune_undeclared()`. A
+    /// group Firestore reserves, such as `__default__`, owns nothing this crate may touch, even
+    /// though validation already rejects a statement naming one.
+    fn ensure_owns(&self, kind: &str, name: &str) -> FirestoreResult<()> {
+        validate_collection_group(self.id)?;
+        let prefix = format!("{}/{kind}/", self.path);
+        if name.starts_with(prefix.as_str()) {
+            Ok(())
+        } else {
+            Err(FirestoreError::invalid_parameters(
+                "resource_name",
+                format!(
+                    "refusing to touch {name}: not under the owned group {}",
+                    self.path
+                ),
+            ))
+        }
     }
 }
 
@@ -177,12 +197,6 @@ fn ensure_owned_resource(group_path: &str, kind: &str, name: &str) -> FirestoreR
 /// override's single-field index build, so a sync that was not asked to wait only fails when a
 /// write it depends on is stuck.
 const SEQUENCING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-
-/// The resource name of field `path` in the group at `group_path`: the key writes to one field
-/// are sequenced on, and the name an `UpdateField` request carries.
-fn field_resource_name(group_path: &str, path: &str) -> String {
-    format!("{group_path}/fields/{path}")
-}
 
 /// The operations one sync has started, which of them are known to have finished, and which one
 /// last wrote each field resource.
@@ -229,12 +243,15 @@ impl FirestoreDb {
         self.inner.client.get_with(OperationsClient::new)
     }
 
-    fn collection_group_path(&self, group: &FirestoreCollectionId) -> String {
-        format!(
-            "{}/collectionGroups/{}",
-            self.inner.database_path,
-            group.as_str()
-        )
+    fn owned_group<'a>(&self, group: &'a FirestoreCollectionId) -> OwnedGroup<'a> {
+        OwnedGroup {
+            id: group,
+            path: format!(
+                "{}/collectionGroups/{}",
+                self.inner.database_path,
+                group.as_str()
+            ),
+        }
     }
 
     async fn list_all_indexes(&self, group_path: &str) -> FirestoreResult<Vec<ProtoIndex>> {
@@ -302,21 +319,21 @@ impl FirestoreDb {
     /// would cut such a path at the wrong point and either drop it from its group or truncate it.
     async fn list_existing_state(
         &self,
-        group: &FirestoreCollectionId,
-    ) -> FirestoreResult<(String, FirestoreIndexListing)> {
-        let group_path = self.collection_group_path(group);
+        group: &OwnedGroup<'_>,
+    ) -> FirestoreResult<FirestoreIndexListing> {
+        let group_path = &group.path;
         let span = span!(
             Level::INFO,
             "Firestore Index List",
-            "/firestore/collection_group" = group.as_str(),
+            "/firestore/collection_group" = group.id.as_str(),
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
         let listed = async {
             let (all_indexes, override_fields, ttl_fields) = tokio::try_join!(
-                self.list_all_indexes(&group_path),
-                self.list_all_fields(&group_path, "indexConfig.usesAncestorConfig:false"),
-                self.list_all_fields(&group_path, "ttlConfig:*"),
+                self.list_all_indexes(group_path),
+                self.list_all_fields(group_path, "indexConfig.usesAncestorConfig:false"),
+                self.list_all_fields(group_path, "ttlConfig:*"),
             )?;
 
             // Measured against the real service, 2026-09-26: `ListIndexes` scoped to one
@@ -369,7 +386,7 @@ impl FirestoreDb {
         .await?;
         let elapsed = FirestoreInstant::now().duration_since(began);
         span.record("/firestore/response_time", elapsed.as_millis());
-        Ok((group_path, listed))
+        Ok(listed)
     }
 
     /// Lists the owned group's existing state, logs it, computes the plan, and logs it - the
@@ -378,9 +395,10 @@ impl FirestoreDb {
     async fn plan_against_server(
         &self,
         params: &FirestoreIndexParams,
+        group: &OwnedGroup<'_>,
         prune: bool,
-    ) -> FirestoreResult<(String, FirestoreIndexPlan)> {
-        let (group_path, listing) = self.list_existing_state(&params.collection_group).await?;
+    ) -> FirestoreResult<FirestoreIndexPlan> {
+        let listing = self.list_existing_state(group).await?;
         log_existing_state(&params.collection_group, &listing);
 
         let diff_span = span!(
@@ -394,12 +412,12 @@ impl FirestoreDb {
         diff_span.record("/firestore/response_time", elapsed.as_millis());
 
         log_plan(&params.collection_group, &plan);
-        Ok((group_path, plan))
+        Ok(plan)
     }
 
     async fn apply_create_index(
         &self,
-        group_path: &str,
+        group: &OwnedGroup<'_>,
         index: &FirestoreCompositeIndex,
     ) -> FirestoreResult<CreateIndexOutcome> {
         let span = span!(
@@ -411,7 +429,7 @@ impl FirestoreDb {
         let proto = ProtoIndex::try_from(index.clone())?;
         let outcome = async {
             let request = CreateIndexRequest {
-                parent: group_path.to_string(),
+                parent: group.path.clone(),
                 index: Some(proto),
             };
             let action = IndexAction::CreateIndex(index.clone());
@@ -450,10 +468,10 @@ impl FirestoreDb {
 
     async fn apply_delete_index(
         &self,
-        group_path: &str,
+        group: &OwnedGroup<'_>,
         listed: &FirestoreListedCompositeIndex,
     ) -> FirestoreResult<()> {
-        ensure_owned_resource(group_path, "indexes", &listed.name)?;
+        group.ensure_owns("indexes", &listed.name)?;
         let span = span!(
             Level::INFO,
             "Delete Index",
@@ -528,7 +546,7 @@ impl FirestoreDb {
 
     async fn apply_update_field_override(
         &self,
-        group_path: &str,
+        group: &OwnedGroup<'_>,
         declared: &FirestoreFieldOverride,
     ) -> FirestoreResult<PendingOperation> {
         let span = span!(
@@ -536,7 +554,7 @@ impl FirestoreDb {
             "Update Field",
             "/firestore/response_time" = field::Empty
         );
-        let name = field_resource_name(group_path, declared.target.as_str());
+        let name = group.field_resource(declared.target.as_str());
         let index_config = proto_field::IndexConfig::try_from(declared.clone())?;
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
@@ -558,7 +576,7 @@ impl FirestoreDb {
 
     async fn apply_enable_ttl(
         &self,
-        group_path: &str,
+        group: &OwnedGroup<'_>,
         field_path: &str,
     ) -> FirestoreResult<PendingOperation> {
         let span = span!(
@@ -566,7 +584,7 @@ impl FirestoreDb {
             "Enable TTL",
             "/firestore/response_time" = field::Empty
         );
-        let name = field_resource_name(group_path, field_path);
+        let name = group.field_resource(field_path);
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
                 name,
@@ -587,10 +605,10 @@ impl FirestoreDb {
 
     async fn apply_revert_field_override(
         &self,
-        group_path: &str,
+        group: &OwnedGroup<'_>,
         listed: &FirestoreListedField,
     ) -> FirestoreResult<PendingOperation> {
-        ensure_owned_resource(group_path, "fields", &listed.name)?;
+        group.ensure_owns("fields", &listed.name)?;
         let span = span!(
             Level::INFO,
             "Revert Field Override",
@@ -616,10 +634,10 @@ impl FirestoreDb {
 
     async fn apply_disable_ttl(
         &self,
-        group_path: &str,
+        group: &OwnedGroup<'_>,
         listed: &FirestoreListedField,
     ) -> FirestoreResult<PendingOperation> {
-        ensure_owned_resource(group_path, "fields", &listed.name)?;
+        group.ensure_owns("fields", &listed.name)?;
         let span = span!(
             Level::INFO,
             "Disable TTL",
@@ -702,7 +720,7 @@ impl FirestoreDb {
     /// Returns the report and the started operations not already waited for.
     async fn apply_plan(
         &self,
-        group_path: &str,
+        group: &OwnedGroup<'_>,
         plan: &FirestoreIndexPlan,
         sequencing: &FirestoreOperationWaitOptions,
     ) -> FirestoreResult<(FirestoreIndexSyncReport, Vec<PendingOperation>)> {
@@ -729,7 +747,7 @@ impl FirestoreDb {
 
         let apply_result: FirestoreResult<()> = async {
             for index in &plan.create_indexes {
-                match self.apply_create_index(group_path, index).await? {
+                match self.apply_create_index(group, index).await? {
                     CreateIndexOutcome::Created(op) => {
                         writes.push(None, op);
                         report.created_indexes.push(index.clone());
@@ -738,11 +756,9 @@ impl FirestoreDb {
                 }
             }
             for declared in &plan.update_fields {
-                let field = field_resource_name(group_path, declared.target.as_str());
+                let field = group.field_resource(declared.target.as_str());
                 self.settle_field(&mut writes, &field, sequencing).await?;
-                let op = self
-                    .apply_update_field_override(group_path, declared)
-                    .await?;
+                let op = self.apply_update_field_override(group, declared).await?;
                 writes.push(Some(field), op);
                 report.updated_fields.push(declared.clone());
             }
@@ -750,7 +766,7 @@ impl FirestoreDb {
             for listed in &plan.disable_ttl {
                 self.settle_field(&mut writes, &listed.name, sequencing)
                     .await?;
-                let op = self.apply_disable_ttl(group_path, listed).await?;
+                let op = self.apply_disable_ttl(group, listed).await?;
                 ttl_disables.push(writes.push(Some(listed.name.clone()), op));
                 report.disabled_ttl.push(listed.clone());
             }
@@ -759,20 +775,20 @@ impl FirestoreDb {
                     .await?;
             }
             for path in &plan.enable_ttl {
-                let field = field_resource_name(group_path, path);
+                let field = group.field_resource(path);
                 self.settle_field(&mut writes, &field, sequencing).await?;
-                let op = self.apply_enable_ttl(group_path, path).await?;
+                let op = self.apply_enable_ttl(group, path).await?;
                 writes.push(Some(field), op);
                 report.enabled_ttl.push(path.clone());
             }
             for listed in &plan.delete_indexes {
-                self.apply_delete_index(group_path, listed).await?;
+                self.apply_delete_index(group, listed).await?;
                 report.deleted_indexes.push(listed.clone());
             }
             for listed in &plan.revert_fields {
                 self.settle_field(&mut writes, &listed.name, sequencing)
                     .await?;
-                let op = self.apply_revert_field_override(group_path, listed).await?;
+                let op = self.apply_revert_field_override(group, listed).await?;
                 writes.push(Some(listed.name.clone()), op);
                 report.reverted_fields.push(listed.clone());
             }
@@ -851,7 +867,10 @@ impl FirestoreIndexSupport for FirestoreDb {
         );
         let began = FirestoreInstant::now();
         let plan = async {
-            let (_, plan) = self.plan_against_server(&params, options.prune).await?;
+            let group = self.owned_group(&params.collection_group);
+            let plan = self
+                .plan_against_server(&params, &group, options.prune)
+                .await?;
             info!(
                 collection_group = params.collection_group.as_str(),
                 "plan() reports what sync() would change; nothing was applied.",
@@ -889,13 +908,16 @@ impl FirestoreIndexSupport for FirestoreDb {
         );
         let began = FirestoreInstant::now();
         let report = async {
-            let (group_path, plan) = self.plan_against_server(&params, options.prune).await?;
+            let group = self.owned_group(&params.collection_group);
+            let plan = self
+                .plan_against_server(&params, &group, options.prune)
+                .await?;
             let sequencing = options
                 .wait
                 .clone()
                 .unwrap_or_else(|| FirestoreOperationWaitOptions::new(SEQUENCING_TIMEOUT));
             let (report, pending_operations) =
-                self.apply_plan(&group_path, &plan, &sequencing).await?;
+                self.apply_plan(&group, &plan, &sequencing).await?;
             if let Some(wait_options) = &options.wait {
                 if let Err(err) = self
                     .wait_for_index_operations(&pending_operations, wait_options)
@@ -1384,23 +1406,94 @@ mod tests {
         );
     }
 
+    fn owned_users_group(users: &FirestoreCollectionId) -> OwnedGroup<'_> {
+        OwnedGroup {
+            id: users,
+            path: GROUP_PATH.to_string(),
+        }
+    }
+
     #[test]
-    fn ensure_owned_resource_rejects_a_name_outside_the_group() {
-        let err = ensure_owned_resource(
-            GROUP_PATH,
-            "indexes",
-            "projects/fake-firestore/databases/(default)/collectionGroups/other/indexes/x",
-        )
-        .unwrap_err();
+    fn ensure_owns_rejects_a_name_outside_the_group() {
+        let users = group();
+        let err = owned_users_group(&users)
+            .ensure_owns(
+                "indexes",
+                "projects/fake-firestore/databases/(default)/collectionGroups/other/indexes/x",
+            )
+            .unwrap_err();
         assert!(err.to_string().contains("not under the owned group"));
     }
 
     #[test]
-    fn ensure_owned_resource_accepts_a_name_inside_the_group() {
-        assert!(
-            ensure_owned_resource(GROUP_PATH, "indexes", &format!("{GROUP_PATH}/indexes/x"))
-                .is_ok()
-        );
+    fn ensure_owns_refuses_every_resource_of_a_reserved_group() {
+        for reserved in ["__default__", "-", "__system__"] {
+            let id = FirestoreCollectionId::new(reserved).unwrap();
+            let owned = OwnedGroup {
+                id: &id,
+                path: format!(
+                    "projects/fake-firestore/databases/(default)/collectionGroups/{reserved}"
+                ),
+            };
+            let name = format!("{}/fields/*", owned.path);
+            assert!(
+                owned.ensure_owns("fields", &name).is_err(),
+                "{reserved} is reserved; nothing under it may be touched"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn applying_a_plan_refuses_every_prune_target_outside_the_owned_group() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| no_writes_allowed(method)).await;
+        let foreign = "projects/fake-firestore/databases/(default)/collectionGroups/other";
+        let foreign_index: FirestoreListedCompositeIndex =
+            listed_declared_index(&format!("{foreign}/indexes/x"), ProtoState::Ready)
+                .try_into()
+                .unwrap();
+        let foreign_field: FirestoreListedField = ProtoField {
+            name: format!("{foreign}/fields/expires_at"),
+            index_config: Some(exempt_override()),
+            ttl_config: Some(active_ttl()),
+        }
+        .into();
+
+        let users = group();
+        let owned = owned_users_group(&users);
+        let sequencing = FirestoreOperationWaitOptions::new(Duration::from_secs(1));
+        for plan in [
+            FirestoreIndexPlan {
+                delete_indexes: vec![foreign_index],
+                ..Default::default()
+            },
+            FirestoreIndexPlan {
+                revert_fields: vec![foreign_field.clone()],
+                ..Default::default()
+            },
+            FirestoreIndexPlan {
+                disable_ttl: vec![foreign_field],
+                ..Default::default()
+            },
+        ] {
+            let err = match fake.db.apply_plan(&owned, &plan, &sequencing).await {
+                Ok(_) => panic!("a foreign prune target was applied: {plan}"),
+                Err(err) => err,
+            };
+            assert!(
+                err.to_string().contains("not under the owned group"),
+                "{err}"
+            );
+        }
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    }
+
+    #[test]
+    fn ensure_owns_accepts_a_name_inside_the_group() {
+        let users = group();
+        assert!(owned_users_group(&users)
+            .ensure_owns("indexes", &format!("{GROUP_PATH}/indexes/x"))
+            .is_ok());
     }
 
     #[tokio::test]
