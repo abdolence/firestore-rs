@@ -3,7 +3,7 @@
 ## 0.56
 
 v0.56.0 bounds how long `run_transaction` and `run_transaction_with_options` keep retrying, and
-fixes several cases where a transaction retried the wrong thing, or not at all.
+fixes several cases where a transaction retried the wrong thing.
 
 ### Retries are bounded
 
@@ -15,9 +15,9 @@ own. Set it with `with_max_retries`. Adding the field breaks code that builds
 unaffected.
 
 `max_elapsed_time` still works as an optional time cap on top of `max_retries`, off by default. A
-negative `max_elapsed_time` is now rejected before the first attempt instead of being clamped
-silently, and a `max_elapsed_time` of zero now means no retry at all, since the first retry no
-longer runs immediately - see below.
+negative `max_elapsed_time` is now rejected before the first attempt rather than after it, and a
+`max_elapsed_time` of zero now means no retry at all, since the first retry no longer runs
+immediately (see below).
 
 ### The first retry now waits too
 

@@ -83,10 +83,10 @@ The transaction retries automatically on a transient failure: the callback retur
 to one), or `commit()` answering `ABORTED`. Either way the whole transaction reruns from the start
 as a new attempt, so the callback must be safe to run more than once; a failed attempt is rolled
 back first, releasing its locks, before the retry begins. A read inside the transaction that comes
-back `ABORTED` is not retried on its own - it fails the attempt, which then retries as usual.
+back `ABORTED` is not retried on its own; it fails the attempt, which then retries as usual.
 
-`Commit` is sent only once per attempt. Any failure other than `ABORTED` - `UNAVAILABLE` or a
-dropped connection, for example - is returned to the caller without retrying, since the writes may
+`Commit` is sent only once per attempt. Any failure other than `ABORTED`, such as `UNAVAILABLE` or a
+dropped connection, is returned to the caller without retrying, since the writes may
 already be applied, and the callback is not run again in that case.
 
 Retries are capped at `max_retries` attempts after the first, 4 by default (5 attempts in total),
