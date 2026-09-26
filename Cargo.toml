@@ -121,3 +121,8 @@ required-features = ["caching-memory", "caching-persistent"]
 name = "admin-indexes-tests"
 path = "tests/admin-indexes-tests.rs"
 required-features = ["admin"]
+
+[[test]]
+name = "admin-bulk-delete-tests"
+path = "tests/admin-bulk-delete-tests.rs"
+required-features = ["admin"]
