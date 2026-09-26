@@ -436,9 +436,38 @@ const MAX_INDEX_FIELDS_WITH_IMPLIED_NAME: usize = 100;
 /// the same single-field index twice, declares a vector index, or has an empty path; or if more
 /// than one TTL field is declared, a TTL path is empty, or a TTL path repeats.
 pub(crate) fn validate_index_params(params: &FirestoreIndexParams) -> FirestoreResult<()> {
+    validate_collection_group(&params.collection_group)?;
     validate_composite_indexes(&params.composite_indexes)?;
     validate_field_overrides(&params.field_overrides)?;
     validate_ttl_fields(&params.ttl_fields)?;
+    Ok(())
+}
+
+/// Rejects the collection group IDs Firestore reserves for itself: the literal `-` (a wildcard
+/// segment in a document path, never a real collection group), `__default__` (the database-wide
+/// configuration every collection group inherits from unless overridden), and any other ID of the
+/// shape `__*__` (Firestore's reserved namespace for system collection groups). A statement that
+/// named one of these would list and modify the reserved group's own resources instead of the
+/// caller's collection - measured against the real service, 2026-09-26: a
+/// `.collection_group("__default__")` sync issued
+/// `UpdateField .../collectionGroups/__default__/fields/*`, changing database-wide defaults no
+/// statement should be able to reach.
+///
+/// [`FirestoreCollectionId::new`] accepts these IDs on purpose (see its module docs), because a
+/// bare document or collection reference to them is legitimate; only naming one as the group a
+/// whole statement *owns* is not.
+fn validate_collection_group(collection_group: &FirestoreCollectionId) -> FirestoreResult<()> {
+    let id = collection_group.as_str();
+    let is_reserved = id == "-" || (id.len() >= 4 && id.starts_with("__") && id.ends_with("__"));
+    if is_reserved {
+        return Err(FirestoreError::invalid_parameters(
+            "collection_group",
+            format!(
+                "\"{id}\" is a collection group ID Firestore reserves (\"-\", or __*__ such as \
+                 __default__); index management must not target it"
+            ),
+        ));
+    }
     Ok(())
 }
 
@@ -1000,6 +1029,35 @@ mod tests {
         assert!(params.composite_indexes.is_empty());
         assert!(params.field_overrides.is_empty());
         assert!(params.ttl_fields.is_empty());
+    }
+
+    #[test]
+    fn default_collection_group_is_rejected() {
+        // Firestore's database-wide defaults every collection group inherits from unless
+        // overridden - a statement must never be able to reach them.
+        let params = FirestoreIndexParams::new(FirestoreCollectionId::from_static("__default__"));
+        let err = validate_index_params(&params).unwrap_err();
+        assert!(err.to_string().contains("__default__"));
+    }
+
+    #[test]
+    fn dash_collection_group_is_rejected() {
+        let params = FirestoreIndexParams::new(FirestoreCollectionId::from_static("-"));
+        let err = validate_index_params(&params).unwrap_err();
+        assert!(err.to_string().contains("reserves"));
+    }
+
+    #[test]
+    fn other_reserved_shaped_collection_group_is_rejected() {
+        let params = FirestoreIndexParams::new(FirestoreCollectionId::from_static("__x__"));
+        let err = validate_index_params(&params).unwrap_err();
+        assert!(err.to_string().contains("__x__"));
+    }
+
+    #[test]
+    fn ordinary_collection_group_is_accepted() {
+        let params = FirestoreIndexParams::new(FirestoreCollectionId::from_static("users"));
+        assert!(validate_index_params(&params).is_ok());
     }
 
     #[test]
