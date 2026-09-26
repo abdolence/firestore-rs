@@ -26,7 +26,7 @@ pub enum FirestoreIndexQueryScope {
 }
 
 /// How a single field participates in an index.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum FirestoreIndexFieldMode {
     /// Sortable and comparable in the given direction.
     Order(FirestoreQueryDirection),
@@ -37,6 +37,22 @@ pub enum FirestoreIndexFieldMode {
         /// The dimension every indexed vector in this field must have.
         dimension: u32,
     },
+}
+
+impl std::hash::Hash for FirestoreIndexFieldMode {
+    // `FirestoreQueryDirection` does not implement `Hash`, so this cannot be derived; keep the
+    // match arms in sync with the derived `PartialEq`/`Eq` above if a variant is added.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending) => 0u8.hash(state),
+            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending) => 1u8.hash(state),
+            FirestoreIndexFieldMode::ArrayContains => 2u8.hash(state),
+            FirestoreIndexFieldMode::Vector { dimension } => {
+                3u8.hash(state);
+                dimension.hash(state);
+            }
+        }
+    }
 }
 
 /// One field of a composite index: its path and how it participates.
@@ -132,6 +148,72 @@ pub struct FirestoreFieldOverride {
     pub indexes: Vec<FirestoreFieldOverrideIndex>,
 }
 
+/// The lifecycle state Firestore reports for a listed composite index.
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
+pub enum FirestoreIndexState {
+    /// There is an active long-running operation building the index.
+    Creating,
+    /// The index is fully built and serving queries.
+    Ready,
+    /// The most recent build failed and left no active operation; `.sync()` never deletes or
+    /// recreates it.
+    NeedsRepair,
+}
+
+/// The lifecycle state Firestore reports for a listed field's TTL configuration.
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Hash)]
+pub enum FirestoreFieldTtlState {
+    /// There is an active long-running operation applying TTL to existing documents.
+    Creating,
+    /// TTL is active for all documents that carry the field.
+    Active,
+    /// The long-running operation that last tried to enable TTL failed.
+    NeedsRepair,
+}
+
+/// One composite index Firestore has listed for the owned collection group.
+#[derive(Debug, PartialEq, Clone)]
+pub struct FirestoreListedCompositeIndex {
+    /// The resource name Firestore assigned this index, for logging or a delete call.
+    pub name: String,
+    /// The index's current lifecycle state.
+    pub state: FirestoreIndexState,
+    /// The index in the same shape a declaration would take.
+    pub index: FirestoreCompositeIndex,
+}
+
+/// One field resource Firestore has listed for the owned collection group, because it carries an
+/// explicit single-field index override, a TTL configuration, or both.
+#[derive(Debug, PartialEq, Clone)]
+pub struct FirestoreListedField {
+    /// The resource name Firestore assigned this field, for logging or an update call.
+    pub name: String,
+    /// The field's path within a document, parsed from `name`.
+    pub field_path: String,
+    /// The field's explicit single-field index set, or `None` when this resource carries no
+    /// index configuration at all (it was listed only for its TTL configuration). `Some(vec![])`
+    /// is an explicit exemption, the same as [`exempt()`](crate::index_builder::FirestoreFieldOverrideFieldBuilder::exempt).
+    pub indexes: Option<Vec<FirestoreFieldOverrideIndex>>,
+    /// The field's TTL configuration state, or `None` when TTL is not configured on this field.
+    pub ttl: Option<FirestoreFieldTtlState>,
+}
+
+/// One listed index or field resource this crate's domain model cannot represent, kept for
+/// visibility instead of being silently dropped.
+///
+/// Covers a search index, a MongoDB-compat or Datastore-mode API scope, a `COLLECTION_RECURSIVE`
+/// query scope, and an unspecified field order - none of which a declared [`FirestoreCompositeIndex`]
+/// or [`FirestoreFieldOverride`] can express. [`plan_index_changes`](crate::plan_index_changes)
+/// never proposes deleting or reverting one of these, even when pruning, because it cannot know
+/// that doing so is what the declaration intends.
+#[derive(Debug, PartialEq, Clone)]
+pub struct FirestoreUnrecognisedIndexItem {
+    /// The resource name Firestore assigned it.
+    pub name: String,
+    /// Why this crate could not convert it into a domain value.
+    pub reason: String,
+}
+
 /// One collection group's declared composite indexes, single-field overrides and TTL policy.
 ///
 /// A statement owns exactly this one collection group: [`FirestoreIndexSyncOptions::prune`]
@@ -206,16 +288,19 @@ pub struct FirestoreIndexPlan {
     /// reported only; `.sync()` never deletes or recreates them.
     pub needs_repair: Vec<FirestoreCompositeIndex>,
     /// Listed composite indexes with no declared match, in the owned collection group.
-    pub undeclared_indexes: Vec<gcloud_sdk::google::firestore::admin::v1::Index>,
+    pub undeclared_indexes: Vec<FirestoreListedCompositeIndex>,
     /// Declared field overrides whose listed configuration differs from the declaration, or is
     /// absent; `.sync()` writes these.
     pub update_fields: Vec<FirestoreFieldOverride>,
     /// Listed field overrides with no declared match, in the owned collection group.
-    pub undeclared_fields: Vec<gcloud_sdk::google::firestore::admin::v1::Field>,
+    pub undeclared_fields: Vec<FirestoreListedField>,
     /// Declared TTL fields with no TTL configuration listed; `.sync()` enables these.
     pub enable_ttl: Vec<String>,
     /// Listed TTL fields with no declaration, in the owned collection group.
-    pub undeclared_ttl: Vec<gcloud_sdk::google::firestore::admin::v1::Field>,
+    pub undeclared_ttl: Vec<FirestoreListedField>,
+    /// Listed indexes or fields this crate's domain model cannot represent; never planned for
+    /// deletion or revert, even when pruning.
+    pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
 }
 
 /// The result of `.sync()`: what it changed, what it left alone, and what it found undeclared.
@@ -237,18 +322,21 @@ pub struct FirestoreIndexSyncReport {
     /// Composite indexes matched to a listed index in state `NEEDS_REPAIR`, reported only.
     pub needs_repair: Vec<FirestoreCompositeIndex>,
     /// Undeclared composite indexes this sync deleted, because `prune` was set.
-    pub deleted_indexes: Vec<gcloud_sdk::google::firestore::admin::v1::Index>,
+    pub deleted_indexes: Vec<FirestoreListedCompositeIndex>,
     /// Undeclared field overrides this sync reverted to automatic indexing, because `prune` was
     /// set.
-    pub reverted_fields: Vec<gcloud_sdk::google::firestore::admin::v1::Field>,
+    pub reverted_fields: Vec<FirestoreListedField>,
     /// Undeclared TTL fields this sync disabled, because `prune` was set.
-    pub disabled_ttl: Vec<gcloud_sdk::google::firestore::admin::v1::Field>,
+    pub disabled_ttl: Vec<FirestoreListedField>,
     /// Undeclared composite indexes left alone, because `prune` was not set.
-    pub kept_undeclared_indexes: Vec<gcloud_sdk::google::firestore::admin::v1::Index>,
+    pub kept_undeclared_indexes: Vec<FirestoreListedCompositeIndex>,
     /// Undeclared field overrides left alone, because `prune` was not set.
-    pub kept_undeclared_fields: Vec<gcloud_sdk::google::firestore::admin::v1::Field>,
+    pub kept_undeclared_fields: Vec<FirestoreListedField>,
     /// Undeclared TTL fields left alone, because `prune` was not set.
-    pub kept_undeclared_ttl: Vec<gcloud_sdk::google::firestore::admin::v1::Field>,
+    pub kept_undeclared_ttl: Vec<FirestoreListedField>,
+    /// Listed indexes or fields this crate's domain model cannot represent; never deleted or
+    /// reverted, even when pruning.
+    pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
 }
 
 /// Checks the structural rules a declared [`FirestoreIndexParams`] must satisfy, independent of
