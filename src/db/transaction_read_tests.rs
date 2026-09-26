@@ -1,11 +1,11 @@
 use super::*;
+use crate::db::fake_firestore::{begin_response, FakeFirestore, FakeResponse};
 use crate::errors::{firestore_err_to_backoff, BackoffError};
 use futures::TryStreamExt;
+use gcloud_sdk::prost::Message;
 use gcloud_sdk::tonic::Code;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicU8;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tokio::task::JoinSet;
 
 #[derive(Clone, Copy, Debug)]
 enum Read {
@@ -49,58 +49,31 @@ impl Read {
     }
 }
 
+// Every request in this suite gets the same status, with no message body: retry counting is by
+// `calls().len()`, not by which RPC ran.
 async fn check_read_retries(read: Read) {
     for (code, in_transaction, expected_attempts) in [
         (Code::Aborted, true, 1),
         (Code::Aborted, false, 2),
         (Code::Unavailable, true, 2),
     ] {
-        let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mut options = FirestoreDbOptions::new("test-project".into());
-        options.firebase_api_url = Some(format!("http://{}", socket.local_addr().unwrap()));
-        options.max_retries = 1;
-        let attempts = Arc::new(AtomicUsize::new(0));
-        let observed = attempts.clone();
-        // JoinSet aborts the server and its connections even if an assertion fails.
-        let mut server = JoinSet::new();
-        server.spawn(async move {
-            let mut connections = JoinSet::new();
-            loop {
-                let (socket, _) = socket.accept().await.unwrap();
-                let observed = observed.clone();
-                connections.spawn(async move {
-                    let mut connection = h2::server::handshake(socket).await.unwrap();
-                    while let Some(request) = connection.accept().await {
-                        let (_, mut respond) = request.unwrap();
-                        observed.fetch_add(1, Ordering::SeqCst);
-                        let response = hyper::Response::builder()
-                            .header("content-type", "application/grpc")
-                            .header("grpc-status", (code as i32).to_string())
-                            .body(())
-                            .unwrap();
-                        respond.send_response(response, true).unwrap();
-                    }
-                });
-            }
-        });
-        let db = FirestoreDb::with_options_token_source(
-            options,
-            Vec::new(),
-            TokenSourceType::ExternalSource(Box::new(FirestoreEmulatorTokenSource)),
-        )
-        .await
-        .unwrap();
+        let server = FakeFirestore::start_with_max_retries(1, move |_, _| {
+            ("attempt".to_string(), FakeResponse::Status(code))
+        })
+        .await;
         let db = if in_transaction {
-            db.clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(vec![1]))
+            server
+                .db
+                .clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(vec![1]))
         } else {
-            db
+            server.db.clone()
         };
         let error = tokio::time::timeout(Duration::from_secs(5), read.execute(&db))
             .await
             .expect("read retries must be bounded")
             .unwrap_err();
         assert_eq!(
-            attempts.load(Ordering::SeqCst),
+            server.calls().len(),
             expected_attempts,
             "{read:?}, {code:?}, in_transaction={in_transaction}"
         );
@@ -116,26 +89,72 @@ async fn check_read_retries(read: Read) {
 }
 
 #[tokio::test]
-async fn get_retry_scope() {
-    check_read_retries(Read::Get).await;
+async fn read_retry_scope() {
+    for read in [
+        Read::Get,
+        Read::List,
+        Read::Query,
+        Read::Aggregate,
+        Read::AggregateStream,
+    ] {
+        check_read_retries(read).await;
+    }
 }
 
 #[tokio::test]
-async fn list_retry_scope() {
-    check_read_retries(Read::List).await;
-}
-
-#[tokio::test]
-async fn query_retry_scope() {
-    check_read_retries(Read::Query).await;
-}
-
-#[tokio::test]
-async fn aggregate_retry_scope() {
-    check_read_retries(Read::Aggregate).await;
-}
-
-#[tokio::test]
-async fn aggregate_stream_retry_scope() {
-    check_read_retries(Read::AggregateStream).await;
+async fn aborted_read_retries_the_whole_transaction() {
+    let begins = AtomicU8::new(0);
+    let server = FakeFirestore::start(move |method, bytes| {
+        if method.ends_with("/BeginTransaction") {
+            begin_response(&begins)
+        } else if method.ends_with("/GetDocument") {
+            let request = GetDocumentRequest::decode(bytes).unwrap();
+            let Some(get_document_request::ConsistencySelector::Transaction(id)) =
+                request.consistency_selector
+            else {
+                panic!("read must belong to a transaction");
+            };
+            if id == [1] {
+                (
+                    format!("Get({}) aborted", id[0]),
+                    FakeResponse::Status(Code::Aborted),
+                )
+            } else {
+                (
+                    format!("Get({})", id[0]),
+                    FakeResponse::Message(Document::default().encode_to_vec()),
+                )
+            }
+        } else if method.ends_with("/Rollback") {
+            ("Rollback".to_string(), FakeResponse::Status(Code::Ok))
+        } else {
+            (
+                "Commit".to_string(),
+                FakeResponse::Message(CommitResponse::default().encode_to_vec()),
+            )
+        }
+    })
+    .await;
+    let result: FirestoreResult<()> = server
+        .db
+        .run_transaction(|db, transaction| {
+            Box::pin(async move {
+                db.get_doc("items", "one", None).await?;
+                transaction.delete_by_id("items", "one", None)?;
+                Ok(())
+            })
+        })
+        .await;
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(
+        server.calls(),
+        vec![
+            "Begin→1",
+            "Get(1) aborted",
+            "Rollback",
+            "Begin→2",
+            "Get(2)",
+            "Commit"
+        ]
+    );
 }
