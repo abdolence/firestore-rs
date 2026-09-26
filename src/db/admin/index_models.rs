@@ -686,6 +686,19 @@ pub(crate) fn write_section<T: Display>(
     Ok(())
 }
 
+/// Writes each item's [`Display`], separated by `", "`, with no wrapping punctuation of its own -
+/// callers add whatever brackets their own format uses. Shared by every place that prints an
+/// index or override's field list, so the separator never drifts between call sites.
+fn write_comma_joined<T: Display>(f: &mut Formatter<'_>, items: &[T]) -> fmt::Result {
+    for (position, item) in items.iter().enumerate() {
+        if position > 0 {
+            write!(f, ", ")?;
+        }
+        write!(f, "{item}")?;
+    }
+    Ok(())
+}
+
 impl Display for FirestoreIndexQueryScope {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -719,12 +732,7 @@ impl Display for FirestoreIndexField {
 impl Display for FirestoreCompositeIndex {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "[{}] (", self.query_scope)?;
-        for (position, field) in self.fields.iter().enumerate() {
-            if position > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{field}")?;
-        }
+        write_comma_joined(f, &self.fields)?;
         write!(f, ")")
     }
 }
@@ -764,12 +772,7 @@ impl Display for FirestoreFieldOverride {
             return f.write_str(" EXEMPT");
         }
         write!(f, " [")?;
-        for (position, index) in self.indexes.iter().enumerate() {
-            if position > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{index}")?;
-        }
+        write_comma_joined(f, &self.indexes)?;
         write!(f, "]")
     }
 }
@@ -794,12 +797,7 @@ impl Display for FirestoreListedField {
                     write!(f, " EXEMPT")?;
                 } else {
                     write!(f, " [")?;
-                    for (position, index) in explicit.indexes.iter().enumerate() {
-                        if position > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{index}")?;
-                    }
+                    write_comma_joined(f, &explicit.indexes)?;
                     write!(f, "]")?;
                 }
                 if explicit.reverting {
