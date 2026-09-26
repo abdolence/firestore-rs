@@ -90,9 +90,7 @@ pub use batch_streaming_writer::*;
 mod batch_simple_writer;
 pub use batch_simple_writer::*;
 
-use crate::errors::{
-    FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
-};
+use crate::errors::FirestoreError;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
@@ -196,11 +194,9 @@ impl FirestoreDb {
     pub async fn for_default_project_id() -> FirestoreResult<Self> {
         match FirestoreDbOptions::for_default_project_id().await {
             Some(options) => Self::with_options(options).await,
-            _ => Err(FirestoreError::InvalidParametersError(
-                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                    "google_project_id".to_string(),
-                    "Unable to retrieve google_project_id".to_string(),
-                )),
+            _ => Err(FirestoreError::invalid_parameters(
+                "google_project_id",
+                "Unable to retrieve google_project_id",
             )),
         }
     }

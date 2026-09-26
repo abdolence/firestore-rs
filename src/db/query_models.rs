@@ -2,9 +2,7 @@
 // that might not implement Eq, or their Eq implementation might change.
 #![allow(clippy::derive_partial_eq_without_eq)]
 
-use crate::errors::{
-    FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
-};
+use crate::errors::FirestoreError;
 use crate::{FirestoreCollectionId, FirestoreRequestOptions, FirestoreValue, FirestoreVector};
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::Builder;
@@ -609,17 +607,15 @@ impl TryFrom<FirestoreFindNearestOptions>
                 distance_measure.into()
             },
             limit: Some(options.neighbors_limit.try_into().map_err(|e| {
-                FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
-                    FirestoreInvalidParametersPublicDetails::new(
-                        "neighbors_limit".to_string(),
-                        format!(
-                            "Invalid value for neighbors_limit: {}. Maximum allowed value is {}. Error: {}",
-                            options.neighbors_limit,
-                            i32::MAX,
-                            e
-                        ),
+                FirestoreError::invalid_parameters(
+                    "neighbors_limit",
+                    format!(
+                        "Invalid value for neighbors_limit: {}. Maximum allowed value is {}. Error: {}",
+                        options.neighbors_limit,
+                        i32::MAX,
+                        e
                     ),
-                ))
+                )
             })?),
             distance_result_field: options.distance_result_field.unwrap_or_default(),
             distance_threshold: options.distance_threshold,

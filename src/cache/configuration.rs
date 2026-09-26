@@ -1,6 +1,4 @@
-use crate::errors::{
-    FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
-};
+use crate::errors::FirestoreError;
 use crate::{FirestoreDb, FirestoreListenerTarget, FirestoreResult};
 use rvstruct::ValueStruct;
 use std::collections::HashMap;
@@ -115,12 +113,10 @@ impl FirestoreCacheConfiguration {
         let mut candidate = from.max(1);
         while used.contains(&candidate) {
             candidate = candidate.checked_add(1).ok_or_else(|| {
-                FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
-                    FirestoreInvalidParametersPublicDetails::new(
-                        "listener_target".into(),
-                        "Ran out of listener target IDs while assigning them automatically.".into(),
-                    ),
-                ))
+                FirestoreError::invalid_parameters(
+                    "listener_target",
+                    "Ran out of listener target IDs while assigning them automatically.",
+                )
             })?;
         }
 
