@@ -1,5 +1,42 @@
 # Migration guide
 
+## 0.56
+
+v0.56.0 bounds how long `run_transaction` and `run_transaction_with_options` keep retrying, and
+fixes several cases where a transaction retried the wrong thing, or not at all.
+
+### Retries are bounded
+
+Before this release, a transaction whose callback kept failing transiently retried forever; no
+option stopped it. `FirestoreTransactionOptions` gains a `max_retries` field, 4 by default (5
+attempts in total, the same default as Google's official clients), so retrying now stops on its
+own. Set it with `with_max_retries`. Adding the field breaks code that builds
+`FirestoreTransactionOptions` with a struct literal naming every field; `new()` and `default()` are
+unaffected.
+
+`max_elapsed_time` still works as an optional time cap on top of `max_retries`, off by default. A
+negative `max_elapsed_time` is now rejected before the first attempt instead of being clamped
+silently, and a `max_elapsed_time` of zero now means no retry at all, since the first retry no
+longer runs immediately - see below.
+
+### The first retry now waits too
+
+A retry used to run immediately after the failure that triggered it, and only the *next* retry
+waited a backoff delay (or the callback's `retry_after`). Every retry, the first included, now
+waits first. Account for the added delay if you relied on the previous behaviour's immediate first
+retry.
+
+### Commit and read retries were tightened
+
+- `Commit` is sent once per attempt. Only `ABORTED` retries the whole transaction; any other
+  failure, `UNAVAILABLE` or a dropped connection included, is now returned to the caller without
+  rerunning the callback, since the writes may already be applied.
+- A read inside a transaction that returns `ABORTED` no longer retries on the same transaction ID;
+  it now fails the attempt, and the whole transaction reruns instead.
+- A failed callback attempt is now rolled back before the transaction retries or gives up,
+  releasing its locks instead of leaving them held until Firestore's own expiry.
+- A retried `get` keeps its field mask; it previously dropped it and read the whole document.
+
 ## 0.55
 
 v0.55.0 adds validated `FirestoreDocumentId` and `FirestoreCollectionId` newtypes and, along with
