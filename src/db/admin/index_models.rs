@@ -10,6 +10,9 @@ use rsb_derive::Builder;
 use std::collections::HashSet;
 use std::time::Duration;
 
+/// The reserved field path Firestore appends to every composite index at creation time.
+pub(crate) const IMPLIED_NAME_FIELD: &str = "__name__";
+
 /// Whether an index serves queries against one collection or a collection-group query across
 /// every collection with the same ID anywhere under the database.
 ///
@@ -139,8 +142,10 @@ pub enum FirestoreIndexState {
     Creating,
     /// The index is fully built and serving queries.
     Ready,
-    /// The most recent build failed and left no active operation; `.sync()` never deletes or
-    /// recreates it.
+    /// The most recent build failed and left no active operation. A declared index matched to
+    /// one in this state is reported only; `.sync()` never deletes or recreates it. An
+    /// *undeclared* index in this state is pruned like any other undeclared index when `prune`
+    /// is set - Firestore does not exempt it.
     NeedsRepair,
 }
 
@@ -175,9 +180,15 @@ pub struct FirestoreListedField {
     /// The field's path within a document, parsed from `name`.
     pub field_path: String,
     /// The field's explicit single-field index set, or `None` when this resource carries no
-    /// index configuration at all (it was listed only for its TTL configuration). `Some(vec![])`
-    /// is an explicit exemption, the same as [`exempt()`](crate::index_builder::FirestoreFieldOverrideFieldBuilder::exempt).
+    /// index configuration at all, or its index configuration is inherited from an ancestor
+    /// field (`uses_ancestor_config`). `Some(vec![])` is an explicit exemption, the same as
+    /// [`exempt()`](crate::index_builder::FirestoreFieldOverrideFieldBuilder::exempt).
     pub indexes: Option<Vec<FirestoreFieldOverrideIndex>>,
+    /// Whether Firestore is already reverting `indexes` to the ancestor's configuration (an
+    /// in-progress `reverting` long-running change). Always `false` when `indexes` is `None`.
+    /// The planner treats a field with this set as already handled and never plans reverting it
+    /// a second time.
+    pub reverting: bool,
     /// The field's TTL configuration state, or `None` when TTL is not configured on this field.
     pub ttl: Option<FirestoreFieldTtlState>,
 }
@@ -187,9 +198,9 @@ pub struct FirestoreListedField {
 ///
 /// Covers a search index, a MongoDB-compat or Datastore-mode API scope, a `COLLECTION_RECURSIVE`
 /// query scope, and an unspecified field order - none of which a declared [`FirestoreCompositeIndex`]
-/// or [`FirestoreFieldOverride`] can express. [`plan_index_changes`](crate::plan_index_changes)
-/// never proposes deleting or reverting one of these, even when pruning, because it cannot know
-/// that doing so is what the declaration intends.
+/// or [`FirestoreFieldOverride`] can express. The planner never proposes deleting or reverting
+/// one of these, even when pruning, because it cannot know that doing so is what the declaration
+/// intends.
 #[derive(Debug, PartialEq, Clone)]
 pub struct FirestoreUnrecognisedIndexItem {
     /// The resource name Firestore assigned it.
@@ -220,8 +231,8 @@ pub struct FirestoreIndexParams {
 
 /// How long a long-running Firestore operation is polled for before giving up.
 ///
-/// Not index-specific: anything that starts a long-running operation and waits for it to reach a
-/// terminal state (index/TTL sync today, a planned bulk-delete API) takes this same options type.
+/// Not index-specific: any long-running admin operation that waits for a terminal state - index
+/// and TTL sync today - can reuse this same options type.
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreOperationWaitOptions {
     /// The maximum time to wait before returning an error naming the operations still pending.
@@ -280,6 +291,10 @@ pub struct FirestoreIndexPlan {
     pub undeclared_fields: Vec<FirestoreListedField>,
     /// Declared TTL fields with no TTL configuration listed; `.sync()` enables these.
     pub enable_ttl: Vec<String>,
+    /// Declared TTL fields matched to a listed TTL configuration still in state `CREATING`.
+    pub pending_ttl: Vec<String>,
+    /// Declared TTL fields matched to a listed TTL configuration in state `NEEDS_REPAIR`.
+    pub needs_repair_ttl: Vec<String>,
     /// Listed TTL fields with no declaration, in the owned collection group.
     pub undeclared_ttl: Vec<FirestoreListedField>,
     /// Listed indexes or fields this crate's domain model cannot represent; never planned for
@@ -305,6 +320,11 @@ pub struct FirestoreIndexSyncReport {
     pub pending: Vec<FirestoreCompositeIndex>,
     /// Composite indexes matched to a listed index in state `NEEDS_REPAIR`, reported only.
     pub needs_repair: Vec<FirestoreCompositeIndex>,
+    /// Declared TTL fields matched to a listed TTL configuration still in state `CREATING`.
+    pub pending_ttl: Vec<String>,
+    /// Declared TTL fields matched to a listed TTL configuration in state `NEEDS_REPAIR`,
+    /// reported only.
+    pub needs_repair_ttl: Vec<String>,
     /// Undeclared composite indexes this sync deleted, because `prune` was set.
     pub deleted_indexes: Vec<FirestoreListedCompositeIndex>,
     /// Undeclared field overrides this sync reverted to automatic indexing, because `prune` was
@@ -323,32 +343,29 @@ pub struct FirestoreIndexSyncReport {
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
 }
 
+/// The maximum number of fields Firestore allows on one composite index, `__name__` included.
+const MAX_INDEX_FIELDS_WITH_IMPLIED_NAME: usize = 100;
+
 /// Checks the structural rules a declared [`FirestoreIndexParams`] must satisfy, independent of
 /// what Firestore currently has.
 ///
 /// # Errors
 /// Returns [`FirestoreError::InvalidParametersError`] if a composite index has fewer than two
-/// fields, has more than one vector field, has a vector field that is not last, has a vector
-/// dimension outside `1..=2048`, or if a field path is declared more than once across
-/// `field_overrides`.
+/// fields (a lone vector field excepted), more than 100 fields counting an implied `__name__`,
+/// more than one vector field, a vector field that is not last, a vector dimension outside
+/// `1..=2048`, an empty field path, or duplicates an earlier declared index once a trailing
+/// `__name__` is normalised away; if a field override path is declared more than once, declares
+/// the same single-field index twice, declares a vector index, or has an empty path; or if more
+/// than one TTL field is declared, a TTL path is empty, or a TTL path repeats.
 pub(crate) fn validate_index_params(params: &FirestoreIndexParams) -> FirestoreResult<()> {
     validate_composite_indexes(&params.composite_indexes)?;
     validate_field_overrides(&params.field_overrides)?;
+    validate_ttl_fields(&params.ttl_fields)?;
     Ok(())
 }
 
 fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreResult<()> {
     for (position, index) in indexes.iter().enumerate() {
-        if index.fields.len() < 2 {
-            return Err(FirestoreError::invalid_parameters(
-                "composite_indexes",
-                format!(
-                    "index {position} needs at least two fields, has {}",
-                    index.fields.len()
-                ),
-            ));
-        }
-
         let vector_positions: Vec<usize> = index
             .fields
             .iter()
@@ -357,11 +374,61 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
             .map(|(field_position, _)| field_position)
             .collect();
 
+        let is_lone_vector_field = index.fields.len() == 1 && vector_positions == [0];
+        if index.fields.len() < 2 && !is_lone_vector_field {
+            return Err(FirestoreError::invalid_parameters(
+                "composite_indexes",
+                format!(
+                    "index {position} needs at least two fields, or exactly one vector field, has {}",
+                    index.fields.len()
+                ),
+            ));
+        }
+
+        if index.fields.iter().any(|field| field.field_path.is_empty()) {
+            return Err(FirestoreError::invalid_parameters(
+                "composite_indexes",
+                format!("index {position} has a field with an empty path"),
+            ));
+        }
+
+        let declares_implied_name = index
+            .fields
+            .iter()
+            .any(|field| field.field_path == IMPLIED_NAME_FIELD);
+        let max_fields = if declares_implied_name {
+            MAX_INDEX_FIELDS_WITH_IMPLIED_NAME
+        } else {
+            MAX_INDEX_FIELDS_WITH_IMPLIED_NAME - 1
+        };
+        if index.fields.len() > max_fields {
+            return Err(FirestoreError::invalid_parameters(
+                "composite_indexes",
+                format!(
+                    "index {position} declares {} fields; Firestore allows at most {max_fields} \
+                     (100 including the __name__ field it appends)",
+                    index.fields.len()
+                ),
+            ));
+        }
+
+        for (earlier_position, earlier) in indexes.iter().enumerate().take(position) {
+            if super::index_diff::composite_index_matches(index, earlier) {
+                return Err(FirestoreError::invalid_parameters(
+                    "composite_indexes",
+                    format!(
+                        "index {position} duplicates index {earlier_position} once a trailing \
+                         implied __name__ field is normalised away"
+                    ),
+                ));
+            }
+        }
+
         match vector_positions.as_slice() {
             [] => {}
             [only] if *only == index.fields.len() - 1 => {
                 if let FirestoreIndexFieldMode::Vector { dimension } = index.fields[*only].mode {
-                    validate_vector_dimension(dimension)?;
+                    validate_vector_dimension(dimension, "composite_indexes")?;
                 }
             }
             [only] => {
@@ -387,10 +454,10 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
     Ok(())
 }
 
-fn validate_vector_dimension(dimension: u32) -> FirestoreResult<()> {
+fn validate_vector_dimension(dimension: u32, field: &'static str) -> FirestoreResult<()> {
     if dimension == 0 || dimension > 2048 {
         return Err(FirestoreError::invalid_parameters(
-            "composite_indexes",
+            field,
             format!("vector dimension must be between 1 and 2048, was {dimension}"),
         ));
     }
@@ -400,6 +467,12 @@ fn validate_vector_dimension(dimension: u32) -> FirestoreResult<()> {
 fn validate_field_overrides(overrides: &[FirestoreFieldOverride]) -> FirestoreResult<()> {
     let mut seen_paths: HashSet<&str> = HashSet::new();
     for field_override in overrides {
+        if field_override.field_path.is_empty() {
+            return Err(FirestoreError::invalid_parameters(
+                "field_overrides",
+                "a field override's field path must not be empty",
+            ));
+        }
         if !seen_paths.insert(field_override.field_path.as_str()) {
             return Err(FirestoreError::invalid_parameters(
                 "field_overrides",
@@ -409,11 +482,54 @@ fn validate_field_overrides(overrides: &[FirestoreFieldOverride]) -> FirestoreRe
                 ),
             ));
         }
+        if super::index_diff::override_index_set(&field_override.indexes).len()
+            != field_override.indexes.len()
+        {
+            return Err(FirestoreError::invalid_parameters(
+                "field_overrides",
+                format!(
+                    "field path \"{}\" declares the same single-field index more than once",
+                    field_override.field_path
+                ),
+            ));
+        }
         for index in &field_override.indexes {
-            if let FirestoreIndexFieldMode::Vector { dimension } = index.mode {
-                validate_vector_dimension(dimension)?;
+            if matches!(index.mode, FirestoreIndexFieldMode::Vector { .. }) {
+                return Err(FirestoreError::invalid_parameters(
+                    "field_overrides",
+                    format!(
+                        "field path \"{}\" declares a vector index, which Firestore does not \
+                         support as a single-field override",
+                        field_override.field_path
+                    ),
+                ));
             }
         }
+    }
+    Ok(())
+}
+
+/// Firestore allows at most one TTL field per collection group.
+///
+/// <https://firebase.google.com/docs/firestore/ttl>: "You can mark only one field per collection
+/// group as a TTL field."
+fn validate_ttl_fields(ttl_fields: &[String]) -> FirestoreResult<()> {
+    for path in ttl_fields {
+        if path.is_empty() {
+            return Err(FirestoreError::invalid_parameters(
+                "ttl_fields",
+                "a TTL field path must not be empty",
+            ));
+        }
+    }
+    if ttl_fields.len() > 1 {
+        return Err(FirestoreError::invalid_parameters(
+            "ttl_fields",
+            format!(
+                "a collection group may have at most one TTL field, {} were declared",
+                ttl_fields.len()
+            ),
+        ));
     }
     Ok(())
 }
@@ -530,5 +646,114 @@ mod tests {
         assert!(params.composite_indexes.is_empty());
         assert!(params.field_overrides.is_empty());
         assert!(params.ttl_fields.is_empty());
+    }
+
+    #[test]
+    fn lone_vector_field_composite_index_is_valid() {
+        let index = FirestoreCompositeIndex::new(vec![field(
+            "embedding",
+            FirestoreIndexFieldMode::Vector { dimension: 8 },
+        )]);
+        assert!(validate_composite_indexes(&[index]).is_ok());
+    }
+
+    #[test]
+    fn lone_vector_field_dimension_is_still_validated() {
+        let index = FirestoreCompositeIndex::new(vec![field(
+            "embedding",
+            FirestoreIndexFieldMode::Vector { dimension: 0 },
+        )]);
+        let err = validate_composite_indexes(&[index]).unwrap_err();
+        assert!(err.to_string().contains("between 1 and 2048"));
+    }
+
+    #[test]
+    fn composite_index_with_empty_field_path_is_rejected() {
+        let index = FirestoreCompositeIndex::new(vec![asc(""), asc("b")]);
+        let err = validate_composite_indexes(&[index]).unwrap_err();
+        assert!(err.to_string().contains("empty path"));
+    }
+
+    #[test]
+    fn composite_index_exceeding_max_declared_fields_is_rejected() {
+        let fields: Vec<_> = (0..100).map(|i| asc(&format!("f{i}"))).collect();
+        let index = FirestoreCompositeIndex::new(fields);
+        let err = validate_composite_indexes(&[index]).unwrap_err();
+        assert!(err.to_string().contains("at most 99"));
+    }
+
+    #[test]
+    fn composite_index_at_max_declared_fields_is_valid() {
+        let fields: Vec<_> = (0..99).map(|i| asc(&format!("f{i}"))).collect();
+        let index = FirestoreCompositeIndex::new(fields);
+        assert!(validate_composite_indexes(&[index]).is_ok());
+    }
+
+    #[test]
+    fn duplicate_composite_index_after_name_normalisation_is_rejected() {
+        let index_a = FirestoreCompositeIndex::new(vec![asc("a"), asc("b")]);
+        let index_b =
+            FirestoreCompositeIndex::new(vec![asc("a"), asc("b"), asc(IMPLIED_NAME_FIELD)]);
+        let err = validate_composite_indexes(&[index_a, index_b]).unwrap_err();
+        assert!(err.to_string().contains("index 1 duplicates index 0"));
+    }
+
+    #[test]
+    fn field_override_with_duplicate_index_entries_is_rejected() {
+        let overrides = vec![FirestoreFieldOverride {
+            field_path: "tags".to_string(),
+            indexes: vec![
+                FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains),
+                FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains),
+            ],
+        }];
+        let err = validate_field_overrides(&overrides).unwrap_err();
+        assert!(err.to_string().contains("more than once"));
+    }
+
+    #[test]
+    fn field_override_with_vector_mode_is_rejected() {
+        let overrides = vec![FirestoreFieldOverride {
+            field_path: "embedding".to_string(),
+            indexes: vec![FirestoreFieldOverrideIndex::new(
+                FirestoreIndexFieldMode::Vector { dimension: 8 },
+            )],
+        }];
+        let err = validate_field_overrides(&overrides).unwrap_err();
+        assert!(err.to_string().contains("vector index"));
+    }
+
+    #[test]
+    fn field_override_with_empty_path_is_rejected() {
+        let overrides = vec![FirestoreFieldOverride {
+            field_path: String::new(),
+            indexes: vec![],
+        }];
+        let err = validate_field_overrides(&overrides).unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn single_ttl_field_is_valid() {
+        assert!(validate_ttl_fields(&["expires_at".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn more_than_one_ttl_field_is_rejected() {
+        let err = validate_ttl_fields(&["a".to_string(), "b".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("at most one TTL field"));
+    }
+
+    #[test]
+    fn duplicate_ttl_field_is_rejected() {
+        let err =
+            validate_ttl_fields(&["expires_at".to_string(), "expires_at".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("at most one TTL field"));
+    }
+
+    #[test]
+    fn empty_ttl_field_path_is_rejected() {
+        let err = validate_ttl_fields(&[String::new()]).unwrap_err();
+        assert!(err.to_string().contains("must not be empty"));
     }
 }
