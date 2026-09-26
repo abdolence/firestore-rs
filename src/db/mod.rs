@@ -104,8 +104,8 @@ struct FirestoreDbInner {
     doc_path: String,
     options: FirestoreDbOptions,
     client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
-    /// Whether this client was built against the `FIRESTORE_EMULATOR_HOST` emulator rather than
-    /// the real service. The emulator does not implement the admin API's index management RPCs,
+    /// Whether this client sends its requests to the `FIRESTORE_EMULATOR_HOST` emulator rather
+    /// than the real service (see [`is_emulator_endpoint`]). The emulator does not implement the admin API's index management RPCs,
     /// so [`FirestoreIndexSupport`](crate::db::support::FirestoreIndexSupport) reads this to skip
     /// rather than fail every call a caller's startup code makes unconditionally. Only read under
     /// the `admin` feature, so the field only exists there.
@@ -268,6 +268,10 @@ impl FirestoreDb {
             "Creating a new database client.",
         );
 
+        #[cfg(feature = "admin")]
+        let is_emulator =
+            is_emulator_endpoint(&effective_firebase_api_url, emulator_host.as_deref());
+
         let client = GoogleApiClient::from_function_with_token_source(
             FirestoreClient::new,
             effective_firebase_api_url,
@@ -283,7 +287,7 @@ impl FirestoreDb {
             client,
             options,
             #[cfg(feature = "admin")]
-            is_emulator: emulator_host.is_some(),
+            is_emulator,
         };
 
         Ok(Self {
@@ -628,6 +632,14 @@ impl FirestoreDb {
 
 /// Ensures that a URL string has a scheme (e.g., "http://").
 /// If no scheme is present, "http://" is prepended.
+/// Whether requests sent to `effective_url` reach the `FIRESTORE_EMULATOR_HOST` emulator: only
+/// when that host is the URL actually used. An explicit `firebase_api_url` pointing elsewhere,
+/// production included, is not the emulator just because the variable is set.
+#[cfg(feature = "admin")]
+fn is_emulator_endpoint(effective_url: &str, emulator_host: Option<&str>) -> bool {
+    emulator_host.is_some_and(|host| ensure_url_scheme(host.to_string()) == effective_url)
+}
+
 fn ensure_url_scheme(url: String) -> String {
     if !url.contains("://") {
         format!("http://{url}")
@@ -707,6 +719,24 @@ mod tests {
                 && documents_path.ends_with("/documents"),
             "ping must read a document under the database's /documents/ path, got {:?}",
             calls[0]
+        );
+    }
+
+    #[cfg(feature = "admin")]
+    #[test]
+    fn the_emulator_host_is_the_emulator_only_when_it_is_the_url_used() {
+        assert!(is_emulator_endpoint(
+            "http://localhost:8080",
+            Some("localhost:8080")
+        ));
+        assert!(is_emulator_endpoint(
+            "http://localhost:8080",
+            Some("http://localhost:8080")
+        ));
+        assert!(!is_emulator_endpoint(GOOGLE_FIREBASE_API_URL, None));
+        assert!(
+            !is_emulator_endpoint(GOOGLE_FIREBASE_API_URL, Some("localhost:8080")),
+            "an explicit production URL is not the emulator"
         );
     }
 
