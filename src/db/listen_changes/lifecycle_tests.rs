@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
@@ -129,13 +130,10 @@ async fn assert_graceful_shutdown(wait: Wait) {
 }
 
 #[tokio::test]
-async fn shutdown_waits_for_callback_and_resume_token() {
-    assert_graceful_shutdown(Wait::Callback).await;
-}
-
-#[tokio::test]
-async fn shutdown_waits_for_resume_token_storage() {
-    assert_graceful_shutdown(Wait::Storage).await;
+async fn shutdown_waits_for_the_callback_and_for_resume_token_storage() {
+    for wait in [Wait::Callback, Wait::Storage] {
+        assert_graceful_shutdown(wait).await;
+    }
 }
 
 #[tokio::test]
@@ -153,51 +151,33 @@ async fn interrupted_shutdown_retains_task_for_join() {
     assert!(listener.shutdown_handle.is_none());
 }
 
+/// A fake server that logs `Listen closed` once the client closes a Listen request; see
+/// [`FakeFirestore`] for why the log line is the proof.
+async fn listen_server() -> FakeFirestore {
+    FakeFirestore::start(|method, _bytes| {
+        assert!(method.ends_with("/Listen"));
+        ("Listen closed".to_string(), FakeResponse::empty())
+    })
+    .await
+}
+
 #[tokio::test]
 async fn dropping_response_closes_http2_request() {
-    let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = server.local_addr().unwrap();
-    let (closed, mut request_closed) = tokio::sync::oneshot::channel();
-    let server_task = tokio::spawn(async move {
-        let (socket, _) = server.accept().await.unwrap();
-        let mut connection = h2::server::handshake(socket).await.unwrap();
-        let (request, mut respond) = connection.accept().await.unwrap().unwrap();
-        let _response = respond
-            .send_response(
-                hyper::Response::builder()
-                    .header("content-type", "application/grpc")
-                    .body(())
-                    .unwrap(),
-                false,
-            )
-            .unwrap();
-        let mut body = request.into_body();
-        tokio::select! {
-            _ = async { while connection.accept().await.is_some() {} } => {}
-            _ = async {
-                while let Some(Ok(data)) = body.data().await {
-                    body.flow_control().release_capacity(data.len()).unwrap();
-                }
-            } => {}
-        }
-        closed.send(()).unwrap();
-    });
-    let db = FirestoreDb::with_options_token_source(
-        crate::FirestoreDbOptions::new("test".into())
-            .with_firebase_api_url(format!("http://{address}")),
-        vec![],
-        gcloud_sdk::TokenSourceType::ExternalSource(Box::new(
-            crate::db::FirestoreEmulatorTokenSource,
-        )),
-    )
-    .await
-    .unwrap();
-    let response = within(db.listen_doc_changes(vec![])).await.unwrap();
-    assert!(matches!(
-        request_closed.try_recv(),
-        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
-    ));
+    let server = listen_server().await;
+    let response = within(server.db.listen_doc_changes(vec![])).await.unwrap();
+    assert!(server.calls().is_empty());
     drop(response);
-    within(request_closed).await.unwrap();
-    server_task.await.unwrap();
+    within(server.wait_for_calls(1)).await;
+    assert_eq!(server.calls(), vec!["Listen closed"]);
+}
+
+// A listener holds its response stream through the reconnect delay after the stream ends, so
+// the request must close when the response ends, not only when the stream is dropped.
+#[tokio::test]
+async fn ended_response_closes_http2_request_while_held() {
+    let server = listen_server().await;
+    let mut response = within(server.db.listen_doc_changes(vec![])).await.unwrap();
+    assert!(within(response.next()).await.is_none());
+    within(server.wait_for_calls(1)).await;
+    assert_eq!(server.calls(), vec!["Listen closed"]);
 }

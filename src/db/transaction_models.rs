@@ -14,9 +14,12 @@ pub struct FirestoreTransactionOptions {
     /// Defaults to [`FirestoreTransactionMode::ReadWrite`].
     #[default = "FirestoreTransactionMode::ReadWrite"]
     pub mode: FirestoreTransactionMode,
-    /// An optional maximum duration for the entire transaction, including retries.
-    /// If set, the transaction will attempt to complete within this duration.
-    /// If `None`, default retry policies of the underlying gRPC client or Firestore service apply.
+    /// How many times a transaction that failed transiently is retried after its first
+    /// attempt. Defaults to 4, which means at most 5 attempts in total.
+    #[default = "4"]
+    pub max_retries: usize,
+    /// An optional cap on how long a transaction keeps retrying, counted from its first
+    /// failure, on top of [`max_retries`](Self::max_retries). `None`, the default, sets no cap.
     pub max_elapsed_time: Option<FirestoreDuration>,
 
     /// Concurrent transaction mode
@@ -32,6 +35,7 @@ impl Default for FirestoreTransactionOptions {
     fn default() -> Self {
         Self {
             mode: FirestoreTransactionMode::ReadWrite,
+            max_retries: 4,
             max_elapsed_time: None,
             concurrent_mode: None,
             request_options: None,
@@ -162,5 +166,14 @@ mod tests {
             options.request_options,
             Some(FirestoreRequestOptions::from_tags(["checkout"]))
         );
+    }
+
+    #[test]
+    fn default_and_new_agree() {
+        assert_eq!(
+            FirestoreTransactionOptions::default(),
+            FirestoreTransactionOptions::new()
+        );
+        assert_eq!(FirestoreTransactionOptions::new().max_retries, 4);
     }
 }

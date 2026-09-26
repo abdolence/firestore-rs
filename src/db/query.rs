@@ -3,12 +3,9 @@ use crate::*;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
-use futures::FutureExt;
-use futures::TryFutureExt;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
-use rand::RngExt;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::*;
@@ -17,8 +14,8 @@ impl FirestoreDb {
     fn create_query_request(
         &self,
         params: FirestoreQueryParams,
-    ) -> FirestoreResult<gcloud_sdk::tonic::Request<RunQueryRequest>> {
-        Ok(gcloud_sdk::tonic::Request::new(RunQueryRequest {
+    ) -> FirestoreResult<RunQueryRequest> {
+        Ok(RunQueryRequest {
             parent: params
                 .parent
                 .as_ref()
@@ -39,78 +36,43 @@ impl FirestoreDb {
             query_type: Some(run_query_request::QueryType::StructuredQuery(
                 params.try_into()?,
             )),
-        }))
+        })
     }
 
-    fn stream_query_doc_with_retries<'b>(
+    async fn stream_query_doc_with_retries<'b>(
         &self,
         params: FirestoreQueryParams,
-        retries: usize,
         span: Span,
-    ) -> BoxFuture<
-        '_,
-        FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<Document>>>>,
-    > {
-        async move {
-            let query_request = self.create_query_request(params.clone())?;
-            let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithMetadata<Document>>>> {
+        let collection_id = params.collection_id.clone();
+        let query_request = self.create_query_request(params)?;
+        let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
-            match self
-                .client()
-                .get()
-                .run_query(query_request)
-                .map_err(|e| e.into())
-                .await
-            {
-                Ok(query_response) => {
-                    let query_stream = query_response
-                        .into_inner()
-                        .map_err(|e| e.into())
-                        .map(|r| r.and_then(|r| r.try_into()))
-                        .boxed();
+        let query_stream = self
+            .retry_read(
+                &span,
+                "stream query",
+                &query_request,
+                |mut client, request| async move { client.run_query(request).await },
+            )
+            .await?
+            .map_err(|e| e.into())
+            .map(|r| r.and_then(|r| r.try_into()))
+            .boxed();
 
-                    let end_query_utc: FirestoreInstant = FirestoreInstant::now();
-                    let query_duration = end_query_utc.duration_since(begin_query_utc);
+        let end_query_utc: FirestoreInstant = FirestoreInstant::now();
+        let query_duration = end_query_utc.duration_since(begin_query_utc);
 
-                    span.record("/firestore/response_time", query_duration.as_millis());
-                    span.in_scope(|| {
-                        debug!(
-                            collection_id = ?params.collection_id,
-                            duration_milliseconds = query_duration.as_millis(),
-                            "Queried stream of documents.",
-                        );
-                    });
+        span.record("/firestore/response_time", query_duration.as_millis());
+        span.in_scope(|| {
+            debug!(
+                ?collection_id,
+                duration_milliseconds = query_duration.as_millis(),
+                "Queried stream of documents.",
+            );
+        });
 
-                    Ok(query_stream)
-                }
-                Err(err) => match err {
-                    FirestoreError::DatabaseError(ref db_err)
-                        if db_err.retryable_read(matches!(
-                            self.session_params.consistency_selector,
-                            Some(FirestoreConsistencySelector::Transaction(_))
-                        )) && retries < self.inner.options.max_retries =>
-                    {
-                        let sleep_duration = tokio::time::Duration::from_millis(
-                            rand::rng().random_range(0..2u64.pow(retries as u32) * 1000 + 1),
-                        );
-                        warn!(
-                            err = %db_err,
-                            current_retry = retries + 1,
-                            max_retries = self.inner.options.max_retries,
-                            delay = sleep_duration.as_millis(),
-                            "Failed to stream query. Retrying up to the specified number of times."
-                        );
-
-                        tokio::time::sleep(sleep_duration).await;
-
-                        self.stream_query_doc_with_retries(params, retries + 1, span)
-                            .await
-                    }
-                    _ => Err(err),
-                },
-            }
-        }
-        .boxed()
+        Ok(query_stream)
     }
 
     #[cfg(feature = "caching")]
@@ -260,7 +222,7 @@ impl FirestoreQuerySupport for FirestoreDb {
             "/firestore/response_time" = field::Empty
         );
 
-        let doc_stream = self.stream_query_doc_with_retries(params, 0, span).await?;
+        let doc_stream = self.stream_query_doc_with_retries(params, span).await?;
 
         Ok(Box::pin(doc_stream.filter_map(|doc_res| {
             future::ready(match doc_res {
@@ -286,7 +248,7 @@ impl FirestoreQuerySupport for FirestoreDb {
             "/firestore/response_time" = field::Empty
         );
 
-        self.stream_query_doc_with_retries(params, 0, span).await
+        self.stream_query_doc_with_retries(params, span).await
     }
 
     async fn query_obj<T>(&self, params: FirestoreQueryParams) -> FirestoreResult<Vec<T>>

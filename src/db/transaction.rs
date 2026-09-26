@@ -3,6 +3,7 @@
 // write transaction-agnostic abstractions over the trait. See
 // https://github.com/abdolence/firestore-rs/issues/206.
 pub use crate::db::transaction_ops::FirestoreTransactionOps;
+
 use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;
 use crate::{
@@ -10,10 +11,11 @@ use crate::{
     FirestoreResult, FirestoreTransactionId, FirestoreTransactionMode, FirestoreTransactionOptions,
     FirestoreTransactionResponse, FirestoreWriteResult,
 };
-use backoff::future::retry;
+use backoff::backoff::Backoff;
 use backoff::ExponentialBackoffBuilder;
 use futures::future::BoxFuture;
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
+use gcloud_sdk::tonic::Code;
 use std::time::Duration;
 use tracing::*;
 
@@ -182,8 +184,9 @@ impl<'a> FirestoreTransaction<'a> {
     /// them. A transaction with no queued writes still commits successfully - useful for a
     /// read-only transaction that only needed a consistent snapshot.
     ///
-    /// Returns an error if the `Commit` request fails. Only `ABORTED` sets `retry_possible`:
-    /// other failures can leave the commit outcome unknown and must not repeat the transaction.
+    /// Returns an error if the `Commit` request fails. Only `ABORTED` sets `retry_possible`,
+    /// meaning the whole transaction may run again. Any other failure, a dropped connection
+    /// included, leaves the outcome unknown: the writes may already be applied.
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
 
@@ -209,13 +212,16 @@ impl<'a> FirestoreTransaction<'a> {
             .commit(request)
             .await
             .map_err(|status| {
-                // Transport failures can arrive after the writes were committed.
-                let retry_possible = status.code() == gcloud_sdk::tonic::Code::Aborted;
-                let mut error = FirestoreError::from(status);
-                if let FirestoreError::DatabaseError(ref mut error) = error {
-                    error.retry_possible = retry_possible;
+                let retry_possible = status.code() == Code::Aborted;
+                match FirestoreError::from(status) {
+                    FirestoreError::DatabaseError(error) => {
+                        FirestoreError::DatabaseError(FirestoreDatabaseError {
+                            retry_possible,
+                            ..error
+                        })
+                    }
+                    other => other,
                 }
-                error
             })?
             .into_inner();
 
@@ -393,14 +399,18 @@ impl FirestoreDb {
     /// document with a server-generated ID, so `update_object` with an explicit document ID -
     /// not an insert - is how a transaction creates one.
     ///
-    /// On a transient failure - `func` returning [`BackoffError::Transient`], or the commit
-    /// returning `ABORTED` - the whole transaction is
-    /// retried from the start with exponential backoff, up to `options.max_elapsed_time`. `func`
-    /// must therefore be safe to run more than once for the same call: read the state it needs
-    /// from the transaction-scoped `db` argument on every invocation rather than closing over
+    /// On a transient failure - `func` returning [`BackoffError::Transient`], or an `ABORTED`
+    /// answer to `Commit` (see [`FirestoreTransaction::commit`]) - the whole transaction is
+    /// retried from the start: after the error's `retry_after` when it names one, and after an
+    /// exponential backoff otherwise. It is retried at most 4 times, 5 attempts in all, with no
+    /// time limit; [`run_transaction_with_options`](Self::run_transaction_with_options) changes
+    /// both bounds. Once they are reached, the last attempt's error is returned. Any other commit
+    /// error is returned without running `func` again.
+    /// `func` must therefore be safe to run more than once for the same call: read the state it
+    /// needs from the transaction-scoped `db` argument on every invocation rather than closing over
     /// state read before the transaction started, and avoid side effects inside the closure that
-    /// are not themselves safe to repeat, such as an external HTTP call. A convenience of this:
-    /// `?` on a plain [`FirestoreResult`] inside the closure already converts to
+    /// are not themselves safe to repeat, such as an external HTTP call. A convenience of this: `?`
+    /// on a plain [`FirestoreResult`] inside the closure already converts to
     /// `BackoffError::Transient` for free, through `backoff::Error`'s blanket `From` impl, so the
     /// ordinary error paths already retry; return `Err(BackoffError::Permanent(err))` explicitly
     /// for an error that must not be retried. A permanent error rolls the transaction back and is
@@ -460,13 +470,16 @@ impl FirestoreDb {
 
     /// Same as [`run_transaction`](Self::run_transaction), with explicit `options`.
     ///
-    /// `options.max_elapsed_time` bounds how long the retry loop described on
-    /// [`run_transaction`](Self::run_transaction) keeps retrying before giving up.
+    /// Two options bound the retries described on [`run_transaction`](Self::run_transaction):
+    /// `options.max_retries` caps how many retries follow the first attempt (4 by default, 5
+    /// attempts in all), and `options.max_elapsed_time`, when set, also caps how long retrying
+    /// may go on, counted from the first failure. Retrying stops at whichever is reached first.
     ///
     /// Returns an error if `BeginTransaction` fails, `func` returns [`BackoffError::Permanent`],
-    /// or retries are exhausted. Callback errors are wrapped in
-    /// [`FirestoreError::ErrorInTransaction`]; rollback is attempted on the failed transaction
-    /// before retrying or returning the error. A rollback error does not replace the callback error.
+    /// the commit fails without `retry_possible`, or retries are exhausted. Callback errors are
+    /// wrapped in [`FirestoreError::ErrorInTransaction`]; rollback is attempted on the failed
+    /// transaction before retrying or returning the error. A rollback error does not replace the
+    /// callback error.
     pub async fn run_transaction_with_options<T, FN, E>(
         &self,
         func: FN,
@@ -479,119 +492,103 @@ impl FirestoreDb {
         ) -> BoxFuture<'b, std::result::Result<T, BackoffError<E>>>,
         E: std::error::Error + Send + Sync + 'static,
     {
-        // Perform our initial attempt. If this fails and the backend tells us we can retry,
-        // we'll try again with exponential backoff using the first attempt's transaction ID.
-        let (transaction_id, transaction_span, initial_backoff_duration) = {
-            let mut transaction = self.begin_transaction_with_options(options.clone()).await?;
-            let transaction_id = transaction.transaction_id().clone();
-            let transaction_span = transaction.data.transaction_span.clone();
-            let mut initial_backoff_duration: Option<Duration> = None;
-
-            let cdb = self.clone_with_consistency_selector(
-                FirestoreConsistencySelector::Transaction(transaction_id.clone()),
-            );
-
-            match func(cdb, &mut transaction).await {
-                Ok(ret_val) => {
-                    match transaction.commit().await {
-                        Ok(_) => return Ok(ret_val),
-                        Err(err) => match err {
-                            FirestoreError::DatabaseError(ref db_err) if db_err.retry_possible => {
-                                transaction_span.in_scope(|| {
-                                    warn!(
-                                        %err,
-                                        "Transient error occurred while committing transaction.",
-                                    )
-                                });
-                                // Ignore; we'll try again below
-                            }
-                            other => return Err(other),
-                        },
-                    }
-                }
-                Err(err) => match err {
-                    BackoffError::Transient { err, retry_after } => {
-                        transaction_span.in_scope(|| {
-                            warn!(%err, delay = ?retry_after, "Transient error occurred in transaction function. Retrying after the specified delay.");
-                        });
-                        initial_backoff_duration = retry_after;
-                        transaction.rollback().await.ok();
-                    }
-                    BackoffError::Permanent(err) => {
-                        transaction.rollback().await.ok();
-                        return Err(FirestoreError::ErrorInTransaction(
-                            FirestoreErrorInTransaction::new(transaction_id.clone(), Box::new(err)),
-                        ));
-                    }
-                },
-            }
-
-            (transaction_id, transaction_span, initial_backoff_duration)
+        let max_elapsed_time = options
+            .max_elapsed_time
+            .map(Duration::try_from)
+            .transpose()?;
+        // The first BeginTransaction error is returned as it is, and every retry names the first
+        // transaction's ID in `ReadWriteRetry`.
+        let transaction = self.begin_transaction_with_options(options.clone()).await?;
+        let retry_options = FirestoreTransactionOptions {
+            mode: FirestoreTransactionMode::ReadWriteRetry(transaction.transaction_id().clone()),
+            ..options
         };
-
-        // We failed the first time. Now we must change the transaction mode to signal that we're retrying with the original transaction ID.
-        let backoff = ExponentialBackoffBuilder::new()
-            .with_max_elapsed_time(
-                options
-                    .max_elapsed_time
-                    // Convert to a std `Duration` and clamp any negative durations
-                    .map(std::time::Duration::try_from)
-                    .transpose()?,
-            )
-            .with_initial_interval(initial_backoff_duration.unwrap_or(Duration::from_millis(
-                backoff::default::INITIAL_INTERVAL_MILLIS,
-            )))
+        let mut result = self.run_transaction_attempt(transaction, &func).await;
+        // Built only now, so that `max_elapsed_time` counts from the first failure.
+        let mut backoff = ExponentialBackoffBuilder::new()
+            .with_max_elapsed_time(max_elapsed_time)
             .build();
+        let mut retries = 0;
 
-        retry(backoff, || async {
-            let options = FirestoreTransactionOptions {
-                mode: FirestoreTransactionMode::ReadWriteRetry(transaction_id.clone()),
-                ..options.clone()
+        loop {
+            let (err, retry_after) = match result {
+                Ok(value) => return Ok(value),
+                Err(BackoffError::Permanent(err)) => return Err(err),
+                Err(BackoffError::Transient { err, retry_after }) => (err, retry_after),
             };
-            let mut transaction = self
-                .begin_transaction_with_options(options)
+            if retries == retry_options.max_retries {
+                return Err(err);
+            }
+            let Some(delay) = retry_after.or_else(|| backoff.next_backoff()) else {
+                return Err(err);
+            };
+            tokio::time::sleep(delay).await;
+            retries += 1;
+            result = match self
+                .begin_transaction_with_options(retry_options.clone())
                 .await
-                .map_err(firestore_err_to_backoff)?;
-            let transaction_id = transaction.transaction_id().clone();
-
-            let cdb = self.clone_with_consistency_selector(
-                FirestoreConsistencySelector::Transaction(transaction_id.clone()),
-            );
-
-            let ret_val = match func(cdb, &mut transaction).await {
-                Ok(value) => value,
-                Err(backoff_err) => {
-                    // Reads can hold locks even without queued writes. Release the attempt
-                    // that owns them, rather than opening another transaction to roll back.
-                    transaction.rollback().await.ok();
-                    return Err(match backoff_err {
-                        BackoffError::Transient { err, retry_after } => {
-                            transaction_span.in_scope(|| {
-                                warn!(%err, delay = ?retry_after, "Transient error occurred in transaction function. Retrying after the specified delay.");
-                            });
-                            let err = FirestoreError::ErrorInTransaction(
-                                FirestoreErrorInTransaction::new(transaction_id, Box::new(err)),
-                            );
-                            BackoffError::Transient { err, retry_after }
-                        }
-                        BackoffError::Permanent(err) => BackoffError::Permanent(
-                            FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction::new(
-                                transaction_id,
-                                Box::new(err),
-                            )),
-                        ),
-                    });
-                }
+            {
+                Ok(transaction) => self.run_transaction_attempt(transaction, &func).await,
+                Err(err) => Err(firestore_err_to_backoff(err)),
             };
+        }
+    }
 
-            transaction
+    /// Runs `func` in `transaction` and commits it, or rolls it back if `func` fails.
+    ///
+    /// A `func` error comes back wrapped in [`FirestoreError::ErrorInTransaction`], still
+    /// transient or permanent as `func` returned it; a commit error is transient only when it is
+    /// `retry_possible`.
+    async fn run_transaction_attempt<T, FN, E>(
+        &self,
+        mut transaction: FirestoreTransaction<'_>,
+        func: &FN,
+    ) -> std::result::Result<T, BackoffError<FirestoreError>>
+    where
+        for<'b> FN: Fn(
+            FirestoreDb,
+            &'b mut FirestoreTransaction,
+        ) -> BoxFuture<'b, std::result::Result<T, BackoffError<E>>>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        let transaction_id = transaction.transaction_id().clone();
+        let transaction_span = transaction.data.transaction_span.clone();
+        let db = self.clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
+            transaction_id.clone(),
+        ));
+
+        let result = match func(db, &mut transaction).await {
+            Ok(value) => transaction
                 .commit()
                 .await
-                .map_err(firestore_err_to_backoff)?;
+                .map(|_| value)
+                .map_err(firestore_err_to_backoff),
+            Err(err) => {
+                // Reads can hold locks even without queued writes, so release them now rather
+                // than leaving them until the transaction expires.
+                transaction.rollback().await.ok();
+                let in_transaction = |err: E| {
+                    FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction::new(
+                        transaction_id,
+                        Box::new(err),
+                    ))
+                };
+                Err(match err {
+                    BackoffError::Transient { err, retry_after } => BackoffError::Transient {
+                        err: in_transaction(err),
+                        retry_after,
+                    },
+                    BackoffError::Permanent(err) => BackoffError::Permanent(in_transaction(err)),
+                })
+            }
+        };
 
-            Ok(ret_val)
-        })
-        .await
+        if let Err(BackoffError::Transient { err, retry_after }) = &result {
+            transaction_span.in_scope(|| {
+                warn!(%err, delay = ?retry_after, "Transient error occurred in transaction.");
+            });
+        }
+        result
     }
 }
 
