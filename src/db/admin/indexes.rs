@@ -13,8 +13,9 @@ use crate::errors::FirestoreError;
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreDb, FirestoreFieldOverride,
     FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSyncOptions, FirestoreIndexSyncReport,
-    FirestoreInstant, FirestoreListedCompositeIndex, FirestoreListedField,
-    FirestoreOperationWaitOptions, FirestoreResult,
+    FirestoreIndexSyncSkipReason, FirestoreIndexSyncTimings, FirestoreInstant,
+    FirestoreListedCompositeIndex, FirestoreListedField, FirestoreOperationWaitOptions,
+    FirestoreResult,
 };
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field as proto_field;
@@ -27,7 +28,7 @@ use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
 use gcloud_sdk::prost_types::FieldMask;
 use gcloud_sdk::tonic::Code;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::*;
 
 /// One write `.sync()` sends for the owned collection group, holding the declared or listed
@@ -397,8 +398,10 @@ impl FirestoreDb {
         params: &FirestoreIndexParams,
         group: &OwnedGroup<'_>,
         prune: bool,
-    ) -> FirestoreResult<FirestoreIndexPlan> {
+    ) -> FirestoreResult<(FirestoreIndexPlan, Duration)> {
+        let list_started = Instant::now();
         let listing = self.list_existing_state(group).await?;
+        let list_elapsed = list_started.elapsed();
         log_existing_state(&params.collection_group, &listing);
 
         let diff_span = span!(
@@ -412,7 +415,7 @@ impl FirestoreDb {
         diff_span.record("/firestore/response_time", elapsed.as_millis());
 
         log_plan(&params.collection_group, &plan);
-        Ok(plan)
+        Ok((plan, list_elapsed))
     }
 
     async fn apply_create_index(
@@ -728,6 +731,7 @@ impl FirestoreDb {
             unchanged: plan.unchanged.clone(),
             pending: plan.pending.clone(),
             needs_repair: plan.needs_repair.clone(),
+            unchanged_ttl: plan.unchanged_ttl.clone(),
             pending_ttl: plan.pending_ttl.clone(),
             needs_repair_ttl: plan.needs_repair_ttl.clone(),
             unrecognised: plan.unrecognised.clone(),
@@ -868,7 +872,7 @@ impl FirestoreIndexSupport for FirestoreDb {
         let began = FirestoreInstant::now();
         let plan = async {
             let group = self.owned_group(&params.collection_group);
-            let plan = self
+            let (plan, _) = self
                 .plan_against_server(&params, &group, options.prune)
                 .await?;
             info!(
@@ -889,13 +893,23 @@ impl FirestoreIndexSupport for FirestoreDb {
         params: FirestoreIndexParams,
         options: FirestoreIndexSyncOptions,
     ) -> FirestoreResult<FirestoreIndexSyncReport> {
+        let started = Instant::now();
         crate::validate_index_params(&params)?;
         if self.inner.is_emulator {
             info!(
                 collection_group = params.collection_group.as_str(),
                 "Skipping index sync: the Firestore emulator does not implement the admin API.",
             );
-            return Ok(FirestoreIndexSyncReport::default());
+            return Ok(FirestoreIndexSyncReport {
+                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
+                timings: FirestoreIndexSyncTimings {
+                    total: started.elapsed(),
+                    list: None,
+                    apply: None,
+                    wait: None,
+                },
+                ..Default::default()
+            });
         }
 
         let root = span!(
@@ -909,20 +923,26 @@ impl FirestoreIndexSupport for FirestoreDb {
         let began = FirestoreInstant::now();
         let report = async {
             let group = self.owned_group(&params.collection_group);
-            let plan = self
+            let (plan, list_elapsed) = self
                 .plan_against_server(&params, &group, options.prune)
                 .await?;
             let sequencing = options
                 .wait
                 .clone()
                 .unwrap_or_else(|| FirestoreOperationWaitOptions::new(SEQUENCING_TIMEOUT));
-            let (report, pending_operations) =
+            let apply_started = Instant::now();
+            let (mut report, pending_operations) =
                 self.apply_plan(&group, &plan, &sequencing).await?;
+            report.timings.list = Some(list_elapsed);
+            report.timings.apply = Some(apply_started.elapsed());
             if let Some(wait_options) = &options.wait {
-                if let Err(err) = self
+                let wait_started = Instant::now();
+                let waited = self
                     .wait_for_index_operations(&pending_operations, wait_options)
-                    .await
-                {
+                    .await;
+                report.timings.wait = Some(wait_started.elapsed());
+                if let Err(err) = waited {
+                    report.timings.total = started.elapsed();
                     warn!(
                         collection_group = params.collection_group.as_str(),
                         "Waiting for the applied changes failed; what was applied before it: {report}",
@@ -930,6 +950,7 @@ impl FirestoreIndexSupport for FirestoreDb {
                     return Err(err);
                 }
             }
+            report.timings.total = started.elapsed();
             info!(
                 collection_group = params.collection_group.as_str(),
                 "{report}"
@@ -1088,6 +1109,74 @@ mod tests {
 
         assert_eq!(report.unchanged, vec![declared_index()]);
         assert!(report.created_indexes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_already_active_declared_ttl_is_reported_unchanged() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => (
+                "ListFields".to_string(),
+                list_fields_response(vec![field_resource("expires_at", None, Some(active_ttl()))]),
+            ),
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let params = FirestoreIndexParams::new(group()).with_ttl_fields(vec!["expires_at".into()]);
+        let report = fake
+            .db
+            .sync_indexes(params, FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+
+        assert_eq!(report.unchanged_ttl, vec!["expires_at".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn the_report_carries_the_time_of_each_phase_that_ran() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                pending_operation_response(&operation_name("op1")),
+            ),
+            GET_OPERATION => (
+                "GetOperation".to_string(),
+                done_operation_response(&operation_name("op1")),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let waited = fake
+            .db
+            .sync_indexes(
+                params_with_index(),
+                FirestoreIndexSyncOptions::new()
+                    .with_wait(FirestoreOperationWaitOptions::new(Duration::from_secs(5))),
+            )
+            .await
+            .unwrap();
+        assert_eq!(waited.skipped, None);
+        let (list, apply, wait) = (
+            waited.timings.list.expect("the listing ran"),
+            waited.timings.apply.expect("the apply ran"),
+            waited.timings.wait.expect("the wait ran"),
+        );
+        assert!(waited.timings.total >= list + apply + wait);
+        assert!(waited.to_string().contains("timings: total"));
+
+        let not_waited = fake
+            .db
+            .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+        assert!(not_waited.timings.apply.is_some());
+        assert_eq!(not_waited.timings.wait, None);
     }
 
     #[tokio::test]
@@ -1960,7 +2049,12 @@ mod tests {
             .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
             .await
             .unwrap();
-        assert_eq!(report, FirestoreIndexSyncReport::default());
+        assert_eq!(report.skipped, Some(FirestoreIndexSyncSkipReason::Emulator));
+        assert_eq!(report.timings.list, None);
+        assert_eq!(report.timings.apply, None);
+        assert!(report
+            .to_string()
+            .contains("skipped: the Firestore emulator"));
 
         assert!(
             fake.calls().is_empty(),

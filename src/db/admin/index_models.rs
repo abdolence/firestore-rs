@@ -439,6 +439,31 @@ pub struct FirestoreIndexSyncReport {
     /// Listed indexes or fields this crate's domain model cannot represent; never deleted or
     /// reverted, even when pruning.
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
+    /// Why this sync did nothing without contacting Firestore; `None` when it ran.
+    pub skipped: Option<FirestoreIndexSyncSkipReason>,
+    /// How long the sync and each of its phases took.
+    pub timings: FirestoreIndexSyncTimings,
+}
+
+/// Why a `.sync()` returned without contacting Firestore.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum FirestoreIndexSyncSkipReason {
+    /// The client talks to the Firestore emulator, which does not implement the admin API.
+    Emulator,
+}
+
+/// How long a `.sync()` took, in total and per phase. A phase is `None` when it did not run: all
+/// of them for a skipped sync, and `wait` when the caller did not ask to wait.
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
+pub struct FirestoreIndexSyncTimings {
+    /// The whole call.
+    pub total: Duration,
+    /// Listing the group's indexes and fields.
+    pub list: Option<Duration>,
+    /// Sending the changes, including any wait between two writes that depend on each other.
+    pub apply: Option<Duration>,
+    /// Waiting for the started changes to finish.
+    pub wait: Option<Duration>,
 }
 
 /// The maximum number of fields Firestore allows on one composite index, `__name__` included.
@@ -925,7 +950,37 @@ impl Display for FirestoreIndexSyncReport {
         write_section(f, "kept_undeclared_indexes", &self.kept_undeclared_indexes)?;
         write_section(f, "kept_undeclared_fields", &self.kept_undeclared_fields)?;
         write_section(f, "kept_undeclared_ttl", &self.kept_undeclared_ttl)?;
-        write_section(f, "unrecognised", &self.unrecognised)
+        write_section(f, "unrecognised", &self.unrecognised)?;
+        if let Some(reason) = &self.skipped {
+            writeln!(f, "  skipped: {reason}")?;
+        }
+        writeln!(f, "  timings: {}", self.timings)
+    }
+}
+
+impl Display for FirestoreIndexSyncSkipReason {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            FirestoreIndexSyncSkipReason::Emulator => {
+                write!(f, "the Firestore emulator does not implement the admin API")
+            }
+        }
+    }
+}
+
+impl Display for FirestoreIndexSyncTimings {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "total {} ms", self.total.as_millis())?;
+        for (phase, duration) in [
+            ("list", self.list),
+            ("apply", self.apply),
+            ("wait", self.wait),
+        ] {
+            if let Some(duration) = duration {
+                write!(f, ", {phase} {} ms", duration.as_millis())?;
+            }
+        }
+        Ok(())
     }
 }
 
