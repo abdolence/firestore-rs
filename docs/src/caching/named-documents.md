@@ -1,4 +1,4 @@
-## Caching named documents instead of a whole collection
+# Caching named documents instead of a whole collection
 
 `.collection(name)` subscribes the listener to the **entire** collection, even though it does not
 preload it - "lazy" only means the initial download is skipped. When you know which documents you

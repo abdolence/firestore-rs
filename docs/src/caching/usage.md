@@ -1,4 +1,4 @@
-## Usage
+# Usage
 
 ```rust,no_run
 # use firestore::*;

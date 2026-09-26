@@ -1,4 +1,4 @@
-## How the cache is updated
+# How the cache is updated
 
 - When you read a document by ID through the cache and it is not there, it is fetched from
   Firestore and cached;
