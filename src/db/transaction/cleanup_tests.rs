@@ -1,10 +1,7 @@
 use super::*;
-use crate::db::fake_firestore::{begin_response, FakeFirestore, FakeResponse};
+use crate::db::fake_firestore::{begin_response, read_transaction_id, FakeFirestore, FakeResponse};
 use crate::FirestoreGetByIdSupport;
-use gcloud_sdk::google::firestore::v1::{
-    get_document_request, CommitRequest, CommitResponse, Document, GetDocumentRequest,
-    RollbackRequest,
-};
+use gcloud_sdk::google::firestore::v1::{CommitRequest, Document, RollbackRequest};
 use gcloud_sdk::prost::Message;
 use gcloud_sdk::tonic::Code;
 use std::sync::atomic::AtomicU8;
@@ -19,14 +16,8 @@ async fn fixture(rollback_code: Code, commit_code: Code) -> FakeFirestore {
         if method.ends_with("/BeginTransaction") {
             begin_response(&begins)
         } else if method.ends_with("/GetDocument") {
-            let request = GetDocumentRequest::decode(bytes).unwrap();
-            let Some(get_document_request::ConsistencySelector::Transaction(id)) =
-                request.consistency_selector
-            else {
-                panic!("read must belong to a transaction");
-            };
             (
-                format!("Get({})", id[0]),
+                format!("Get({})", read_transaction_id(bytes)),
                 FakeResponse::Message(Document::default().encode_to_vec()),
             )
         } else if method.ends_with("/Rollback") {
@@ -40,12 +31,17 @@ async fn fixture(rollback_code: Code, commit_code: Code) -> FakeFirestore {
             } else {
                 format!("Rollback({}, tags={tags:?})", request.transaction[0])
             };
-            (label, FakeResponse::Status(rollback_code))
+            let response = if rollback_code == Code::Ok {
+                FakeResponse::empty()
+            } else {
+                FakeResponse::Status(rollback_code)
+            };
+            (label, response)
         } else {
             let request = CommitRequest::decode(bytes).unwrap();
             let call = format!("Commit({})", request.transaction[0]);
             let response = if commit_code == Code::Ok {
-                FakeResponse::Message(CommitResponse::default().encode_to_vec())
+                FakeResponse::committed()
             } else {
                 FakeResponse::Status(commit_code)
             };
@@ -53,6 +49,18 @@ async fn fixture(rollback_code: Code, commit_code: Code) -> FakeFirestore {
         }
     })
     .await
+}
+
+// The fixture's two rollback answers are what the table below relies on: one a success, the
+// other a failure.
+#[tokio::test]
+async fn fixture_rollback_answers_succeed_and_fail() {
+    for (rollback_code, succeeds) in [(Code::Ok, true), (Code::Unavailable, false)] {
+        let server = fixture(rollback_code, Code::Ok).await;
+        let transaction = server.db.begin_transaction().await.unwrap();
+        let result = transaction.rollback().await;
+        assert_eq!(result.is_ok(), succeeds, "{rollback_code:?}: {result:?}");
+    }
 }
 
 // A rollback failing must not replace the callback's own error, so the same assertions run

@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::fake_firestore::{begin_response, FakeFirestore, FakeResponse};
+use crate::db::fake_firestore::{begin_response, read_transaction_id, FakeFirestore, FakeResponse};
 use crate::errors::{firestore_err_to_backoff, BackoffError};
 use futures::TryStreamExt;
 use gcloud_sdk::prost::Message;
@@ -108,30 +108,22 @@ async fn aborted_read_retries_the_whole_transaction() {
         if method.ends_with("/BeginTransaction") {
             begin_response(&begins)
         } else if method.ends_with("/GetDocument") {
-            let request = GetDocumentRequest::decode(bytes).unwrap();
-            let Some(get_document_request::ConsistencySelector::Transaction(id)) =
-                request.consistency_selector
-            else {
-                panic!("read must belong to a transaction");
-            };
-            if id == [1] {
+            let id = read_transaction_id(bytes);
+            if id == 1 {
                 (
-                    format!("Get({}) aborted", id[0]),
+                    format!("Get({id}) aborted"),
                     FakeResponse::Status(Code::Aborted),
                 )
             } else {
                 (
-                    format!("Get({})", id[0]),
+                    format!("Get({id})"),
                     FakeResponse::Message(Document::default().encode_to_vec()),
                 )
             }
         } else if method.ends_with("/Rollback") {
-            ("Rollback".to_string(), FakeResponse::Status(Code::Ok))
+            ("Rollback".to_string(), FakeResponse::empty())
         } else {
-            (
-                "Commit".to_string(),
-                FakeResponse::Message(CommitResponse::default().encode_to_vec()),
-            )
+            ("Commit".to_string(), FakeResponse::committed())
         }
     })
     .await;

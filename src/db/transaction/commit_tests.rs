@@ -1,10 +1,9 @@
 use super::*;
-use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
-use gcloud_sdk::google::firestore::v1::{BeginTransactionResponse, CommitResponse};
+use crate::db::fake_firestore::{begin_failure, begin_response, FakeFirestore, FakeResponse};
 use gcloud_sdk::prost::Message;
 use gcloud_sdk::tonic::Code;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// One queued answer to a `Commit` RPC: a real response, an error code, or a connection dropped
@@ -16,47 +15,49 @@ enum CommitOutcome {
     Drop,
 }
 
-/// `begin_failure` is the one allowed `BeginTransaction` failure, as (attempt number, code).
+impl CommitOutcome {
+    /// The public error code the client reports for this outcome.
+    fn error_code(self) -> String {
+        match self {
+            Self::Ok => panic!("a successful commit has no error code"),
+            Self::Status(code) => format!("{code:?}"),
+            Self::Drop => "CONNECTION_ERROR".to_string(),
+        }
+    }
+}
+
+/// `failing_begin` fails, once, the `BeginTransaction` that would open the given transaction ID.
 /// Returns the transaction result, the number of callback runs, and one `Commit(<transaction>)`
 /// entry per `Commit` RPC, in order.
 async fn run_transaction(
     commits: &[CommitOutcome],
-    begin_failure: Option<(u32, Code)>,
+    failing_begin: Option<(u8, Code)>,
     transient_callback: bool,
 ) -> (FirestoreResult<usize>, usize, Vec<String>) {
     let commit_results = Mutex::new(VecDeque::from(commits.to_vec()));
-    let begin_count = AtomicU32::new(0);
+    let begins = AtomicU8::new(0);
+    let failing_begin = Mutex::new(failing_begin);
     // One retry keeps a persistently failing commit, and its backoff, short.
     let server = FakeFirestore::start_with_max_retries(1, move |method, bytes| {
         if method.ends_with("/BeginTransaction") {
-            let count = begin_count.fetch_add(1, Ordering::SeqCst) + 1;
-            let code = begin_failure
-                .filter(|(attempt, _)| *attempt == count)
-                .map_or(Code::Ok, |(_, code)| code);
-            let response = if code == Code::Ok {
-                FakeResponse::Message(
-                    BeginTransactionResponse {
-                        transaction: count.to_be_bytes().to_vec(),
-                    }
-                    .encode_to_vec(),
-                )
-            } else {
-                FakeResponse::Status(code)
-            };
-            (format!("Begin({count}, {code:?})"), response)
+            let next_id = begins.load(Ordering::SeqCst) + 1;
+            match failing_begin
+                .lock()
+                .unwrap()
+                .take_if(|(id, _)| *id == next_id)
+            {
+                Some((_, code)) => begin_failure(code),
+                None => begin_response(&begins),
+            }
         } else if method.ends_with("/Commit") {
             let request = CommitRequest::decode(bytes).unwrap();
             assert_eq!(request.writes.len(), 1);
-            let outcome = commit_results.lock().unwrap().pop_front().unwrap();
-            let response = match outcome {
-                CommitOutcome::Ok => {
-                    FakeResponse::Message(CommitResponse::default().encode_to_vec())
-                }
+            let response = match commit_results.lock().unwrap().pop_front().unwrap() {
+                CommitOutcome::Ok => FakeResponse::committed(),
                 CommitOutcome::Status(code) => FakeResponse::Status(code),
                 CommitOutcome::Drop => FakeResponse::Drop,
             };
-            let transaction = u32::from_be_bytes(request.transaction.try_into().unwrap());
-            (format!("Commit({transaction})"), response)
+            (format!("Commit({})", request.transaction[0]), response)
         } else {
             assert!(method.ends_with("/Rollback"));
             // A failed cleanup must not replace the original commit error.
@@ -125,9 +126,7 @@ async fn ambiguous_commit_stops_without_repeating_the_callback() {
                 !error.retry_possible,
                 "{outcome:?} must not be retried: {error:?}"
             );
-            if let CommitOutcome::Status(code) = outcome {
-                assert_eq!(error.public.code, format!("{code:?}"));
-            }
+            assert_eq!(error.public.code, outcome.error_code());
             assert_eq!(
                 (callbacks, commits_seen.len()),
                 (commits.len(), commits.len()),
@@ -142,7 +141,7 @@ async fn ambiguous_commit_stops_without_repeating_the_callback() {
 #[tokio::test]
 async fn precommit_failures_keep_their_own_retry_policy() {
     let aborted = CommitOutcome::Status(Code::Aborted);
-    for (commits, begin_failure, transient_callback, want_commits) in [
+    for (commits, failing_begin, transient_callback, want_commits) in [
         (vec![aborted, aborted, CommitOutcome::Ok], None, false, 3),
         (
             vec![aborted, CommitOutcome::Ok],
@@ -152,7 +151,7 @@ async fn precommit_failures_keep_their_own_retry_policy() {
         ),
     ] {
         let (result, callbacks, commits_seen) =
-            run_transaction(&commits, begin_failure, transient_callback).await;
+            run_transaction(&commits, failing_begin, transient_callback).await;
         assert_eq!(result.unwrap(), 3);
         assert_eq!((callbacks, commits_seen.len()), (3, want_commits));
     }

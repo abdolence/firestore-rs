@@ -151,24 +151,33 @@ async fn interrupted_shutdown_retains_task_for_join() {
     assert!(listener.shutdown_handle.is_none());
 }
 
-// The fake server's handler only runs once the request body ends, which for a Listen call
-// happens only when the client drops its response - so a logged call is itself the proof that
-// dropping the response closed the request stream.
+/// A fake server that logs `Listen closed` once the client closes a Listen request; see
+/// [`FakeFirestore`] for why the log line is the proof.
+async fn listen_server() -> FakeFirestore {
+    FakeFirestore::start(|method, _bytes| {
+        assert!(method.ends_with("/Listen"));
+        ("Listen closed".to_string(), FakeResponse::empty())
+    })
+    .await
+}
+
 #[tokio::test]
 async fn dropping_response_closes_http2_request() {
-    let server = FakeFirestore::start(|method, _bytes| {
-        assert!(method.ends_with("/Listen"));
-        ("Listen closed".to_string(), FakeResponse::Drop)
-    })
-    .await;
+    let server = listen_server().await;
     let response = within(server.db.listen_doc_changes(vec![])).await.unwrap();
     assert!(server.calls().is_empty());
     drop(response);
-    within(async {
-        while server.calls().is_empty() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
+    within(server.wait_for_calls(1)).await;
+    assert_eq!(server.calls(), vec!["Listen closed"]);
+}
+
+// A listener holds its response stream through the reconnect delay after the stream ends, so
+// the request must close when the response ends, not only when the stream is dropped.
+#[tokio::test]
+async fn ended_response_closes_http2_request_while_held() {
+    let server = listen_server().await;
+    let mut response = within(server.db.listen_doc_changes(vec![])).await.unwrap();
+    assert!(within(response.next()).await.is_none());
+    within(server.wait_for_calls(1)).await;
     assert_eq!(server.calls(), vec!["Listen closed"]);
 }
