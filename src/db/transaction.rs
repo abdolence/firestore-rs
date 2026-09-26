@@ -186,15 +186,16 @@ impl<'a> FirestoreTransaction<'a> {
     /// read-only transaction that only needed a consistent snapshot.
     ///
     /// A `Commit` failing with `UNAVAILABLE` or `RESOURCE_EXHAUSTED` is sent again, for the same
-    /// transaction and with the same writes, up to the client's `max_retries` times with the same
-    /// randomised backoff that reads use.
+    /// transaction and with the same writes, up to
+    /// [`FirestoreDbOptions::max_retries`](crate::FirestoreDbOptions::max_retries) times with the
+    /// same randomised backoff that reads use.
     ///
     /// Returns an error if the `Commit` request fails. Only an `ABORTED` answer to the first
     /// `Commit` sets `retry_possible`, meaning the whole transaction may run again. Every other
     /// failure, including exhausted resends and a dropped connection, leaves the outcome unknown:
     /// the writes may already be applied. That includes an `ABORTED` answer to a resent `Commit`,
     /// because Firestore answers a `Commit` for a transaction that has already committed with
-    /// `ABORTED` ("The referenced transaction has expired or is no longer valid"), and the earlier
+    /// `ABORTED` ("The referenced transaction has expired or is no longer valid"), and an earlier
     /// attempt may have committed before its response was lost.
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
@@ -433,16 +434,15 @@ impl FirestoreDb {
     /// document with a server-generated ID, so `update_object` with an explicit document ID -
     /// not an insert - is how a transaction creates one.
     ///
-    /// On a transient failure - `func` returning [`BackoffError::Transient`], or the commit
-    /// failing with a `retry_possible` error, which only an `ABORTED` answer to its first attempt
-    /// is (see [`FirestoreTransaction::commit`]) - the whole transaction is retried from the
-    /// start with exponential backoff, up to `options.max_elapsed_time`. Any other commit error is
-    /// returned as it is, without running `func` again. `func`
-    /// must therefore be safe to run more than once for the same call: read the state it needs
-    /// from the transaction-scoped `db` argument on every invocation rather than closing over
+    /// On a transient failure - `func` returning [`BackoffError::Transient`], or an `ABORTED`
+    /// answer to the first `Commit` attempt (see [`FirestoreTransaction::commit`]) - the whole
+    /// transaction is retried from the start with exponential backoff, up to
+    /// `options.max_elapsed_time`. Any other commit error is returned without running `func` again.
+    /// `func` must therefore be safe to run more than once for the same call: read the state it
+    /// needs from the transaction-scoped `db` argument on every invocation rather than closing over
     /// state read before the transaction started, and avoid side effects inside the closure that
-    /// are not themselves safe to repeat, such as an external HTTP call. A convenience of this:
-    /// `?` on a plain [`FirestoreResult`] inside the closure already converts to
+    /// are not themselves safe to repeat, such as an external HTTP call. A convenience of this: `?`
+    /// on a plain [`FirestoreResult`] inside the closure already converts to
     /// `BackoffError::Transient` for free, through `backoff::Error`'s blanket `From` impl, so the
     /// ordinary error paths already retry; return `Err(BackoffError::Permanent(err))` explicitly
     /// for an error that must not be retried. A permanent error rolls the transaction back and is
