@@ -4,13 +4,15 @@
 //! ([`GoogleApiClient::get_with`](gcloud_sdk::GoogleApiClient::get_with)).
 
 use crate::db::admin::index_diff::{plan_index_changes, FirestoreIndexExistingState};
+use crate::db::admin::index_models::write_section;
 use crate::db::support::FirestoreIndexSupport;
 use crate::errors::{FirestoreError, FirestoreErrorPublicGenericDetails, FirestoreSystemError};
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreDb, FirestoreFieldOverride,
-    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSyncOptions, FirestoreIndexSyncReport,
-    FirestoreInstant, FirestoreListedCompositeIndex, FirestoreListedField,
-    FirestoreOperationWaitOptions, FirestoreResult,
+    FirestoreFieldOverrideOutcome, FirestoreIndexParams, FirestoreIndexPlan,
+    FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreInstant,
+    FirestoreListedCompositeIndex, FirestoreListedField, FirestoreOperationWaitOptions,
+    FirestoreResult,
 };
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field as proto_field;
@@ -104,119 +106,85 @@ enum CreateIndexOutcome {
     AlreadyExists,
 }
 
-/// Logs one line per listed composite index and field resource in `existing`, before anything is
-/// planned, then a summary line. An item this crate's domain model cannot convert is skipped here
-/// silently - [`plan_index_changes`] surfaces it in the plan's `unrecognised` list, which
-/// [`log_plan`] logs.
-fn log_existing_state(group: &FirestoreCollectionId, existing: &FirestoreIndexExistingState) {
-    let mut indexes_shown = 0usize;
-    for proto in &existing.indexes {
-        if let Ok(listed) = FirestoreListedCompositeIndex::try_from(proto.clone()) {
-            indexes_shown += 1;
-            info!(
-                collection_group = group.as_str(),
-                "Existing index: {listed}"
-            );
+/// The owned group's existing indexes, field overrides and TTL fields, as domain values, grouped
+/// for one log event instead of one per item. Reuses the same per-item `Display` impls the plan
+/// and report use (via [`write_section`]), so this listing and those never disagree on how an
+/// item reads. An item this crate's domain model cannot convert is left out here silently -
+/// [`plan_index_changes`] surfaces it in the plan's `unrecognised` list instead.
+struct ExistingState {
+    indexes: Vec<FirestoreListedCompositeIndex>,
+    field_overrides: Vec<FirestoreListedField>,
+    ttl_fields: Vec<FirestoreListedField>,
+}
+
+impl ExistingState {
+    fn from_raw(existing: &FirestoreIndexExistingState) -> Self {
+        let indexes = existing
+            .indexes
+            .iter()
+            .filter_map(|proto| FirestoreListedCompositeIndex::try_from(proto.clone()).ok())
+            .collect();
+        let listed_fields: Vec<FirestoreListedField> = existing
+            .fields
+            .iter()
+            .cloned()
+            .map(FirestoreListedField::from)
+            .collect();
+        let field_overrides = listed_fields
+            .iter()
+            .filter(|f| {
+                !matches!(
+                    f.index_override,
+                    None | Some(FirestoreFieldOverrideOutcome::Inherited)
+                )
+            })
+            .cloned()
+            .collect();
+        let ttl_fields = listed_fields
+            .iter()
+            .filter(|f| f.ttl.is_some())
+            .cloned()
+            .collect();
+        Self {
+            indexes,
+            field_overrides,
+            ttl_fields,
         }
     }
-    let mut fields_shown = 0usize;
-    for proto in &existing.fields {
-        let listed = FirestoreListedField::from(proto.clone());
-        fields_shown += 1;
-        info!(
-            collection_group = group.as_str(),
-            "Existing field: {listed}"
-        );
+}
+
+impl std::fmt::Display for ExistingState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "Existing state: {} indexes, {} field overrides, {} TTL fields",
+            self.indexes.len(),
+            self.field_overrides.len(),
+            self.ttl_fields.len(),
+        )?;
+        write_section(f, "indexes", &self.indexes)?;
+        write_section(f, "field_overrides", &self.field_overrides)?;
+        write_section(f, "ttl_fields", &self.ttl_fields)
     }
+}
+
+/// Logs the owned group's existing state as one grouped event, before anything is planned.
+fn log_existing_state(group: &FirestoreCollectionId, existing: &FirestoreIndexExistingState) {
+    let state = ExistingState::from_raw(existing);
     info!(
         collection_group = group.as_str(),
-        indexes = indexes_shown,
-        fields = fields_shown,
-        "Existing state summary.",
+        composite_indexes = state.indexes.len(),
+        field_overrides = state.field_overrides.len(),
+        ttl_fields = state.ttl_fields.len(),
+        "{state}",
     );
 }
 
-/// Logs one line per planned action - in the same readable form [`Display`](std::fmt::Display)
-/// prints - then a summary line of counts. An undeclared item logs as kept when `prune` is unset,
-/// or as the action `.sync()` will take on it when `prune` is set.
-fn log_plan(group: &FirestoreCollectionId, plan: &FirestoreIndexPlan, prune: bool) {
-    for index in &plan.create_indexes {
-        info!(
-            collection_group = group.as_str(),
-            "Plan: create index {index}"
-        );
-    }
-    for declared in &plan.update_fields {
-        info!(
-            collection_group = group.as_str(),
-            "Plan: write field override {declared}"
-        );
-    }
-    for path in &plan.enable_ttl {
-        info!(
-            collection_group = group.as_str(),
-            field_path = path.as_str(),
-            "Plan: enable TTL",
-        );
-    }
-    for index in &plan.needs_repair {
-        warn!(
-            collection_group = group.as_str(),
-            "Plan: index needs repair and is left alone: {index}",
-        );
-    }
-    for path in &plan.needs_repair_ttl {
-        warn!(
-            collection_group = group.as_str(),
-            field_path = path.as_str(),
-            "Plan: TTL needs repair and is left alone",
-        );
-    }
-    for listed in &plan.undeclared_indexes {
-        if prune {
-            info!(
-                collection_group = group.as_str(),
-                "Plan: delete undeclared index {listed}"
-            );
-        } else {
-            info!(
-                collection_group = group.as_str(),
-                "Plan: keep undeclared index, prune_undeclared() would delete it: {listed}",
-            );
-        }
-    }
-    for listed in &plan.undeclared_fields {
-        if prune {
-            info!(
-                collection_group = group.as_str(),
-                "Plan: revert undeclared field override {listed}",
-            );
-        } else {
-            info!(
-                collection_group = group.as_str(),
-                "Plan: keep undeclared field override, prune_undeclared() would revert it: {listed}",
-            );
-        }
-    }
-    for listed in &plan.undeclared_ttl {
-        if prune {
-            info!(
-                collection_group = group.as_str(),
-                "Plan: disable undeclared TTL {listed}"
-            );
-        } else {
-            info!(
-                collection_group = group.as_str(),
-                "Plan: keep undeclared TTL, prune_undeclared() would disable it: {listed}",
-            );
-        }
-    }
-    for item in &plan.unrecognised {
-        info!(
-            collection_group = group.as_str(),
-            "Plan: unrecognised listed item, never pruned: {item}",
-        );
-    }
+/// Logs `plan` as one grouped event, in the same readable form its own
+/// [`Display`](std::fmt::Display) prints, so the log and a caller's own `println!("{plan}")`
+/// never disagree. `NEEDS_REPAIR` items additionally get their own `warn!`, since they need
+/// attention `info` logging would not draw.
+fn log_plan(group: &FirestoreCollectionId, plan: &FirestoreIndexPlan) {
     info!(
         collection_group = group.as_str(),
         create_indexes = plan.create_indexes.len(),
@@ -224,14 +192,29 @@ fn log_plan(group: &FirestoreCollectionId, plan: &FirestoreIndexPlan, prune: boo
         enable_ttl = plan.enable_ttl.len(),
         unchanged = plan.unchanged.len(),
         pending = plan.pending.len(),
-        needs_repair = plan.needs_repair.len(),
         undeclared_indexes = plan.undeclared_indexes.len(),
         undeclared_fields = plan.undeclared_fields.len(),
         undeclared_ttl = plan.undeclared_ttl.len(),
         unrecognised = plan.unrecognised.len(),
-        prune,
-        "Planned changes summary.",
+        prune = plan.prune,
+        "{plan}",
     );
+
+    if !plan.needs_repair.is_empty() || !plan.needs_repair_ttl.is_empty() {
+        let items: Vec<String> = plan
+            .needs_repair
+            .iter()
+            .map(ToString::to_string)
+            .chain(plan.needs_repair_ttl.iter().cloned())
+            .collect();
+        warn!(
+            collection_group = group.as_str(),
+            needs_repair_indexes = plan.needs_repair.len(),
+            needs_repair_ttl = plan.needs_repair_ttl.len(),
+            "NEEDS_REPAIR, left alone: {}",
+            items.join("; "),
+        );
+    }
 }
 
 /// Refuses to touch a resource that is not under `group_path`, independent of the filtering
@@ -419,11 +402,12 @@ impl FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
-        let plan = diff_span.in_scope(|| plan_index_changes(params, &existing))?;
+        let mut plan = diff_span.in_scope(|| plan_index_changes(params, &existing))?;
+        plan.prune = prune;
         let elapsed = FirestoreInstant::now().duration_since(began);
         diff_span.record("/firestore/response_time", elapsed.as_millis());
 
-        log_plan(&params.collection_group, &plan, prune);
+        log_plan(&params.collection_group, &plan);
         Ok((group_path, plan))
     }
 
@@ -1905,13 +1889,24 @@ mod tests {
                 "missing span {expected:?} in:\n{output}"
             );
         }
-        assert!(output.contains("Existing state summary."));
-        assert!(output.contains("Plan: create index"));
+        assert!(output.contains("Existing state:"));
+        assert!(output.contains("Firestore index plan:"));
+        assert!(output.contains("create_indexes: 1"));
         assert!(output.contains("Created a composite index."));
         assert!(output.contains("Firestore index sync report"));
         assert!(
             output.contains("/firestore/response_time"),
             "missing recorded response time in:\n{output}"
+        );
+        assert_eq!(
+            output.matches("Existing state:").count(),
+            1,
+            "the existing state must be one grouped event, not one per item:\n{output}"
+        );
+        assert_eq!(
+            output.matches("Firestore index plan:").count(),
+            1,
+            "the plan must be one grouped event, not one per item:\n{output}"
         );
 
         let listed_line = output
@@ -1920,6 +1915,79 @@ mod tests {
             .unwrap_or_else(|| panic!("no list-summary line in:\n{output}"));
         assert!(listed_line.contains("Firestore Index Sync"));
         assert!(listed_line.contains("Firestore Index List"));
+    }
+
+    #[tokio::test]
+    async fn log_events_are_grouped_not_per_item() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        // Two listed indexes, neither declared: enough items in one category to tell "one event
+        // holding N items" apart from "N events".
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![
+                    listed_index(&format!("{GROUP_PATH}/indexes/legacy-1"), ProtoState::Ready),
+                    listed_index(&format!("{GROUP_PATH}/indexes/legacy-2"), ProtoState::Ready),
+                ]),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let (subscriber, buffer) = capturing_subscriber();
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db
+                .plan_indexes(FirestoreIndexParams::new(group()))
+                .await
+                .unwrap();
+        }
+        let output = captured_text(&buffer);
+
+        assert!(output.contains("legacy-1"));
+        assert!(output.contains("legacy-2"));
+        assert_eq!(
+            output.matches("Existing state:").count(),
+            1,
+            "two listed indexes must still be one existing-state event:\n{output}"
+        );
+        assert_eq!(
+            output.matches("Firestore index plan:").count(),
+            1,
+            "two undeclared indexes must still be one plan event:\n{output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn needs_repair_items_get_their_own_warning() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_index(
+                    &format!("{GROUP_PATH}/indexes/1"),
+                    ProtoState::NeedsRepair,
+                )]),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let (subscriber, buffer) = capturing_subscriber();
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db.plan_indexes(params_with_index()).await.unwrap();
+        }
+        let output = captured_text(&buffer);
+
+        assert_eq!(
+            output.matches("NEEDS_REPAIR, left alone:").count(),
+            1,
+            "needs_repair must be one grouped warning, not one per item:\n{output}"
+        );
+        assert!(output.contains("WARN"));
     }
 
     #[tokio::test]

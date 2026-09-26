@@ -364,6 +364,12 @@ pub struct FirestoreIndexPlan {
     /// Listed indexes or fields this crate's domain model cannot represent; never planned for
     /// deletion or revert, even when pruning.
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
+    /// Whether `Display` should describe the undeclared items above as what `.sync()` would
+    /// delete, revert or disable, or as what it would merely keep and report. Not part of the
+    /// plan itself - `plan_index_changes` never sets it - only of how `FirestoreDb` prints one:
+    /// `false` for `.plan()` (which takes no prune setting) and the real value for `.sync()`'s
+    /// internal planning step.
+    pub(crate) prune: bool,
 }
 
 /// The result of `.sync()`: what it changed, what it left alone, and what it found undeclared.
@@ -613,13 +619,18 @@ fn validate_ttl_fields(ttl_fields: &[String]) -> FirestoreResult<()> {
     Ok(())
 }
 
-/// Writes `label: <count>`, then one indented line per item's [`Display`], or `label: none` when
-/// `items` is empty. Shared by every section of [`Display for FirestoreIndexPlan`] and
-/// [`Display for FirestoreIndexSyncReport`], so a log line built from the same items never
-/// disagrees with what these types print.
-fn write_section<T: Display>(f: &mut Formatter<'_>, label: &str, items: &[T]) -> fmt::Result {
+/// Writes `label: <count>`, then one indented line per item's [`Display`], or nothing at all when
+/// `items` is empty. Shared by every section of [`Display for FirestoreIndexPlan`],
+/// [`Display for FirestoreIndexSyncReport`] and the existing-state summary in
+/// `db::admin::indexes`, so a log line built from the same items never disagrees with what these
+/// types print, and an empty section never crowds out the ones that have something to say.
+pub(crate) fn write_section<T: Display>(
+    f: &mut Formatter<'_>,
+    label: &str,
+    items: &[T],
+) -> fmt::Result {
     if items.is_empty() {
-        return writeln!(f, "  {label}: none");
+        return Ok(());
     }
     writeln!(f, "  {label}: {}", items.len())?;
     for item in items {
@@ -771,19 +782,67 @@ impl Display for FirestoreUnrecognisedIndexItem {
 
 impl Display for FirestoreIndexPlan {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let prune_has_work = self.prune
+            && (!self.undeclared_indexes.is_empty()
+                || !self.undeclared_fields.is_empty()
+                || !self.undeclared_ttl.is_empty());
+        let anything_to_report = !self.create_indexes.is_empty()
+            || !self.update_fields.is_empty()
+            || !self.enable_ttl.is_empty()
+            || prune_has_work
+            || !self.undeclared_indexes.is_empty()
+            || !self.undeclared_fields.is_empty()
+            || !self.undeclared_ttl.is_empty()
+            || !self.needs_repair.is_empty()
+            || !self.needs_repair_ttl.is_empty()
+            || !self.unrecognised.is_empty();
+
+        if !anything_to_report {
+            return writeln!(
+                f,
+                "Firestore index plan: no changes ({} unchanged, {} pending)",
+                self.unchanged.len(),
+                self.pending.len()
+            );
+        }
+
         writeln!(f, "Firestore index plan:")?;
         write_section(f, "create_indexes", &self.create_indexes)?;
-        write_section(f, "unchanged", &self.unchanged)?;
-        write_section(f, "pending", &self.pending)?;
-        write_section(f, "needs_repair", &self.needs_repair)?;
-        write_section(f, "undeclared_indexes", &self.undeclared_indexes)?;
-        write_section(f, "update_fields", &self.update_fields)?;
-        write_section(f, "undeclared_fields", &self.undeclared_fields)?;
+        write_section(f, "update_field_overrides", &self.update_fields)?;
         write_section(f, "enable_ttl", &self.enable_ttl)?;
-        write_section(f, "pending_ttl", &self.pending_ttl)?;
+        if self.prune {
+            write_section(f, "delete_indexes", &self.undeclared_indexes)?;
+            write_section(f, "revert_field_overrides", &self.undeclared_fields)?;
+            write_section(f, "disable_ttl", &self.undeclared_ttl)?;
+        } else {
+            write_section(
+                f,
+                "kept_undeclared_indexes (prune_undeclared() would delete)",
+                &self.undeclared_indexes,
+            )?;
+            write_section(
+                f,
+                "kept_undeclared_fields (prune_undeclared() would revert)",
+                &self.undeclared_fields,
+            )?;
+            write_section(
+                f,
+                "kept_undeclared_ttl (prune_undeclared() would disable)",
+                &self.undeclared_ttl,
+            )?;
+        }
+        write_section(f, "needs_repair", &self.needs_repair)?;
         write_section(f, "needs_repair_ttl", &self.needs_repair_ttl)?;
-        write_section(f, "undeclared_ttl", &self.undeclared_ttl)?;
-        write_section(f, "unrecognised", &self.unrecognised)
+        write_section(f, "unrecognised, never pruned", &self.unrecognised)?;
+        if !self.unchanged.is_empty() || !self.pending.is_empty() {
+            writeln!(
+                f,
+                "  unchanged: {}, pending: {}",
+                self.unchanged.len(),
+                self.pending.len()
+            )?;
+        }
+        Ok(())
     }
 }
 
