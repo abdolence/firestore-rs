@@ -121,10 +121,7 @@ async fn exhausted_retries_roll_back_the_last_attempt() {
         )
         .await;
     assert!(matches!(result, Err(FirestoreError::ErrorInTransaction(_))));
-    assert_eq!(
-        server.calls(),
-        vec!["Begin→1", "Rollback(1)", "Begin→2", "Rollback(2)"]
-    );
+    assert_eq!(server.calls(), vec!["Begin→1", "Rollback(1)"]);
 }
 
 #[tokio::test]
@@ -153,6 +150,37 @@ async fn failed_commit_in_the_retry_loop_opens_no_extra_transaction() {
     assert!(
         matches!(result, Err(FirestoreError::DatabaseError(ref error)) if error.public.code == "Unavailable")
     );
+    assert_eq!(
+        server.calls(),
+        vec!["Begin→1", "Rollback(1)", "Begin→2", "Commit(2)"]
+    );
+}
+
+// A callback's `retry_after` is the delay before the attempt that retries it, the first
+// retry included.
+#[tokio::test]
+async fn retry_after_delays_the_next_attempt() {
+    let server = fixture(Code::Ok, Code::Ok).await;
+    let retry_after = Duration::from_millis(300);
+    let started = std::time::Instant::now();
+    let result: FirestoreResult<()> = server
+        .db
+        .run_transaction(move |_, transaction| {
+            Box::pin(async move {
+                if transaction.transaction_id() == &[1] {
+                    Err(BackoffError::retry_after(
+                        std::io::Error::other("busy"),
+                        retry_after,
+                    ))
+                } else {
+                    Ok(())
+                }
+            })
+        })
+        .await;
+    let elapsed = started.elapsed();
+    result.unwrap();
+    assert!(elapsed >= retry_after, "retried after {elapsed:?}");
     assert_eq!(
         server.calls(),
         vec!["Begin→1", "Rollback(1)", "Begin→2", "Commit(2)"]
