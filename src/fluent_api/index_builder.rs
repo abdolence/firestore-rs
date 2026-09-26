@@ -6,10 +6,10 @@
 
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
-    FirestoreFieldOverrideIndex, FirestoreIndexField, FirestoreIndexFieldMode,
-    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSupport, FirestoreIndexSyncOptions,
-    FirestoreIndexSyncReport, FirestoreIndexWait, FirestoreOperationWaitOptions,
-    FirestoreQueryDirection, FirestoreResult,
+    FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreIndexField,
+    FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSupport,
+    FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreIndexWait,
+    FirestoreOperationWaitOptions, FirestoreQueryDirection, FirestoreResult,
 };
 use std::time::Duration;
 
@@ -390,9 +390,27 @@ impl FirestoreFieldOverrideBuilder {
     }
 
     /// Targets `field_path` for a single-field index override.
+    ///
+    /// `field_path` must not be the literal string `"*"` - that special path is only reachable
+    /// through [`all_fields`](Self::all_fields), and is rejected here at `.plan()`/`.sync()` with
+    /// a message pointing at it.
     #[inline]
     pub fn field<S: AsRef<str>>(&self, field_path: S) -> FirestoreFieldOverrideFieldBuilder {
-        FirestoreFieldOverrideFieldBuilder::new(field_path.as_ref().to_string())
+        FirestoreFieldOverrideFieldBuilder::new(FirestoreFieldOverrideTarget::Field(
+            field_path.as_ref().to_string(),
+        ))
+    }
+
+    /// Targets every field in the owned collection group that has no more specific, named
+    /// override - Firestore's special `*` field.
+    ///
+    /// A named [`field`](Self::field) declared alongside this one wins for that field, since it
+    /// is more specific: this is how "everything except these fields" is expressed. Composite
+    /// indexes are unaffected. There is no database-wide equivalent: a collection-group statement
+    /// never reaches the `__default__` group's own `*` field.
+    #[inline]
+    pub fn all_fields(&self) -> FirestoreFieldOverrideFieldBuilder {
+        FirestoreFieldOverrideFieldBuilder::new(FirestoreFieldOverrideTarget::AllFields)
     }
 
     /// An ascending single-field index, for use inside
@@ -466,12 +484,12 @@ where
 ///
 /// Obtained from [`FirestoreFieldOverrideBuilder::field`].
 pub struct FirestoreFieldOverrideFieldBuilder {
-    field_path: String,
+    target: FirestoreFieldOverrideTarget,
 }
 
 impl FirestoreFieldOverrideFieldBuilder {
-    pub(crate) fn new(field_path: String) -> Self {
-        Self { field_path }
+    pub(crate) fn new(target: FirestoreFieldOverrideTarget) -> Self {
+        Self { target }
     }
 
     /// Excludes this field from automatic single-field indexing entirely. Equivalent to
@@ -479,7 +497,7 @@ impl FirestoreFieldOverrideFieldBuilder {
     #[inline]
     pub fn exempt(self) -> FirestoreFieldOverride {
         FirestoreFieldOverride {
-            field_path: self.field_path,
+            target: self.target,
             indexes: Vec::new(),
         }
     }
@@ -497,7 +515,7 @@ impl FirestoreFieldOverrideFieldBuilder {
         I::Item: FirestoreFieldOverrideIndexExpr,
     {
         FirestoreFieldOverride {
-            field_path: self.field_path,
+            target: self.target,
             indexes: indexes
                 .into_iter()
                 .filter_map(FirestoreFieldOverrideIndexExpr::build_field_override_index)
@@ -537,9 +555,9 @@ mod tests {
     use crate::fluent_api::FirestoreExprBuilder;
     use crate::{
         path, FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
-        FirestoreFieldOverrideIndex, FirestoreIndexField, FirestoreIndexFieldMode,
-        FirestoreIndexSyncOptions, FirestoreIndexWait, FirestoreOperationWaitOptions,
-        FirestoreQueryDirection,
+        FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreIndexField,
+        FirestoreIndexFieldMode, FirestoreIndexSyncOptions, FirestoreIndexWait,
+        FirestoreOperationWaitOptions, FirestoreQueryDirection,
     };
     use std::time::Duration;
 
@@ -636,11 +654,11 @@ mod tests {
             params.field_overrides,
             vec![
                 FirestoreFieldOverride {
-                    field_path: "bio".to_string(),
+                    target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
                     indexes: vec![],
                 },
                 FirestoreFieldOverride {
-                    field_path: "tags".to_string(),
+                    target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
                     indexes: vec![
                         FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::Order(
                             FirestoreQueryDirection::Ascending
@@ -752,7 +770,7 @@ mod tests {
         assert_eq!(
             params.field_overrides,
             vec![FirestoreFieldOverride {
-                field_path: "bio".to_string(),
+                target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
                 indexes: vec![],
             }]
         );
@@ -779,7 +797,7 @@ mod tests {
         assert_eq!(
             params.field_overrides,
             vec![FirestoreFieldOverride {
-                field_path: "tags".to_string(),
+                target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
                 indexes: vec![
                     FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::Order(
                         FirestoreQueryDirection::Ascending
@@ -788,6 +806,54 @@ mod tests {
                 ],
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn all_fields_targets_the_wildcard_and_named_fields_win_over_it() {
+        let mock = MockIndexDatabase::default();
+        FirestoreExprBuilder { db: &mock }
+            .indexes()
+            .collection_group("users")
+            .field_overrides(|f| {
+                f.fields([
+                    f.all_fields().exempt(),
+                    f.field(path!(User::country)).indexes([f.ascending()]),
+                ])
+            })
+            .sync()
+            .await
+            .unwrap();
+
+        let (params, _) = mock.captured().unwrap();
+        assert_eq!(
+            params.field_overrides,
+            vec![
+                FirestoreFieldOverride {
+                    target: FirestoreFieldOverrideTarget::AllFields,
+                    indexes: vec![],
+                },
+                FirestoreFieldOverride {
+                    target: FirestoreFieldOverrideTarget::Field("country".to_string()),
+                    indexes: vec![FirestoreFieldOverrideIndex::new(
+                        FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending)
+                    )],
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn field_named_star_is_rejected_at_the_terminal() {
+        let mock = MockIndexDatabase::default();
+        let err = FirestoreExprBuilder { db: &mock }
+            .indexes()
+            .collection_group("users")
+            .field_overrides(|f| f.fields([f.field("*").exempt()]))
+            .plan()
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("all_fields()"));
+        assert!(mock.captured().is_none());
     }
 
     #[tokio::test]

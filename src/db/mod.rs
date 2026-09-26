@@ -104,6 +104,13 @@ struct FirestoreDbInner {
     doc_path: String,
     options: FirestoreDbOptions,
     client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
+    /// Whether this client was built against the `FIRESTORE_EMULATOR_HOST` emulator rather than
+    /// the real service. The emulator does not implement the admin API's index management RPCs,
+    /// so [`FirestoreIndexSupport`](crate::db::support::FirestoreIndexSupport) reads this to skip
+    /// rather than fail every call a caller's startup code makes unconditionally. Only read under
+    /// the `admin` feature, so the field only exists there.
+    #[cfg(feature = "admin")]
+    is_emulator: bool,
 }
 
 /// The main entry point for interacting with a Google Firestore database.
@@ -275,6 +282,8 @@ impl FirestoreDb {
             doc_path: firestore_database_doc_path,
             client,
             options,
+            #[cfg(feature = "admin")]
+            is_emulator: emulator_host.is_some(),
         };
 
         Ok(Self {

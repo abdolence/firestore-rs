@@ -8,6 +8,7 @@ use crate::errors::FirestoreError;
 use crate::{FirestoreCollectionId, FirestoreQueryDirection, FirestoreResult};
 use rsb_derive::Builder;
 use std::collections::HashSet;
+use std::fmt::{self, Display, Formatter};
 use std::time::Duration;
 
 /// The reserved field path Firestore appends to every composite index at creation time.
@@ -118,8 +119,42 @@ impl FirestoreFieldOverrideIndex {
     }
 }
 
+/// The Firestore special field path (`*`) that targets every field in a collection group, in
+/// place of one named field. Reachable only through
+/// [`all_fields()`](crate::index_builder::FirestoreFieldOverrideBuilder::all_fields), never as a
+/// literal string: see [`FirestoreFieldOverrideTarget`].
+pub(crate) const ALL_FIELDS_PATH: &str = "*";
+
+/// What a [`FirestoreFieldOverride`] applies to: one named field, or every field in the owned
+/// collection group.
+///
+/// A bare `field_path: String` would let `"*"` arrive through
+/// [`field()`](crate::index_builder::FirestoreFieldOverrideBuilder::field) indistinguishably from
+/// [`all_fields()`](crate::index_builder::FirestoreFieldOverrideBuilder::all_fields), so validation
+/// could never tell "the caller meant the wildcard" from "the caller has a field literally named
+/// `*`". Splitting the two into their own variants makes `field("*")` a value validation can
+/// reject outright, pointing the caller at `all_fields()`.
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub enum FirestoreFieldOverrideTarget {
+    /// One field's path within a document.
+    Field(String),
+    /// Every field in the owned collection group that has no more specific, named override.
+    AllFields,
+}
+
+impl FirestoreFieldOverrideTarget {
+    /// The resource path segment this target corresponds to: the field path itself, or `*` for
+    /// [`AllFields`](Self::AllFields).
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            FirestoreFieldOverrideTarget::Field(path) => path.as_str(),
+            FirestoreFieldOverrideTarget::AllFields => ALL_FIELDS_PATH,
+        }
+    }
+}
+
 /// A single-field index override: the automatic indexes Firestore would otherwise build for
-/// `field_path`, replaced by exactly the indexes listed here.
+/// `target`, replaced by exactly the indexes listed here.
 ///
 /// **This replaces the field's whole automatic index set, it does not add to it.** Declaring
 /// only `array_contains()` on a field that is also compared with `==` and ordered removes the
@@ -129,9 +164,9 @@ impl FirestoreFieldOverrideIndex {
 /// excludes the field from single-field indexing entirely.
 #[derive(Debug, PartialEq, Clone)]
 pub struct FirestoreFieldOverride {
-    /// The field's path within a document.
-    pub field_path: String,
-    /// The exact set of single-field indexes to maintain for this field. Empty means exempt.
+    /// What this override applies to.
+    pub target: FirestoreFieldOverrideTarget,
+    /// The exact set of single-field indexes to maintain for this target. Empty means exempt.
     pub indexes: Vec<FirestoreFieldOverrideIndex>,
 }
 
@@ -171,6 +206,53 @@ pub struct FirestoreListedCompositeIndex {
     pub index: FirestoreCompositeIndex,
 }
 
+/// A field resource's single-field index configuration, as read from a listed [`ProtoField`]
+/// (`gcloud_sdk::google::firestore::admin::v1::Field`).
+///
+/// Carries its own outcome rather than failing the whole field's conversion: a field resource can
+/// carry a valid override alongside an unrecognisable TTL state (or the reverse), and failing on
+/// one bad half would hide the other, valid half from the diff and re-plan a change to it on
+/// every sync.
+///
+/// [`ProtoField`]: gcloud_sdk::google::firestore::admin::v1::Field
+#[derive(Debug, PartialEq, Clone, Default)]
+pub enum FirestoreFieldOverrideOutcome {
+    /// No explicit override: the field carries no `index_config` at all, or one inherited from
+    /// an ancestor field (`uses_ancestor_config`). Neither is an override a declaration can be
+    /// compared against.
+    #[default]
+    None,
+    /// An explicit, non-inherited override.
+    Explicit {
+        /// The field's explicit single-field index set. Empty is an explicit exemption, the same
+        /// as [`exempt()`](crate::index_builder::FirestoreFieldOverrideFieldBuilder::exempt).
+        indexes: Vec<FirestoreFieldOverrideIndex>,
+        /// Whether Firestore is already reverting this override to the ancestor's configuration
+        /// (an in-progress `reverting` long-running change). The planner treats a field with this
+        /// set as already handled and never plans reverting it a second time.
+        reverting: bool,
+    },
+    /// The listed `index_config` carries data this crate's domain model cannot represent (an
+    /// unspecified or unknown order, array config, vector dimension, query scope or API scope).
+    /// Carries why, for [`FirestoreUnrecognisedIndexItem::reason`].
+    Unrecognised(String),
+}
+
+/// A field resource's TTL configuration, as read from a listed [`ProtoField`].
+///
+/// [`ProtoField`]: gcloud_sdk::google::firestore::admin::v1::Field
+#[derive(Debug, PartialEq, Clone, Default)]
+pub enum FirestoreFieldTtlOutcome {
+    /// The field carries no `ttl_config`.
+    #[default]
+    None,
+    /// TTL is configured, in the given lifecycle state.
+    Configured(FirestoreFieldTtlState),
+    /// The listed `ttl_config` carries a state this crate's domain model cannot represent.
+    /// Carries why, for [`FirestoreUnrecognisedIndexItem::reason`].
+    Unrecognised(String),
+}
+
 /// One field resource Firestore has listed for the owned collection group, because it carries an
 /// explicit single-field index override, a TTL configuration, or both.
 #[derive(Debug, PartialEq, Clone)]
@@ -179,18 +261,10 @@ pub struct FirestoreListedField {
     pub name: String,
     /// The field's path within a document, parsed from `name`.
     pub field_path: String,
-    /// The field's explicit single-field index set, or `None` when this resource carries no
-    /// index configuration at all, or its index configuration is inherited from an ancestor
-    /// field (`uses_ancestor_config`). `Some(vec![])` is an explicit exemption, the same as
-    /// [`exempt()`](crate::index_builder::FirestoreFieldOverrideFieldBuilder::exempt).
-    pub indexes: Option<Vec<FirestoreFieldOverrideIndex>>,
-    /// Whether Firestore is already reverting `indexes` to the ancestor's configuration (an
-    /// in-progress `reverting` long-running change). Always `false` when `indexes` is `None`.
-    /// The planner treats a field with this set as already handled and never plans reverting it
-    /// a second time.
-    pub reverting: bool,
-    /// The field's TTL configuration state, or `None` when TTL is not configured on this field.
-    pub ttl: Option<FirestoreFieldTtlState>,
+    /// The field's single-field index configuration.
+    pub index_override: FirestoreFieldOverrideOutcome,
+    /// The field's TTL configuration.
+    pub ttl: FirestoreFieldTtlOutcome,
 }
 
 /// One listed index or field resource this crate's domain model cannot represent, kept for
@@ -465,20 +539,30 @@ fn validate_vector_dimension(dimension: u32, field: &'static str) -> FirestoreRe
 }
 
 fn validate_field_overrides(overrides: &[FirestoreFieldOverride]) -> FirestoreResult<()> {
-    let mut seen_paths: HashSet<&str> = HashSet::new();
+    let mut seen_targets: HashSet<&FirestoreFieldOverrideTarget> = HashSet::new();
     for field_override in overrides {
-        if field_override.field_path.is_empty() {
-            return Err(FirestoreError::invalid_parameters(
-                "field_overrides",
-                "a field override's field path must not be empty",
-            ));
+        match &field_override.target {
+            FirestoreFieldOverrideTarget::Field(path) if path.is_empty() => {
+                return Err(FirestoreError::invalid_parameters(
+                    "field_overrides",
+                    "a field override's field path must not be empty",
+                ));
+            }
+            FirestoreFieldOverrideTarget::Field(path) if path == ALL_FIELDS_PATH => {
+                return Err(FirestoreError::invalid_parameters(
+                    "field_overrides",
+                    "field path \"*\" is reserved; declare it with all_fields() instead of \
+                     field(\"*\")",
+                ));
+            }
+            _ => {}
         }
-        if !seen_paths.insert(field_override.field_path.as_str()) {
+        if !seen_targets.insert(&field_override.target) {
             return Err(FirestoreError::invalid_parameters(
                 "field_overrides",
                 format!(
-                    "field path \"{}\" is declared more than once",
-                    field_override.field_path
+                    "{} is declared more than once",
+                    field_override.target.as_str()
                 ),
             ));
         }
@@ -488,8 +572,8 @@ fn validate_field_overrides(overrides: &[FirestoreFieldOverride]) -> FirestoreRe
             return Err(FirestoreError::invalid_parameters(
                 "field_overrides",
                 format!(
-                    "field path \"{}\" declares the same single-field index more than once",
-                    field_override.field_path
+                    "{} declares the same single-field index more than once",
+                    field_override.target.as_str()
                 ),
             ));
         }
@@ -498,9 +582,9 @@ fn validate_field_overrides(overrides: &[FirestoreFieldOverride]) -> FirestoreRe
                 return Err(FirestoreError::invalid_parameters(
                     "field_overrides",
                     format!(
-                        "field path \"{}\" declares a vector index, which Firestore does not \
-                         support as a single-field override",
-                        field_override.field_path
+                        "{} declares a vector index, which Firestore does not support as a \
+                         single-field override",
+                        field_override.target.as_str()
                     ),
                 ));
             }
@@ -532,6 +616,201 @@ fn validate_ttl_fields(ttl_fields: &[String]) -> FirestoreResult<()> {
         ));
     }
     Ok(())
+}
+
+/// Writes `label: <count>`, then one indented line per item's [`Display`], or `label: none` when
+/// `items` is empty. Shared by every section of [`Display for FirestoreIndexPlan`] and
+/// [`Display for FirestoreIndexSyncReport`], so a log line built from the same items never
+/// disagrees with what these types print.
+fn write_section<T: Display>(f: &mut Formatter<'_>, label: &str, items: &[T]) -> fmt::Result {
+    if items.is_empty() {
+        return writeln!(f, "  {label}: none");
+    }
+    writeln!(f, "  {label}: {}", items.len())?;
+    for item in items {
+        writeln!(f, "    {item}")?;
+    }
+    Ok(())
+}
+
+impl Display for FirestoreIndexQueryScope {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            FirestoreIndexQueryScope::Collection => "COLLECTION",
+            FirestoreIndexQueryScope::AllDescendants => "COLLECTION_GROUP",
+        })
+    }
+}
+
+impl Display for FirestoreIndexFieldMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending) => {
+                f.write_str("ASC")
+            }
+            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending) => {
+                f.write_str("DESC")
+            }
+            FirestoreIndexFieldMode::ArrayContains => f.write_str("CONTAINS"),
+            FirestoreIndexFieldMode::Vector { dimension } => write!(f, "VECTOR({dimension})"),
+        }
+    }
+}
+
+impl Display for FirestoreIndexField {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.field_path, self.mode)
+    }
+}
+
+impl Display for FirestoreCompositeIndex {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}] (", self.query_scope)?;
+        for (position, field) in self.fields.iter().enumerate() {
+            if position > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{field}")?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl Display for FirestoreIndexState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            FirestoreIndexState::Creating => "CREATING",
+            FirestoreIndexState::Ready => "READY",
+            FirestoreIndexState::NeedsRepair => "NEEDS_REPAIR",
+        })
+    }
+}
+
+impl Display for FirestoreListedCompositeIndex {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {} ({})", self.index, self.state, self.name)
+    }
+}
+
+impl Display for FirestoreFieldOverrideIndex {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "[{}] {}", self.query_scope, self.mode)
+    }
+}
+
+impl Display for FirestoreFieldOverrideTarget {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Display for FirestoreFieldOverride {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.target)?;
+        if self.indexes.is_empty() {
+            return f.write_str(" EXEMPT");
+        }
+        write!(f, " [")?;
+        for (position, index) in self.indexes.iter().enumerate() {
+            if position > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{index}")?;
+        }
+        write!(f, "]")
+    }
+}
+
+impl Display for FirestoreFieldTtlState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            FirestoreFieldTtlState::Creating => "CREATING",
+            FirestoreFieldTtlState::Active => "ACTIVE",
+            FirestoreFieldTtlState::NeedsRepair => "NEEDS_REPAIR",
+        })
+    }
+}
+
+impl Display for FirestoreListedField {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.field_path)?;
+        match &self.index_override {
+            FirestoreFieldOverrideOutcome::None => {}
+            FirestoreFieldOverrideOutcome::Explicit { indexes, reverting } => {
+                if indexes.is_empty() {
+                    write!(f, " EXEMPT")?;
+                } else {
+                    write!(f, " [")?;
+                    for (position, index) in indexes.iter().enumerate() {
+                        if position > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{index}")?;
+                    }
+                    write!(f, "]")?;
+                }
+                if *reverting {
+                    write!(f, " (reverting)")?;
+                }
+            }
+            FirestoreFieldOverrideOutcome::Unrecognised(reason) => {
+                write!(f, " override unrecognised: {reason}")?;
+            }
+        }
+        match &self.ttl {
+            FirestoreFieldTtlOutcome::None => {}
+            FirestoreFieldTtlOutcome::Configured(state) => write!(f, " ttl={state}")?,
+            FirestoreFieldTtlOutcome::Unrecognised(reason) => {
+                write!(f, " ttl unrecognised: {reason}")?;
+            }
+        }
+        write!(f, " ({})", self.name)
+    }
+}
+
+impl Display for FirestoreUnrecognisedIndexItem {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.reason)
+    }
+}
+
+impl Display for FirestoreIndexPlan {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Firestore index plan:")?;
+        write_section(f, "create_indexes", &self.create_indexes)?;
+        write_section(f, "unchanged", &self.unchanged)?;
+        write_section(f, "pending", &self.pending)?;
+        write_section(f, "needs_repair", &self.needs_repair)?;
+        write_section(f, "undeclared_indexes", &self.undeclared_indexes)?;
+        write_section(f, "update_fields", &self.update_fields)?;
+        write_section(f, "undeclared_fields", &self.undeclared_fields)?;
+        write_section(f, "enable_ttl", &self.enable_ttl)?;
+        write_section(f, "pending_ttl", &self.pending_ttl)?;
+        write_section(f, "needs_repair_ttl", &self.needs_repair_ttl)?;
+        write_section(f, "undeclared_ttl", &self.undeclared_ttl)?;
+        write_section(f, "unrecognised", &self.unrecognised)
+    }
+}
+
+impl Display for FirestoreIndexSyncReport {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Firestore index sync report:")?;
+        write_section(f, "created_indexes", &self.created_indexes)?;
+        write_section(f, "updated_fields", &self.updated_fields)?;
+        write_section(f, "enabled_ttl", &self.enabled_ttl)?;
+        write_section(f, "unchanged", &self.unchanged)?;
+        write_section(f, "pending", &self.pending)?;
+        write_section(f, "needs_repair", &self.needs_repair)?;
+        write_section(f, "pending_ttl", &self.pending_ttl)?;
+        write_section(f, "needs_repair_ttl", &self.needs_repair_ttl)?;
+        write_section(f, "deleted_indexes", &self.deleted_indexes)?;
+        write_section(f, "reverted_fields", &self.reverted_fields)?;
+        write_section(f, "disabled_ttl", &self.disabled_ttl)?;
+        write_section(f, "kept_undeclared_indexes", &self.kept_undeclared_indexes)?;
+        write_section(f, "kept_undeclared_fields", &self.kept_undeclared_fields)?;
+        write_section(f, "kept_undeclared_ttl", &self.kept_undeclared_ttl)?;
+        write_section(f, "unrecognised", &self.unrecognised)
+    }
 }
 
 #[cfg(test)]
@@ -618,11 +897,11 @@ mod tests {
     fn duplicate_field_override_path_is_rejected() {
         let overrides = vec![
             FirestoreFieldOverride {
-                field_path: "tags".to_string(),
+                target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
                 indexes: vec![],
             },
             FirestoreFieldOverride {
-                field_path: "tags".to_string(),
+                target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
                 indexes: vec![],
             },
         ];
@@ -633,7 +912,7 @@ mod tests {
     #[test]
     fn exempt_and_empty_indexes_are_the_same_and_accepted() {
         let overrides = vec![FirestoreFieldOverride {
-            field_path: "bio".to_string(),
+            target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
             indexes: vec![],
         }];
         assert!(validate_field_overrides(&overrides).is_ok());
@@ -701,7 +980,7 @@ mod tests {
     #[test]
     fn field_override_with_duplicate_index_entries_is_rejected() {
         let overrides = vec![FirestoreFieldOverride {
-            field_path: "tags".to_string(),
+            target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
             indexes: vec![
                 FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains),
                 FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains),
@@ -714,7 +993,7 @@ mod tests {
     #[test]
     fn field_override_with_vector_mode_is_rejected() {
         let overrides = vec![FirestoreFieldOverride {
-            field_path: "embedding".to_string(),
+            target: FirestoreFieldOverrideTarget::Field("embedding".to_string()),
             indexes: vec![FirestoreFieldOverrideIndex::new(
                 FirestoreIndexFieldMode::Vector { dimension: 8 },
             )],
@@ -726,11 +1005,65 @@ mod tests {
     #[test]
     fn field_override_with_empty_path_is_rejected() {
         let overrides = vec![FirestoreFieldOverride {
-            field_path: String::new(),
+            target: FirestoreFieldOverrideTarget::Field(String::new()),
             indexes: vec![],
         }];
         let err = validate_field_overrides(&overrides).unwrap_err();
         assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn field_named_star_is_rejected_pointing_at_all_fields() {
+        let overrides = vec![FirestoreFieldOverride {
+            target: FirestoreFieldOverrideTarget::Field(ALL_FIELDS_PATH.to_string()),
+            indexes: vec![],
+        }];
+        let err = validate_field_overrides(&overrides).unwrap_err();
+        assert!(err.to_string().contains("all_fields()"));
+    }
+
+    #[test]
+    fn all_fields_target_is_accepted() {
+        let overrides = vec![FirestoreFieldOverride {
+            target: FirestoreFieldOverrideTarget::AllFields,
+            indexes: vec![],
+        }];
+        assert!(validate_field_overrides(&overrides).is_ok());
+    }
+
+    #[test]
+    fn all_fields_declared_twice_is_rejected_as_a_duplicate() {
+        let overrides = vec![
+            FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::AllFields,
+                indexes: vec![],
+            },
+            FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::AllFields,
+                indexes: vec![FirestoreFieldOverrideIndex::new(
+                    FirestoreIndexFieldMode::ArrayContains,
+                )],
+            },
+        ];
+        let err = validate_field_overrides(&overrides).unwrap_err();
+        assert!(err.to_string().contains("declared more than once"));
+    }
+
+    #[test]
+    fn all_fields_and_a_named_field_are_both_accepted() {
+        let overrides = vec![
+            FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::AllFields,
+                indexes: vec![],
+            },
+            FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::Field("country".to_string()),
+                indexes: vec![FirestoreFieldOverrideIndex::new(
+                    FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending),
+                )],
+            },
+        ];
+        assert!(validate_field_overrides(&overrides).is_ok());
     }
 
     #[test]

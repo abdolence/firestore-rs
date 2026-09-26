@@ -10,6 +10,7 @@ use crate::db::split_document_path;
 use crate::errors::FirestoreError;
 use crate::{
     FirestoreCompositeIndex, FirestoreFieldOverride, FirestoreFieldOverrideIndex,
+    FirestoreFieldOverrideOutcome, FirestoreFieldOverrideTarget, FirestoreFieldTtlOutcome,
     FirestoreFieldTtlState, FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexParams,
     FirestoreIndexPlan, FirestoreIndexQueryScope, FirestoreIndexState,
     FirestoreListedCompositeIndex, FirestoreListedField, FirestoreQueryDirection, FirestoreResult,
@@ -37,7 +38,7 @@ use std::collections::HashSet;
 /// [`FirestoreUnrecognisedIndexItem`]) is not dropped: it is carried into the plan's
 /// `unrecognised` list instead.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct FirestoreIndexExistingState {
+pub(crate) struct FirestoreIndexExistingState {
     /// The collection group's currently listed composite indexes.
     pub indexes: Vec<ProtoIndex>,
     /// The collection group's field resources that carry an explicit index override, a TTL
@@ -77,34 +78,21 @@ impl TryFrom<ProtoQueryScope> for FirestoreIndexQueryScope {
     }
 }
 
-/// Parses a listed `i32` query scope, going through the proto's own `TryFrom<i32>` before
-/// [`TryFrom<ProtoQueryScope> for FirestoreIndexQueryScope`] so an out-of-range value and a
-/// known-but-unsupported one are reported the same way this module reports everything else.
-fn parse_query_scope(scope: i32) -> FirestoreResult<FirestoreIndexQueryScope> {
-    let scope = ProtoQueryScope::try_from(scope).map_err(|_| {
-        FirestoreError::invalid_parameters(
-            "query_scope",
-            format!("{scope} is not a known query scope"),
-        )
-    })?;
-    FirestoreIndexQueryScope::try_from(scope)
-}
+/// Converts a listed `i32` query scope: the proto enum's own `TryFrom<i32>`, then
+/// [`TryFrom<ProtoQueryScope> for FirestoreIndexQueryScope`]. An out-of-range raw value and a
+/// known-but-unsupported scope both end up as this crate's own error, through the same `?` chain
+/// a caller uses for any other fallible conversion.
+impl TryFrom<i32> for FirestoreIndexQueryScope {
+    type Error = FirestoreError;
 
-/// Rejects any API scope other than `ANY_API`. A declared index is always `ANY_API` (see
-/// `TryFrom<FirestoreCompositeIndex> for ProtoIndex` below), so a listed MongoDB-compat or
-/// Datastore-mode index can never be the domain equivalent of a declaration; it is reported as
-/// unrecognised rather than compared field-by-field and found merely "different".
-fn ensure_any_api_scope(api_scope: i32) -> FirestoreResult<()> {
-    match ApiScope::try_from(api_scope) {
-        Ok(ApiScope::AnyApi) => Ok(()),
-        Ok(other) => Err(FirestoreError::invalid_parameters(
-            "api_scope",
-            format!("API scope {} is not supported", other.as_str_name()),
-        )),
-        Err(_) => Err(FirestoreError::invalid_parameters(
-            "api_scope",
-            format!("{api_scope} is not a known API scope"),
-        )),
+    fn try_from(scope: i32) -> Result<Self, Self::Error> {
+        let scope = ProtoQueryScope::try_from(scope).map_err(|_| {
+            FirestoreError::invalid_parameters(
+                "query_scope",
+                format!("{scope} is not a known query scope"),
+            )
+        })?;
+        FirestoreIndexQueryScope::try_from(scope)
     }
 }
 
@@ -238,12 +226,30 @@ impl TryFrom<FirestoreCompositeIndex> for ProtoIndex {
 /// compared as domain values. A non-`ANY_API` scope, an unrepresentable query scope or a field
 /// this crate cannot express fails the whole conversion, so the caller reports the index as
 /// unrecognised instead of matching it field-by-field against a declaration it could never equal.
+///
+/// The `api_scope` check is inlined rather than shared with [`TryFrom<ProtoIndex> for
+/// FirestoreFieldOverrideIndex`] below: it is a validation, not a conversion between two named
+/// types, so it has no `From`/`TryFrom` home to live in.
 impl TryFrom<ProtoIndex> for FirestoreCompositeIndex {
     type Error = FirestoreError;
 
     fn try_from(index: ProtoIndex) -> Result<Self, Self::Error> {
-        ensure_any_api_scope(index.api_scope)?;
-        let query_scope = parse_query_scope(index.query_scope)?;
+        match ApiScope::try_from(index.api_scope) {
+            Ok(ApiScope::AnyApi) => {}
+            Ok(other) => {
+                return Err(FirestoreError::invalid_parameters(
+                    "api_scope",
+                    format!("API scope {} is not supported", other.as_str_name()),
+                ))
+            }
+            Err(_) => {
+                return Err(FirestoreError::invalid_parameters(
+                    "api_scope",
+                    format!("{} is not a known API scope", index.api_scope),
+                ))
+            }
+        }
+        let query_scope = FirestoreIndexQueryScope::try_from(index.query_scope)?;
         let fields = index
             .fields
             .into_iter()
@@ -313,15 +319,29 @@ impl TryFrom<FirestoreFieldOverrideIndex> for ProtoIndex {
     }
 }
 
-/// Converts one listed entry of a `field::IndexConfig` (a single-field index). Shares
-/// `ensure_any_api_scope` and the query-scope/value-mode conversions with the composite-index
-/// path, since a single-field index is the same `Index` message with exactly one field.
+/// Converts one listed entry of a `field::IndexConfig` (a single-field index). Shares the
+/// query-scope and value-mode conversions with the composite-index path, since a single-field
+/// index is the same `Index` message with exactly one field.
 impl TryFrom<ProtoIndex> for FirestoreFieldOverrideIndex {
     type Error = FirestoreError;
 
     fn try_from(index: ProtoIndex) -> Result<Self, Self::Error> {
-        ensure_any_api_scope(index.api_scope)?;
-        let query_scope = parse_query_scope(index.query_scope)?;
+        match ApiScope::try_from(index.api_scope) {
+            Ok(ApiScope::AnyApi) => {}
+            Ok(other) => {
+                return Err(FirestoreError::invalid_parameters(
+                    "api_scope",
+                    format!("API scope {} is not supported", other.as_str_name()),
+                ))
+            }
+            Err(_) => {
+                return Err(FirestoreError::invalid_parameters(
+                    "api_scope",
+                    format!("{} is not a known API scope", index.api_scope),
+                ))
+            }
+        }
+        let query_scope = FirestoreIndexQueryScope::try_from(index.query_scope)?;
         let value_mode = index
             .fields
             .into_iter()
@@ -377,87 +397,67 @@ impl TryFrom<field::TtlConfig> for FirestoreFieldTtlState {
     }
 }
 
-/// Converts one field resource's index-override half: `None` for both "no `index_config` at all"
-/// and "`index_config` is inherited from an ancestor field" (`uses_ancestor_config`), since
-/// neither carries an explicit override for `plan_index_changes` to compare against a
-/// declaration. Returns the override's `reverting` flag alongside it.
-fn convert_listed_field_indexes(
-    config: Option<field::IndexConfig>,
-) -> FirestoreResult<(Option<Vec<FirestoreFieldOverrideIndex>>, bool)> {
-    let Some(config) = config else {
-        return Ok((None, false));
-    };
-    if config.uses_ancestor_config {
-        return Ok((None, false));
+/// Converts one field resource's index-override half. `None` covers both "no `index_config` at
+/// all" and "`index_config` is inherited from an ancestor field" (`uses_ancestor_config`), since
+/// neither is an explicit override [`plan_index_changes`] can compare against a declaration.
+/// Infallible: a config this crate cannot represent becomes
+/// [`Unrecognised`](FirestoreFieldOverrideOutcome::Unrecognised) rather than failing the
+/// conversion, so it stays independent of the TTL half - see
+/// [`From<ProtoField> for FirestoreListedField`] below.
+impl From<field::IndexConfig> for FirestoreFieldOverrideOutcome {
+    fn from(config: field::IndexConfig) -> Self {
+        if config.uses_ancestor_config {
+            return FirestoreFieldOverrideOutcome::None;
+        }
+        let reverting = config.reverting;
+        match config
+            .indexes
+            .into_iter()
+            .map(FirestoreFieldOverrideIndex::try_from)
+            .collect::<FirestoreResult<Vec<_>>>()
+        {
+            Ok(indexes) => FirestoreFieldOverrideOutcome::Explicit { indexes, reverting },
+            Err(err) => FirestoreFieldOverrideOutcome::Unrecognised(describe_error(&err)),
+        }
     }
-    let indexes = config
-        .indexes
-        .into_iter()
-        .map(FirestoreFieldOverrideIndex::try_from)
-        .collect::<FirestoreResult<Vec<_>>>()?;
-    Ok((Some(indexes), config.reverting))
 }
 
-/// Converts a listed field resource. The field path is the resource name's last segment
-/// (`.../collectionGroups/{group}/fields/{path}`), the same shape `split_document_path` already
-/// splits a document path on, so that helper is reused rather than a second last-segment parser.
+impl From<Option<field::IndexConfig>> for FirestoreFieldOverrideOutcome {
+    fn from(config: Option<field::IndexConfig>) -> Self {
+        config.map_or(FirestoreFieldOverrideOutcome::None, Self::from)
+    }
+}
+
+/// Converts one field resource's TTL half. Infallible for the same reason as
+/// [`From<field::IndexConfig> for FirestoreFieldOverrideOutcome`]: an unrecognisable state becomes
+/// [`Unrecognised`](FirestoreFieldTtlOutcome::Unrecognised) rather than failing the whole field.
+impl From<Option<field::TtlConfig>> for FirestoreFieldTtlOutcome {
+    fn from(config: Option<field::TtlConfig>) -> Self {
+        match config.map(FirestoreFieldTtlState::try_from) {
+            None => FirestoreFieldTtlOutcome::None,
+            Some(Ok(state)) => FirestoreFieldTtlOutcome::Configured(state),
+            Some(Err(err)) => FirestoreFieldTtlOutcome::Unrecognised(describe_error(&err)),
+        }
+    }
+}
+
+/// Converts a listed field resource. Always succeeds: the override half and the TTL half each
+/// carry their own outcome (see [`FirestoreFieldOverrideOutcome`] and [`FirestoreFieldTtlOutcome`]),
+/// so a field resource with a valid override alongside an unrecognisable TTL state - or the
+/// reverse - keeps its valid half instead of losing it to a whole-field conversion failure.
+/// [`plan_index_changes`] reads each `Unrecognised` half into the plan's own `unrecognised` list.
 ///
-/// The index-override half and the TTL half are converted independently rather than through one
-/// `TryFrom`: a field resource can carry a valid override alongside an unrecognisable TTL state
-/// (or the reverse), and failing the whole field on one bad half would hide the other, valid one
-/// from the diff and re-plan a change to it on every sync. [`plan_index_changes`] calls this
-/// directly and folds each half's failure into its own `unrecognised` entry; [`TryFrom<ProtoField>
-/// for FirestoreListedField`] below still fails the whole field, for callers that want a single
-/// fully-converted value.
-fn convert_listed_field(
-    field: &ProtoField,
-) -> (FirestoreListedField, Vec<FirestoreUnrecognisedIndexItem>) {
-    let field_path = split_document_path(&field.name).1.to_string();
-    let mut unrecognised = Vec::new();
-
-    let (indexes, reverting) = match convert_listed_field_indexes(field.index_config.clone()) {
-        Ok(result) => result,
-        Err(err) => {
-            unrecognised.push(FirestoreUnrecognisedIndexItem {
-                name: field.name.clone(),
-                reason: describe_error(&err),
-            });
-            (None, false)
-        }
-    };
-
-    let ttl = match field.ttl_config.map(FirestoreFieldTtlState::try_from) {
-        None => None,
-        Some(Ok(state)) => Some(state),
-        Some(Err(err)) => {
-            unrecognised.push(FirestoreUnrecognisedIndexItem {
-                name: field.name.clone(),
-                reason: describe_error(&err),
-            });
-            None
-        }
-    };
-
-    (
+/// The field path is the resource name's last segment (`.../collectionGroups/{group}/fields/{path}`),
+/// the same shape `split_document_path` already splits a document path on, so that helper is
+/// reused rather than a second last-segment parser.
+impl From<ProtoField> for FirestoreListedField {
+    fn from(field: ProtoField) -> Self {
+        let field_path = split_document_path(&field.name).1.to_string();
         FirestoreListedField {
-            name: field.name.clone(),
+            name: field.name,
             field_path,
-            indexes,
-            reverting,
-            ttl,
-        },
-        unrecognised,
-    )
-}
-
-impl TryFrom<ProtoField> for FirestoreListedField {
-    type Error = FirestoreError;
-
-    fn try_from(field: ProtoField) -> Result<Self, Self::Error> {
-        let (listed, unrecognised) = convert_listed_field(&field);
-        match unrecognised.into_iter().next() {
-            None => Ok(listed),
-            Some(item) => Err(FirestoreError::invalid_parameters("field", item.reason)),
+            index_override: field.index_config.into(),
+            ttl: field.ttl_config.into(),
         }
     }
 }
@@ -524,10 +524,10 @@ fn field_override_matches(
     declared: &FirestoreFieldOverride,
     listed: &FirestoreListedField,
 ) -> bool {
-    let Some(listed_indexes) = &listed.indexes else {
+    let FirestoreFieldOverrideOutcome::Explicit { indexes, .. } = &listed.index_override else {
         return false;
     };
-    override_index_set(&declared.indexes) == override_index_set(listed_indexes)
+    override_index_set(&declared.indexes) == override_index_set(indexes)
 }
 
 /// Describes a [`FirestoreError`] the way an unrecognised listed item's `reason` should read: a
@@ -553,7 +553,7 @@ fn describe_error(err: &FirestoreError) -> String {
 /// `unrecognised` list. It is never matched against a declaration and never planned for deletion
 /// or revert, even when pruning: this crate cannot know that removing it is what the declaration
 /// intends.
-pub fn plan_index_changes(
+pub(crate) fn plan_index_changes(
     params: &FirestoreIndexParams,
     existing: &FirestoreIndexExistingState,
 ) -> FirestoreResult<FirestoreIndexPlan> {
@@ -581,12 +581,23 @@ pub fn plan_index_changes(
     let listed_fields: Vec<FirestoreListedField> = existing
         .fields
         .iter()
-        .map(|proto| {
-            let (listed, unrecognised) = convert_listed_field(proto);
-            plan.unrecognised.extend(unrecognised);
-            listed
-        })
+        .cloned()
+        .map(FirestoreListedField::from)
         .collect();
+    for listed in &listed_fields {
+        if let FirestoreFieldOverrideOutcome::Unrecognised(reason) = &listed.index_override {
+            plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
+                name: listed.name.clone(),
+                reason: reason.clone(),
+            });
+        }
+        if let FirestoreFieldTtlOutcome::Unrecognised(reason) = &listed.ttl {
+            plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
+                name: listed.name.clone(),
+                reason: reason.clone(),
+            });
+        }
+    }
 
     let mut matched_listed_index = vec![false; listed_indexes.len()];
     for declared in &params.composite_indexes {
@@ -622,12 +633,13 @@ pub fn plan_index_changes(
     let declared_override_paths: HashSet<&str> = params
         .field_overrides
         .iter()
-        .map(|f| f.field_path.as_str())
+        .map(|f| f.target.as_str())
         .collect();
     for declared in &params.field_overrides {
-        let listed = listed_fields
-            .iter()
-            .find(|f| f.indexes.is_some() && f.field_path == declared.field_path);
+        let listed = listed_fields.iter().find(|f| {
+            matches!(f.index_override, FirestoreFieldOverrideOutcome::Explicit { .. })
+                && f.field_path == declared.target.as_str()
+        });
         let up_to_date = listed
             .map(|f| field_override_matches(declared, f))
             .unwrap_or(false);
@@ -636,12 +648,13 @@ pub fn plan_index_changes(
         }
     }
     for listed in &listed_fields {
+        let FirestoreFieldOverrideOutcome::Explicit { reverting, .. } = listed.index_override
+        else {
+            continue;
+        };
         // A field already `reverting` has an in-flight change back to the ancestor's config;
         // planning another revert for it would just repeat a change already under way.
-        if listed.indexes.is_some()
-            && !listed.reverting
-            && !declared_override_paths.contains(listed.field_path.as_str())
-        {
+        if !reverting && !declared_override_paths.contains(listed.field_path.as_str()) {
             plan.undeclared_fields.push(listed.clone());
         }
     }
@@ -652,18 +665,24 @@ pub fn plan_index_changes(
         let listed_ttl = listed_fields
             .iter()
             .find(|f| f.field_path == *declared_path)
-            .and_then(|f| f.ttl);
+            .map(|f| &f.ttl);
         match listed_ttl {
-            None => plan.enable_ttl.push(declared_path.clone()),
-            Some(FirestoreFieldTtlState::Creating) => plan.pending_ttl.push(declared_path.clone()),
-            Some(FirestoreFieldTtlState::NeedsRepair) => {
+            None | Some(FirestoreFieldTtlOutcome::None | FirestoreFieldTtlOutcome::Unrecognised(_)) => {
+                plan.enable_ttl.push(declared_path.clone())
+            }
+            Some(FirestoreFieldTtlOutcome::Configured(FirestoreFieldTtlState::Creating)) => {
+                plan.pending_ttl.push(declared_path.clone())
+            }
+            Some(FirestoreFieldTtlOutcome::Configured(FirestoreFieldTtlState::NeedsRepair)) => {
                 plan.needs_repair_ttl.push(declared_path.clone())
             }
-            Some(FirestoreFieldTtlState::Active) => {}
+            Some(FirestoreFieldTtlOutcome::Configured(FirestoreFieldTtlState::Active)) => {}
         }
     }
     for listed in &listed_fields {
-        if listed.ttl.is_some() && !declared_ttl_paths.contains(listed.field_path.as_str()) {
+        if matches!(listed.ttl, FirestoreFieldTtlOutcome::Configured(_))
+            && !declared_ttl_paths.contains(listed.field_path.as_str())
+        {
             plan.undeclared_ttl.push(listed.clone());
         }
     }
@@ -752,7 +771,7 @@ mod tests {
     #[test]
     fn declared_override_converts_to_an_explicit_non_inherited_index_config() {
         let field_override = FirestoreFieldOverride {
-            field_path: "tags".to_string(),
+            target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
             indexes: vec![
                 FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains)
                     .all_descendants(),
@@ -1053,7 +1072,7 @@ mod tests {
     #[test]
     fn declared_exempt_matches_listed_empty_override() {
         let declared = FirestoreFieldOverride {
-            field_path: "bio".to_string(),
+            target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
             indexes: vec![],
         };
         let params = users_params().with_field_overrides(vec![declared]);
@@ -1079,7 +1098,7 @@ mod tests {
     #[test]
     fn declared_exempt_with_no_listed_override_needs_update() {
         let declared = FirestoreFieldOverride {
-            field_path: "bio".to_string(),
+            target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
             indexes: vec![],
         };
         let params = users_params().with_field_overrides(vec![declared.clone()]);
@@ -1110,14 +1129,14 @@ mod tests {
         let plan = plan_index_changes(&users_params(), &existing).unwrap();
         assert_eq!(
             plan.undeclared_fields,
-            vec![FirestoreListedField::try_from(listed_field).unwrap()]
+            vec![FirestoreListedField::from(listed_field)]
         );
     }
 
     #[test]
     fn matching_override_is_unchanged() {
         let declared = FirestoreFieldOverride {
-            field_path: "tags".to_string(),
+            target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
             indexes: vec![
                 FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains)
                     .all_descendants(),
@@ -1174,7 +1193,7 @@ mod tests {
         let plan = plan_index_changes(&users_params(), &existing).unwrap();
         assert_eq!(
             plan.undeclared_ttl,
-            vec![FirestoreListedField::try_from(listed_field).unwrap()]
+            vec![FirestoreListedField::from(listed_field)]
         );
     }
 
@@ -1392,7 +1411,7 @@ mod tests {
     #[test]
     fn valid_override_survives_an_unrecognised_ttl_half() {
         let declared = FirestoreFieldOverride {
-            field_path: "tags".to_string(),
+            target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
             indexes: vec![
                 FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains)
                     .all_descendants(),

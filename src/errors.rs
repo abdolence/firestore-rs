@@ -283,6 +283,21 @@ impl From<gcloud_sdk::error::Error> for FirestoreError {
     }
 }
 
+/// Converts a failed long-running admin operation's status. Its `code` is a `google.rpc.Code`
+/// value with the same numbering as [`gcloud_sdk::tonic::Code`], but the operation carries it as
+/// a bare `i32` rather than a `tonic::Status`, so it needs its own conversion rather than reusing
+/// `From<tonic::Status>` above.
+#[cfg(feature = "admin")]
+impl From<gcloud_sdk::google::rpc::Status> for FirestoreError {
+    fn from(status: gcloud_sdk::google::rpc::Status) -> Self {
+        FirestoreError::DatabaseError(FirestoreDatabaseError::new(
+            FirestoreErrorPublicGenericDetails::new(status.code.to_string()),
+            status.message,
+            false,
+        ))
+    }
+}
+
 impl From<gcloud_sdk::tonic::Status> for FirestoreError {
     fn from(status: gcloud_sdk::tonic::Status) -> Self {
         match status.code() {
