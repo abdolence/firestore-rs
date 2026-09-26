@@ -4,19 +4,11 @@
 //! `db.fluent().indexes()...` chain assembles, and what `FirestoreDb`'s index management passes
 //! on to Firestore.
 
-use crate::errors::{
-    FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
-};
+use crate::errors::FirestoreError;
 use crate::{FirestoreCollectionId, FirestoreQueryDirection, FirestoreResult};
 use rsb_derive::Builder;
 use std::collections::HashSet;
 use std::time::Duration;
-
-fn invalid(field: &str, error: impl Into<String>) -> FirestoreError {
-    FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
-        FirestoreInvalidParametersPublicDetails::new(field.to_string(), error.into()),
-    ))
-}
 
 /// Whether an index serves queries against one collection or a collection-group query across
 /// every collection with the same ID anywhere under the database.
@@ -273,7 +265,7 @@ pub(crate) fn validate_index_params(params: &FirestoreIndexParams) -> FirestoreR
 fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreResult<()> {
     for (position, index) in indexes.iter().enumerate() {
         if index.fields.len() < 2 {
-            return Err(invalid(
+            return Err(FirestoreError::invalid_parameters(
                 "composite_indexes",
                 format!(
                     "index {position} needs at least two fields, has {}",
@@ -298,7 +290,7 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
                 }
             }
             [only] => {
-                return Err(invalid(
+                return Err(FirestoreError::invalid_parameters(
                     "composite_indexes",
                     format!(
                         "index {position}'s vector field must be last, was at position {only} of {}",
@@ -307,7 +299,7 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
                 ));
             }
             multiple => {
-                return Err(invalid(
+                return Err(FirestoreError::invalid_parameters(
                     "composite_indexes",
                     format!(
                         "index {position} has {} vector fields, at most one is allowed",
@@ -322,7 +314,7 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
 
 fn validate_vector_dimension(dimension: u32) -> FirestoreResult<()> {
     if dimension == 0 || dimension > 2048 {
-        return Err(invalid(
+        return Err(FirestoreError::invalid_parameters(
             "composite_indexes",
             format!("vector dimension must be between 1 and 2048, was {dimension}"),
         ));
@@ -334,7 +326,7 @@ fn validate_field_overrides(overrides: &[FirestoreFieldOverride]) -> FirestoreRe
     let mut seen_paths: HashSet<&str> = HashSet::new();
     for field_override in overrides {
         if !seen_paths.insert(field_override.field_path.as_str()) {
-            return Err(invalid(
+            return Err(FirestoreError::invalid_parameters(
                 "field_overrides",
                 format!(
                     "field path \"{}\" is declared more than once",

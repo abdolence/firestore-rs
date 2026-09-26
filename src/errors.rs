@@ -46,6 +46,16 @@ pub enum FirestoreError {
     CacheError(FirestoreCacheError),
 }
 
+impl FirestoreError {
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) naming the
+    /// offending field and why it was rejected.
+    pub(crate) fn invalid_parameters(field: impl Into<String>, error: impl Into<String>) -> Self {
+        FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+            FirestoreInvalidParametersPublicDetails::new(field.into(), error.into()),
+        ))
+    }
+}
+
 impl Display for FirestoreError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match *self {
