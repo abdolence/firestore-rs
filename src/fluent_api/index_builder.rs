@@ -197,6 +197,11 @@ where
     }
 
     /// Reconciles Firestore with this declaration.
+    ///
+    /// When waiting was requested and the wait fails (an operation fails, a poll fails with a
+    /// non-retryable error, or the timeout passes), the error is returned and the report of what
+    /// was already applied is logged at `warn` just before, since the changes it lists were sent
+    /// and are not rolled back.
     pub async fn sync(self) -> FirestoreResult<FirestoreIndexSyncReport> {
         let (db, params, options) = self.build_params()?;
         db.sync_indexes(params, options).await

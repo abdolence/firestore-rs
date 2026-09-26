@@ -7,8 +7,9 @@ use crate::db::admin::index_diff::{
     plan_index_changes, FirestoreIndexExistingState, FirestoreIndexListing,
 };
 use crate::db::admin::index_models::write_section;
+use crate::db::admin::operation_wait::{OperationAction, StartedOperation};
 use crate::db::support::FirestoreIndexSupport;
-use crate::errors::{FirestoreError, FirestoreErrorPublicGenericDetails, FirestoreSystemError};
+use crate::errors::FirestoreError;
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreDb, FirestoreFieldOverride,
     FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSyncOptions, FirestoreIndexSyncReport,
@@ -22,24 +23,15 @@ use gcloud_sdk::google::firestore::admin::v1::{
     CreateIndexRequest, DeleteIndexRequest, Field as ProtoField, Index as ProtoIndex,
     ListFieldsRequest, ListIndexesRequest, UpdateFieldRequest,
 };
-use gcloud_sdk::google::longrunning::operation::Result as LroResult;
 use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
 use gcloud_sdk::prost_types::FieldMask;
 use gcloud_sdk::tonic::Code;
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use tracing::*;
 
-/// One index-management action this crate applies to a single collection group.
-///
-/// `name` is the server-assigned resource name of the field or index the action targets, not the
-/// long-running operation - it never appears in a public type, so it stays a plain `String`
-/// rather than a newtype; there is exactly one place that ever needs it (the resource-ownership
-/// check `ensure_owned_resource` and the raw admin RPCs), unlike the domain identifiers this
-/// crate does wrap.
-///
-/// `Display` produces the exact text this crate has always logged and reported for each kind, so
-/// a log line and a wait timeout's error message never disagree on what an operation was for.
+/// One write `.sync()` sends for the owned collection group, holding the declared or listed
+/// item it writes. `Display` is the text every log line and wait error uses for the write, such as
+/// `enable TTL on expires_at`, so the two never disagree on what an operation was for.
 enum IndexAction {
     CreateIndex(FirestoreCompositeIndex),
     UpdateFieldOverride(FirestoreFieldOverride),
@@ -49,10 +41,7 @@ enum IndexAction {
     DeleteIndex(FirestoreListedCompositeIndex),
 }
 
-impl IndexAction {
-    /// A short, stable identifier for this action's kind, independent of its target - logged
-    /// alongside the human-readable `Display` text as a field a caller can filter or group on
-    /// without parsing it.
+impl OperationAction for IndexAction {
     fn kind(&self) -> &'static str {
         match self {
             IndexAction::CreateIndex(_) => "create_index",
@@ -82,21 +71,7 @@ impl std::fmt::Display for IndexAction {
     }
 }
 
-/// One admin RPC's long-running result that `.sync()` must poll to completion when waiting is
-/// requested: the operation's resource name, plus the action it belongs to, for the wait phase's
-/// logging and its timeout error.
-struct PendingOperation {
-    name: String,
-    action: IndexAction,
-}
-
-/// The result of polling one operation until it is done or the shared wait budget runs out.
-/// Distinct from an operation *failing*, which is a [`FirestoreError`] and stops the wait
-/// immediately.
-enum WaitOutcome {
-    Done,
-    TimedOut,
-}
+type PendingOperation = StartedOperation<IndexAction>;
 
 /// The result of [`FirestoreDb::apply_create_index`]: whether the create actually started a
 /// build, or found one already existing (a race with another deployment), which `.sync()` reports
@@ -404,7 +379,7 @@ impl FirestoreDb {
                         index = %index,
                         "Created a composite index.",
                     );
-                    Ok(CreateIndexOutcome::Created(PendingOperation {
+                    Ok(CreateIndexOutcome::Created(StartedOperation {
                         name: operation.name,
                         action,
                     }))
@@ -483,7 +458,7 @@ impl FirestoreDb {
                         label = %action,
                         "Applied an index management change.",
                     );
-                    Ok(PendingOperation {
+                    Ok(StartedOperation {
                         name: operation.name,
                         action,
                     })
@@ -696,77 +671,11 @@ impl FirestoreDb {
         Ok((report, pending_operations))
     }
 
-    /// Polls one operation until it is done or `deadline` passes, at `poll_interval`.
-    async fn wait_for_one_operation(
+    /// Waits for every operation `.sync()` started under one shared deadline (see
+    /// [`FirestoreDb::wait_for_operations`]), in a `Firestore Index Wait` span.
+    async fn wait_for_index_operations(
         &self,
-        op: &PendingOperation,
-        deadline: Instant,
-        poll_interval: Duration,
-    ) -> FirestoreResult<WaitOutcome> {
-        let span = span!(
-            Level::INFO,
-            "Wait For Operation",
-            "/firestore/operation" = op.name.as_str(),
-            "/firestore/response_time" = field::Empty,
-        );
-        let started = Instant::now();
-        let mut polls: u32 = 0;
-        let outcome = async {
-            loop {
-                polls += 1;
-                let operation = self.get_operation(&op.name).await?;
-                debug!(
-                    poll = polls,
-                    operation = op.name.as_str(),
-                    action = op.action.kind(),
-                    label = %op.action,
-                    done = operation.done,
-                    "Polled a pending operation.",
-                );
-                if operation.done {
-                    return match operation.result {
-                        Some(LroResult::Error(status)) => {
-                            error!(
-                                operation = op.name.as_str(),
-                                action = op.action.kind(),
-                                label = %op.action,
-                                code = status.code,
-                                message = status.message.as_str(),
-                                "Operation failed.",
-                            );
-                            Err(FirestoreError::from(status))
-                        }
-                        _ => {
-                            info!(
-                                operation = op.name.as_str(),
-                                action = op.action.kind(),
-                                label = %op.action,
-                                polls,
-                                "Operation reached a terminal state.",
-                            );
-                            Ok(WaitOutcome::Done)
-                        }
-                    };
-                }
-                if Instant::now() >= deadline {
-                    return Ok(WaitOutcome::TimedOut);
-                }
-                tokio::time::sleep(poll_interval).await;
-            }
-        }
-        .instrument(span.clone())
-        .await;
-        let elapsed_ms = started.elapsed().as_millis();
-        span.record("/firestore/response_time", elapsed_ms);
-        outcome
-    }
-
-    /// Waits for every operation `.sync()` started, one after another under one shared deadline:
-    /// a timeout on any of them names every operation still pending, not only the one being
-    /// polled, since the ones after it were never even checked.
-    async fn wait_for_operations(
-        &self,
-        pending: Vec<PendingOperation>,
+        pending: &[PendingOperation],
         options: &FirestoreOperationWaitOptions,
     ) -> FirestoreResult<()> {
         if pending.is_empty() {
@@ -779,37 +688,17 @@ impl FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
-        let deadline = Instant::now() + options.timeout;
-        let result: FirestoreResult<()> = async {
-            for (position, op) in pending.iter().enumerate() {
-                match self
-                    .wait_for_one_operation(op, deadline, options.poll_interval)
-                    .await?
-                {
-                    WaitOutcome::Done => {}
-                    WaitOutcome::TimedOut => {
-                        let remaining: Vec<String> = pending[position..]
-                            .iter()
-                            .map(|p| p.action.to_string())
-                            .collect();
-                        warn!(
-                            pending = remaining.join(", "),
-                            "Timed out waiting for index operations to finish.",
-                        );
-                        return Err(FirestoreError::SystemError(FirestoreSystemError::new(
-                            FirestoreErrorPublicGenericDetails::new(
-                                "OPERATION_WAIT_TIMEOUT".to_string(),
-                            ),
-                            format!(
-                                "timed out after {:?} waiting for: {}",
-                                options.timeout,
-                                remaining.join(", ")
-                            ),
-                        )));
-                    }
-                }
-            }
-            info!("All index operations reached a terminal state.");
+        let operations: Vec<&PendingOperation> = pending.iter().collect();
+        let result = async {
+            self.wait_for_operations(&operations, options, |_, _| {})
+                .await?;
+            let elapsed = FirestoreInstant::now().duration_since(began);
+            info!(
+                operations = pending.len(),
+                elapsed_ms = elapsed.as_millis(),
+                "All index operations reached a terminal state in {} ms.",
+                elapsed.as_millis(),
+            );
             Ok(())
         }
         .instrument(span.clone())
@@ -886,8 +775,16 @@ impl FirestoreIndexSupport for FirestoreDb {
             let (group_path, plan) = self.plan_against_server(&params, options.prune).await?;
             let (report, pending_operations) = self.apply_plan(&group_path, &plan).await?;
             if let Some(wait_options) = &options.wait {
-                self.wait_for_operations(pending_operations, wait_options)
-                    .await?;
+                if let Err(err) = self
+                    .wait_for_index_operations(&pending_operations, wait_options)
+                    .await
+                {
+                    warn!(
+                        collection_group = params.collection_group.as_str(),
+                        "Waiting for the applied changes failed; what was applied before it: {report}",
+                    );
+                    return Err(err);
+                }
             }
             info!(
                 collection_group = params.collection_group.as_str(),
@@ -926,6 +823,7 @@ mod tests {
     use gcloud_sdk::tonic::Code;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc as StdArc, Mutex};
+    use std::time::Duration;
 
     const LIST_INDEXES: &str = "/google.firestore.admin.v1.FirestoreAdmin/ListIndexes";
     const CREATE_INDEX: &str = "/google.firestore.admin.v1.FirestoreAdmin/CreateIndex";
@@ -1305,6 +1203,281 @@ mod tests {
 
         assert!(err.to_string().contains("timed out"));
         assert!(err.to_string().contains("create index"));
+    }
+
+    fn get_operation_name(bytes: &[u8]) -> String {
+        gcloud_sdk::google::longrunning::GetOperationRequest::decode(bytes)
+            .unwrap()
+            .name
+    }
+
+    fn operation_name(id: &str) -> String {
+        format!("{GROUP_PATH}/operations/{id}")
+    }
+
+    /// `[b ASC, c DESC]`, a second declared index distinct from [`declared_index`].
+    fn second_declared_index() -> FirestoreCompositeIndex {
+        FirestoreCompositeIndex::new(vec![
+            FirestoreIndexField::new(
+                "b".to_string(),
+                FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending),
+            ),
+            desc("c"),
+        ])
+    }
+
+    /// Answers the listing with nothing, and each `CreateIndex` with a pending operation named
+    /// after the created index's first field: `op-a` for [`declared_index`], `op-b` for
+    /// [`second_declared_index`].
+    fn two_creates(method: &str, bytes: &[u8]) -> Option<(String, FakeResponse)> {
+        match method {
+            LIST_INDEXES => Some(("ListIndexes".to_string(), list_indexes_response(vec![]))),
+            LIST_FIELDS => Some(("ListFields".to_string(), list_fields_response(vec![]))),
+            CREATE_INDEX => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::CreateIndexRequest::decode(bytes)
+                        .unwrap();
+                let first = &request.index.unwrap().fields[0].field_path;
+                let name = operation_name(&format!("op-{first}"));
+                Some((
+                    format!("CreateIndex({name})"),
+                    pending_operation_response(&name),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn two_indexes_params() -> FirestoreIndexParams {
+        FirestoreIndexParams::new(group())
+            .with_composite_indexes(vec![declared_index(), second_declared_index()])
+    }
+
+    #[tokio::test]
+    async fn a_transient_poll_error_is_retried_within_the_deadline() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let polls = StdArc::new(AtomicU32::new(0));
+        let polls_in_handler = polls.clone();
+        let fake = FakeFirestore::start(move |method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                pending_operation_response(&operation_name("op1")),
+            ),
+            GET_OPERATION => {
+                let count = polls_in_handler.fetch_add(1, Ordering::SeqCst) + 1;
+                if count == 1 {
+                    (
+                        "GetOperation#1 (unavailable)".to_string(),
+                        FakeResponse::Status(Code::Unavailable),
+                    )
+                } else {
+                    (
+                        format!("GetOperation#{count}"),
+                        done_operation_response(&operation_name("op1")),
+                    )
+                }
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let options = FirestoreIndexSyncOptions::new().with_wait(
+            FirestoreOperationWaitOptions::new(Duration::from_secs(5))
+                .with_poll_interval(Duration::from_millis(5)),
+        );
+        let report = fake
+            .db
+            .sync_indexes(params_with_index(), options)
+            .await
+            .expect("an UNAVAILABLE poll must be retried, not end the wait");
+
+        assert_eq!(report.created_indexes, vec![declared_index()]);
+        assert_eq!(polls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_non_retryable_poll_error_ends_the_wait_at_once() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                pending_operation_response(&operation_name("op1")),
+            ),
+            GET_OPERATION => (
+                "GetOperation (permission denied)".to_string(),
+                FakeResponse::Status(Code::PermissionDenied),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let options = FirestoreIndexSyncOptions::new().with_wait(
+            FirestoreOperationWaitOptions::new(Duration::from_secs(5))
+                .with_poll_interval(Duration::from_millis(5)),
+        );
+        let err = fake
+            .db
+            .sync_indexes(params_with_index(), options)
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("PermissionDenied"), "{err}");
+        assert_eq!(
+            fake.calls()
+                .iter()
+                .filter(|call| call.starts_with("GetOperation"))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn every_pending_operation_is_polled_and_only_the_unfinished_one_times_out() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, bytes| {
+            if let Some(answer) = two_creates(method, bytes) {
+                return answer;
+            }
+            match method {
+                GET_OPERATION => {
+                    let name = get_operation_name(bytes);
+                    let response = if name.ends_with("op-b") {
+                        done_operation_response(&name)
+                    } else {
+                        pending_operation_response(&name)
+                    };
+                    (format!("GetOperation({name})"), response)
+                }
+                other => panic!("unexpected RPC: {other}"),
+            }
+        })
+        .await;
+
+        let options = FirestoreIndexSyncOptions::new().with_wait(
+            FirestoreOperationWaitOptions::new(Duration::from_millis(100))
+                .with_poll_interval(Duration::from_millis(10)),
+        );
+        let err = fake
+            .db
+            .sync_indexes(two_indexes_params(), options)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            fake.calls()
+                .contains(&format!("GetOperation({})", operation_name("op-b"))),
+            "the second operation must be polled while the first is still pending: {:?}",
+            fake.calls()
+        );
+        assert!(err.contains("timed out"), "{err}");
+        assert!(
+            err.contains("create index [COLLECTION] (a DESC, tags CONTAINS)"),
+            "{err}"
+        );
+        assert!(err.contains(&operation_name("op-a")), "{err}");
+        assert!(
+            !err.contains("(b ASC") && !err.contains(&operation_name("op-b")),
+            "a finished operation must not be reported as pending: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_deadline_covers_every_operation_of_the_wait() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let polls_of_b = StdArc::new(AtomicU32::new(0));
+        let polls_of_b_in_handler = polls_of_b.clone();
+        let fake = FakeFirestore::start(move |method, bytes| {
+            if let Some(answer) = two_creates(method, bytes) {
+                return answer;
+            }
+            match method {
+                GET_OPERATION => {
+                    let name = get_operation_name(bytes);
+                    let finishes_now = name.ends_with("op-b")
+                        && polls_of_b_in_handler.fetch_add(1, Ordering::SeqCst) + 1 >= 8;
+                    let response = if finishes_now {
+                        done_operation_response(&name)
+                    } else {
+                        pending_operation_response(&name)
+                    };
+                    (format!("GetOperation({name})"), response)
+                }
+                other => panic!("unexpected RPC: {other}"),
+            }
+        })
+        .await;
+
+        // op-b finishes after about 8 polls (~160 ms) and op-a never does. With one deadline the
+        // wait ends at ~200 ms; an operation given its own timeout from when the previous one
+        // finished would run to ~360 ms.
+        let timeout = Duration::from_millis(200);
+        let options = FirestoreIndexSyncOptions::new().with_wait(
+            FirestoreOperationWaitOptions::new(timeout)
+                .with_poll_interval(Duration::from_millis(20)),
+        );
+        let started = std::time::Instant::now();
+        let err = tokio::time::timeout(
+            Duration::from_secs(2),
+            fake.db.sync_indexes(two_indexes_params(), options),
+        )
+        .await
+        .expect("the wait must end at its deadline")
+        .unwrap_err()
+        .to_string();
+        let elapsed = started.elapsed();
+
+        assert!(polls_of_b.load(Ordering::SeqCst) >= 8);
+        assert!(err.contains(&operation_name("op-a")), "{err}");
+        assert!(!err.contains(&operation_name("op-b")), "{err}");
+        assert!(
+            elapsed < Duration::from_millis(300),
+            "the wait must end at one shared deadline of {timeout:?}, took {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_wait_logs_the_report_of_what_was_applied() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                pending_operation_response(&operation_name("op1")),
+            ),
+            GET_OPERATION => (
+                "GetOperation".to_string(),
+                pending_operation_response(&operation_name("op1")),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let options = FirestoreIndexSyncOptions::new().with_wait(
+            FirestoreOperationWaitOptions::new(Duration::from_millis(20))
+                .with_poll_interval(Duration::from_millis(5)),
+        );
+        let (subscriber, buffer) = capturing_subscriber();
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db
+                .sync_indexes(params_with_index(), options)
+                .await
+                .unwrap_err();
+        }
+        let output = captured_text(&buffer);
+
+        let report_line = output
+            .lines()
+            .find(|line| line.contains("Firestore index sync report"))
+            .unwrap_or_else(|| panic!("no partial report logged in:\n{output}"));
+        assert!(report_line.contains("WARN"), "{report_line}");
+        assert!(output.contains("created_indexes: 1"), "{output}");
     }
 
     #[tokio::test]

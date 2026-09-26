@@ -2,6 +2,7 @@
 //! `BulkDeleteDocuments` admin RPC, on the same authenticated channel index management uses
 //! ([`FirestoreDb::admin_client`](super::indexes)).
 
+use crate::db::admin::operation_wait::{OperationAction, StartedOperation};
 use crate::db::support::FirestoreBulkDeleteSupport;
 use crate::errors::{FirestoreError, FirestoreErrorPublicGenericDetails, FirestoreSystemError};
 use crate::{
@@ -13,14 +14,13 @@ use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::{
     BulkDeleteDocumentsMetadata, BulkDeleteDocumentsRequest, Progress as ProtoProgress,
 };
-use gcloud_sdk::google::longrunning::operation::Result as LroResult;
 use gcloud_sdk::prost::Message as _;
 use gcloud_sdk::prost_types::Any;
 use std::time::Instant;
 use tracing::*;
 
 /// A short, stable identifier for `BulkDeleteDocuments`, logged as a field alongside the
-/// human-readable collection-group label - mirrors [`super::indexes`]'s `IndexAction::kind`.
+/// human-readable collection-group label.
 const BULK_DELETE_ACTION_KIND: &str = "bulk_delete";
 
 /// The declared collection groups, comma-joined, for logging and a timeout's error message.
@@ -30,6 +30,23 @@ fn bulk_delete_label(groups: &[FirestoreCollectionId]) -> String {
         .map(FirestoreCollectionId::as_str)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The one action a bulk delete's operation carries out, for the shared operation wait.
+struct BulkDeleteAction<'a> {
+    label: &'a str,
+}
+
+impl std::fmt::Display for BulkDeleteAction<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "bulk delete {}", self.label)
+    }
+}
+
+impl OperationAction for BulkDeleteAction<'_> {
+    fn kind(&self) -> &'static str {
+        BULK_DELETE_ACTION_KIND
+    }
 }
 
 /// Decodes a long-running operation's metadata as `BulkDeleteDocumentsMetadata`. Not checked
@@ -119,94 +136,40 @@ impl FirestoreDb {
         outcome
     }
 
-    /// Polls the started bulk delete until it reaches a terminal state or `options.timeout`
-    /// passes, decoding `BulkDeleteDocumentsMetadata` on every poll: unlike index sync's wait,
-    /// which only needs an operation's done/error state, a caller here also wants the progress a
-    /// still-running bulk delete is reporting.
+    /// Waits for the started bulk delete through the shared operation wait, folding the
+    /// `BulkDeleteDocumentsMetadata` of every poll into `result`, so progress is known even when
+    /// the wait fails.
     async fn wait_for_bulk_delete(
         &self,
-        operation_name: &str,
-        label: &str,
+        operation: &StartedOperation<BulkDeleteAction<'_>>,
+        result: &mut FirestoreBulkDeleteResult,
         options: &FirestoreOperationWaitOptions,
-    ) -> FirestoreResult<BulkDeleteDocumentsMetadata> {
+    ) -> FirestoreResult<()> {
         let span = span!(
             Level::INFO,
             "Firestore Bulk Delete Wait",
-            "/firestore/operation" = operation_name,
+            "/firestore/operation" = operation.name.as_str(),
             "/firestore/response_time" = field::Empty,
         );
-        let started = Instant::now();
-        let deadline = started + options.timeout;
-        let mut polls: u32 = 0;
-        let mut latest_metadata: Option<BulkDeleteDocumentsMetadata> = None;
-        let outcome: FirestoreResult<()> = async {
-            loop {
-                polls += 1;
-                let operation = self.get_operation(operation_name).await?;
-                let metadata = operation.metadata.as_ref().and_then(decode_metadata);
-                debug!(
-                    poll = polls,
-                    operation = operation_name,
-                    action = BULK_DELETE_ACTION_KIND,
-                    collection_groups = label,
-                    documents = ?metadata.as_ref().and_then(|m| progress_from(m.progress_documents)),
-                    bytes = ?metadata.as_ref().and_then(|m| progress_from(m.progress_bytes)),
-                    done = operation.done,
-                    "Polled a pending bulk delete.",
-                );
-                if let Some(metadata) = metadata {
-                    latest_metadata = Some(metadata);
-                }
-                if operation.done {
-                    return match operation.result {
-                        Some(LroResult::Error(status)) => {
-                            error!(
-                                operation = operation_name,
-                                action = BULK_DELETE_ACTION_KIND,
-                                collection_groups = label,
-                                code = status.code,
-                                message = status.message.as_str(),
-                                "Bulk delete failed.",
-                            );
-                            Err(FirestoreError::from(status))
-                        }
-                        _ => {
-                            info!(
-                                operation = operation_name,
-                                action = BULK_DELETE_ACTION_KIND,
-                                collection_groups = label,
-                                polls,
-                                "Bulk delete reached a terminal state.",
-                            );
-                            Ok(())
-                        }
-                    };
-                }
-                if Instant::now() >= deadline {
-                    warn!(
-                        operation = operation_name,
+        let began = FirestoreInstant::now();
+        let label = operation.action.label;
+        let outcome = self
+            .wait_for_operations(&[operation], options, |_, polled| {
+                if let Some(metadata) = polled.metadata.as_ref().and_then(decode_metadata) {
+                    debug!(
                         collection_groups = label,
-                        "Timed out waiting for a bulk delete to finish.",
+                        documents = ?progress_from(metadata.progress_documents),
+                        bytes = ?progress_from(metadata.progress_bytes),
+                        "Bulk delete progress.",
                     );
-                    return Err(FirestoreError::SystemError(FirestoreSystemError::new(
-                        FirestoreErrorPublicGenericDetails::new(
-                            "OPERATION_WAIT_TIMEOUT".to_string(),
-                        ),
-                        format!(
-                            "timed out after {:?} waiting for bulk delete {label} ({operation_name})",
-                            options.timeout
-                        ),
-                    )));
+                    apply_metadata(label, result, &metadata);
                 }
-                tokio::time::sleep(options.poll_interval).await;
-            }
-        }
-        .instrument(span.clone())
-        .await;
-        let elapsed_ms = started.elapsed().as_millis();
-        span.record("/firestore/response_time", elapsed_ms);
-        outcome?;
-        Ok(latest_metadata.unwrap_or_default())
+            })
+            .instrument(span.clone())
+            .await;
+        let elapsed = FirestoreInstant::now().duration_since(began);
+        span.record("/firestore/response_time", elapsed.as_millis());
+        outcome
     }
 }
 
@@ -261,10 +224,21 @@ impl FirestoreBulkDeleteSupport for FirestoreDb {
                 apply_metadata(&label, &mut result, metadata);
             }
             if let Some(wait_options) = &params.wait {
-                let metadata = self
-                    .wait_for_bulk_delete(&operation_name, &label, wait_options)
-                    .await?;
-                apply_metadata(&label, &mut result, &metadata);
+                let started = StartedOperation {
+                    name: operation_name,
+                    action: BulkDeleteAction { label: &label },
+                };
+                if let Err(err) = self
+                    .wait_for_bulk_delete(&started, &mut result, wait_options)
+                    .await
+                {
+                    result.elapsed = wall_start.elapsed();
+                    warn!(
+                        collection_groups = label.as_str(),
+                        "Waiting for the bulk delete failed; known so far: {result}",
+                    );
+                    return Err(err);
+                }
             }
             Ok::<_, FirestoreError>(result)
         }
@@ -287,13 +261,14 @@ mod tests {
     use super::*;
     use crate::db::fake_firestore::{
         bulk_delete_operation_response, done_operation_response, failed_operation_response,
-        pending_operation_response, FakeFirestore,
+        pending_operation_response, FakeFirestore, FakeResponse,
     };
     use crate::db::FirestoreDbInner;
     use crate::{FirestoreCollectionId, FirestoreOperationWaitOptions};
     use gcloud_sdk::google::firestore::admin::v1::{
         BulkDeleteDocumentsRequest, Progress as ProtoProgress,
     };
+    use gcloud_sdk::tonic::Code;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc as StdArc;
     use std::time::Duration;
@@ -445,6 +420,99 @@ mod tests {
         assert_eq!(result.operation_name, OPERATION_NAME);
         assert!(result.documents.is_none());
         assert!(fake.calls().len() == 1);
+    }
+
+    #[tokio::test]
+    async fn a_transient_poll_error_is_retried_within_the_deadline() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let polls = StdArc::new(AtomicU32::new(0));
+        let polls_in_handler = polls.clone();
+        let fake = FakeFirestore::start(move |method, _| match method {
+            BULK_DELETE => (
+                "BulkDeleteDocuments".to_string(),
+                pending_operation_response(OPERATION_NAME),
+            ),
+            GET_OPERATION => {
+                let count = polls_in_handler.fetch_add(1, Ordering::SeqCst) + 1;
+                if count == 1 {
+                    (
+                        "GetOperation#1 (unavailable)".to_string(),
+                        FakeResponse::Status(Code::Unavailable),
+                    )
+                } else {
+                    let metadata = BulkDeleteDocumentsMetadata {
+                        progress_documents: Some(ProtoProgress {
+                            estimated_work: 3,
+                            completed_work: 3,
+                        }),
+                        ..Default::default()
+                    };
+                    (
+                        format!("GetOperation#{count}"),
+                        bulk_delete_operation_response(OPERATION_NAME, true, metadata),
+                    )
+                }
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let params = FirestoreBulkDeleteParams::new(groups()).with_wait(
+            FirestoreOperationWaitOptions::new(Duration::from_secs(5))
+                .with_poll_interval(Duration::from_millis(5)),
+        );
+        let result = fake
+            .db
+            .bulk_delete_documents(params)
+            .await
+            .expect("an UNAVAILABLE poll must be retried, not end the wait");
+
+        assert_eq!(polls.load(Ordering::SeqCst), 2);
+        assert_eq!(result.documents.unwrap().completed_work, 3);
+    }
+
+    #[tokio::test]
+    async fn a_failed_wait_logs_the_result_known_so_far() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            BULK_DELETE => (
+                "BulkDeleteDocuments".to_string(),
+                pending_operation_response(OPERATION_NAME),
+            ),
+            GET_OPERATION => {
+                let metadata = BulkDeleteDocumentsMetadata {
+                    progress_documents: Some(ProtoProgress {
+                        estimated_work: 10,
+                        completed_work: 4,
+                    }),
+                    ..Default::default()
+                };
+                (
+                    "GetOperation".to_string(),
+                    bulk_delete_operation_response(OPERATION_NAME, false, metadata),
+                )
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let params = FirestoreBulkDeleteParams::new(groups()).with_wait(
+            FirestoreOperationWaitOptions::new(Duration::from_millis(20))
+                .with_poll_interval(Duration::from_millis(5)),
+        );
+        let (subscriber, buffer) = capturing_subscriber();
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db.bulk_delete_documents(params).await.unwrap_err();
+        }
+        let output = captured_text(&buffer);
+
+        let result_line = output
+            .lines()
+            .find(|line| line.contains("Bulk delete users, orders"))
+            .unwrap_or_else(|| panic!("no partial result logged in:\n{output}"));
+        assert!(result_line.contains("WARN"), "{result_line}");
+        assert!(result_line.contains("documents 4/10"), "{result_line}");
     }
 
     #[tokio::test]
@@ -610,7 +678,7 @@ mod tests {
         }
         assert!(output.contains("Started a bulk delete."));
         assert!(output.contains("Firestore reported the bulk delete's snapshot time."));
-        assert!(output.contains("Bulk delete reached a terminal state."));
+        assert!(output.contains("Operation reached a terminal state."));
         assert!(output.contains("Bulk delete users, orders"));
         assert!(
             output.contains("/firestore/response_time"),

@@ -352,6 +352,10 @@ where
 
     /// Sends the bulk delete to Firestore.
     ///
+    /// When waiting was requested and the wait fails, the error is returned and the result known
+    /// so far (the operation name and the last reported progress) is logged at `warn` just
+    /// before: the delete keeps running on the server either way.
+    ///
     /// Returns [`FirestoreError::InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError)
     /// if no collection groups were named, or the same group was named twice: an empty list is
     /// never sent, since Firestore reads it as "delete the whole database".
