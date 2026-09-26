@@ -1643,6 +1643,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_listing_page_is_followed() {
+        use gcloud_sdk::google::firestore::admin::v1::{
+            ListFieldsRequest, ListFieldsResponse, ListIndexesRequest, ListIndexesResponse,
+        };
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, bytes| match method {
+            LIST_INDEXES => {
+                let token = ListIndexesRequest::decode(bytes).unwrap().page_token;
+                let (id, next_page_token) = match token.as_str() {
+                    "" => ("page-1", "p2"),
+                    "p2" => ("page-2", ""),
+                    other => panic!("unexpected page token {other:?}"),
+                };
+                let response = ListIndexesResponse {
+                    indexes: vec![listed_declared_index(
+                        &format!("{GROUP_PATH}/indexes/{id}"),
+                        ProtoState::Ready,
+                    )],
+                    next_page_token: next_page_token.to_string(),
+                };
+                (
+                    format!("ListIndexes({token})"),
+                    FakeResponse::Message(response.encode_to_vec()),
+                )
+            }
+            LIST_FIELDS => {
+                let request = ListFieldsRequest::decode(bytes).unwrap();
+                let (field, next_page_token) = match request.page_token.as_str() {
+                    "" => ("page_1", "p2"),
+                    "p2" => ("page_2", ""),
+                    other => panic!("unexpected page token {other:?}"),
+                };
+                let response = ListFieldsResponse {
+                    fields: vec![if request.filter.contains("ttlConfig") {
+                        field_resource(&format!("{field}_ttl"), None, Some(active_ttl()))
+                    } else {
+                        field_resource(field, Some(exempt_override()), None)
+                    }],
+                    next_page_token: next_page_token.to_string(),
+                };
+                (
+                    format!("ListFields({})", request.page_token),
+                    FakeResponse::Message(response.encode_to_vec()),
+                )
+            }
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let plan = fake
+            .db
+            .plan_indexes(
+                FirestoreIndexParams::new(group()),
+                FirestoreIndexSyncOptions::new(),
+            )
+            .await
+            .unwrap();
+
+        let names = |items: Vec<String>| items.join(", ");
+        assert_eq!(
+            names(
+                plan.kept_undeclared_indexes
+                    .iter()
+                    .map(|i| i.name.clone())
+                    .collect()
+            ),
+            format!("{GROUP_PATH}/indexes/page-1, {GROUP_PATH}/indexes/page-2")
+        );
+        assert_eq!(
+            names(
+                plan.kept_undeclared_fields
+                    .iter()
+                    .map(|f| f.field_path.clone())
+                    .collect()
+            ),
+            "page_1, page_2"
+        );
+        assert_eq!(
+            names(
+                plan.kept_undeclared_ttl
+                    .iter()
+                    .map(|f| f.field_path.clone())
+                    .collect()
+            ),
+            "page_1_ttl, page_2_ttl"
+        );
+    }
+
+    #[tokio::test]
     async fn only_the_owned_group_is_ever_listed() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, bytes| match method {
