@@ -461,47 +461,79 @@ impl From<ProtoField> for FirestoreListedField {
     }
 }
 
-/// The direction Firestore assigns `__name__` when the index does not specify one: the direction
-/// of the last declared field when it is directional (`Order`), or ascending otherwise. This is
-/// the direction of the *last* field, not the last *directional* one - `[a DESC, tags CONTAINS]`
-/// implies ascending, not descending, because `tags` (not `a`) is last.
-fn implied_name_direction(fields: &[FirestoreIndexField]) -> FirestoreQueryDirection {
-    match fields.last().map(|field| &field.mode) {
-        Some(FirestoreIndexFieldMode::Order(direction)) => direction.clone(),
-        _ => FirestoreQueryDirection::Ascending,
-    }
-}
-
 impl FirestoreCompositeIndex {
-    /// The field list with a trailing `__name__` field removed, when its direction equals the
-    /// implied direction of the fields before it. The server always appends `__name__` to a
-    /// listed index and a declaration never states it, so a declared index and its listed form
-    /// compare equal only after this normalisation.
-    pub(crate) fn comparable_fields(&self) -> &[FirestoreIndexField] {
-        match self.fields.split_last() {
-            Some((last, rest)) if last.field_path == IMPLIED_NAME_FIELD => {
-                let implied = FirestoreIndexFieldMode::Order(implied_name_direction(rest));
-                if last.mode == implied {
-                    rest
-                } else {
-                    &self.fields
-                }
+    /// The field list Firestore would store for this declaration if it inserted `__name__` on its
+    /// own: appended after the last field in that field's direction (ascending when the last
+    /// field is not directional), or, when the last field is a vector field, `__name__ ASC`
+    /// inserted directly before it instead - measured against the real service, 2026-09-26
+    /// (`latestbit`, `test-query-vec/indexes/CICAgLiIkYMK`, a lone-vector declaration listed as
+    /// `[__name__ ASC, <vector field>]`).
+    ///
+    /// Used only to break a tie between several listed indexes that already match `self` once
+    /// `__name__` is ignored (see [`composite_index_matches`]) - never to decide whether a listed
+    /// index matches in the first place, since Firestore's actual placement is exactly the fact
+    /// this method cannot be relied on to predict for every index shape.
+    fn with_default_implied_name(&self) -> Vec<FirestoreIndexField> {
+        let mut fields = self.fields.clone();
+        match fields.pop() {
+            Some(last) if matches!(last.mode, FirestoreIndexFieldMode::Vector { .. }) => {
+                fields.push(FirestoreIndexField::new(
+                    IMPLIED_NAME_FIELD.to_string(),
+                    FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending),
+                ));
+                fields.push(last);
             }
-            _ => &self.fields,
+            Some(last) => {
+                let direction = match &last.mode {
+                    FirestoreIndexFieldMode::Order(direction) => direction.clone(),
+                    _ => FirestoreQueryDirection::Ascending,
+                };
+                fields.push(last);
+                fields.push(FirestoreIndexField::new(
+                    IMPLIED_NAME_FIELD.to_string(),
+                    FirestoreIndexFieldMode::Order(direction),
+                ));
+            }
+            None => {}
         }
+        fields
     }
 }
 
-/// Whether two composite indexes are the same declaration, after normalising away a trailing
-/// implied `__name__` field on either side. Used both to match a declaration against a listed
-/// index and, in [`validate_index_params`](crate::validate_index_params), to reject two
-/// declarations that are really the same index.
+/// Whether `declared` and `listed` are the same index.
+///
+/// A declaration that does not mention `__name__` matches a listed index with any `__name__`
+/// field removed, in whatever position and direction it was listed: Firestore's placement varies
+/// by index shape (trailing for an ordinary index, ahead of a terminal vector field for a vector
+/// one - both measured against the real service, 2026-09-26) and a declaration never states it,
+/// so position and direction carry no information to compare. A declaration that mentions
+/// `__name__` explicitly is compared field-for-field, position included, since the caller is then
+/// asserting a specific shape rather than leaving it to Firestore.
+///
+/// Used both to match a declaration against a listed index and, in
+/// [`validate_index_params`](crate::validate_index_params), to reject two declarations that are
+/// really the same index.
 pub(crate) fn composite_index_matches(
     declared: &FirestoreCompositeIndex,
     listed: &FirestoreCompositeIndex,
 ) -> bool {
-    declared.query_scope == listed.query_scope
-        && declared.comparable_fields() == listed.comparable_fields()
+    if declared.query_scope != listed.query_scope {
+        return false;
+    }
+    if declared
+        .fields
+        .iter()
+        .any(|field| field.field_path == IMPLIED_NAME_FIELD)
+    {
+        declared.fields == listed.fields
+    } else {
+        let listed_without_name: Vec<&FirestoreIndexField> = listed
+            .fields
+            .iter()
+            .filter(|field| field.field_path != IMPLIED_NAME_FIELD)
+            .collect();
+        declared.fields.iter().collect::<Vec<_>>() == listed_without_name
+    }
 }
 
 pub(crate) fn override_index_set(
@@ -600,16 +632,30 @@ pub(crate) fn plan_index_changes(
 
     let mut matched_listed_index = vec![false; listed_indexes.len()];
     for declared in &params.composite_indexes {
-        let mut found = None;
-        for (position, listed) in listed_indexes.iter().enumerate() {
-            if matched_listed_index[position] {
-                continue;
-            }
-            if composite_index_matches(declared, &listed.index) {
-                found = Some(position);
-                break;
-            }
-        }
+        let candidates: Vec<usize> = listed_indexes
+            .iter()
+            .enumerate()
+            .filter(|(position, listed)| {
+                !matched_listed_index[*position] && composite_index_matches(declared, &listed.index)
+            })
+            .map(|(position, _)| position)
+            .collect();
+
+        // Several listed indexes can match one declaration once `__name__` is ignored - the
+        // default-placement one wins, so a legitimate duplicate left over from a previous
+        // creation is what ends up eligible for pruning rather than the live index.
+        let default_fields = declared.with_default_implied_name();
+        let found = match candidates.len() {
+            0 => None,
+            1 => Some(candidates[0]),
+            _ => Some(
+                candidates
+                    .iter()
+                    .find(|&&position| listed_indexes[position].index.fields == default_fields)
+                    .copied()
+                    .unwrap_or(candidates[0]),
+            ),
+        };
 
         match found {
             None => plan.create_indexes.push(declared.clone()),
@@ -817,8 +863,8 @@ mod tests {
         let declared =
             FirestoreCompositeIndex::new(vec![asc_field("country"), desc_field("created_at")]);
         let params = users_params().with_composite_indexes(vec![declared.clone()]);
-        // The server appends `__name__` with the direction of the last directional field
-        // (descending here), which must still compare equal to the declaration.
+        // A declaration that does not mention __name__ matches regardless of where or in which
+        // direction the server listed it - here, trailing and descending.
         let listed = listed_index(
             vec![
                 order_field("country", ProtoOrder::Ascending),
@@ -839,39 +885,35 @@ mod tests {
     }
 
     #[test]
-    fn implied_name_direction_is_ascending_when_the_last_field_is_not_directional() {
-        // "a" is descending, but the *last* field ("tags", ArrayContains) is not directional,
-        // so Firestore implies `__name__` ascending. Picking the last *directional* field's
-        // direction instead - the bug this pins - would wrongly read this as descending.
-        let fields = vec![
+    fn default_implied_name_is_ascending_when_the_last_field_is_not_directional() {
+        // "a" is descending, but the *last* field ("tags", ArrayContains) is not directional, so
+        // Firestore's default places `__name__` ascending. Picking the last *directional* field's
+        // direction instead - the bug this pins - would wrongly expect it descending. This only
+        // ever matters for the tie-break in `plan_index_changes`, never for whether a listed
+        // index matches at all.
+        let declared = FirestoreCompositeIndex::new(vec![
             desc_field("a"),
             FirestoreIndexField::new("tags".to_string(), FirestoreIndexFieldMode::ArrayContains),
-        ];
+        ]);
         assert_eq!(
-            implied_name_direction(&fields),
-            FirestoreQueryDirection::Ascending
+            declared.with_default_implied_name(),
+            vec![
+                desc_field("a"),
+                FirestoreIndexField::new(
+                    "tags".to_string(),
+                    FirestoreIndexFieldMode::ArrayContains
+                ),
+                asc_field(IMPLIED_NAME_FIELD),
+            ]
         );
     }
 
     #[test]
-    fn implied_name_direction_is_ascending_with_no_directional_field_at_all() {
-        let fields = vec![FirestoreIndexField::new(
-            "tags".to_string(),
-            FirestoreIndexFieldMode::ArrayContains,
-        )];
-        assert_eq!(
-            implied_name_direction(&fields),
-            FirestoreQueryDirection::Ascending
-        );
-    }
-
-    #[test]
-    fn declared_index_ending_non_directional_matches_listed_ascending_implied_name() {
-        // Regression: an earlier version implied `__name__`'s direction from the last
-        // *directional* field ("a", descending) instead of the actual last field ("tags", not
-        // directional), so it expected a descending `__name__` here. That mismatch would plan a
-        // duplicate `create_indexes` entry and leave the live listed index in
-        // `undeclared_indexes` - exactly what `prune_undeclared()` deletes.
+    fn declared_index_ending_non_directional_matches_listed_regardless_of_name_direction() {
+        // The listed `__name__` here is descending - not Firestore's own default (ascending, per
+        // `default_implied_name_is_ascending_when_the_last_field_is_not_directional` above) - and
+        // still matches, because a declaration that omits `__name__` ignores it outright rather
+        // than checking its direction against a predicted default.
         let declared = FirestoreCompositeIndex::new(vec![
             desc_field("a"),
             FirestoreIndexField::new("tags".to_string(), FirestoreIndexFieldMode::ArrayContains),
@@ -884,7 +926,7 @@ mod tests {
                     "tags",
                     ValueMode::ArrayConfig(ProtoArrayConfig::Contains as i32),
                 ),
-                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
+                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Descending),
             ],
             ProtoQueryScope::Collection,
             ProtoState::Ready,
@@ -903,7 +945,10 @@ mod tests {
     }
 
     #[test]
-    fn declared_index_ending_in_vector_matches_listed_ascending_implied_name() {
+    fn declared_index_ending_in_vector_matches_listed_with_name_before_the_vector_field() {
+        // Measured against the real service, 2026-09-26: unlike a non-vector index, where
+        // `__name__` trails, Firestore inserts `__name__ ASC` immediately *before* the terminal
+        // vector field, whatever else precedes it.
         let declared = FirestoreCompositeIndex::new(vec![
             desc_field("a"),
             FirestoreIndexField::new(
@@ -915,6 +960,7 @@ mod tests {
         let listed = listed_index(
             vec![
                 order_field("a", ProtoOrder::Descending),
+                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
                 proto_field(
                     "v",
                     ValueMode::VectorConfig(ProtoVectorConfig {
@@ -922,7 +968,6 @@ mod tests {
                         r#type: Some(vector_config::Type::Flat(vector_config::FlatIndex {})),
                     }),
                 ),
-                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
             ],
             ProtoQueryScope::Collection,
             ProtoState::Ready,
@@ -1270,7 +1315,10 @@ mod tests {
     }
 
     #[test]
-    fn lone_vector_composite_index_matches_listed_with_implied_name() {
+    fn lone_vector_composite_index_matches_listed_with_name_before_the_vector_field() {
+        // Measured against the real service, 2026-09-26 (project latestbit,
+        // `test-query-vec/indexes/CICAgLiIkYMK`): a lone-vector index lists as
+        // `[__name__ ASC, <vector field>]`, not `[<vector field>, __name__ ASC]`.
         let declared = FirestoreCompositeIndex::new(vec![FirestoreIndexField::new(
             "embedding".to_string(),
             FirestoreIndexFieldMode::Vector { dimension: 8 },
@@ -1278,6 +1326,7 @@ mod tests {
         let params = users_params().with_composite_indexes(vec![declared.clone()]);
         let listed = listed_index(
             vec![
+                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
                 proto_field(
                     "embedding",
                     ValueMode::VectorConfig(ProtoVectorConfig {
@@ -1285,7 +1334,6 @@ mod tests {
                         r#type: Some(vector_config::Type::Flat(vector_config::FlatIndex {})),
                     }),
                 ),
-                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
             ],
             ProtoQueryScope::Collection,
             ProtoState::Ready,
@@ -1296,6 +1344,93 @@ mod tests {
         };
         let plan = plan_index_changes(&params, &existing).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
+        assert!(
+            plan.undeclared_indexes.is_empty(),
+            "the live listed index must not be left eligible for prune"
+        );
+    }
+
+    #[test]
+    fn explicit_name_declaration_does_not_match_a_different_listed_direction() {
+        // Once a declaration states `__name__` itself, it is compared exactly like any other
+        // field - direction included - rather than ignored.
+        let declared =
+            FirestoreCompositeIndex::new(vec![asc_field("a"), desc_field(IMPLIED_NAME_FIELD)]);
+        let params = users_params().with_composite_indexes(vec![declared.clone()]);
+        let listed = listed_index(
+            vec![
+                order_field("a", ProtoOrder::Ascending),
+                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
+            ],
+            ProtoQueryScope::Collection,
+            ProtoState::Ready,
+        );
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![listed],
+            fields: vec![],
+        };
+        let plan = plan_index_changes(&params, &existing).unwrap();
+        assert_eq!(plan.create_indexes, vec![declared]);
+        assert_eq!(
+            plan.undeclared_indexes.len(),
+            1,
+            "the listed index does not match this declaration and stays eligible for prune"
+        );
+    }
+
+    #[test]
+    fn several_listed_indexes_matching_one_declaration_tie_break_on_the_default_name() {
+        // Two listed indexes differ only in their `__name__` direction - a leftover duplicate
+        // from an earlier creation, say. Both match the declaration once `__name__` is ignored,
+        // so the tie-break picks the one shaped like Firestore's own default (trailing ascending,
+        // since the last declared field, "tags", is not directional) and leaves the other
+        // eligible for `prune_undeclared()`.
+        let declared = FirestoreCompositeIndex::new(vec![
+            desc_field("a"),
+            FirestoreIndexField::new("tags".to_string(), FirestoreIndexFieldMode::ArrayContains),
+        ]);
+        let params = users_params().with_composite_indexes(vec![declared.clone()]);
+        let default_shaped = ProtoIndex {
+            name: "projects/p/databases/(default)/collectionGroups/users/indexes/default"
+                .to_string(),
+            ..listed_index(
+                vec![
+                    order_field("a", ProtoOrder::Descending),
+                    proto_field(
+                        "tags",
+                        ValueMode::ArrayConfig(ProtoArrayConfig::Contains as i32),
+                    ),
+                    order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
+                ],
+                ProtoQueryScope::Collection,
+                ProtoState::Ready,
+            )
+        };
+        let non_default_duplicate = ProtoIndex {
+            name: "projects/p/databases/(default)/collectionGroups/users/indexes/duplicate"
+                .to_string(),
+            ..listed_index(
+                vec![
+                    order_field("a", ProtoOrder::Descending),
+                    proto_field(
+                        "tags",
+                        ValueMode::ArrayConfig(ProtoArrayConfig::Contains as i32),
+                    ),
+                    order_field(IMPLIED_NAME_FIELD, ProtoOrder::Descending),
+                ],
+                ProtoQueryScope::Collection,
+                ProtoState::Ready,
+            )
+        };
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![non_default_duplicate.clone(), default_shaped.clone()],
+            fields: vec![],
+        };
+        let plan = plan_index_changes(&params, &existing).unwrap();
+        assert_eq!(plan.unchanged, vec![declared]);
+        assert!(plan.create_indexes.is_empty());
+        assert_eq!(plan.undeclared_indexes.len(), 1);
+        assert_eq!(plan.undeclared_indexes[0].name, non_default_duplicate.name);
     }
 
     #[test]

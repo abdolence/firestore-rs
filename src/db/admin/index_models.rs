@@ -487,12 +487,17 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
         }
 
         for (earlier_position, earlier) in indexes.iter().enumerate().take(position) {
-            if super::index_diff::composite_index_matches(index, earlier) {
+            // Checked both ways: `composite_index_matches` only ignores `__name__` on its
+            // second (`listed`) argument, and either of the two declarations may be the one
+            // that states it explicitly.
+            if super::index_diff::composite_index_matches(index, earlier)
+                || super::index_diff::composite_index_matches(earlier, index)
+            {
                 return Err(FirestoreError::invalid_parameters(
                     "composite_indexes",
                     format!(
-                        "index {position} duplicates index {earlier_position} once a trailing \
-                         implied __name__ field is normalised away"
+                        "index {position} duplicates index {earlier_position} once an implicit \
+                         __name__ field is ignored"
                     ),
                 ));
             }

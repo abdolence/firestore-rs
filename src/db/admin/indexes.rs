@@ -182,6 +182,25 @@ fn log_plan(group: &FirestoreCollectionId, plan: &FirestoreIndexPlan, prune: boo
     );
 }
 
+/// Refuses to touch a resource that is not under `group_path`, independent of the filtering
+/// `list_existing_state` already applies to what it reports as undeclared in the first place.
+///
+/// The last line of defense before a delete or a revert: measured against the real service,
+/// 2026-09-26, `ListIndexes` scoped to one collection group's parent still answered with
+/// composite indexes belonging to other groups in the same database, so a resource's presence in
+/// a listing response is not enough on its own to trust it with `prune_undeclared()`.
+fn ensure_owned_resource(group_path: &str, kind: &str, name: &str) -> FirestoreResult<()> {
+    let prefix = format!("{group_path}/{kind}/");
+    if name.starts_with(prefix.as_str()) {
+        Ok(())
+    } else {
+        Err(FirestoreError::invalid_parameters(
+            "resource_name",
+            format!("refusing to touch {name}: not under the owned group {group_path}"),
+        ))
+    }
+}
+
 impl FirestoreDb {
     fn admin_client(&self) -> FirestoreAdminClient<gcloud_sdk::GoogleAuthMiddleware> {
         self.inner.client.get_with(FirestoreAdminClient::new)
@@ -275,11 +294,25 @@ impl FirestoreDb {
         );
         let began = FirestoreInstant::now();
         let listed = async {
-            let (indexes, override_fields, ttl_fields) = tokio::try_join!(
+            let (all_indexes, override_fields, ttl_fields) = tokio::try_join!(
                 self.list_all_indexes(&group_path),
                 self.list_all_fields(&group_path, "indexConfig.usesAncestorConfig:false"),
                 self.list_all_fields(&group_path, "ttlConfig:*"),
             )?;
+
+            // Measured against the real service, 2026-09-26: `ListIndexes` scoped to one
+            // collection group's parent has still answered with composite indexes belonging to
+            // other groups in the same database. Membership is decided here, the same way as for
+            // fields below, rather than trusted from the request scope - `sync()`'s prune path
+            // must never reach an index this crate did not itself confirm belongs to the owned
+            // group.
+            let indexes_prefix = format!("{group_path}/indexes/");
+            let total_indexes = all_indexes.len();
+            let indexes: Vec<ProtoIndex> = all_indexes
+                .into_iter()
+                .filter(|index| index.name.starts_with(indexes_prefix.as_str()))
+                .collect();
+            let skipped_indexes = total_indexes - indexes.len();
 
             let mut merged: HashMap<String, ProtoField> = HashMap::new();
             for f in override_fields {
@@ -292,15 +325,19 @@ impl FirestoreDb {
                     .or_insert(f);
             }
             let fields_prefix = format!("{group_path}/fields/");
+            let total_fields = merged.len();
             let mut fields: Vec<ProtoField> = merged
                 .into_values()
                 .filter(|f| f.name.starts_with(fields_prefix.as_str()))
                 .collect();
             fields.sort_by(|a, b| a.name.cmp(&b.name));
+            let skipped_fields = total_fields - fields.len();
 
             debug!(
                 indexes = indexes.len(),
                 fields = fields.len(),
+                skipped_indexes,
+                skipped_fields,
                 "Listed the collection group's indexes and fields.",
             );
 
@@ -385,8 +422,10 @@ impl FirestoreDb {
 
     async fn apply_delete_index(
         &self,
+        group_path: &str,
         listed: &FirestoreListedCompositeIndex,
     ) -> FirestoreResult<()> {
+        ensure_owned_resource(group_path, "indexes", &listed.name)?;
         let span = span!(
             Level::INFO,
             "Delete Index",
@@ -505,8 +544,10 @@ impl FirestoreDb {
 
     async fn apply_revert_field_override(
         &self,
+        group_path: &str,
         listed: &FirestoreListedField,
     ) -> FirestoreResult<PendingOperation> {
+        ensure_owned_resource(group_path, "fields", &listed.name)?;
         let span = span!(
             Level::INFO,
             "Revert Field Override",
@@ -528,8 +569,10 @@ impl FirestoreDb {
 
     async fn apply_disable_ttl(
         &self,
+        group_path: &str,
         listed: &FirestoreListedField,
     ) -> FirestoreResult<PendingOperation> {
+        ensure_owned_resource(group_path, "fields", &listed.name)?;
         let span = span!(
             Level::INFO,
             "Disable TTL",
@@ -609,16 +652,16 @@ impl FirestoreDb {
             }
             if prune {
                 for listed in &plan.undeclared_indexes {
-                    self.apply_delete_index(listed).await?;
+                    self.apply_delete_index(group_path, listed).await?;
                     report.deleted_indexes.push(listed.clone());
                 }
                 for listed in &plan.undeclared_fields {
-                    let op = self.apply_revert_field_override(listed).await?;
+                    let op = self.apply_revert_field_override(group_path, listed).await?;
                     pending_operations.push(op);
                     report.reverted_fields.push(listed.clone());
                 }
                 for listed in &plan.undeclared_ttl {
-                    let op = self.apply_disable_ttl(listed).await?;
+                    let op = self.apply_disable_ttl(group_path, listed).await?;
                     pending_operations.push(op);
                     report.disabled_ttl.push(listed.clone());
                 }
@@ -1054,6 +1097,25 @@ mod tests {
         assert!(fake.calls().contains(&"DeleteIndex".to_string()));
     }
 
+    #[test]
+    fn ensure_owned_resource_rejects_a_name_outside_the_group() {
+        let err = ensure_owned_resource(
+            GROUP_PATH,
+            "indexes",
+            "projects/fake-firestore/databases/(default)/collectionGroups/other/indexes/x",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not under the owned group"));
+    }
+
+    #[test]
+    fn ensure_owned_resource_accepts_a_name_inside_the_group() {
+        assert!(
+            ensure_owned_resource(GROUP_PATH, "indexes", &format!("{GROUP_PATH}/indexes/x"))
+                .is_ok()
+        );
+    }
+
     #[tokio::test]
     async fn only_the_owned_group_is_ever_listed() {
         let fake = FakeFirestore::start(|method, bytes| match method {
@@ -1238,6 +1300,228 @@ mod tests {
             fake.calls().is_empty(),
             "the emulator path must never contact the server"
         );
+    }
+
+    // The tests below replay `ListIndexes` responses captured read-only from the real `latestbit`
+    // project (2026-09-26), rather than hand-written fixtures: a hand-written fixture had already
+    // encoded the same wrong assumptions as the code it was meant to check (that `ListIndexes`
+    // scoped to one group's parent lists only that group, and that a vector index's `__name__`
+    // sits in a single fixed position), so unit tests and review both missed it. The raw JSON
+    // lives in `testdata/` and is decoded into the wire types here rather than transcribed by
+    // hand, so the fixture is what the service actually returned.
+
+    fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
+        value.get(key).and_then(|v| v.as_str()).unwrap_or_default()
+    }
+
+    fn decode_captured_query_scope(scope: &str) -> i32 {
+        match scope {
+            "COLLECTION" => ProtoQueryScope::Collection as i32,
+            "COLLECTION_GROUP" => ProtoQueryScope::CollectionGroup as i32,
+            "COLLECTION_RECURSIVE" => ProtoQueryScope::CollectionRecursive as i32,
+            _ => ProtoQueryScope::Unspecified as i32,
+        }
+    }
+
+    fn decode_captured_index_state(state: &str) -> i32 {
+        match state {
+            "CREATING" => ProtoState::Creating as i32,
+            "READY" => ProtoState::Ready as i32,
+            "NEEDS_REPAIR" => ProtoState::NeedsRepair as i32,
+            _ => ProtoState::Unspecified as i32,
+        }
+    }
+
+    fn decode_captured_index_field(value: &serde_json::Value) -> ProtoIndexField {
+        use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
+            vector_config, ArrayConfig, Order, ValueMode, VectorConfig,
+        };
+        let value_mode = if let Some(order) = value.get("order").and_then(|v| v.as_str()) {
+            Some(ValueMode::Order(match order {
+                "ASCENDING" => Order::Ascending as i32,
+                "DESCENDING" => Order::Descending as i32,
+                _ => Order::Unspecified as i32,
+            }))
+        } else if let Some(array_config) = value.get("arrayConfig").and_then(|v| v.as_str()) {
+            Some(ValueMode::ArrayConfig(match array_config {
+                "CONTAINS" => ArrayConfig::Contains as i32,
+                _ => ArrayConfig::Unspecified as i32,
+            }))
+        } else {
+            value.get("vectorConfig").map(|vector| {
+                ValueMode::VectorConfig(VectorConfig {
+                    dimension: vector
+                        .get("dimension")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0) as i32,
+                    r#type: Some(vector_config::Type::Flat(vector_config::FlatIndex {})),
+                })
+            })
+        };
+        ProtoIndexField {
+            field_path: json_str(value, "fieldPath").to_string(),
+            value_mode,
+        }
+    }
+
+    /// Decodes a captured `ListIndexesResponse` REST JSON body into the wire types, translating
+    /// its camelCase field names to the ones the proto messages use. Resource names are rewritten
+    /// from the project they were captured under to [`FakeFirestore`]'s fixed `fake-firestore`
+    /// project, so the fixture lines up with the group path the code under test computes.
+    fn decode_captured_indexes(json: &str) -> Vec<ProtoIndex> {
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        value
+            .get("indexes")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(|index| ProtoIndex {
+                name: json_str(index, "name")
+                    .replace("projects/latestbit/", "projects/fake-firestore/"),
+                query_scope: decode_captured_query_scope(json_str(index, "queryScope")),
+                api_scope: ApiScope::AnyApi as i32,
+                fields: index
+                    .get("fields")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .map(decode_captured_index_field)
+                    .collect(),
+                state: decode_captured_index_state(json_str(index, "state")),
+                density: 0,
+                multikey: false,
+                shard_count: 0,
+                unique: false,
+                search_index_options: None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn only_the_owned_groups_index_is_ever_considered_among_real_database_indexes() {
+        let indexes = decode_captured_indexes(include_str!("testdata/latestbit-list-indexes.json"));
+        assert_eq!(
+            indexes.len(),
+            8,
+            "fixture sanity check: 8 real indexes were captured, spanning six other groups"
+        );
+
+        let fake = FakeFirestore::start(move |method, _| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(indexes.clone()),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let plan = fake
+            .db
+            .plan_indexes(FirestoreIndexParams::new(
+                FirestoreCollectionId::from_static("firestore-rs-index-sync-test"),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            plan.undeclared_indexes.len(),
+            1,
+            "only the owned group's own index must be considered, not the other seven"
+        );
+        let only = &plan.undeclared_indexes[0];
+        assert!(only
+            .name
+            .contains("firestore-rs-index-sync-test/indexes/CICAgJiHlpgK"));
+        for other_group in [
+            "versions",
+            "/test/",
+            "integration-test-query",
+            "test-query-vec",
+            "test-camel-case",
+        ] {
+            assert!(
+                !only.name.contains(other_group),
+                "no index from {other_group} may be considered, got {}",
+                only.name
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn prune_never_deletes_anything_outside_the_owned_group() {
+        let indexes = decode_captured_indexes(include_str!("testdata/latestbit-list-indexes.json"));
+        let fake = FakeFirestore::start(move |method, bytes| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(indexes.clone()),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            DELETE_INDEX => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::DeleteIndexRequest::decode(bytes)
+                        .unwrap();
+                assert!(
+                    request.name.contains("firestore-rs-index-sync-test"),
+                    "must never delete a resource outside the owned group: {}",
+                    request.name
+                );
+                ("DeleteIndex".to_string(), FakeResponse::empty())
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let options = FirestoreIndexSyncOptions::new().with_prune(true);
+        let report = fake
+            .db
+            .sync_indexes(
+                FirestoreIndexParams::new(FirestoreCollectionId::from_static(
+                    "firestore-rs-index-sync-test",
+                )),
+                options,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(report.deleted_indexes.len(), 1);
+        assert!(report.deleted_indexes[0]
+            .name
+            .contains("firestore-rs-index-sync-test"));
+    }
+
+    #[test]
+    fn vector_index_shape_from_the_real_service_matches_when_replayed_as_the_owned_group() {
+        let captured =
+            decode_captured_indexes(include_str!("testdata/latestbit-list-indexes.json"));
+        let vector_index = captured
+            .into_iter()
+            .find(|index| index.name.contains("test-query-vec"))
+            .expect("fixture must contain the captured vector index");
+        assert_eq!(
+            vector_index.fields[0].field_path, "__name__",
+            "fixture sanity check: __name__ precedes the vector field in the real listing"
+        );
+
+        // Replay the real field shape as if it belonged to the owned group, isolating the
+        // matching rule from the group-membership filter proven above.
+        let replayed = ProtoIndex {
+            name: format!("{GROUP_PATH}/indexes/replayed-vector"),
+            ..vector_index
+        };
+        let declared = FirestoreCompositeIndex::new(vec![FirestoreIndexField::new(
+            "some_vec".to_string(),
+            FirestoreIndexFieldMode::Vector { dimension: 3 },
+        )]);
+        let params =
+            FirestoreIndexParams::new(group()).with_composite_indexes(vec![declared.clone()]);
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![replayed],
+            fields: vec![],
+        };
+        let plan = plan_index_changes(&params, &existing).unwrap();
+        assert_eq!(plan.unchanged, vec![declared]);
+        assert!(plan.undeclared_indexes.is_empty());
     }
 
     fn field_resource(

@@ -15,7 +15,7 @@ documentation = "https://docs.rs/firestore"
 keywords = ["firestore", "google", "client"]
 categories = ["api-bindings"]
 readme = "README.md"
-include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE", "docs/src/**/*.md"]
+include = ["Cargo.toml", "src/**/*.rs", "src/**/*.json", "README.md", "LICENSE", "docs/src/**/*.md"]
 
 [badges]
 maintenance = { status = "actively-developed" }
@@ -65,6 +65,7 @@ tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 approx = "0.5"
 rustls = "0.23"
+serde_json = "1"
 
 [[example]]
 name = "caching_memory_collections"
