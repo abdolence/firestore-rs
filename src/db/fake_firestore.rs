@@ -1,8 +1,14 @@
 use crate::db::FirestoreEmulatorTokenSource;
 use crate::{FirestoreDb, FirestoreDbOptions};
+#[cfg(feature = "admin")]
+use gcloud_sdk::google::firestore::admin::v1::{Field as ProtoField, Index as ProtoIndex};
 use gcloud_sdk::google::firestore::v1::{
     get_document_request, BeginTransactionResponse, CommitResponse, GetDocumentRequest,
 };
+#[cfg(feature = "admin")]
+use gcloud_sdk::google::longrunning::{operation, Operation};
+#[cfg(feature = "admin")]
+use gcloud_sdk::google::rpc::Status as RpcStatus;
 use gcloud_sdk::prost::Message as _;
 use gcloud_sdk::tonic::Code;
 use h2::server::SendResponse;
@@ -72,6 +78,79 @@ pub(super) fn read_transaction_id(get_document_request: &[u8]) -> u8 {
         panic!("read must belong to a transaction");
     };
     id[0]
+}
+
+/// A `ListIndexes`/`ListFields` response, or a `CreateIndex`/`UpdateField` operation, or a
+/// `DeleteIndex`/`Empty` acknowledgement - the admin and long-running operations RPCs an index
+/// sync test drives, alongside the data RPC fixtures above.
+#[cfg(feature = "admin")]
+pub(super) fn list_indexes_response(indexes: Vec<ProtoIndex>) -> FakeResponse {
+    FakeResponse::Message(
+        gcloud_sdk::google::firestore::admin::v1::ListIndexesResponse {
+            indexes,
+            next_page_token: String::new(),
+        }
+        .encode_to_vec(),
+    )
+}
+
+#[cfg(feature = "admin")]
+pub(super) fn list_fields_response(fields: Vec<ProtoField>) -> FakeResponse {
+    FakeResponse::Message(
+        gcloud_sdk::google::firestore::admin::v1::ListFieldsResponse {
+            fields,
+            next_page_token: String::new(),
+        }
+        .encode_to_vec(),
+    )
+}
+
+/// A long-running operation still in progress.
+#[cfg(feature = "admin")]
+pub(super) fn pending_operation_response(name: &str) -> FakeResponse {
+    FakeResponse::Message(
+        Operation {
+            name: name.to_string(),
+            metadata: None,
+            done: false,
+            result: None,
+        }
+        .encode_to_vec(),
+    )
+}
+
+/// A long-running operation that completed successfully.
+#[cfg(feature = "admin")]
+pub(super) fn done_operation_response(name: &str) -> FakeResponse {
+    FakeResponse::Message(
+        Operation {
+            name: name.to_string(),
+            metadata: None,
+            done: true,
+            result: Some(operation::Result::Response(
+                gcloud_sdk::prost_types::Any::default(),
+            )),
+        }
+        .encode_to_vec(),
+    )
+}
+
+/// A long-running operation that completed with an error.
+#[cfg(feature = "admin")]
+pub(super) fn failed_operation_response(name: &str, code: i32, message: &str) -> FakeResponse {
+    FakeResponse::Message(
+        Operation {
+            name: name.to_string(),
+            metadata: None,
+            done: true,
+            result: Some(operation::Result::Error(RpcStatus {
+                code,
+                message: message.to_string(),
+                details: vec![],
+            })),
+        }
+        .encode_to_vec(),
+    )
 }
 
 type Handler = dyn Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync;

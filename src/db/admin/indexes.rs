@@ -844,3 +844,714 @@ impl FirestoreIndexSupport for FirestoreDb {
         Ok(report)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::fake_firestore::{
+        done_operation_response, failed_operation_response, list_fields_response,
+        list_indexes_response, pending_operation_response, FakeFirestore, FakeResponse,
+    };
+    use crate::db::FirestoreDbInner;
+    use crate::{
+        FirestoreCollectionId, FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget,
+        FirestoreIndexField, FirestoreIndexFieldMode, FirestoreQueryDirection,
+    };
+    use gcloud_sdk::google::firestore::admin::v1::index::{
+        ApiScope, IndexField as ProtoIndexField, QueryScope as ProtoQueryScope, State as ProtoState,
+    };
+    use gcloud_sdk::prost::Message as _;
+    use gcloud_sdk::tonic::Code;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc as StdArc, Mutex};
+
+    const LIST_INDEXES: &str = "/google.firestore.admin.v1.FirestoreAdmin/ListIndexes";
+    const CREATE_INDEX: &str = "/google.firestore.admin.v1.FirestoreAdmin/CreateIndex";
+    const DELETE_INDEX: &str = "/google.firestore.admin.v1.FirestoreAdmin/DeleteIndex";
+    const LIST_FIELDS: &str = "/google.firestore.admin.v1.FirestoreAdmin/ListFields";
+    const UPDATE_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/UpdateField";
+    const GET_OPERATION: &str = "/google.longrunning.Operations/GetOperation";
+
+    const GROUP_PATH: &str = "projects/fake-firestore/databases/(default)/collectionGroups/users";
+
+    fn group() -> FirestoreCollectionId {
+        FirestoreCollectionId::from_static("users")
+    }
+
+    fn desc(path: &str) -> FirestoreIndexField {
+        FirestoreIndexField::new(
+            path.to_string(),
+            FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending),
+        )
+    }
+
+    fn order_field(
+        path: &str,
+        order: gcloud_sdk::google::firestore::admin::v1::index::index_field::Order,
+    ) -> ProtoIndexField {
+        ProtoIndexField {
+            field_path: path.to_string(),
+            value_mode: Some(
+                gcloud_sdk::google::firestore::admin::v1::index::index_field::ValueMode::Order(
+                    order as i32,
+                ),
+            ),
+        }
+    }
+
+    /// A listed composite index matching `[a DESC, tags CONTAINS, __name__ ASC]`, in `state`.
+    fn listed_index(name: &str, state: ProtoState) -> ProtoIndex {
+        use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
+            ArrayConfig, ValueMode,
+        };
+        ProtoIndex {
+            name: name.to_string(),
+            query_scope: ProtoQueryScope::Collection as i32,
+            api_scope: ApiScope::AnyApi as i32,
+            fields: vec![
+                order_field(
+                    "a",
+                    gcloud_sdk::google::firestore::admin::v1::index::index_field::Order::Descending,
+                ),
+                ProtoIndexField {
+                    field_path: "tags".to_string(),
+                    value_mode: Some(ValueMode::ArrayConfig(ArrayConfig::Contains as i32)),
+                },
+                order_field(
+                    "__name__",
+                    gcloud_sdk::google::firestore::admin::v1::index::index_field::Order::Ascending,
+                ),
+            ],
+            state: state as i32,
+            density: 0,
+            multikey: false,
+            shard_count: 0,
+            unique: false,
+            search_index_options: None,
+        }
+    }
+
+    fn declared_index() -> FirestoreCompositeIndex {
+        FirestoreCompositeIndex::new(vec![
+            desc("a"),
+            FirestoreIndexField::new("tags".to_string(), FirestoreIndexFieldMode::ArrayContains),
+        ])
+    }
+
+    fn params_with_index() -> FirestoreIndexParams {
+        FirestoreIndexParams::new(group()).with_composite_indexes(vec![declared_index()])
+    }
+
+    fn no_writes_allowed(method: &str) -> ! {
+        panic!("unexpected write RPC in a read-only scenario: {method}")
+    }
+
+    #[tokio::test]
+    async fn missing_index_is_created() {
+        let fake = FakeFirestore::start(|method, bytes| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => {
+                let _ = gcloud_sdk::google::firestore::admin::v1::CreateIndexRequest::decode(bytes)
+                    .unwrap();
+                (
+                    "CreateIndex".to_string(),
+                    done_operation_response(&format!("{GROUP_PATH}/operations/op1")),
+                )
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let report = fake
+            .db
+            .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+
+        assert_eq!(report.created_indexes, vec![declared_index()]);
+        assert!(fake.calls().contains(&"CreateIndex".to_string()));
+    }
+
+    #[tokio::test]
+    async fn unchanged_index_causes_no_writes() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_index(
+                    &format!("{GROUP_PATH}/indexes/1"),
+                    ProtoState::Ready,
+                )]),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let report = fake
+            .db
+            .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+
+        assert_eq!(report.unchanged, vec![declared_index()]);
+        assert!(report.created_indexes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn without_prune_undeclared_index_is_kept_and_reported() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_index(
+                    &format!("{GROUP_PATH}/indexes/legacy"),
+                    ProtoState::Ready,
+                )]),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let params = FirestoreIndexParams::new(group());
+        let report = fake
+            .db
+            .sync_indexes(params, FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+
+        assert_eq!(report.kept_undeclared_indexes.len(), 1);
+        assert!(report.deleted_indexes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn with_prune_undeclared_index_is_deleted() {
+        let fake = FakeFirestore::start(|method, bytes| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_index(
+                    &format!("{GROUP_PATH}/indexes/legacy"),
+                    ProtoState::Ready,
+                )]),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            DELETE_INDEX => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::DeleteIndexRequest::decode(bytes)
+                        .unwrap();
+                assert_eq!(request.name, format!("{GROUP_PATH}/indexes/legacy"));
+                ("DeleteIndex".to_string(), FakeResponse::empty())
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let params = FirestoreIndexParams::new(group());
+        let options = FirestoreIndexSyncOptions::new().with_prune(true);
+        let report = fake.db.sync_indexes(params, options).await.unwrap();
+
+        assert_eq!(report.deleted_indexes.len(), 1);
+        assert!(fake.calls().contains(&"DeleteIndex".to_string()));
+    }
+
+    #[tokio::test]
+    async fn only_the_owned_group_is_ever_listed() {
+        let fake = FakeFirestore::start(|method, bytes| match method {
+            LIST_INDEXES => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::ListIndexesRequest::decode(bytes)
+                        .unwrap();
+                assert_eq!(request.parent, GROUP_PATH);
+                assert_eq!(request.page_size, 0);
+                ("ListIndexes".to_string(), list_indexes_response(vec![]))
+            }
+            LIST_FIELDS => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::ListFieldsRequest::decode(bytes)
+                        .unwrap();
+                assert_eq!(request.parent, GROUP_PATH);
+                ("ListFields".to_string(), list_fields_response(vec![]))
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let plan = fake
+            .db
+            .plan_indexes(FirestoreIndexParams::new(group()))
+            .await
+            .unwrap();
+        assert_eq!(plan, FirestoreIndexPlan::default());
+    }
+
+    #[tokio::test]
+    async fn wait_polls_until_done() {
+        let polls = StdArc::new(AtomicU32::new(0));
+        let polls_in_handler = polls.clone();
+        let fake = FakeFirestore::start(move |method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                pending_operation_response(&format!("{GROUP_PATH}/operations/op1")),
+            ),
+            GET_OPERATION => {
+                let count = polls_in_handler.fetch_add(1, Ordering::SeqCst) + 1;
+                let response = if count < 2 {
+                    pending_operation_response(&format!("{GROUP_PATH}/operations/op1"))
+                } else {
+                    done_operation_response(&format!("{GROUP_PATH}/operations/op1"))
+                };
+                (format!("GetOperation#{count}"), response)
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let options = FirestoreIndexSyncOptions::new().with_wait(FirestoreIndexWait::UntilReady(
+            FirestoreOperationWaitOptions::new(Duration::from_secs(5))
+                .with_poll_interval(Duration::from_millis(5)),
+        ));
+        let report = fake
+            .db
+            .sync_indexes(params_with_index(), options)
+            .await
+            .unwrap();
+
+        assert_eq!(report.created_indexes.len(), 1);
+        assert!(polls.load(Ordering::SeqCst) >= 2);
+        assert!(fake.calls().contains(&"GetOperation#2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn wait_timeout_returns_an_error_naming_the_operation() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                pending_operation_response(&format!("{GROUP_PATH}/operations/op1")),
+            ),
+            GET_OPERATION => (
+                "GetOperation".to_string(),
+                pending_operation_response(&format!("{GROUP_PATH}/operations/op1")),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let options = FirestoreIndexSyncOptions::new().with_wait(FirestoreIndexWait::UntilReady(
+            FirestoreOperationWaitOptions::new(Duration::from_millis(20))
+                .with_poll_interval(Duration::from_millis(5)),
+        ));
+        let err = fake
+            .db
+            .sync_indexes(params_with_index(), options)
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("timed out"));
+        assert!(err.to_string().contains("create index"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_operation_surfaces_as_an_error() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                pending_operation_response(&format!("{GROUP_PATH}/operations/op1")),
+            ),
+            GET_OPERATION => (
+                "GetOperation".to_string(),
+                failed_operation_response(
+                    &format!("{GROUP_PATH}/operations/op1"),
+                    9,
+                    "index build failed: quota exceeded",
+                ),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let options = FirestoreIndexSyncOptions::new().with_wait(FirestoreIndexWait::UntilReady(
+            FirestoreOperationWaitOptions::new(Duration::from_secs(5)),
+        ));
+        let err = fake
+            .db
+            .sync_indexes(params_with_index(), options)
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("quota exceeded"));
+    }
+
+    #[tokio::test]
+    async fn already_exists_on_create_counts_as_unchanged() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex (already exists)".to_string(),
+                FakeResponse::Status(Code::AlreadyExists),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let report = fake
+            .db
+            .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+
+        assert!(report.created_indexes.is_empty());
+        assert_eq!(report.unchanged, vec![declared_index()]);
+    }
+
+    #[tokio::test]
+    async fn the_emulator_skips_index_management_entirely() {
+        let fake = FakeFirestore::start(|method, _| no_writes_allowed(method)).await;
+
+        let emulator_db = FirestoreDb {
+            inner: StdArc::new(FirestoreDbInner {
+                database_path: fake.db.get_database_path().clone(),
+                doc_path: fake.db.get_documents_path().clone(),
+                options: fake.db.get_options().clone(),
+                client: fake.db.client().clone(),
+                is_emulator: true,
+            }),
+            session_params: fake.db.get_session_params().clone().into(),
+        };
+
+        let plan = emulator_db.plan_indexes(params_with_index()).await.unwrap();
+        assert_eq!(plan, FirestoreIndexPlan::default());
+
+        let report = emulator_db
+            .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+        assert_eq!(report, FirestoreIndexSyncReport::default());
+
+        assert!(
+            fake.calls().is_empty(),
+            "the emulator path must never contact the server"
+        );
+    }
+
+    fn field_resource(
+        path: &str,
+        index_config: Option<gcloud_sdk::google::firestore::admin::v1::field::IndexConfig>,
+        ttl_config: Option<gcloud_sdk::google::firestore::admin::v1::field::TtlConfig>,
+    ) -> ProtoField {
+        ProtoField {
+            name: format!("{GROUP_PATH}/fields/{path}"),
+            index_config,
+            ttl_config,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_field_listed_in_both_filters_is_merged_into_one() {
+        use gcloud_sdk::google::firestore::admin::v1::field;
+        let override_field = field_resource(
+            "tags",
+            Some(field::IndexConfig {
+                indexes: vec![ProtoIndex {
+                    query_scope: ProtoQueryScope::Collection as i32,
+                    api_scope: ApiScope::AnyApi as i32,
+                    fields: vec![ProtoIndexField {
+                        field_path: String::new(),
+                        value_mode: Some(
+                            gcloud_sdk::google::firestore::admin::v1::index::index_field::ValueMode::Order(
+                                gcloud_sdk::google::firestore::admin::v1::index::index_field::Order::Ascending as i32,
+                            ),
+                        ),
+                    }],
+                    ..Default::default()
+                }],
+                uses_ancestor_config: false,
+                ancestor_field: String::new(),
+                reverting: false,
+            }),
+            None,
+        );
+        let ttl_field = field_resource(
+            "tags",
+            None,
+            Some(field::TtlConfig {
+                state: field::ttl_config::State::Active as i32,
+                expiration_offset: None,
+            }),
+        );
+
+        let fake = FakeFirestore::start(move |method, bytes| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::ListFieldsRequest::decode(bytes)
+                        .unwrap();
+                if request.filter.contains("ttlConfig") {
+                    (
+                        "ListFields(ttl)".to_string(),
+                        list_fields_response(vec![ttl_field.clone()]),
+                    )
+                } else {
+                    (
+                        "ListFields(override)".to_string(),
+                        list_fields_response(vec![override_field.clone()]),
+                    )
+                }
+            }
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let params = FirestoreIndexParams::new(group())
+            .with_field_overrides(vec![FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
+                indexes: vec![FirestoreFieldOverrideIndex::new(
+                    FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending),
+                )],
+            }])
+            .with_ttl_fields(vec!["tags".to_string()]);
+
+        let plan = fake.db.plan_indexes(params).await.unwrap();
+        assert!(
+            plan.update_fields.is_empty(),
+            "the override half must already match"
+        );
+        assert!(
+            plan.enable_ttl.is_empty(),
+            "the ttl half must already match"
+        );
+        assert!(plan.unrecognised.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_default_group_field_is_ignored() {
+        let leaked = ProtoField {
+            name:
+                "projects/fake-firestore/databases/(default)/collectionGroups/__default__/fields/*"
+                    .to_string(),
+            index_config: Some(
+                gcloud_sdk::google::firestore::admin::v1::field::IndexConfig {
+                    indexes: vec![],
+                    uses_ancestor_config: false,
+                    ancestor_field: String::new(),
+                    reverting: false,
+                },
+            ),
+            ttl_config: None,
+        };
+        let fake = FakeFirestore::start(move |method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => (
+                "ListFields".to_string(),
+                list_fields_response(vec![leaked.clone()]),
+            ),
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let plan = fake
+            .db
+            .plan_indexes(FirestoreIndexParams::new(group()))
+            .await
+            .unwrap();
+        assert!(plan.undeclared_fields.is_empty());
+        assert!(plan.undeclared_ttl.is_empty());
+        assert!(plan.unrecognised.is_empty());
+    }
+
+    #[tokio::test]
+    async fn all_fields_apply_and_prune_round_trip() {
+        use gcloud_sdk::google::firestore::admin::v1::field;
+
+        let stored: StdArc<Mutex<Option<ProtoField>>> = StdArc::new(Mutex::new(None));
+
+        let stored_for_fields = stored.clone();
+        let stored_for_update = stored.clone();
+        let fake = FakeFirestore::start(move |method, bytes| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => {
+                let existing = stored_for_fields.lock().unwrap().clone();
+                (
+                    "ListFields".to_string(),
+                    list_fields_response(existing.into_iter().collect()),
+                )
+            }
+            UPDATE_FIELD => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::UpdateFieldRequest::decode(bytes)
+                        .unwrap();
+                let updated_field = request.field.expect("UpdateField always carries a field");
+                assert_eq!(updated_field.name, format!("{GROUP_PATH}/fields/*"));
+                *stored_for_update.lock().unwrap() =
+                    updated_field.index_config.clone().map(|cfg| ProtoField {
+                        name: format!("{GROUP_PATH}/fields/*"),
+                        index_config: Some(cfg),
+                        ttl_config: None,
+                    });
+                (
+                    "UpdateField".to_string(),
+                    done_operation_response(&format!("{GROUP_PATH}/operations/op-field")),
+                )
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let params =
+            FirestoreIndexParams::new(group()).with_field_overrides(vec![FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::AllFields,
+                indexes: vec![],
+            }]);
+
+        let report = fake
+            .db
+            .sync_indexes(params.clone(), FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+        assert_eq!(report.updated_fields.len(), 1);
+        assert_eq!(
+            report.updated_fields[0].target,
+            FirestoreFieldOverrideTarget::AllFields
+        );
+
+        let replan = fake.db.plan_indexes(params).await.unwrap();
+        assert!(
+            replan.update_fields.is_empty(),
+            "the wildcard override must now match"
+        );
+
+        let prune_options = FirestoreIndexSyncOptions::new().with_prune(true);
+        let prune_report = fake
+            .db
+            .sync_indexes(FirestoreIndexParams::new(group()), prune_options)
+            .await
+            .unwrap();
+        assert_eq!(prune_report.reverted_fields.len(), 1);
+
+        assert!(
+            stored
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|f| f.index_config.as_ref())
+                .is_none()
+                || stored.lock().unwrap().is_none(),
+            "the wildcard override must be reverted (index_config unset)",
+        );
+        let _ = field::TtlConfig::default();
+    }
+
+    fn capturing_subscriber() -> (
+        impl tracing::Subscriber + Send + Sync,
+        StdArc<Mutex<Vec<u8>>>,
+    ) {
+        let buffer = StdArc::new(Mutex::new(Vec::new()));
+        let make_writer = {
+            let buffer = buffer.clone();
+            move || SharedBufferWriter(buffer.clone())
+        };
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(make_writer)
+            .with_ansi(false)
+            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+            .with_max_level(Level::DEBUG)
+            .finish();
+        (subscriber, buffer)
+    }
+
+    struct SharedBufferWriter(StdArc<Mutex<Vec<u8>>>);
+    impl std::io::Write for SharedBufferWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn captured_text(buffer: &StdArc<Mutex<Vec<u8>>>) -> String {
+        String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn sync_logs_the_span_tree_and_the_named_lines() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                done_operation_response(&format!("{GROUP_PATH}/operations/op1")),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let (subscriber, buffer) = capturing_subscriber();
+        let report = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db
+                .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+                .await
+                .unwrap()
+        };
+        let output = captured_text(&buffer);
+        assert_eq!(report.created_indexes, vec![declared_index()]);
+
+        for expected in [
+            "Firestore Index Sync",
+            "Firestore Index List",
+            "Firestore Index Diff",
+            "Firestore Index Apply",
+            "Create Index",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing span {expected:?} in:\n{output}"
+            );
+        }
+        assert!(output.contains("Existing state summary."));
+        assert!(output.contains("Plan: create index"));
+        assert!(output.contains("Created a composite index."));
+        assert!(output.contains("Firestore index sync report"));
+        assert!(
+            output.contains("/firestore/response_time"),
+            "missing recorded response time in:\n{output}"
+        );
+
+        let listed_line = output
+            .lines()
+            .find(|line| line.contains("Listed the collection group's"))
+            .unwrap_or_else(|| panic!("no list-summary line in:\n{output}"));
+        assert!(listed_line.contains("Firestore Index Sync"));
+        assert!(listed_line.contains("Firestore Index List"));
+    }
+
+    #[tokio::test]
+    async fn plan_logs_no_execution() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let (subscriber, buffer) = capturing_subscriber();
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db.plan_indexes(params_with_index()).await.unwrap();
+        }
+        let output = captured_text(&buffer);
+
+        assert!(output.contains("nothing was applied"));
+        assert!(!output.contains("Firestore Index Apply"));
+        assert!(!output.contains("Created a composite index."));
+        assert!(!output.contains("Applied an index management change."));
+    }
+}
