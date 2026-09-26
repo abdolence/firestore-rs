@@ -440,18 +440,38 @@ impl From<field::TtlConfig> for FirestoreFieldTtlOutcome {
     }
 }
 
+/// Extracts the field path from a listed field resource name,
+/// `.../collectionGroups/{group}/fields/{path}`. Anchored on the `/collectionGroups/` and
+/// `fields/` markers rather than split on the last `/` (`split_document_path`): a group ID cannot
+/// contain `/`, but a field path can - a backtick-quoted path such as `` `a/b` `` - and the
+/// last-`/` split would then return only `` b` ``, truncating a declared override's path so it
+/// never matches its listed counterpart. Anchoring on the markers instead also makes this immune
+/// to a database ID or a field path that happens to contain the literal word "fields".
+///
+/// Falls back to `split_document_path`'s last segment when `name` does not have the expected
+/// shape at all, which should not happen for a resource Firestore itself returned.
+fn field_path_from_listed_name(name: &str) -> String {
+    const COLLECTION_GROUPS_MARKER: &str = "/collectionGroups/";
+    const FIELDS_MARKER: &str = "fields/";
+
+    name.find(COLLECTION_GROUPS_MARKER)
+        .and_then(|groups_at| {
+            let after_groups = &name[groups_at + COLLECTION_GROUPS_MARKER.len()..];
+            let group_end = after_groups.find('/')?;
+            after_groups[group_end + 1..].strip_prefix(FIELDS_MARKER)
+        })
+        .map(str::to_string)
+        .unwrap_or_else(|| split_document_path(name).1.to_string())
+}
+
 /// Converts a listed field resource. Always succeeds: the override half and the TTL half each
 /// carry their own outcome (see [`FirestoreFieldOverrideOutcome`] and [`FirestoreFieldTtlOutcome`]),
 /// so a field resource with a valid override alongside an unrecognisable TTL state - or the
 /// reverse - keeps its valid half instead of losing it to a whole-field conversion failure.
 /// `plan_index_changes` reads each `Unrecognised` half into the plan's own `unrecognised` list.
-///
-/// The field path is the resource name's last segment (`.../collectionGroups/{group}/fields/{path}`),
-/// the same shape `split_document_path` already splits a document path on, so that helper is
-/// reused rather than a second last-segment parser.
 impl From<ProtoField> for FirestoreListedField {
     fn from(field: ProtoField) -> Self {
-        let field_path = split_document_path(&field.name).1.to_string();
+        let field_path = field_path_from_listed_name(&field.name);
         FirestoreListedField {
             name: field.name,
             field_path,
@@ -1114,6 +1134,41 @@ mod tests {
             unique: false,
             search_index_options: None,
         }
+    }
+
+    #[test]
+    fn listed_field_path_keeps_a_backtick_quoted_segment_containing_a_slash() {
+        // The last-`/`-split parser this replaces would return only "b`" here, truncating the
+        // path so a declared override on `` `a/b` `` never matches its listed counterpart.
+        let listed_field = field_resource("`a/b`", None, None);
+        let listed = FirestoreListedField::from(listed_field);
+        assert_eq!(listed.field_path, "`a/b`");
+    }
+
+    #[test]
+    fn listed_field_path_keeps_a_nested_path() {
+        let listed_field = field_resource("a.b", None, None);
+        let listed = FirestoreListedField::from(listed_field);
+        assert_eq!(listed.field_path, "a.b");
+    }
+
+    #[test]
+    fn listed_field_path_keeps_the_all_fields_wildcard() {
+        let listed_field = field_resource("*", None, None);
+        let listed = FirestoreListedField::from(listed_field);
+        assert_eq!(listed.field_path, "*");
+    }
+
+    #[test]
+    fn listed_field_path_survives_a_database_id_containing_the_word_fields() {
+        let name = "projects/p/databases/fields/collectionGroups/users/fields/tags".to_string();
+        let listed = FirestoreListedField::from(ProtoField {
+            name: name.clone(),
+            index_config: None,
+            ttl_config: None,
+        });
+        assert_eq!(listed.field_path, "tags");
+        assert_eq!(listed.name, name);
     }
 
     #[test]
