@@ -33,6 +33,9 @@ pub(super) enum FakeResponse {
     /// The server closes the whole connection without answering, simulating a response lost in
     /// transit: the client sees a transport error, not a `grpc-status` it can read off the wire.
     Drop,
+    /// The server never answers and keeps the stream open, simulating a call stuck in flight
+    /// until the client gives up on it.
+    Hang,
 }
 
 impl FakeResponse {
@@ -328,6 +331,7 @@ async fn answer(
             let headers = ok_headers().header("grpc-status", (code as i32).to_string());
             let _ = respond.send_response(headers.body(()).unwrap(), true);
         }
+        FakeResponse::Hang => std::future::pending::<()>().await,
         FakeResponse::Drop => {
             close.notify_one();
             // Dropping `respond` while the connection is still up would reset just this stream,

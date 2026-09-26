@@ -2,13 +2,12 @@
 //! `BulkDeleteDocuments` admin RPC, on the same authenticated channel index management uses
 //! ([`FirestoreDb::admin_client`](super::indexes)).
 
-use crate::db::admin::operation_wait::{OperationAction, StartedOperation};
+use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
 use crate::db::support::FirestoreBulkDeleteSupport;
 use crate::errors::{FirestoreError, FirestoreErrorPublicGenericDetails, FirestoreSystemError};
 use crate::{
     FirestoreBulkDeleteParams, FirestoreBulkDeleteProgress, FirestoreBulkDeleteResult,
-    FirestoreCollectionId, FirestoreDb, FirestoreInstant, FirestoreOperationWaitOptions,
-    FirestoreResult,
+    FirestoreCollectionId, FirestoreDb, FirestoreInstant, FirestoreResult,
 };
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::{
@@ -23,13 +22,20 @@ use tracing::*;
 /// human-readable collection-group label.
 const BULK_DELETE_ACTION_KIND: &str = "bulk_delete";
 
-/// The declared collection groups, comma-joined, for logging and a timeout's error message.
-fn bulk_delete_label(groups: &[FirestoreCollectionId]) -> String {
-    groups
-        .iter()
-        .map(FirestoreCollectionId::as_str)
-        .collect::<Vec<_>>()
-        .join(", ")
+/// The declared collection groups, comma-joined, as log lines and a timeout's error message show
+/// them.
+struct CollectionGroupList<'a>(&'a [FirestoreCollectionId]);
+
+impl std::fmt::Display for CollectionGroupList<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (position, group) in self.0.iter().enumerate() {
+            if position > 0 {
+                f.write_str(", ")?;
+            }
+            f.write_str(group.as_str())?;
+        }
+        Ok(())
+    }
 }
 
 /// The one action a bulk delete's operation carries out, for the shared operation wait.
@@ -178,7 +184,7 @@ impl FirestoreDb {
         &self,
         operation: &StartedOperation<BulkDeleteAction<'_>>,
         result: &mut FirestoreBulkDeleteResult,
-        options: &FirestoreOperationWaitOptions,
+        deadline: &OperationDeadline,
     ) -> FirestoreResult<()> {
         let span = span!(
             Level::INFO,
@@ -189,7 +195,7 @@ impl FirestoreDb {
         let began = FirestoreInstant::now();
         let label = operation.action.label;
         let outcome = self
-            .wait_for_operations(&[operation], options, |started, polled| {
+            .wait_for_operations(&[operation], deadline, |started, polled| {
                 result.record_metadata(label, &started.name, polled.metadata.clone());
                 debug!(
                     collection_groups = label,
@@ -213,7 +219,7 @@ impl FirestoreBulkDeleteSupport for FirestoreDb {
         params: FirestoreBulkDeleteParams,
     ) -> FirestoreResult<FirestoreBulkDeleteResult> {
         crate::validate_bulk_delete_params(&params)?;
-        let label = bulk_delete_label(&params.collection_groups);
+        let label = CollectionGroupList(&params.collection_groups).to_string();
 
         if self.inner.is_emulator {
             error!(
@@ -260,7 +266,11 @@ impl FirestoreBulkDeleteSupport for FirestoreDb {
                     action: BulkDeleteAction { label: &label },
                 };
                 if let Err(err) = self
-                    .wait_for_bulk_delete(&started, &mut result, wait_options)
+                    .wait_for_bulk_delete(
+                        &started,
+                        &mut result,
+                        &OperationDeadline::from_now(wait_options),
+                    )
                     .await
                 {
                     result.elapsed = wall_start.elapsed();
@@ -545,6 +555,28 @@ mod tests {
             .unwrap_or_else(|| panic!("no partial result logged in:\n{output}"));
         assert!(result_line.contains("WARN"), "{result_line}");
         assert!(result_line.contains("documents 4/10"), "{result_line}");
+    }
+
+    #[tokio::test]
+    async fn a_wait_timeout_of_duration_max_does_not_panic() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            BULK_DELETE => (
+                "BulkDeleteDocuments".to_string(),
+                pending_operation_response(OPERATION_NAME),
+            ),
+            GET_OPERATION => (
+                "GetOperation".to_string(),
+                done_operation_response(OPERATION_NAME),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let params = FirestoreBulkDeleteParams::new(groups()).with_wait(
+            FirestoreOperationWaitOptions::new(Duration::MAX).with_poll_interval(Duration::MAX),
+        );
+        fake.db.bulk_delete_documents(params).await.unwrap();
     }
 
     fn wait_params() -> FirestoreBulkDeleteParams {

@@ -9,7 +9,7 @@ use crate::db::admin::index_diff::{
 use crate::db::admin::index_models::{
     validate_collection_group, write_section, CanonicalFieldPath,
 };
-use crate::db::admin::operation_wait::{OperationAction, StartedOperation};
+use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
 use crate::db::support::FirestoreIndexSupport;
 use crate::errors::FirestoreError;
 use crate::{
@@ -747,8 +747,12 @@ impl FirestoreDb {
                 .join(", "),
             "Waiting for earlier writes to finish before the next write that depends on them.",
         );
-        self.wait_for_operations(&operations, options, |_, _| {})
-            .await?;
+        self.wait_for_operations(
+            &operations,
+            &OperationDeadline::from_now(options),
+            |_, _| {},
+        )
+        .await?;
         for position in unsettled {
             writes.settled[position] = true;
         }
@@ -886,8 +890,12 @@ impl FirestoreDb {
         let began = FirestoreInstant::now();
         let operations: Vec<&PendingOperation> = pending.iter().collect();
         let result = async {
-            self.wait_for_operations(&operations, options, |_, _| {})
-                .await?;
+            self.wait_for_operations(
+                &operations,
+                &OperationDeadline::from_now(options),
+                |_, _| {},
+            )
+            .await?;
             let elapsed = FirestoreInstant::now().duration_since(began);
             info!(
                 operations = pending.len(),
@@ -2149,6 +2157,11 @@ mod tests {
             .unwrap_err();
 
         assert!(err.to_string().contains("quota exceeded"));
+        assert!(
+            err.to_string()
+                .contains(&format!("{GROUP_PATH}/operations/op1")),
+            "{err}"
+        );
     }
 
     #[tokio::test]
@@ -2203,6 +2216,234 @@ mod tests {
                 "GetOperation(op-index_config-expires_at)",
                 "UpdateField(ttl_config expires_at)",
             ]
+        );
+    }
+
+    /// The count of calls logged with exactly `call`.
+    fn count_of(fake: &FakeFirestore, call: &str) -> usize {
+        fake.calls().iter().filter(|logged| *logged == call).count()
+    }
+
+    /// Syncs [`params_with_index`] with a wait of `options`, answering its `CreateIndex` with a
+    /// pending `op1` and each `GetOperation` of it through `poll`, given the poll's 1-based count.
+    async fn sync_one_create(
+        options: FirestoreOperationWaitOptions,
+        poll: impl Fn(u32) -> FakeResponse + Send + Sync + 'static,
+    ) -> (FakeFirestore, FirestoreResult<FirestoreIndexSyncReport>) {
+        let polls = AtomicU32::new(0);
+        let fake = FakeFirestore::start(move |method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                pending_operation_response(&operation_name("op1")),
+            ),
+            GET_OPERATION => {
+                let count = polls.fetch_add(1, Ordering::SeqCst) + 1;
+                (format!("GetOperation#{count}"), poll(count))
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            fake.db.sync_indexes(
+                params_with_index(),
+                FirestoreIndexSyncOptions::new().with_wait(options),
+            ),
+        )
+        .await
+        .expect("the wait must end within 5 s");
+        (fake, result)
+    }
+
+    fn pending_once_then_done(count: u32) -> FakeResponse {
+        if count < 2 {
+            pending_operation_response(&operation_name("op1"))
+        } else {
+            done_operation_response(&operation_name("op1"))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_poll_sent_at_the_deadline_can_still_succeed() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let interval = Duration::from_millis(300);
+        let (fake, result) = sync_one_create(
+            FirestoreOperationWaitOptions::new(interval).with_poll_interval(interval),
+            pending_once_then_done,
+        )
+        .await;
+
+        result.expect("the poll sent at the deadline must be given time to answer");
+        assert_eq!(count_of(&fake, "GetOperation#2"), 1, "{:?}", fake.calls());
+    }
+
+    #[tokio::test]
+    async fn a_wait_timeout_of_duration_max_does_not_panic() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let (_fake, result) = sync_one_create(
+            FirestoreOperationWaitOptions::new(Duration::MAX)
+                .with_poll_interval(Duration::from_millis(5)),
+            pending_once_then_done,
+        )
+        .await;
+
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_poll_interval_of_duration_max_does_not_panic() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let (_fake, result) = sync_one_create(
+            FirestoreOperationWaitOptions::new(Duration::from_millis(200))
+                .with_poll_interval(Duration::MAX),
+            pending_once_then_done,
+        )
+        .await;
+
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_long_poll_interval_never_sleeps_past_the_deadline() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let started = std::time::Instant::now();
+        let (_fake, result) = sync_one_create(
+            FirestoreOperationWaitOptions::new(Duration::from_millis(100))
+                .with_poll_interval(Duration::from_secs(10)),
+            |_| pending_operation_response(&operation_name("op1")),
+        )
+        .await;
+
+        assert!(result.unwrap_err().to_string().contains("timed out"));
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_poll_that_ran_out_of_time_or_found_no_operation_is_sent_again() {
+        for code in [Code::DeadlineExceeded, Code::NotFound] {
+            let _serialize = MODULE_TEST_LOCK.lock().await;
+            let (fake, result) = sync_one_create(
+                FirestoreOperationWaitOptions::new(Duration::from_secs(5))
+                    .with_poll_interval(Duration::from_millis(5)),
+                move |count| {
+                    if count < 2 {
+                        FakeResponse::Status(code)
+                    } else {
+                        done_operation_response(&operation_name("op1"))
+                    }
+                },
+            )
+            .await;
+
+            result.unwrap_or_else(|err| panic!("{code:?} must be polled again: {err}"));
+            assert_eq!(count_of(&fake, "GetOperation#2"), 1, "{code:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn every_operation_polled_in_a_round_is_judged_before_a_failure_returns() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, bytes| {
+            if let Some(answer) = two_creates(method, bytes) {
+                return answer;
+            }
+            match method {
+                GET_OPERATION => {
+                    let name = get_operation_name(bytes);
+                    let response = if name.ends_with("op-a") {
+                        failed_operation_response(&name, 9, "index build failed")
+                    } else {
+                        done_operation_response(&name)
+                    };
+                    (format!("GetOperation({name})"), response)
+                }
+                other => panic!("unexpected RPC: {other}"),
+            }
+        })
+        .await;
+
+        let (subscriber, buffer) = capturing_subscriber();
+        let err = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db
+                .sync_indexes(
+                    two_indexes_params(),
+                    FirestoreIndexSyncOptions::new().with_wait(
+                        FirestoreOperationWaitOptions::new(Duration::from_secs(5))
+                            .with_poll_interval(Duration::from_millis(5)),
+                    ),
+                )
+                .await
+                .unwrap_err()
+        };
+        let output = captured_text(&buffer);
+
+        assert!(err.to_string().contains(&operation_name("op-a")), "{err}");
+        for (operation, state) in [("op-a", "failed"), ("op-b", "done")] {
+            assert!(
+                output
+                    .lines()
+                    .any(|line| line.contains("Wait For Operation{")
+                        && line.contains(&operation_name(operation))
+                        && line.contains(&format!("/firestore/state=\"{state}\""))
+                        && line.contains("close")),
+                "{operation} must close in state {state}:\n{output}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_operation_left_pending_by_a_failure_is_recorded_abandoned() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, bytes| {
+            if let Some(answer) = two_creates(method, bytes) {
+                return answer;
+            }
+            match method {
+                GET_OPERATION => {
+                    let name = get_operation_name(bytes);
+                    let response = if name.ends_with("op-a") {
+                        failed_operation_response(&name, 9, "index build failed")
+                    } else {
+                        pending_operation_response(&name)
+                    };
+                    (format!("GetOperation({name})"), response)
+                }
+                other => panic!("unexpected RPC: {other}"),
+            }
+        })
+        .await;
+
+        let (subscriber, buffer) = capturing_subscriber();
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db
+                .sync_indexes(
+                    two_indexes_params(),
+                    FirestoreIndexSyncOptions::new().with_wait(
+                        FirestoreOperationWaitOptions::new(Duration::from_secs(5))
+                            .with_poll_interval(Duration::from_millis(5)),
+                    ),
+                )
+                .await
+                .unwrap_err();
+        }
+        let output = captured_text(&buffer);
+
+        assert!(
+            output
+                .lines()
+                .any(|line| line.contains("Wait For Operation{")
+                    && line.contains(&operation_name("op-b"))
+                    && line.contains("/firestore/state=\"abandoned\"")
+                    && line.contains("close")),
+            "op-b must close as abandoned:\n{output}"
         );
     }
 
