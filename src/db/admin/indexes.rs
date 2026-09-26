@@ -28,12 +28,64 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::*;
 
+/// One index-management action this crate applies to a single collection group.
+///
+/// `name` is the server-assigned resource name of the field or index the action targets, not the
+/// long-running operation - it never appears in a public type, so it stays a plain `String`
+/// rather than a newtype; there is exactly one place that ever needs it (the resource-ownership
+/// check `ensure_owned_resource` and the raw admin RPCs), unlike the domain identifiers this
+/// crate does wrap.
+///
+/// `Display` produces the exact text this crate has always logged and reported for each kind, so
+/// a log line and a wait timeout's error message never disagree on what an operation was for.
+enum IndexAction {
+    CreateIndex(FirestoreCompositeIndex),
+    UpdateFieldOverride(FirestoreFieldOverride),
+    EnableTtl(String),
+    RevertFieldOverride(FirestoreListedField),
+    DisableTtl(FirestoreListedField),
+    DeleteIndex(FirestoreListedCompositeIndex),
+}
+
+impl IndexAction {
+    /// A short, stable identifier for this action's kind, independent of its target - logged
+    /// alongside the human-readable `Display` text as a field a caller can filter or group on
+    /// without parsing it.
+    fn kind(&self) -> &'static str {
+        match self {
+            IndexAction::CreateIndex(_) => "create_index",
+            IndexAction::UpdateFieldOverride(_) => "update_field_override",
+            IndexAction::EnableTtl(_) => "enable_ttl",
+            IndexAction::RevertFieldOverride(_) => "revert_field_override",
+            IndexAction::DisableTtl(_) => "disable_ttl",
+            IndexAction::DeleteIndex(_) => "delete_index",
+        }
+    }
+}
+
+impl std::fmt::Display for IndexAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IndexAction::CreateIndex(index) => write!(f, "create index {index}"),
+            IndexAction::UpdateFieldOverride(declared) => {
+                write!(f, "write field override {declared}")
+            }
+            IndexAction::EnableTtl(field_path) => write!(f, "enable TTL on {field_path}"),
+            IndexAction::RevertFieldOverride(listed) => {
+                write!(f, "revert field override {listed}")
+            }
+            IndexAction::DisableTtl(listed) => write!(f, "disable TTL on {}", listed.field_path),
+            IndexAction::DeleteIndex(listed) => write!(f, "delete index {listed}"),
+        }
+    }
+}
+
 /// One admin RPC's long-running result that `.sync()` must poll to completion when waiting is
-/// requested: the operation's resource name, plus the human-readable action it belongs to, for
-/// the wait phase's logging and its timeout error.
+/// requested: the operation's resource name, plus the action it belongs to, for the wait phase's
+/// logging and its timeout error.
 struct PendingOperation {
     name: String,
-    label: String,
+    action: IndexAction,
 }
 
 /// The result of polling one operation until it is done or the shared wait budget runs out.
@@ -392,23 +444,29 @@ impl FirestoreDb {
                 parent: group_path.to_string(),
                 index: Some(proto),
             };
+            let action = IndexAction::CreateIndex(index.clone());
             match self.admin_client().create_index(request).await {
                 Ok(response) => {
                     let operation = response.into_inner();
-                    info!(operation = operation.name.as_str(), index = %index, "Created a composite index.");
+                    info!(
+                        operation = operation.name.as_str(),
+                        action = action.kind(),
+                        index = %index,
+                        "Created a composite index.",
+                    );
                     Ok(CreateIndexOutcome::Created(PendingOperation {
                         name: operation.name,
-                        label: format!("create index {index}"),
+                        action,
                     }))
                 }
                 // A race with another deployment: the index already exists, so this counts as
                 // unchanged rather than an error.
                 Err(status) if status.code() == Code::AlreadyExists => {
-                    info!(index = %index, "Index already existed; treating as unchanged.");
+                    info!(action = action.kind(), index = %index, "Index already existed; treating as unchanged.");
                     Ok(CreateIndexOutcome::AlreadyExists)
                 }
                 Err(status) => {
-                    error!(error = %status, index = %index, "Failed to create a composite index.");
+                    error!(error = %status, action = action.kind(), index = %index, "Failed to create a composite index.");
                     Err(FirestoreError::from(status))
                 }
             }
@@ -436,13 +494,14 @@ impl FirestoreDb {
             let request = DeleteIndexRequest {
                 name: listed.name.clone(),
             };
+            let action = IndexAction::DeleteIndex(listed.clone());
             match self.admin_client().delete_index(request).await {
                 Ok(_) => {
-                    info!(index = %listed, "Deleted an undeclared composite index.");
+                    info!(action = action.kind(), index = %listed, "Deleted an undeclared composite index.");
                     Ok(())
                 }
                 Err(status) => {
-                    error!(error = %status, index = %listed, "Failed to delete a composite index.");
+                    error!(error = %status, action = action.kind(), index = %listed, "Failed to delete a composite index.");
                     Err(FirestoreError::from(status))
                 }
             }
@@ -461,7 +520,7 @@ impl FirestoreDb {
         &self,
         span: Span,
         request: UpdateFieldRequest,
-        label: String,
+        action: IndexAction,
     ) -> FirestoreResult<PendingOperation> {
         let began = FirestoreInstant::now();
         let outcome = async {
@@ -470,16 +529,22 @@ impl FirestoreDb {
                     let operation = response.into_inner();
                     info!(
                         operation = operation.name.as_str(),
-                        label = label.as_str(),
+                        action = action.kind(),
+                        label = %action,
                         "Applied an index management change.",
                     );
                     Ok(PendingOperation {
                         name: operation.name,
-                        label,
+                        action,
                     })
                 }
                 Err(status) => {
-                    error!(error = %status, label = label.as_str(), "Failed to apply an index management change.");
+                    error!(
+                        error = %status,
+                        action = action.kind(),
+                        label = %action,
+                        "Failed to apply an index management change.",
+                    );
                     Err(FirestoreError::from(status))
                 }
             }
@@ -513,8 +578,12 @@ impl FirestoreDb {
                 paths: vec!["index_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, format!("write field override {declared}"))
-            .await
+        self.run_update_field(
+            span,
+            request,
+            IndexAction::UpdateFieldOverride(declared.clone()),
+        )
+        .await
     }
 
     async fn apply_enable_ttl(
@@ -538,8 +607,12 @@ impl FirestoreDb {
                 paths: vec!["ttl_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, format!("enable TTL on {field_path}"))
-            .await
+        self.run_update_field(
+            span,
+            request,
+            IndexAction::EnableTtl(field_path.to_string()),
+        )
+        .await
     }
 
     async fn apply_revert_field_override(
@@ -563,8 +636,12 @@ impl FirestoreDb {
                 paths: vec!["index_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, format!("revert field override {listed}"))
-            .await
+        self.run_update_field(
+            span,
+            request,
+            IndexAction::RevertFieldOverride(listed.clone()),
+        )
+        .await
     }
 
     async fn apply_disable_ttl(
@@ -588,12 +665,8 @@ impl FirestoreDb {
                 paths: vec!["ttl_config".to_string()],
             }),
         };
-        self.run_update_field(
-            span,
-            request,
-            format!("disable TTL on {}", listed.field_path),
-        )
-        .await
+        self.run_update_field(span, request, IndexAction::DisableTtl(listed.clone()))
+            .await
     }
 
     /// Applies `plan` in the fixed order Firestore requires (create, update fields, enable TTL,
@@ -707,7 +780,8 @@ impl FirestoreDb {
                 debug!(
                     poll = polls,
                     operation = op.name.as_str(),
-                    label = op.label.as_str(),
+                    action = op.action.kind(),
+                    label = %op.action,
                     done = operation.done,
                     "Polled a pending operation.",
                 );
@@ -716,7 +790,8 @@ impl FirestoreDb {
                         Some(LroResult::Error(status)) => {
                             error!(
                                 operation = op.name.as_str(),
-                                label = op.label.as_str(),
+                                action = op.action.kind(),
+                                label = %op.action,
                                 code = status.code,
                                 message = status.message.as_str(),
                                 "Operation failed.",
@@ -726,7 +801,8 @@ impl FirestoreDb {
                         _ => {
                             info!(
                                 operation = op.name.as_str(),
-                                label = op.label.as_str(),
+                                action = op.action.kind(),
+                                label = %op.action,
                                 polls,
                                 "Operation reached a terminal state.",
                             );
@@ -774,9 +850,9 @@ impl FirestoreDb {
                 {
                     WaitOutcome::Done => {}
                     WaitOutcome::TimedOut => {
-                        let remaining: Vec<&str> = pending[position..]
+                        let remaining: Vec<String> = pending[position..]
                             .iter()
-                            .map(|p| p.label.as_str())
+                            .map(|p| p.action.to_string())
                             .collect();
                         warn!(
                             pending = remaining.join(", "),
