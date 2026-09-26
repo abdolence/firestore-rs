@@ -37,8 +37,7 @@ async fn run_transaction(
     let commit_results = Mutex::new(VecDeque::from(commits.to_vec()));
     let begins = AtomicU8::new(0);
     let failing_begin = Mutex::new(failing_begin);
-    // One retry keeps a persistently failing commit, and its backoff, short.
-    let server = FakeFirestore::start_with_max_retries(1, move |method, bytes| {
+    let server = FakeFirestore::start(move |method, bytes| {
         if method.ends_with("/BeginTransaction") {
             let next_id = begins.load(Ordering::SeqCst) + 1;
             match failing_begin

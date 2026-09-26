@@ -8,11 +8,10 @@ use std::sync::atomic::AtomicU8;
 
 /// Begins transactions with sequential IDs and answers every read, rolling back with
 /// `rollback_code` and committing with `commit_code`. A rollback's call-log entry carries its
-/// request tags, so a test can assert them without separate bookkeeping. One retry keeps a
-/// persistently failing commit short.
+/// request tags, so a test can assert them without separate bookkeeping.
 async fn fixture(rollback_code: Code, commit_code: Code) -> FakeFirestore {
     let begins = AtomicU8::new(0);
-    FakeFirestore::start_with_max_retries(1, move |method, bytes| {
+    FakeFirestore::start(move |method, bytes| {
         if method.ends_with("/BeginTransaction") {
             begin_response(&begins)
         } else if method.ends_with("/GetDocument") {
