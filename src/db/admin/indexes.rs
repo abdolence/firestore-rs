@@ -43,6 +43,22 @@ enum IndexAction {
     DeleteIndex(FirestoreListedCompositeIndex),
 }
 
+impl IndexAction {
+    /// What the action writes: the index definition for a create, the index resource name for
+    /// a delete, and the field path for a field write.
+    fn target(&self) -> String {
+        match self {
+            IndexAction::CreateIndex(index) => index.to_string(),
+            IndexAction::UpdateFieldOverride(declared) => declared.target.as_str().to_string(),
+            IndexAction::EnableTtl(field_path) => field_path.clone(),
+            IndexAction::RevertFieldOverride(listed) | IndexAction::DisableTtl(listed) => {
+                listed.field_path.clone()
+            }
+            IndexAction::DeleteIndex(listed) => listed.name.clone(),
+        }
+    }
+}
+
 impl OperationAction for IndexAction {
     fn kind(&self) -> &'static str {
         match self {
@@ -327,14 +343,46 @@ impl FirestoreDb {
             Level::INFO,
             "Firestore Index List",
             "/firestore/collection_group" = group.id.as_str(),
+            "/firestore/list_indexes_ms" = field::Empty,
+            "/firestore/list_field_overrides_ms" = field::Empty,
+            "/firestore/list_ttl_fields_ms" = field::Empty,
+            "/firestore/listed_indexes" = field::Empty,
+            "/firestore/listed_field_overrides" = field::Empty,
+            "/firestore/listed_ttl_fields" = field::Empty,
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
         let listed = async {
             let (all_indexes, override_fields, ttl_fields) = tokio::try_join!(
-                self.list_all_indexes(group_path),
-                self.list_all_fields(group_path, "indexConfig.usesAncestorConfig:false"),
-                self.list_all_fields(group_path, "ttlConfig:*"),
+                async {
+                    let started = Instant::now();
+                    let indexes = self.list_all_indexes(group_path).await?;
+                    span.record("/firestore/list_indexes_ms", started.elapsed().as_millis());
+                    span.record("/firestore/listed_indexes", indexes.len());
+                    Ok::<_, FirestoreError>(indexes)
+                },
+                async {
+                    let started = Instant::now();
+                    let fields = self
+                        .list_all_fields(group_path, "indexConfig.usesAncestorConfig:false")
+                        .await?;
+                    span.record(
+                        "/firestore/list_field_overrides_ms",
+                        started.elapsed().as_millis(),
+                    );
+                    span.record("/firestore/listed_field_overrides", fields.len());
+                    Ok(fields)
+                },
+                async {
+                    let started = Instant::now();
+                    let fields = self.list_all_fields(group_path, "ttlConfig:*").await?;
+                    span.record(
+                        "/firestore/list_ttl_fields_ms",
+                        started.elapsed().as_millis(),
+                    );
+                    span.record("/firestore/listed_ttl_fields", fields.len());
+                    Ok(fields)
+                },
             )?;
 
             // Measured against the real service, 2026-09-26: `ListIndexes` scoped to one
@@ -423,10 +471,14 @@ impl FirestoreDb {
         group: &OwnedGroup<'_>,
         index: &FirestoreCompositeIndex,
     ) -> FirestoreResult<CreateIndexOutcome> {
+        let action = IndexAction::CreateIndex(index.clone());
         let span = span!(
             Level::INFO,
             "Create Index",
-            "/firestore/response_time" = field::Empty
+            "/firestore/action" = action.kind(),
+            "/firestore/target" = action.target().as_str(),
+            "/firestore/operation" = field::Empty,
+            "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
         let proto = ProtoIndex::try_from(index.clone())?;
@@ -435,10 +487,10 @@ impl FirestoreDb {
                 parent: group.path.clone(),
                 index: Some(proto),
             };
-            let action = IndexAction::CreateIndex(index.clone());
             match self.admin_client().create_index(request).await {
                 Ok(response) => {
                     let operation = response.into_inner();
+                    span.record("/firestore/operation", operation.name.as_str());
                     info!(
                         operation = operation.name.as_str(),
                         action = action.kind(),
@@ -475,17 +527,21 @@ impl FirestoreDb {
         listed: &FirestoreListedCompositeIndex,
     ) -> FirestoreResult<()> {
         group.ensure_owns("indexes", &listed.name)?;
+        let action = IndexAction::DeleteIndex(listed.clone());
+        // DeleteIndex answers directly rather than with a long-running operation, so this span
+        // has no `/firestore/operation`.
         let span = span!(
             Level::INFO,
             "Delete Index",
-            "/firestore/response_time" = field::Empty
+            "/firestore/action" = action.kind(),
+            "/firestore/target" = action.target().as_str(),
+            "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
         let outcome = async {
             let request = DeleteIndexRequest {
                 name: listed.name.clone(),
             };
-            let action = IndexAction::DeleteIndex(listed.clone());
             match self.admin_client().delete_index(request).await {
                 Ok(_) => {
                     info!(action = action.kind(), index = %listed, "Deleted an undeclared composite index.");
@@ -518,6 +574,7 @@ impl FirestoreDb {
             match self.admin_client().update_field(request).await {
                 Ok(response) => {
                     let operation = response.into_inner();
+                    span.record("/firestore/operation", operation.name.as_str());
                     info!(
                         operation = operation.name.as_str(),
                         action = action.kind(),
@@ -552,10 +609,14 @@ impl FirestoreDb {
         group: &OwnedGroup<'_>,
         declared: &FirestoreFieldOverride,
     ) -> FirestoreResult<PendingOperation> {
+        let action = IndexAction::UpdateFieldOverride(declared.clone());
         let span = span!(
             Level::INFO,
             "Update Field",
-            "/firestore/response_time" = field::Empty
+            "/firestore/action" = action.kind(),
+            "/firestore/target" = action.target().as_str(),
+            "/firestore/operation" = field::Empty,
+            "/firestore/response_time" = field::Empty,
         );
         let name = group.field_resource(declared.target.as_str());
         let index_config = proto_field::IndexConfig::try_from(declared.clone())?;
@@ -569,12 +630,7 @@ impl FirestoreDb {
                 paths: vec!["index_config".to_string()],
             }),
         };
-        self.run_update_field(
-            span,
-            request,
-            IndexAction::UpdateFieldOverride(declared.clone()),
-        )
-        .await
+        self.run_update_field(span, request, action).await
     }
 
     async fn apply_enable_ttl(
@@ -582,10 +638,14 @@ impl FirestoreDb {
         group: &OwnedGroup<'_>,
         field_path: &str,
     ) -> FirestoreResult<PendingOperation> {
+        let action = IndexAction::EnableTtl(field_path.to_string());
         let span = span!(
             Level::INFO,
             "Enable TTL",
-            "/firestore/response_time" = field::Empty
+            "/firestore/action" = action.kind(),
+            "/firestore/target" = action.target().as_str(),
+            "/firestore/operation" = field::Empty,
+            "/firestore/response_time" = field::Empty,
         );
         let name = group.field_resource(field_path);
         let request = UpdateFieldRequest {
@@ -598,12 +658,7 @@ impl FirestoreDb {
                 paths: vec!["ttl_config".to_string()],
             }),
         };
-        self.run_update_field(
-            span,
-            request,
-            IndexAction::EnableTtl(field_path.to_string()),
-        )
-        .await
+        self.run_update_field(span, request, action).await
     }
 
     async fn apply_revert_field_override(
@@ -612,9 +667,13 @@ impl FirestoreDb {
         listed: &FirestoreListedField,
     ) -> FirestoreResult<PendingOperation> {
         group.ensure_owns("fields", &listed.name)?;
+        let action = IndexAction::RevertFieldOverride(listed.clone());
         let span = span!(
             Level::INFO,
             "Revert Field Override",
+            "/firestore/action" = action.kind(),
+            "/firestore/target" = action.target().as_str(),
+            "/firestore/operation" = field::Empty,
             "/firestore/response_time" = field::Empty,
         );
         let request = UpdateFieldRequest {
@@ -627,12 +686,7 @@ impl FirestoreDb {
                 paths: vec!["index_config".to_string()],
             }),
         };
-        self.run_update_field(
-            span,
-            request,
-            IndexAction::RevertFieldOverride(listed.clone()),
-        )
-        .await
+        self.run_update_field(span, request, action).await
     }
 
     async fn apply_disable_ttl(
@@ -641,10 +695,14 @@ impl FirestoreDb {
         listed: &FirestoreListedField,
     ) -> FirestoreResult<PendingOperation> {
         group.ensure_owns("fields", &listed.name)?;
+        let action = IndexAction::DisableTtl(listed.clone());
         let span = span!(
             Level::INFO,
             "Disable TTL",
-            "/firestore/response_time" = field::Empty
+            "/firestore/action" = action.kind(),
+            "/firestore/target" = action.target().as_str(),
+            "/firestore/operation" = field::Empty,
+            "/firestore/response_time" = field::Empty,
         );
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
@@ -656,8 +714,7 @@ impl FirestoreDb {
                 paths: vec!["ttl_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, IndexAction::DisableTtl(listed.clone()))
-            .await
+        self.run_update_field(span, request, action).await
     }
 
     /// Waits for the given started writes to finish, then marks them settled so neither a later
@@ -2530,13 +2587,24 @@ mod tests {
     #[tokio::test]
     async fn sync_logs_the_span_tree_and_the_named_lines() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let polls = StdArc::new(AtomicU32::new(0));
+        let polls_in_handler = polls.clone();
+        let fake = FakeFirestore::start(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
                 "CreateIndex".to_string(),
-                done_operation_response(&format!("{GROUP_PATH}/operations/op1")),
+                pending_operation_response(&operation_name("op1")),
             ),
+            GET_OPERATION => {
+                let count = polls_in_handler.fetch_add(1, Ordering::SeqCst) + 1;
+                let response = if count < 2 {
+                    pending_operation_response(&operation_name("op1"))
+                } else {
+                    done_operation_response(&operation_name("op1"))
+                };
+                (format!("GetOperation#{count}"), response)
+            }
             other => panic!("unexpected RPC: {other}"),
         })
         .await;
@@ -2545,7 +2613,13 @@ mod tests {
         let report = {
             let _guard = tracing::subscriber::set_default(subscriber);
             fake.db
-                .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+                .sync_indexes(
+                    params_with_index(),
+                    FirestoreIndexSyncOptions::new().with_wait(
+                        FirestoreOperationWaitOptions::new(Duration::from_secs(5))
+                            .with_poll_interval(Duration::from_millis(5)),
+                    ),
+                )
                 .await
                 .unwrap()
         };
@@ -2558,6 +2632,8 @@ mod tests {
             "Firestore Index Diff",
             "Firestore Index Apply",
             "Create Index",
+            "Firestore Index Wait",
+            "Wait For Operation",
         ] {
             assert!(
                 output.contains(expected),
@@ -2583,6 +2659,42 @@ mod tests {
             1,
             "the plan must be one grouped event, not one per item:\n{output}"
         );
+
+        let line_with = |needles: &[&str]| {
+            output
+                .lines()
+                .find(|line| needles.iter().all(|needle| line.contains(needle)))
+                .unwrap_or_else(|| panic!("no line with all of {needles:?} in:\n{output}"))
+                .to_string()
+        };
+        line_with(&[
+            "Create Index{",
+            "/firestore/action=\"create_index\"",
+            "/firestore/target=\"[COLLECTION] (a DESC, tags CONTAINS)\"",
+            &format!("/firestore/operation=\"{}\"", operation_name("op1")),
+            "close",
+        ]);
+        line_with(&[
+            "Wait For Operation{",
+            "/firestore/polls=2",
+            "/firestore/state=\"done\"",
+            "/firestore/response_time=",
+            "close",
+        ]);
+        line_with(&[
+            "Firestore Index List{",
+            "/firestore/list_indexes_ms=",
+            "/firestore/list_field_overrides_ms=",
+            "/firestore/list_ttl_fields_ms=",
+            "/firestore/listed_indexes=0",
+            "/firestore/listed_field_overrides=0",
+            "/firestore/listed_ttl_fields=0",
+            "close",
+        ]);
+        line_with(&[
+            "All index operations reached a terminal state in",
+            "elapsed_ms=",
+        ]);
 
         let listed_line = output
             .lines()
@@ -2640,6 +2752,44 @@ mod tests {
             output.matches("Firestore index plan:").count(),
             1,
             "two undeclared indexes must still be one plan event:\n{output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_plan_event_lists_each_unrecognised_item_with_its_reason() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => {
+                let mut mongodb = listed_declared_index(
+                    &format!("{GROUP_PATH}/indexes/mongodb"),
+                    ProtoState::Ready,
+                );
+                mongodb.api_scope = ApiScope::MongodbCompatibleApi as i32;
+                (
+                    "ListIndexes".to_string(),
+                    list_indexes_response(vec![mongodb]),
+                )
+            }
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => no_writes_allowed(other),
+        })
+        .await;
+
+        let (subscriber, buffer) = capturing_subscriber();
+        let plan = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            fake.db
+                .plan_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+                .await
+                .unwrap()
+        };
+        let output = captured_text(&buffer);
+
+        let reason = &plan.unrecognised[0].reason;
+        assert!(output.contains("unrecognised, never pruned: 1"), "{output}");
+        assert!(
+            output.contains(&format!("{GROUP_PATH}/indexes/mongodb: {reason}")),
+            "{output}"
         );
     }
 
