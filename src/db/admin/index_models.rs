@@ -1111,6 +1111,17 @@ mod tests {
     }
 
     #[test]
+    fn composite_index_with_name_field_mid_position_is_not_a_duplicate() {
+        // Firestore never places an implicit `__name__` mid-index, so a declaration that states
+        // it there explicitly is a different index from one that omits `__name__` altogether,
+        // not a duplicate of it.
+        let index_a = FirestoreCompositeIndex::new(vec![asc("a"), asc("b")]);
+        let index_b =
+            FirestoreCompositeIndex::new(vec![asc("a"), asc(IMPLIED_NAME_FIELD), asc("b")]);
+        assert!(validate_composite_indexes(&[index_a, index_b]).is_ok());
+    }
+
+    #[test]
     fn field_override_with_duplicate_index_entries_is_rejected() {
         let overrides = vec![FirestoreFieldOverride {
             target: FirestoreFieldOverrideTarget::Field("tags".to_string()),

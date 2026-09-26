@@ -520,15 +520,50 @@ impl FirestoreCompositeIndex {
     }
 }
 
+/// Strips an implicit `__name__` field from `listed`, when `declared` omits `__name__` and
+/// `listed` carries exactly one more field than `declared`, at the one position Firestore is
+/// known to place it (trailing for an ordinary index, or directly before a terminal vector field,
+/// both measured against the real service, 2026-09-26). Its direction is never checked, since a
+/// declaration that omits `__name__` never states one. Returns `None` when `listed` does not have
+/// that shape, which means it is not a match for `declared` at all.
+fn strip_implied_name_at_expected_position(
+    declared: &[FirestoreIndexField],
+    listed: &[FirestoreIndexField],
+) -> Option<Vec<FirestoreIndexField>> {
+    if listed.len() == declared.len() {
+        return Some(listed.to_vec());
+    }
+    if listed.len() != declared.len() + 1 {
+        return None;
+    }
+    let vector_last = matches!(
+        declared.last().map(|field| &field.mode),
+        Some(FirestoreIndexFieldMode::Vector(_))
+    );
+    let name_position = if vector_last {
+        declared.len() - 1
+    } else {
+        declared.len()
+    };
+    let candidate = &listed[name_position];
+    if candidate.field_path != IMPLIED_NAME_FIELD
+        || !matches!(candidate.mode, FirestoreIndexFieldMode::Order(_))
+    {
+        return None;
+    }
+    let mut without_name = listed.to_vec();
+    without_name.remove(name_position);
+    Some(without_name)
+}
+
 /// Whether `declared` and `listed` are the same index.
 ///
-/// A declaration that does not mention `__name__` matches a listed index with any `__name__`
-/// field removed, in whatever position and direction it was listed: Firestore's placement varies
-/// by index shape (trailing for an ordinary index, ahead of a terminal vector field for a vector
-/// one - both measured against the real service, 2026-09-26) and a declaration never states it,
-/// so position and direction carry no information to compare. A declaration that mentions
-/// `__name__` explicitly is compared field-for-field, position included, since the caller is then
-/// asserting a specific shape rather than leaving it to Firestore.
+/// A declaration that does not mention `__name__` matches a listed index with an implicit
+/// `__name__` removed only from the one position Firestore is known to place it at (see
+/// [`strip_implied_name_at_expected_position`]); a `__name__` field anywhere else makes `listed` a
+/// different index. A declaration that mentions `__name__` explicitly is compared field-for-field,
+/// position included, since the caller is then asserting a specific shape rather than leaving it
+/// to Firestore.
 ///
 /// Used both to match a declaration against a listed index and, in
 /// [`validate_index_params`](crate::validate_index_params), to reject two declarations that are
@@ -545,14 +580,11 @@ pub(crate) fn composite_index_matches(
         .iter()
         .any(|field| field.field_path == IMPLIED_NAME_FIELD)
     {
-        declared.fields == listed.fields
-    } else {
-        let listed_without_name: Vec<&FirestoreIndexField> = listed
-            .fields
-            .iter()
-            .filter(|field| field.field_path != IMPLIED_NAME_FIELD)
-            .collect();
-        declared.fields.iter().collect::<Vec<_>>() == listed_without_name
+        return declared.fields == listed.fields;
+    }
+    match strip_implied_name_at_expected_position(&declared.fields, &listed.fields) {
+        Some(listed_without_name) => declared.fields == listed_without_name,
+        None => false,
     }
 }
 
@@ -1429,6 +1461,71 @@ mod tests {
             plan.undeclared_indexes.is_empty(),
             "the live listed index must not be left eligible for prune"
         );
+    }
+
+    #[test]
+    fn name_field_in_a_non_trailing_non_vector_position_is_not_ignored() {
+        // Firestore never places an implicit __name__ mid-index - only trailing for an ordinary
+        // index, or just before a terminal vector field. A listed index with it anywhere else is
+        // simply a different index from a declaration that omits __name__, not a match.
+        let declared = FirestoreCompositeIndex::new(vec![asc_field("a"), asc_field("b")]);
+        let params = users_params().with_composite_indexes(vec![declared.clone()]);
+        let listed = listed_index(
+            vec![
+                order_field("a", ProtoOrder::Ascending),
+                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Descending),
+                order_field("b", ProtoOrder::Ascending),
+            ],
+            ProtoQueryScope::Collection,
+            ProtoState::Ready,
+        );
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![listed],
+            fields: vec![],
+        };
+        let plan = plan_index_changes(&params, &existing).unwrap();
+        assert_eq!(plan.create_indexes, vec![declared]);
+        assert_eq!(
+            plan.undeclared_indexes.len(),
+            1,
+            "the mid-index __name__ makes this a different index, not a duplicate of the declared one"
+        );
+    }
+
+    #[test]
+    fn vector_index_with_two_prefix_fields_matches_name_before_the_vector_field() {
+        let declared = FirestoreCompositeIndex::new(vec![
+            asc_field("a"),
+            desc_field("b"),
+            FirestoreIndexField::new(
+                "v".to_string(),
+                FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
+            ),
+        ]);
+        let params = users_params().with_composite_indexes(vec![declared.clone()]);
+        let listed = listed_index(
+            vec![
+                order_field("a", ProtoOrder::Ascending),
+                order_field("b", ProtoOrder::Descending),
+                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
+                proto_field(
+                    "v",
+                    ValueMode::VectorConfig(ProtoVectorConfig {
+                        dimension: 8,
+                        r#type: Some(vector_config::Type::Flat(vector_config::FlatIndex {})),
+                    }),
+                ),
+            ],
+            ProtoQueryScope::Collection,
+            ProtoState::Ready,
+        );
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![listed],
+            fields: vec![],
+        };
+        let plan = plan_index_changes(&params, &existing).unwrap();
+        assert_eq!(plan.unchanged, vec![declared]);
+        assert!(plan.undeclared_indexes.is_empty());
     }
 
     #[test]
