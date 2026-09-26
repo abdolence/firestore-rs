@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn progress_without_an_estimate_shows_only_the_completed_work() {
+    fn an_estimate_of_zero_shows_only_the_completed_work() {
         let progress = FirestoreBulkDeleteProgress {
             estimated_work: 0,
             completed_work: 5,
@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn progress_with_an_estimate_shows_both() {
+    fn a_known_estimate_shows_completed_over_estimated_work() {
         let progress = FirestoreBulkDeleteProgress {
             estimated_work: 10,
             completed_work: 5,

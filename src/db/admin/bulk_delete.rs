@@ -635,7 +635,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn progress_from_an_earlier_poll_survives_a_poll_that_does_not_report_it() {
+    async fn earlier_progress_survives_a_poll_that_does_not_report_it() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let polls = StdArc::new(AtomicU32::new(0));
         let polls_in_handler = polls.clone();
