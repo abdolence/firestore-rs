@@ -46,6 +46,12 @@ println!("{:?}", as_vec);
 # }
 ```
 
+## Filtering
+
+`.filter()` takes a closure that receives a filter builder and returns an
+`Option<FirestoreQueryFilter>`. Conditions can be optional, since a `None` entry in the list is
+dropped, as `one_more_string` in the example above.
+
 Use:
 
 - `q.for_all` for AND conditions
