@@ -17,6 +17,13 @@ pub mod delete_builder;
 /// Reach for this via `.transforms()` on an update builder, not directly.
 pub mod document_transform_builder;
 
+/// Declares and syncs one collection group's composite indexes, single-field overrides and TTL
+/// policy. Requires the `admin` feature.
+///
+/// Reach for this from [`FirestoreExprBuilder::indexes()`](FirestoreExprBuilder::indexes).
+#[cfg(feature = "admin")]
+pub mod index_builder;
+
 /// Inserts a document from a raw `Document` or a serializable Rust object.
 ///
 /// Reach for this from [`FirestoreExprBuilder::insert()`](FirestoreExprBuilder::insert).
@@ -126,6 +133,21 @@ where
     #[inline]
     pub fn list(self) -> FirestoreListingInitialBuilder<'a, D> {
         FirestoreListingInitialBuilder::new(self.db)
+    }
+}
+
+// A separate impl block, bounded only by `FirestoreIndexSupport`, so that adding index
+// management never widens the bounds every other fluent operation above pays for.
+#[cfg(feature = "admin")]
+impl<'a, D> FirestoreExprBuilder<'a, D>
+where
+    D: crate::FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Starts declaring one collection group's indexes. Continue with `.collection_group()`.
+    /// Requires the `admin` feature.
+    #[inline]
+    pub fn indexes(self) -> crate::index_builder::FirestoreIndexesInitialBuilder<'a, D> {
+        crate::index_builder::FirestoreIndexesInitialBuilder::new(self.db)
     }
 }
 

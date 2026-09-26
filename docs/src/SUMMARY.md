@@ -39,6 +39,11 @@
     - [Load modes and preloading](./caching/load-modes.md)
     - [How the cache is updated](./caching/updates.md)
 
+# Administration
+
+- [Index management](./index-management.md)
+- [Bulk delete](./bulk-delete.md)
+
 # Environment and operations
 
 - [Google authentication](./auth.md)

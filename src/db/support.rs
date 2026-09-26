@@ -462,3 +462,47 @@ pub trait FirestoreListenSupport {
         targets: Vec<FirestoreListenerTargetParams>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>>;
 }
+
+/// Plans or applies one collection group's declared indexes, field overrides and TTL policy.
+///
+/// Mirrors [`FirestoreQuerySupport::query_doc`]. Today the fluent `.plan()` and `.sync()`
+/// terminals on [`FirestoreIndexesBuilder`](crate::index_builder::FirestoreIndexesBuilder) are
+/// the only callers, and they validate `params` before calling in - but an implementation must
+/// not rely on that: the planning step behind `plan_indexes`/`sync_indexes` validates `params`
+/// again on its own, so a declaration is checked regardless of caller.
+#[cfg(feature = "admin")]
+#[async_trait]
+pub trait FirestoreIndexSupport {
+    /// Reports what [`sync_indexes`](Self::sync_indexes) would change with the same `options`,
+    /// without writing anything. Only `options.prune` affects the plan; `options.wait` is ignored.
+    async fn plan_indexes(
+        &self,
+        params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
+    ) -> FirestoreResult<FirestoreIndexPlan>;
+
+    /// Reconciles Firestore with `params`, according to `options`.
+    async fn sync_indexes(
+        &self,
+        params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
+    ) -> FirestoreResult<FirestoreIndexSyncReport>;
+}
+
+/// Deletes every document in one or more collection groups, at any depth, across the whole
+/// database, via Firestore's `BulkDeleteDocuments` admin RPC.
+///
+/// The fluent `.execute()` terminal on
+/// [`FirestoreBulkDeleteBuilder`](crate::delete_builder::FirestoreBulkDeleteBuilder) is today's
+/// only caller, and it validates `params` before calling in - but an implementation must not rely
+/// on that: `bulk_delete_documents` validates `params` again on its own.
+#[cfg(feature = "admin")]
+#[async_trait]
+pub trait FirestoreBulkDeleteSupport {
+    /// Starts the bulk delete, and - when [`FirestoreBulkDeleteParams::wait`] is set - waits for
+    /// it to reach a terminal state before returning.
+    async fn bulk_delete_documents(
+        &self,
+        params: FirestoreBulkDeleteParams,
+    ) -> FirestoreResult<FirestoreBulkDeleteResult>;
+}

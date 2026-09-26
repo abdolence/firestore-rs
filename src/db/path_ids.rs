@@ -4,20 +4,12 @@
 //! shape applied to collection names. This module is private — both types are re-exported at the
 //! crate root.
 
-use crate::errors::{
-    FirestoreError, FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails,
-};
+use crate::errors::FirestoreError;
 use crate::FirestoreResult;
 use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::{Borrow, Cow};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
-
-fn path_segment_error(field: &str, error: String) -> FirestoreError {
-    FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
-        FirestoreInvalidParametersPublicDetails::new(field.to_string(), error),
-    ))
-}
 
 /// The one rule a path segment fails, if any.
 ///
@@ -100,13 +92,17 @@ pub(crate) fn validate_path_segment(segment: &str, field: &'static str) -> Fires
     let rule = violation.rule_message();
 
     match violation {
-        PathSegmentViolation::Empty => Err(path_segment_error(field, rule.to_string())),
+        PathSegmentViolation::Empty => Err(FirestoreError::invalid_parameters(
+            field,
+            rule.to_string(),
+        )),
         // The value itself is unbounded here, unlike every other violation below, so this
         // message reports the length rather than echoing it.
-        PathSegmentViolation::TooLong { len } => {
-            Err(path_segment_error(field, format!("{rule}, was {len} bytes")))
-        }
-        PathSegmentViolation::ContainsSlash => Err(path_segment_error(
+        PathSegmentViolation::TooLong { len } => Err(FirestoreError::invalid_parameters(
+            field,
+            format!("{rule}, was {len} bytes"),
+        )),
+        PathSegmentViolation::ContainsSlash => Err(FirestoreError::invalid_parameters(
             field,
             format!(
                 "{rule}: \"{}\" - a slash-delimited path such as \"users/123/posts\" is not a single ID; \
@@ -114,9 +110,10 @@ pub(crate) fn validate_path_segment(segment: &str, field: &'static str) -> Fires
                 segment.escape_debug(),
             ),
         )),
-        PathSegmentViolation::DotOrDotDot => {
-            Err(path_segment_error(field, format!("{rule}, got \"{segment}\"")))
-        }
+        PathSegmentViolation::DotOrDotDot => Err(FirestoreError::invalid_parameters(
+            field,
+            format!("{rule}, got \"{segment}\""),
+        )),
     }
 }
 

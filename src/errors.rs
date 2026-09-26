@@ -46,6 +46,16 @@ pub enum FirestoreError {
     CacheError(FirestoreCacheError),
 }
 
+impl FirestoreError {
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) naming the
+    /// offending field and why it was rejected.
+    pub(crate) fn invalid_parameters(field: impl Into<String>, error: impl Into<String>) -> Self {
+        FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+            FirestoreInvalidParametersPublicDetails::new(field.into(), error.into()),
+        ))
+    }
+}
+
 impl Display for FirestoreError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match *self {
@@ -270,6 +280,20 @@ impl From<gcloud_sdk::error::Error> for FirestoreError {
             FirestoreErrorPublicGenericDetails::new(format!("{:?}", e.kind())),
             format!("GCloud system error: {e}"),
         ))
+    }
+}
+
+/// Converts a failed long-running admin operation's status. Its `code` is a `google.rpc.Code`
+/// value with the same numbering as [`gcloud_sdk::tonic::Code`], but the operation carries it as
+/// a bare `i32` rather than a `tonic::Status`. Rebuilding a `tonic::Status` from it and reusing
+/// `From<tonic::Status>` below keeps the code-name reporting and the retryable classification
+/// (`Unavailable`, `Aborted`, ...) in one place instead of a second copy that numbered the code
+/// and never marked anything retryable.
+#[cfg(feature = "admin")]
+impl From<gcloud_sdk::google::rpc::Status> for FirestoreError {
+    fn from(status: gcloud_sdk::google::rpc::Status) -> Self {
+        gcloud_sdk::tonic::Status::new(gcloud_sdk::tonic::Code::from(status.code), status.message)
+            .into()
     }
 }
 
@@ -567,12 +591,59 @@ impl From<gcloud_sdk::prost::EncodeError> for FirestoreError {
     }
 }
 
-#[cfg(feature = "caching-persistent")]
+#[cfg(any(feature = "caching-persistent", feature = "admin"))]
 impl From<gcloud_sdk::prost::DecodeError> for FirestoreError {
     fn from(err: gcloud_sdk::prost::DecodeError) -> Self {
         FirestoreError::SerializeError(FirestoreSerializationError::new(
             FirestoreErrorPublicGenericDetails::new("PrototBufDecodeError".into()),
             format!("Protobuf deserialization error: {err}"),
         ))
+    }
+}
+
+#[cfg(all(test, feature = "admin"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_status_maps_like_the_equivalent_tonic_status() {
+        let rpc_status = gcloud_sdk::google::rpc::Status {
+            code: gcloud_sdk::tonic::Code::FailedPrecondition as i32,
+            message: "precondition failed".to_string(),
+            details: vec![],
+        };
+        let from_rpc = FirestoreError::from(rpc_status);
+        let from_tonic = FirestoreError::from(gcloud_sdk::tonic::Status::new(
+            gcloud_sdk::tonic::Code::FailedPrecondition,
+            "precondition failed",
+        ));
+        match (from_rpc, from_tonic) {
+            (
+                FirestoreError::DatabaseError(from_rpc),
+                FirestoreError::DatabaseError(from_tonic),
+            ) => {
+                assert_eq!(from_rpc.public.code, from_tonic.public.code);
+                assert_eq!(from_rpc.public.code, "FailedPrecondition");
+                assert_eq!(from_rpc.retry_possible, from_tonic.retry_possible);
+                assert!(!from_rpc.retry_possible);
+            }
+            other => panic!("expected DatabaseError for both conversions, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rpc_status_marks_unavailable_as_retryable() {
+        let rpc_status = gcloud_sdk::google::rpc::Status {
+            code: gcloud_sdk::tonic::Code::Unavailable as i32,
+            message: "backend unavailable".to_string(),
+            details: vec![],
+        };
+        match FirestoreError::from(rpc_status) {
+            FirestoreError::DatabaseError(err) => {
+                assert_eq!(err.public.code, "Unavailable");
+                assert!(err.retry_possible);
+            }
+            other => panic!("expected DatabaseError, got {other:?}"),
+        }
     }
 }

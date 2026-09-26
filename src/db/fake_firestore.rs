@@ -1,8 +1,16 @@
 use crate::db::FirestoreEmulatorTokenSource;
 use crate::{FirestoreDb, FirestoreDbOptions};
+#[cfg(feature = "admin")]
+use gcloud_sdk::google::firestore::admin::v1::{
+    BulkDeleteDocumentsMetadata, Field as ProtoField, Index as ProtoIndex,
+};
 use gcloud_sdk::google::firestore::v1::{
     get_document_request, BeginTransactionResponse, CommitResponse, GetDocumentRequest,
 };
+#[cfg(feature = "admin")]
+use gcloud_sdk::google::longrunning::{operation, Operation};
+#[cfg(feature = "admin")]
+use gcloud_sdk::google::rpc::Status as RpcStatus;
 use gcloud_sdk::prost::Message as _;
 use gcloud_sdk::tonic::Code;
 use h2::server::SendResponse;
@@ -25,6 +33,10 @@ pub(super) enum FakeResponse {
     /// The server closes the whole connection without answering, simulating a response lost in
     /// transit: the client sees a transport error, not a `grpc-status` it can read off the wire.
     Drop,
+    /// The server never answers and keeps the stream open, simulating a call stuck in flight
+    /// until the client gives up on it.
+    #[cfg(feature = "admin")]
+    Hang,
 }
 
 impl FakeResponse {
@@ -72,6 +84,105 @@ pub(super) fn read_transaction_id(get_document_request: &[u8]) -> u8 {
         panic!("read must belong to a transaction");
     };
     id[0]
+}
+
+/// A `ListIndexes`/`ListFields` response, or a `CreateIndex`/`UpdateField` operation, or a
+/// `DeleteIndex`/`Empty` acknowledgement - the admin and long-running operations RPCs an index
+/// sync test drives, alongside the data RPC fixtures above.
+#[cfg(feature = "admin")]
+pub(super) fn list_indexes_response(indexes: Vec<ProtoIndex>) -> FakeResponse {
+    FakeResponse::Message(
+        gcloud_sdk::google::firestore::admin::v1::ListIndexesResponse {
+            indexes,
+            next_page_token: String::new(),
+        }
+        .encode_to_vec(),
+    )
+}
+
+#[cfg(feature = "admin")]
+pub(super) fn list_fields_response(fields: Vec<ProtoField>) -> FakeResponse {
+    FakeResponse::Message(
+        gcloud_sdk::google::firestore::admin::v1::ListFieldsResponse {
+            fields,
+            next_page_token: String::new(),
+        }
+        .encode_to_vec(),
+    )
+}
+
+/// A long-running operation still in progress.
+#[cfg(feature = "admin")]
+pub(super) fn pending_operation_response(name: &str) -> FakeResponse {
+    FakeResponse::Message(
+        Operation {
+            name: name.to_string(),
+            metadata: None,
+            done: false,
+            result: None,
+        }
+        .encode_to_vec(),
+    )
+}
+
+/// A long-running operation that completed successfully.
+#[cfg(feature = "admin")]
+pub(super) fn done_operation_response(name: &str) -> FakeResponse {
+    FakeResponse::Message(
+        Operation {
+            name: name.to_string(),
+            metadata: None,
+            done: true,
+            result: Some(operation::Result::Response(
+                gcloud_sdk::prost_types::Any::default(),
+            )),
+        }
+        .encode_to_vec(),
+    )
+}
+
+/// A `BulkDeleteDocuments` long-running operation carrying `metadata`, pending or done - the
+/// fixture a bulk-delete wait test needs that [`pending_operation_response`]/
+/// [`done_operation_response`] cannot provide, since those never attach metadata.
+#[cfg(feature = "admin")]
+pub(super) fn bulk_delete_operation_response(
+    name: &str,
+    done: bool,
+    metadata: BulkDeleteDocumentsMetadata,
+) -> FakeResponse {
+    FakeResponse::Message(
+        Operation {
+            name: name.to_string(),
+            metadata: Some(gcloud_sdk::prost_types::Any {
+                type_url:
+                    "type.googleapis.com/google.firestore.admin.v1.BulkDeleteDocumentsMetadata"
+                        .to_string(),
+                value: metadata.encode_to_vec(),
+            }),
+            done,
+            result: done
+                .then(|| operation::Result::Response(gcloud_sdk::prost_types::Any::default())),
+        }
+        .encode_to_vec(),
+    )
+}
+
+/// A long-running operation that completed with an error.
+#[cfg(feature = "admin")]
+pub(super) fn failed_operation_response(name: &str, code: i32, message: &str) -> FakeResponse {
+    FakeResponse::Message(
+        Operation {
+            name: name.to_string(),
+            metadata: None,
+            done: true,
+            result: Some(operation::Result::Error(RpcStatus {
+                code,
+                message: message.to_string(),
+                details: vec![],
+            })),
+        }
+        .encode_to_vec(),
+    )
 }
 
 type Handler = dyn Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync;
@@ -221,6 +332,8 @@ async fn answer(
             let headers = ok_headers().header("grpc-status", (code as i32).to_string());
             let _ = respond.send_response(headers.body(()).unwrap(), true);
         }
+        #[cfg(feature = "admin")]
+        FakeResponse::Hang => std::future::pending::<()>().await,
         FakeResponse::Drop => {
             close.notify_one();
             // Dropping `respond` while the connection is still up would reset just this stream,

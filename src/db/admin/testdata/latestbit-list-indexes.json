@@ -1,0 +1,175 @@
+{
+  "indexes": [
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/integration-test-query/indexes/CICAgNiav4AK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "some_string",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "some_num",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/versions/indexes/CICAgOjXh4EK",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "articleId.regionCode",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test/indexes/CICAgJjF9oIK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "one_more_string",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "some_string",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "some_num",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test-query-vec/indexes/CICAgLiIkYMK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "some_vec",
+          "vectorConfig": {
+            "dimension": 3,
+            "flat": {}
+          }
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/versions/indexes/CICAgJiUpoMK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test-camel-case/indexes/CICAgJiH2JAK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "one_more_string",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "someString",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "someNum",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test/indexes/CICAgJiUsZIK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "some_num",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/firestore-rs-index-sync-test/indexes/CICAgJiHlpgK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "a",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "tags",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    }
+  ]
+}
