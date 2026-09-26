@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Caching - Firestore for Rust</title>
+        <title>Bulk delete - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -177,30 +177,119 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="caching"><a class="header" href="#caching">Caching</a></h1>
-<p>The library supports caching for collections and documents. A Firestore listener keeps the cache
-up to date when documents change, so updates are propagated across distributed instances
-automatically.</p>
-<p>This avoids reading, and paying for, the same documents repeatedly. It is particularly useful for
-dictionaries, configuration and other data that changes rarely, and can reduce both cost and
-latency noticeably.</p>
-<p>Caching is opt-in through cargo features:</p>
+                        <h1 id="bulk-delete"><a class="header" href="#bulk-delete">Bulk delete</a></h1>
+<p>Firestore’s <code>BulkDeleteDocuments</code> operation removes every document in one or more collection
+groups in the background, without you reading or writing each document yourself. The library
+exposes it through <code>db.fluent().delete().bulk()</code>, behind the same <code>admin</code> feature <a href="./index-management.html">index
+management</a> uses; see <a href="./index-management.html#enabling-the-admin-feature">Enabling the <code>admin</code>
+feature</a> for turning it on. Google’s own
+documentation for the underlying operation is at
+<a href="https://cloud.google.com/firestore/docs/manage-data/bulk-delete">https://cloud.google.com/firestore/docs/manage-data/bulk-delete</a>.</p>
+<h2 id="why-the-builder-takes-collection-groups"><a class="header" href="#why-the-builder-takes-collection-groups">Why the builder takes collection groups</a></h2>
+<p><code>.bulk()</code> takes <code>.collection_groups(...)</code>, and there is no <code>.parent()</code>: Google’s
+<code>BulkDeleteDocuments</code> deletes every document in every collection with the given ID, at any depth,
+across the whole database, and Firestore offers no parent-scoped bulk delete. Naming a collection
+group called <code>orders</code> deletes every <code>orders</code> collection under every document in the database,
+including ones your code never queries.</p>
+<h2 id="what-survives-a-bulk-delete"><a class="header" href="#what-survives-a-bulk-delete">What survives a bulk delete</a></h2>
 <ul>
-<li><code>caching-memory</code> for an in-memory cache, implemented with the
-<a href="https://github.com/moka-rs/moka">moka cache library</a>;</li>
-<li><code>caching-persistent</code> for a persistent, disk backed cache, implemented with
-<a href="https://github.com/cberner/redb">redb</a> and protobuf.</li>
+<li>documents written after the operation starts processing;</li>
+<li>any collection whose ID does not match a named group, even nested under a deleted one.</li>
 </ul>
+<h2 id="background-and-non-transactional"><a class="header" href="#background-and-non-transactional">Background and non-transactional</a></h2>
+<p>Firestore picks the documents to delete as of one snapshot time, which the result reports as
+<code>snapshot_time</code>. The deletes themselves are not one transaction, so other writes can interleave
+with them while the operation runs. <code>execute()</code> returns once the
+operation is requested unless you ask it to wait; either way the deletion itself continues on
+Firestore’s side, independent of your process.</p>
+<h2 id="declaring-a-bulk-delete"><a class="header" href="#declaring-a-bulk-delete">Declaring a bulk delete</a></h2>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let result = db
+    .fluent()
+    .delete()
+    .bulk()
+    .collection_groups(["orders"])
+    .execute()
+    .await?;
+println!("{result}");
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p><code>.collection_groups(...)</code> replaces whatever an earlier call in the same chain set, so call it
+once with every group you want removed.</p>
+<h2 id="the-empty-list-and-duplicate-group-rules"><a class="header" href="#the-empty-list-and-duplicate-group-rules">The empty-list and duplicate-group rules</a></h2>
+<p>An empty list is rejected before anything is sent: Firestore reads an empty <code>collection_ids</code> as
+“the whole database”, and the library refuses to send that on your behalf. Naming the same group
+twice is rejected too. Both checks run at <code>.execute()</code>, alongside <code>FirestoreCollectionId</code>’s own
+validation of each name, and return <code>InvalidParametersError</code> naming what is wrong, without making
+a request.</p>
+<h2 id="waiting-for-the-operation-and-reading-the-result"><a class="header" href="#waiting-for-the-operation-and-reading-the-result">Waiting for the operation and reading the result</a></h2>
+<p>By default <code>execute()</code> returns as soon as Firestore accepts the operation. Add
+<code>.wait_until_done(timeout)</code> to poll until it reaches a terminal state instead, or
+<code>.wait_until_done_with_options(...)</code> for control over the poll interval too:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::Duration;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let result = db
+    .fluent()
+    .delete()
+    .bulk()
+    .collection_groups(["orders"])
+    .wait_until_done(Duration::from_secs(300))
+    .execute()
+    .await?;
+println!("{result}");
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>The returned <code>FirestoreBulkDeleteResult</code> carries the operation name, the collection groups you
+asked for, and the elapsed time, plus, once you wait for it, the snapshot time Firestore used to
+decide what to delete and document and byte progress; without <code>.wait_until_done(...)</code>, the
+snapshot time and progress stay unset and print as “progress not reported”, never as <code>0/0</code>. It
+implements <code>Display</code>, so printing or logging it directly works with or without a tracing
+subscriber.</p>
+<p>The timeout works the same way as for index management’s <code>.wait_until_ready(...)</code>: the last poll
+goes out at the deadline and may take up to 10 seconds to answer, or the whole timeout if that is
+shorter.</p>
+<p>A failed wait leaves the operation running on Firestore’s side; the library logs the result built
+from what was polled so far at <code>warn</code> before returning the error, the same as index management’s
+<code>.sync()</code> does for its own wait.</p>
+<h2 id="logs-and-spans"><a class="header" href="#logs-and-spans">Logs and spans</a></h2>
+<p>A bulk delete logs through <code>tracing</code>, one span covering the whole call (<code>Firestore Bulk Delete</code>),
+nesting a <code>Firestore Bulk Delete Wait</code> child span when you wait. An excerpt from a real run
+against five documents:</p>
+<pre><code class="language-text">Started a bulk delete. operation=".../operations/CyA0..." action="bulk_delete" collection_groups="firestore-rs-bulk-delete-test"
+Firestore reported the bulk delete's snapshot time. snapshot_time=2026-09-26T19:50:00Z
+Operation reached a terminal state. action="bulk_delete" polls=3
+</code></pre>
+<p>The third line comes from the same wait every long-running admin operation polls through, index
+sync included, which is why it names the operation generically rather than as a bulk delete.</p>
+<p>That run took about 11 seconds end to end, for 5 documents; budget for it running longer against
+more data.</p>
+<h2 id="the-firestore-emulator"><a class="header" href="#the-firestore-emulator">The Firestore emulator</a></h2>
+<p>The emulator answers <code>BulkDeleteDocuments</code> with <code>UNIMPLEMENTED</code>. Unlike index management, which
+skips silently against the emulator, a bulk delete returns an explicit error instead: there is no
+safe default result to report for an operation the emulator cannot run at all, so the library
+never lets it pass silently.</p>
+<h2 id="iam-roles"><a class="header" href="#iam-roles">IAM roles</a></h2>
+<p><code>roles/datastore.bulkAdmin</code> carries <code>datastore.databases.bulkDelete</code>, the permission a bulk delete
+needs. <code>roles/datastore.owner</code> is a superset and also works.</p>
+<h2 id="running-the-tests-against-a-real-project"><a class="header" href="#running-the-tests-against-a-real-project">Running the tests against a real project</a></h2>
+<p><code>tests/admin-bulk-delete-tests.rs</code> writes and bulk-deletes real documents in <code>GCP_PROJECT</code>, so it
+carries <code>#[ignore]</code> and only runs explicitly:</p>
+<pre><code class="language-bash">GCP_PROJECT=your-project cargo test --test admin-bulk-delete-tests --features admin -- --ignored --nocapture
+</code></pre>
+<p>Full example available
+<a href="https://github.com/abdolence/firestore-rs/blob/master/examples/bulk-delete.rs">here</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="document-collection-ids.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="index-management.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="caching/usage.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="auth.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -210,11 +299,11 @@ latency noticeably.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="document-collection-ids.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="index-management.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="caching/usage.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="auth.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
