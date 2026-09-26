@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-4e8cffbb.js";
+            window.path_to_searchindex_js = "searchindex-6d9d7ae7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-2ba3f931.js"></script>
@@ -220,6 +220,10 @@ let as_vec: Vec&lt;MyTestStructure&gt; = object_stream.try_collect().await?;
 println!("{:?}", as_vec);
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<h2 id="filtering"><a class="header" href="#filtering">Filtering</a></h2>
+<p><code>.filter()</code> takes a closure that receives a filter builder and returns an
+<code>Option&lt;FirestoreQueryFilter&gt;</code>. Conditions can be optional, since a <code>None</code> entry in the list is
+dropped, as <code>one_more_string</code> in the example above.</p>
 <p>Use:</p>
 <ul>
 <li><code>q.for_all</code> for AND conditions</li>
