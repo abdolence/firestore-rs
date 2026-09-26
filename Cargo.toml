@@ -92,6 +92,11 @@ name = "index-whitelist"
 path = "examples/index-whitelist.rs"
 required-features = ["admin"]
 
+[[example]]
+name = "bulk-delete"
+path = "examples/bulk-delete.rs"
+required-features = ["admin"]
+
 [[test]]
 name = "caching_memory_test"
 path = "tests/caching_memory_test.rs"
