@@ -383,17 +383,15 @@ impl TryFrom<ProtoField> for FirestoreListedField {
     }
 }
 
-/// The direction Firestore assigns `__name__` when the index does not specify one: the last
-/// directional field's direction, or ascending when there is none.
+/// The direction Firestore assigns `__name__` when the index does not specify one: the direction
+/// of the last declared field when it is directional (`Order`), or ascending otherwise. This is
+/// the direction of the *last* field, not the last *directional* one - `[a DESC, tags CONTAINS]`
+/// implies ascending, not descending, because `tags` (not `a`) is last.
 fn implied_name_direction(fields: &[FirestoreIndexField]) -> FirestoreQueryDirection {
-    fields
-        .iter()
-        .rev()
-        .find_map(|field| match &field.mode {
-            FirestoreIndexFieldMode::Order(direction) => Some(direction.clone()),
-            _ => None,
-        })
-        .unwrap_or(FirestoreQueryDirection::Ascending)
+    match fields.last().map(|field| &field.mode) {
+        Some(FirestoreIndexFieldMode::Order(direction)) => direction.clone(),
+        _ => FirestoreQueryDirection::Ascending,
+    }
 }
 
 impl FirestoreCompositeIndex {
@@ -717,21 +715,51 @@ mod tests {
     }
 
     #[test]
-    fn implied_name_direction_defaults_to_ascending_with_no_directional_field() {
-        // A single-field-mode-only index (e.g. all array-contains) implies an ascending
-        // `__name__`, the other direction this normalisation must handle.
-        let declared = FirestoreCompositeIndex::new(vec![
+    fn implied_name_direction_is_ascending_when_the_last_field_is_not_directional() {
+        // "a" is descending, but the *last* field ("tags", ArrayContains) is not directional,
+        // so Firestore implies `__name__` ascending. Picking the last *directional* field's
+        // direction instead - the bug this pins - would wrongly read this as descending.
+        let fields = vec![
+            desc_field("a"),
             FirestoreIndexField::new("tags".to_string(), FirestoreIndexFieldMode::ArrayContains),
-            asc_field("age"),
+        ];
+        assert_eq!(
+            implied_name_direction(&fields),
+            FirestoreQueryDirection::Ascending
+        );
+    }
+
+    #[test]
+    fn implied_name_direction_is_ascending_with_no_directional_field_at_all() {
+        let fields = vec![FirestoreIndexField::new(
+            "tags".to_string(),
+            FirestoreIndexFieldMode::ArrayContains,
+        )];
+        assert_eq!(
+            implied_name_direction(&fields),
+            FirestoreQueryDirection::Ascending
+        );
+    }
+
+    #[test]
+    fn declared_index_ending_non_directional_matches_listed_ascending_implied_name() {
+        // Regression: an earlier version implied `__name__`'s direction from the last
+        // *directional* field ("a", descending) instead of the actual last field ("tags", not
+        // directional), so it expected a descending `__name__` here. That mismatch would plan a
+        // duplicate `create_indexes` entry and leave the live listed index in
+        // `undeclared_indexes` - exactly what `prune_undeclared()` deletes.
+        let declared = FirestoreCompositeIndex::new(vec![
+            desc_field("a"),
+            FirestoreIndexField::new("tags".to_string(), FirestoreIndexFieldMode::ArrayContains),
         ]);
         let params = users_params().with_composite_indexes(vec![declared.clone()]);
         let listed = listed_index(
             vec![
+                order_field("a", ProtoOrder::Descending),
                 proto_field(
                     "tags",
                     ValueMode::ArrayConfig(ProtoArrayConfig::Contains as i32),
                 ),
-                order_field("age", ProtoOrder::Ascending),
                 order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
             ],
             ProtoQueryScope::Collection,
@@ -743,6 +771,48 @@ mod tests {
         };
         let plan = plan_index_changes(&params, &existing);
         assert_eq!(plan.unchanged, vec![declared]);
+        assert!(plan.create_indexes.is_empty());
+        assert!(
+            plan.undeclared_indexes.is_empty(),
+            "the live listed index must not be left eligible for prune"
+        );
+    }
+
+    #[test]
+    fn declared_index_ending_in_vector_matches_listed_ascending_implied_name() {
+        let declared = FirestoreCompositeIndex::new(vec![
+            desc_field("a"),
+            FirestoreIndexField::new(
+                "v".to_string(),
+                FirestoreIndexFieldMode::Vector { dimension: 8 },
+            ),
+        ]);
+        let params = users_params().with_composite_indexes(vec![declared.clone()]);
+        let listed = listed_index(
+            vec![
+                order_field("a", ProtoOrder::Descending),
+                proto_field(
+                    "v",
+                    ValueMode::VectorConfig(ProtoVectorConfig {
+                        dimension: 8,
+                        r#type: Some(vector_config::Type::Flat(vector_config::FlatIndex {})),
+                    }),
+                ),
+                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Ascending),
+            ],
+            ProtoQueryScope::Collection,
+            ProtoState::Ready,
+        );
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![listed],
+            fields: vec![],
+        };
+        let plan = plan_index_changes(&params, &existing);
+        assert_eq!(plan.unchanged, vec![declared]);
+        assert!(
+            plan.undeclared_indexes.is_empty(),
+            "the live listed index must not be left eligible for prune"
+        );
     }
 
     #[test]
