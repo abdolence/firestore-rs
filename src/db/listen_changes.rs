@@ -113,22 +113,18 @@ impl FirestoreListenerTarget {
     /// message carries it as a signed 32-bit integer, so a larger value cannot be sent.
     pub fn validate(&self) -> FirestoreResult<()> {
         if *self.value() == 0 {
-            Err(FirestoreError::InvalidParametersError(
-                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                    "target_id".to_string(),
-                    "Listener target ID cannot be zero".to_string(),
-                )),
+            Err(FirestoreError::invalid_parameters(
+                "target_id",
+                "Listener target ID cannot be zero",
             ))
         } else if *self.value() > i32::MAX as u32 {
-            Err(FirestoreError::InvalidParametersError(
-                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                    "target_id".to_string(),
-                    format!(
-                        "Listener target ID cannot be more than: {}. {} is specified",
-                        i32::MAX,
-                        self.value()
-                    ),
-                )),
+            Err(FirestoreError::invalid_parameters(
+                "target_id",
+                format!(
+                    "Listener target ID cannot be more than: {}. {} is specified",
+                    i32::MAX,
+                    self.value()
+                ),
             ))
         } else {
             Ok(())
@@ -142,12 +138,10 @@ impl TryInto<i32> for FirestoreListenerTarget {
     fn try_into(self) -> FirestoreResult<i32> {
         self.validate()?;
         (*self.value()).try_into().map_err(|e| {
-            FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
-                FirestoreInvalidParametersPublicDetails::new(
-                    "target_id".to_string(),
-                    format!("Invalid target ID: {} {}", self.value(), e),
-                ),
-            ))
+            FirestoreError::invalid_parameters(
+                "target_id",
+                format!("Invalid target ID: {} {}", self.value(), e),
+            )
         })
     }
 }
@@ -159,12 +153,10 @@ impl TryFrom<i32> for FirestoreListenerTarget {
         value
             .try_into()
             .map_err(|e| {
-                FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
-                    FirestoreInvalidParametersPublicDetails::new(
-                        "target_id".to_string(),
-                        format!("Invalid target ID: {value} {e}"),
-                    ),
-                ))
+                FirestoreError::invalid_parameters(
+                    "target_id",
+                    format!("Invalid target ID: {value} {e}"),
+                )
             })
             .map(FirestoreListenerTarget)
     }
@@ -401,11 +393,9 @@ where
         target_params.validate()?;
 
         if self.shutdown_flag.load(Ordering::Relaxed) {
-            return Err(FirestoreError::InvalidParametersError(
-                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                    "target".to_string(),
-                    "Cannot add a target to a listener that has been shut down".to_string(),
-                )),
+            return Err(FirestoreError::invalid_parameters(
+                "target",
+                "Cannot add a target to a listener that has been shut down",
             ));
         }
 
@@ -415,15 +405,11 @@ where
                 .write()
                 .expect("listener targets lock poisoned");
             if targets.contains_key(&target_params.target) {
-                return Err(FirestoreError::InvalidParametersError(
-                    FirestoreInvalidParametersError::new(
-                        FirestoreInvalidParametersPublicDetails::new(
-                            "target".to_string(),
-                            format!(
-                                "Listener target {} is already registered on this listener",
-                                target_params.target.value()
-                            ),
-                        ),
+                return Err(FirestoreError::invalid_parameters(
+                    "target",
+                    format!(
+                        "Listener target {} is already registered on this listener",
+                        target_params.target.value()
                     ),
                 ));
             }
@@ -553,11 +539,9 @@ where
         }
 
         let Some(mut control_reader) = self.control_reader.take() else {
-            return Err(FirestoreError::InvalidParametersError(
-                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                    "listener".to_string(),
-                    "This Firestore listener has already been started".to_string(),
-                )),
+            return Err(FirestoreError::invalid_parameters(
+                "listener",
+                "This Firestore listener has already been started",
             ));
         };
 

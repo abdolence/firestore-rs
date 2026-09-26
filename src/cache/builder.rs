@@ -4,7 +4,6 @@
 //! [`FirestoreCache::new`] constructor it assigns Firestore listener target IDs automatically,
 //! picks a listener state storage that matches the backend, and loads the cache for you.
 
-use crate::errors::{FirestoreInvalidParametersError, FirestoreInvalidParametersPublicDetails};
 use crate::*;
 use std::collections::HashSet;
 
@@ -570,15 +569,11 @@ fn build_configuration(
     for collection in collections {
         if let Some(target) = collection.listener_target {
             if !used_targets.insert(target) {
-                return Err(FirestoreError::InvalidParametersError(
-                    FirestoreInvalidParametersError::new(
-                        FirestoreInvalidParametersPublicDetails::new(
-                            "listener_target".into(),
-                            format!(
-                                "Listener target {target} was requested by more than one cached \
-                                 collection. Target IDs must be unique."
-                            ),
-                        ),
+                return Err(FirestoreError::invalid_parameters(
+                    "listener_target",
+                    format!(
+                        "Listener target {target} was requested by more than one cached \
+                         collection. Target IDs must be unique."
                     ),
                 ));
             }
@@ -596,15 +591,9 @@ fn build_configuration(
             None => {
                 while used_targets.contains(&next_target) {
                     next_target = next_target.checked_add(1).ok_or_else(|| {
-                        FirestoreError::InvalidParametersError(
-                            FirestoreInvalidParametersError::new(
-                                FirestoreInvalidParametersPublicDetails::new(
-                                    "listener_target_base".into(),
-                                    "Ran out of listener target IDs while assigning them \
-                                     automatically."
-                                        .into(),
-                                ),
-                            ),
+                        FirestoreError::invalid_parameters(
+                            "listener_target_base",
+                            "Ran out of listener target IDs while assigning them automatically.",
                         )
                     })?;
                 }
@@ -630,14 +619,12 @@ fn build_configuration(
 
         let collection_path = collection_config.resolve_collection_path(documents_path);
         if !seen_paths.insert(collection_path.clone()) {
-            return Err(FirestoreError::InvalidParametersError(
-                FirestoreInvalidParametersError::new(FirestoreInvalidParametersPublicDetails::new(
-                    "collection_name".into(),
-                    format!(
-                        "The collection `{collection_path}` was configured more than once for \
-                         this cache."
-                    ),
-                )),
+            return Err(FirestoreError::invalid_parameters(
+                "collection_name",
+                format!(
+                    "The collection `{collection_path}` was configured more than once for \
+                     this cache."
+                ),
             ));
         }
 

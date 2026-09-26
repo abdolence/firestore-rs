@@ -35,6 +35,8 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 - Caching support for collections and documents:
     - In-memory cache;
     - Persistent cache;
+- Declarative index management behind an opt-in `admin` feature: composite indexes, vector
+  indexes, single-field overrides and TTL policy, planned and synced with one call;
 - Works with the Firestore emulator through `FIRESTORE_EMULATOR_HOST`, no credentials needed;
 - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
   that automatically detects GCE environment or application default accounts for local development;

@@ -46,6 +46,16 @@ pub enum FirestoreError {
     CacheError(FirestoreCacheError),
 }
 
+impl FirestoreError {
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) naming the
+    /// offending field and why it was rejected.
+    pub(crate) fn invalid_parameters(field: impl Into<String>, error: impl Into<String>) -> Self {
+        FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+            FirestoreInvalidParametersPublicDetails::new(field.into(), error.into()),
+        ))
+    }
+}
+
 impl Display for FirestoreError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match *self {
@@ -269,6 +279,21 @@ impl From<gcloud_sdk::error::Error> for FirestoreError {
         FirestoreError::SystemError(FirestoreSystemError::new(
             FirestoreErrorPublicGenericDetails::new(format!("{:?}", e.kind())),
             format!("GCloud system error: {e}"),
+        ))
+    }
+}
+
+/// Converts a failed long-running admin operation's status. Its `code` is a `google.rpc.Code`
+/// value with the same numbering as [`gcloud_sdk::tonic::Code`], but the operation carries it as
+/// a bare `i32` rather than a `tonic::Status`, so it needs its own conversion rather than reusing
+/// `From<tonic::Status>` above.
+#[cfg(feature = "admin")]
+impl From<gcloud_sdk::google::rpc::Status> for FirestoreError {
+    fn from(status: gcloud_sdk::google::rpc::Status) -> Self {
+        FirestoreError::DatabaseError(FirestoreDatabaseError::new(
+            FirestoreErrorPublicGenericDetails::new(status.code.to_string()),
+            status.message,
+            false,
         ))
     }
 }

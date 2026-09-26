@@ -462,3 +462,27 @@ pub trait FirestoreListenSupport {
         targets: Vec<FirestoreListenerTargetParams>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>>;
 }
+
+/// Plans or applies one collection group's declared indexes, field overrides and TTL policy.
+///
+/// Mirrors [`FirestoreQuerySupport::query_doc`]. Today the fluent `.plan()` and `.sync()`
+/// terminals on [`FirestoreIndexesBuilder`](crate::index_builder::FirestoreIndexesBuilder) are
+/// the only callers, and they validate `params` before calling in - but an implementation must
+/// not rely on that: the planning step behind `plan_indexes`/`sync_indexes` validates `params`
+/// again on its own, so a declaration is checked regardless of caller.
+#[cfg(feature = "admin")]
+#[async_trait]
+pub trait FirestoreIndexSupport {
+    /// Reports what [`sync_indexes`](Self::sync_indexes) would change, without writing anything.
+    async fn plan_indexes(
+        &self,
+        params: FirestoreIndexParams,
+    ) -> FirestoreResult<FirestoreIndexPlan>;
+
+    /// Reconciles Firestore with `params`, according to `options`.
+    async fn sync_indexes(
+        &self,
+        params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
+    ) -> FirestoreResult<FirestoreIndexSyncReport>;
+}

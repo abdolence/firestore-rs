@@ -15,7 +15,7 @@ documentation = "https://docs.rs/firestore"
 keywords = ["firestore", "google", "client"]
 categories = ["api-bindings"]
 readme = "README.md"
-include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE", "docs/src/**/*.md"]
+include = ["Cargo.toml", "src/**/*.rs", "src/**/*.json", "README.md", "LICENSE", "docs/src/**/*.md"]
 
 [badges]
 maintenance = { status = "actively-developed" }
@@ -35,10 +35,11 @@ caching-memory = ["caching", "dep:moka"]
 caching-persistent = ["caching", "dep:redb"]
 tls-roots = ["gcloud-sdk/tls-roots"]
 tls-webpki-roots = ["gcloud-sdk/tls-webpki-roots"]
+admin = ["gcloud-sdk/google-firestore-admin-v1"]
 
 [dependencies]
 tracing = "0.1"
-gcloud-sdk = { version = "0.32", default-features = false, features = ["google-firestore-v1"] }
+gcloud-sdk = { version = "0.32.1", default-features = false, features = ["google-firestore-v1"] }
 hyper = { version = "1" }
 struct-path = "0.2"
 rvstruct = "0.3.2"
@@ -64,6 +65,7 @@ tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 approx = "0.5"
 rustls = "0.23"
+serde_json = "1"
 
 [[example]]
 name = "caching_memory_collections"
@@ -79,6 +81,16 @@ required-features = ["caching-memory"]
 name = "caching_persistent_collections"
 path = "examples/caching_persistent_collections.rs"
 required-features = ["caching-persistent"]
+
+[[example]]
+name = "index-management"
+path = "examples/index-management.rs"
+required-features = ["admin"]
+
+[[example]]
+name = "index-whitelist"
+path = "examples/index-whitelist.rs"
+required-features = ["admin"]
 
 [[test]]
 name = "caching_memory_test"
@@ -104,3 +116,8 @@ required-features = ["caching-memory"]
 name = "caching_watched_documents_test"
 path = "tests/caching_watched_documents_test.rs"
 required-features = ["caching-memory", "caching-persistent"]
+
+[[test]]
+name = "admin-indexes-tests"
+path = "tests/admin-indexes-tests.rs"
+required-features = ["admin"]
