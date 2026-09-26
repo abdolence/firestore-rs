@@ -4,7 +4,6 @@
 // https://github.com/abdolence/firestore-rs/issues/206.
 pub use crate::db::transaction_ops::FirestoreTransactionOps;
 
-use crate::db::retry::retry_delay;
 use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;
 use crate::{
@@ -185,18 +184,9 @@ impl<'a> FirestoreTransaction<'a> {
     /// them. A transaction with no queued writes still commits successfully - useful for a
     /// read-only transaction that only needed a consistent snapshot.
     ///
-    /// A `Commit` failing with `UNAVAILABLE` or `RESOURCE_EXHAUSTED` is sent again, for the same
-    /// transaction and with the same writes, up to
-    /// [`FirestoreDbOptions::max_retries`](crate::FirestoreDbOptions::max_retries) times with the
-    /// same randomised backoff that reads use.
-    ///
-    /// Returns an error if the `Commit` request fails. Only an `ABORTED` answer to the first
-    /// `Commit` sets `retry_possible`, meaning the whole transaction may run again. Every other
-    /// failure, including exhausted resends and a dropped connection, leaves the outcome unknown:
-    /// the writes may already be applied. That includes an `ABORTED` answer to a resent `Commit`,
-    /// because Firestore answers a `Commit` for a transaction that has already committed with
-    /// `ABORTED` ("The referenced transaction has expired or is no longer valid"), and an earlier
-    /// attempt may have committed before its response was lost.
+    /// Returns an error if the `Commit` request fails. Only `ABORTED` sets `retry_possible`,
+    /// meaning the whole transaction may run again. Any other failure, a dropped connection
+    /// included, leaves the outcome unknown: the writes may already be applied.
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
 
@@ -206,59 +196,34 @@ impl<'a> FirestoreTransaction<'a> {
             });
         }
 
-        let request = CommitRequest {
+        let request = gcloud_sdk::tonic::Request::new(CommitRequest {
             database: self.db.get_database_path().clone(),
             writes: std::mem::take(&mut self.data.writes),
             transaction: self.data.transaction_id.clone(),
             request_options: self
                 .db
                 .resolve_request_options(self.request_options.as_ref()),
-        };
-        let max_retries = self.db.get_options().max_retries;
-        let mut retries = 0;
+        });
 
-        let response = loop {
-            match self
-                .db
-                .client()
-                .get()
-                .commit(gcloud_sdk::tonic::Request::new(request.clone()))
-                .await
-            {
-                Ok(response) => break response.into_inner(),
-                Err(status)
-                    if retries < max_retries
-                        && matches!(status.code(), Code::Unavailable | Code::ResourceExhausted) =>
-                {
-                    let delay = retry_delay(retries);
-                    self.data.transaction_span.in_scope(|| {
-                        warn!(
-                            %status,
-                            current_retry = retries + 1,
-                            max_retries,
-                            delay = delay.as_millis(),
-                            "Failed to commit transaction. Retrying up to the specified number of times.",
-                        );
-                    });
-                    tokio::time::sleep(delay).await;
-                    retries += 1;
+        let response = self
+            .db
+            .client()
+            .get()
+            .commit(request)
+            .await
+            .map_err(|status| {
+                let retry_possible = status.code() == Code::Aborted;
+                match FirestoreError::from(status) {
+                    FirestoreError::DatabaseError(error) => {
+                        FirestoreError::DatabaseError(FirestoreDatabaseError {
+                            retry_possible,
+                            ..error
+                        })
+                    }
+                    other => other,
                 }
-                Err(status) => {
-                    // Firestore answers a Commit for an already committed transaction with
-                    // ABORTED, so only an ABORTED first attempt proves nothing was written.
-                    let retry_possible = retries == 0 && status.code() == Code::Aborted;
-                    return Err(match FirestoreError::from(status) {
-                        FirestoreError::DatabaseError(error) => {
-                            FirestoreError::DatabaseError(FirestoreDatabaseError {
-                                retry_possible,
-                                ..error
-                            })
-                        }
-                        other => other,
-                    });
-                }
-            }
-        };
+            })?
+            .into_inner();
 
         let result = FirestoreTransactionResponse::new(
             response
@@ -435,7 +400,7 @@ impl FirestoreDb {
     /// not an insert - is how a transaction creates one.
     ///
     /// On a transient failure - `func` returning [`BackoffError::Transient`], or an `ABORTED`
-    /// answer to the first `Commit` attempt (see [`FirestoreTransaction::commit`]) - the whole
+    /// answer to `Commit` (see [`FirestoreTransaction::commit`]) - the whole
     /// transaction is retried from the start with exponential backoff, up to
     /// `options.max_elapsed_time`. Any other commit error is returned without running `func` again.
     /// `func` must therefore be safe to run more than once for the same call: read the state it

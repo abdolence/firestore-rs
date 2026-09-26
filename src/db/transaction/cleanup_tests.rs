@@ -155,12 +155,6 @@ async fn failed_commit_in_the_retry_loop_opens_no_extra_transaction() {
     );
     assert_eq!(
         server.calls(),
-        vec![
-            "Begin→1",
-            "Rollback(1)",
-            "Begin→2",
-            "Commit(2)",
-            "Commit(2)"
-        ]
+        vec!["Begin→1", "Rollback(1)", "Begin→2", "Commit(2)"]
     );
 }
