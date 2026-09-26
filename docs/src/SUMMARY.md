@@ -42,6 +42,7 @@
 # Administration
 
 - [Index management](./index-management.md)
+- [Bulk delete](./bulk-delete.md)
 
 # Environment and operations
 
