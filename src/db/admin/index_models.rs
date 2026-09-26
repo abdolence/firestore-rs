@@ -396,6 +396,11 @@ pub struct FirestoreIndexPlan {
     /// Listed indexes or fields this crate's domain model cannot represent; never planned for
     /// deletion or revert, even when pruning.
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
+    /// Why this plan did nothing without contacting Firestore; `None` when it ran. Mirrors
+    /// [`FirestoreIndexSyncReport::skipped`], so a plan made against the emulator carries the
+    /// same explicit marker a sync against it reports, rather than the plain default a caller
+    /// could otherwise mistake for "nothing to do".
+    pub skipped: Option<FirestoreIndexSyncSkipReason>,
 }
 
 /// The result of `.sync()`: what it changed, what it left alone, and what it found undeclared.
@@ -879,13 +884,17 @@ impl Display for FirestoreIndexPlan {
             || !self.unrecognised.is_empty();
 
         if !anything_to_report {
-            return writeln!(
+            writeln!(
                 f,
                 "Firestore index plan: no changes ({} unchanged, {} pending, {} ttl unchanged)",
                 self.unchanged.len(),
                 self.pending.len(),
                 self.unchanged_ttl.len()
-            );
+            )?;
+            if let Some(reason) = &self.skipped {
+                writeln!(f, "  skipped: {reason}")?;
+            }
+            return Ok(());
         }
 
         writeln!(f, "Firestore index plan:")?;
@@ -927,6 +936,9 @@ impl Display for FirestoreIndexPlan {
                 self.pending.len(),
                 self.unchanged_ttl.len()
             )?;
+        }
+        if let Some(reason) = &self.skipped {
+            writeln!(f, "  skipped: {reason}")?;
         }
         Ok(())
     }

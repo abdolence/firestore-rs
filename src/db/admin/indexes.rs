@@ -916,7 +916,10 @@ impl FirestoreIndexSupport for FirestoreDb {
                 collection_group = params.collection_group.as_str(),
                 "Skipping index plan: the Firestore emulator does not implement the admin API.",
             );
-            return Ok(FirestoreIndexPlan::default());
+            return Ok(FirestoreIndexPlan {
+                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
+                ..Default::default()
+            });
         }
 
         let root = span!(
@@ -2189,7 +2192,15 @@ mod tests {
             .plan_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
             .await
             .unwrap();
-        assert_eq!(plan, FirestoreIndexPlan::default());
+        assert_eq!(plan.skipped, Some(FirestoreIndexSyncSkipReason::Emulator));
+        assert_eq!(
+            plan,
+            FirestoreIndexPlan {
+                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
+                ..Default::default()
+            }
+        );
+        assert!(plan.to_string().contains("skipped: the Firestore emulator"));
 
         let report = emulator_db
             .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
