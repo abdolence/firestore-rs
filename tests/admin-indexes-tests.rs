@@ -5,8 +5,9 @@
 //!
 //! `plan_is_read_only_and_scoped_to_the_owned_group` makes no writes and runs in seconds, so it
 //! runs by default. Every other test here creates, updates or deletes real indexes, overrides or
-//! TTL policy in `GCP_PROJECT` and can take 10-15 minutes (a composite or vector index build is
-//! not instant even on an empty collection), so each carries `#[ignore]` and only runs on
+//! TTL policy in `GCP_PROJECT` and takes most of an hour: each index or field operation it waits
+//! on took 6-7 minutes against the real service on 2026-09-26, even on an empty collection. So
+//! each carries `#[ignore]` and only runs on
 //! `cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture`.
 //!
 //! Safety net: `ListIndexes` scoped to one collection group's parent has been measured, against
@@ -80,6 +81,49 @@ fn outside_owned_groups(indexes: &[ProtoIndex]) -> BTreeMap<String, ProtoIndex> 
         .collect()
 }
 
+/// The stored field lists of every composite index in `group`, each field as `path MODE`, in
+/// the order Firestore stores them, so a test can check where `__name__` really went.
+async fn stored_index_fields(
+    db: &FirestoreDb,
+    group: &str,
+) -> Result<Vec<Vec<String>>, Box<dyn std::error::Error + Send + Sync>> {
+    use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
+        ArrayConfig, Order, ValueMode,
+    };
+    let marker = format!("/collectionGroups/{group}/");
+    Ok(list_all_database_indexes(db)
+        .await?
+        .into_iter()
+        .filter(|index| index.name.contains(&marker))
+        .map(|index| {
+            index
+                .fields
+                .into_iter()
+                .map(|field| {
+                    let mode = match field.value_mode {
+                        Some(ValueMode::Order(order)) if order == Order::Ascending as i32 => {
+                            "ASC".to_string()
+                        }
+                        Some(ValueMode::Order(order)) if order == Order::Descending as i32 => {
+                            "DESC".to_string()
+                        }
+                        Some(ValueMode::ArrayConfig(config))
+                            if config == ArrayConfig::Contains as i32 =>
+                        {
+                            "CONTAINS".to_string()
+                        }
+                        Some(ValueMode::VectorConfig(vector)) => {
+                            format!("VECTOR({})", vector.dimension)
+                        }
+                        other => format!("{other:?}"),
+                    };
+                    format!("{} {mode}", field.field_path)
+                })
+                .collect()
+        })
+        .collect())
+}
+
 async fn prune_to_empty(
     db: &FirestoreDb,
     collection_group: &str,
@@ -96,7 +140,7 @@ async fn prune_to_empty(
 }
 
 /// Question 1: does Firestore store `__name__` ASC for a created `[a DESC, tags CONTAINS]`, and
-/// does a second plan then show no changes?
+/// does a second plan then show no changes? Runs on a group the scenario emptied first.
 async fn implied_name_direction_and_replan_is_a_no_op(
     db: &FirestoreDb,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -111,10 +155,15 @@ async fn implied_name_direction_and_replan_is_a_no_op(
         .sync()
         .await?;
     println!("[Q1] first sync report:\n{report}");
-    assert!(
-        report.created_indexes.len() + report.unchanged.len() + report.pending.len() == 1,
-        "expected exactly the one declared index, either freshly created or already there from \
-         a previous run"
+    assert_eq!(report.created_indexes.len(), 1, "the declared index is new");
+    assert!(report.unchanged.is_empty() && report.pending.is_empty());
+
+    let stored = stored_index_fields(db, SYNC_GROUP).await?;
+    println!("[Q1] stored: {stored:?}");
+    assert_eq!(
+        stored,
+        vec![vec!["a DESC", "tags CONTAINS", "__name__ ASC"]],
+        "Firestore appends __name__ ASC after the declared fields"
     );
 
     let plan = db
@@ -127,19 +176,13 @@ async fn implied_name_direction_and_replan_is_a_no_op(
         .plan()
         .await?;
     println!("[Q1] replan:\n{plan}");
-    assert!(
-        plan.create_indexes.is_empty(),
-        "replan must not want to create anything again"
-    );
-    assert_eq!(
-        plan.unchanged.len(),
-        1,
-        "the created index must be reported unchanged"
-    );
+    assert!(plan.create_indexes.is_empty());
+    assert_eq!(plan.unchanged.len(), 1, "the waited-for index is READY");
+    assert!(plan.pending.is_empty());
     Ok(())
 }
 
-/// Question 2: is a vector-only composite index accepted?
+/// Question 2: is a vector-only composite index accepted, and where does `__name__` go in it?
 async fn vector_only_composite_index_is_accepted(
     db: &FirestoreDb,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -157,11 +200,22 @@ async fn vector_only_composite_index_is_accepted(
         .sync()
         .await?;
     println!("[Q2] vector index sync report:\n{report}");
+    assert_eq!(
+        report.created_indexes.len(),
+        1,
+        "only the vector index is new"
+    );
+    assert_eq!(report.unchanged.len(), 1, "the Q1 index is unchanged");
+    assert!(report.pending.is_empty());
+
+    let stored = stored_index_fields(db, SYNC_GROUP).await?;
+    println!("[Q2] stored: {stored:?}");
     assert!(
-        report.created_indexes.len() == 1
-            || report.unchanged.len() == 2
-            || report.pending.len() == 1,
-        "expected the vector-only index to be created (the [a, tags] index already existed)",
+        stored.contains(&vec![
+            "__name__ ASC".to_string(),
+            "embedding VECTOR(8)".to_string()
+        ]),
+        "Firestore puts __name__ before the vector field: {stored:?}"
     );
     Ok(())
 }
@@ -198,6 +252,7 @@ async fn all_fields_override_on_a_single_group(
         2,
         "expected both the wildcard and the named field written"
     );
+    assert!(report.reverted_fields.is_empty() && report.kept_undeclared_fields.is_empty());
 
     let plan = db
         .fluent()
@@ -239,8 +294,56 @@ async fn all_fields_override_on_a_single_group(
     Ok(())
 }
 
+/// Question 5: a TTL field plus an override on the same field, then a TTL move to another field
+/// with pruning. Firestore allows one TTL field per group, so the move only succeeds if the old
+/// TTL is disabled, and finished, before the new one is enabled.
+async fn ttl_on_an_overridden_field_then_a_ttl_move(
+    db: &FirestoreDb,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let report = db
+        .fluent()
+        .indexes()
+        .collection_group(PROBE_GROUP)
+        .field_overrides(|f| f.fields([f.field("expires_at").exempt()]))
+        .ttl(["expires_at"])
+        .wait_until_ready_with_options(FirestoreOperationWaitOptions::new(WAIT_TIMEOUT))
+        .sync()
+        .await?;
+    println!("[Q5] TTL on an overridden field:\n{report}");
+    assert_eq!(report.updated_fields.len(), 1);
+    assert_eq!(report.enabled_ttl, vec!["expires_at".to_string()]);
+
+    let report = db
+        .fluent()
+        .indexes()
+        .collection_group(PROBE_GROUP)
+        .ttl(["expires_at_moved"])
+        .prune_undeclared()
+        .wait_until_ready_with_options(FirestoreOperationWaitOptions::new(WAIT_TIMEOUT))
+        .sync()
+        .await?;
+    println!("[Q5] TTL move:\n{report}");
+    assert_eq!(report.disabled_ttl.len(), 1);
+    assert_eq!(report.disabled_ttl[0].field_path, "expires_at");
+    assert_eq!(report.reverted_fields.len(), 1);
+    assert_eq!(report.reverted_fields[0].field_path, "expires_at");
+    assert_eq!(report.enabled_ttl, vec!["expires_at_moved".to_string()]);
+
+    let plan = db
+        .fluent()
+        .indexes()
+        .collection_group(PROBE_GROUP)
+        .ttl(["expires_at_moved"])
+        .plan()
+        .await?;
+    println!("[Q5] replan after the move:\n{plan}");
+    assert_eq!(plan.unchanged_ttl, vec!["expires_at_moved".to_string()]);
+    assert!(plan.kept_undeclared_ttl.is_empty());
+    Ok(())
+}
+
 #[tokio::test]
-#[ignore = "creates and deletes real indexes in GCP_PROJECT; takes 10-15 minutes; run with --ignored"]
+#[ignore = "creates and deletes real indexes in GCP_PROJECT; takes most of an hour; run with --ignored"]
 async fn admin_index_management_against_real_firestore(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = setup().await?;
@@ -265,9 +368,15 @@ async fn admin_index_management_against_real_firestore(
     let data_read_result = db.fluent().select().from(SYNC_GROUP).query().await;
 
     let scenario = async {
+        // Start from an empty declaration on both groups, so every step below can expect exact
+        // counts instead of accepting whatever an earlier, interrupted run left behind.
+        let emptied_sync = prune_to_empty(&db, SYNC_GROUP).await?;
+        let emptied_probe = prune_to_empty(&db, PROBE_GROUP).await?;
+        println!("[setup] emptied:\n{emptied_sync}\n{emptied_probe}");
         implied_name_direction_and_replan_is_a_no_op(&db).await?;
         vector_only_composite_index_is_accepted(&db).await?;
         all_fields_override_on_a_single_group(&db).await?;
+        ttl_on_an_overridden_field_then_a_ttl_move(&db).await?;
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     }
     .await;
