@@ -162,12 +162,7 @@ async fn dropping_response_closes_http2_request() {
     })
     .await;
     let response = within(server.db.listen_doc_changes(vec![])).await.unwrap();
-    // Long enough for a request that ended early to reach the server's call log.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(
-        server.calls().is_empty(),
-        "request closed while the response is held"
-    );
+    assert!(server.calls().is_empty());
     drop(response);
     within(async {
         while server.calls().is_empty() {

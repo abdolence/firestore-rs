@@ -90,14 +90,16 @@ impl FirestoreListenSupport for FirestoreDb {
 
         let response = self.client().get().listen(request).await?;
 
-        Ok(response
-            .into_inner()
-            .map(move |item| {
-                // The stream owns the sender, so the request stays open exactly as long.
-                let _keep_request_open = &keep_request_open;
-                item.map_err(Into::into)
-            })
-            .boxed())
+        Ok(futures::stream::unfold(
+            (response.into_inner(), keep_request_open),
+            |(mut response, keep_request_open)| async move {
+                response
+                    .next()
+                    .await
+                    .map(|item| (item.map_err(Into::into), (response, keep_request_open)))
+            },
+        )
+        .boxed())
     }
 }
 
