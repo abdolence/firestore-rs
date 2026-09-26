@@ -27,6 +27,7 @@ use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
 use gcloud_sdk::prost_types::FieldMask;
 use gcloud_sdk::tonic::Code;
 use std::collections::HashMap;
+use std::time::Duration;
 use tracing::*;
 
 /// One write `.sync()` sends for the owned collection group, holding the declared or listed
@@ -168,6 +169,50 @@ fn ensure_owned_resource(group_path: &str, kind: &str, name: &str) -> FirestoreR
             "resource_name",
             format!("refusing to touch {name}: not under the owned group {group_path}"),
         ))
+    }
+}
+
+/// Bounds each wait `.sync()` makes between two dependent writes (see
+/// [`FirestoreDb::apply_plan`]) when the caller did not ask to wait: long enough for a field
+/// override's single-field index build, so a sync that was not asked to wait only fails when a
+/// write it depends on is stuck.
+const SEQUENCING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// The resource name of field `path` in the group at `group_path`: the key writes to one field
+/// are sequenced on, and the name an `UpdateField` request carries.
+fn field_resource_name(group_path: &str, path: &str) -> String {
+    format!("{group_path}/fields/{path}")
+}
+
+/// The operations one sync has started, which of them are known to have finished, and which one
+/// last wrote each field resource.
+#[derive(Default)]
+struct StartedWrites {
+    operations: Vec<PendingOperation>,
+    settled: Vec<bool>,
+    last_write_to_field: HashMap<String, usize>,
+}
+
+impl StartedWrites {
+    /// Records `operation`, as the latest write to `field` when it writes one, and returns its
+    /// position.
+    fn push(&mut self, field: Option<String>, operation: PendingOperation) -> usize {
+        let position = self.operations.len();
+        self.operations.push(operation);
+        self.settled.push(false);
+        if let Some(field) = field {
+            self.last_write_to_field.insert(field, position);
+        }
+        position
+    }
+
+    fn into_unsettled(self) -> Vec<PendingOperation> {
+        self.operations
+            .into_iter()
+            .zip(self.settled)
+            .filter(|(_, settled)| !settled)
+            .map(|(operation, _)| operation)
+            .collect()
     }
 }
 
@@ -491,7 +536,7 @@ impl FirestoreDb {
             "Update Field",
             "/firestore/response_time" = field::Empty
         );
-        let name = format!("{group_path}/fields/{}", declared.target.as_str());
+        let name = field_resource_name(group_path, declared.target.as_str());
         let index_config = proto_field::IndexConfig::try_from(declared.clone())?;
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
@@ -521,7 +566,7 @@ impl FirestoreDb {
             "Enable TTL",
             "/firestore/response_time" = field::Empty
         );
-        let name = format!("{group_path}/fields/{field_path}");
+        let name = field_resource_name(group_path, field_path);
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
                 name,
@@ -594,13 +639,72 @@ impl FirestoreDb {
             .await
     }
 
-    /// Applies `plan` in the fixed order Firestore requires (create, update fields, enable TTL,
-    /// then prune), sequentially: Firestore rejects overlapping field operations on one
-    /// collection group. Stops at the first failing action.
+    /// Waits for the given started writes to finish, then marks them settled so neither a later
+    /// write nor the final wait polls them again.
+    async fn settle_writes(
+        &self,
+        writes: &mut StartedWrites,
+        positions: &[usize],
+        options: &FirestoreOperationWaitOptions,
+    ) -> FirestoreResult<()> {
+        let unsettled: Vec<usize> = positions
+            .iter()
+            .copied()
+            .filter(|position| !writes.settled[*position])
+            .collect();
+        if unsettled.is_empty() {
+            return Ok(());
+        }
+        let operations: Vec<&PendingOperation> = unsettled
+            .iter()
+            .map(|position| &writes.operations[*position])
+            .collect();
+        info!(
+            waiting_for = operations
+                .iter()
+                .map(|operation| operation.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            "Waiting for earlier writes to finish before the next write that depends on them.",
+        );
+        self.wait_for_operations(&operations, options, |_, _| {})
+            .await?;
+        for position in unsettled {
+            writes.settled[position] = true;
+        }
+        Ok(())
+    }
+
+    /// Waits for the last write to `field_resource`, if this sync sent one that has not settled.
+    async fn settle_field(
+        &self,
+        writes: &mut StartedWrites,
+        field_resource: &str,
+        options: &FirestoreOperationWaitOptions,
+    ) -> FirestoreResult<()> {
+        match writes.last_write_to_field.get(field_resource).copied() {
+            Some(position) => self.settle_writes(writes, &[position], options).await,
+            None => Ok(()),
+        }
+    }
+
+    /// Applies `plan`, stopping at the first failing write, in this order: create indexes,
+    /// write declared field overrides, disable undeclared TTL, enable declared TTL, delete
+    /// undeclared indexes, revert undeclared field overrides.
+    ///
+    /// Creates come before deletes so a replaced index is never missing in between. A TTL
+    /// disable must finish before any TTL enable is sent, because Firestore allows one TTL field
+    /// per collection group (<https://firebase.google.com/docs/firestore/ttl>). A write to a field
+    /// waits for this sync's previous write to that same field, because overlapping writes to one
+    /// field are not known to be safe; writes to different fields are sent back to back, which
+    /// Firestore accepts. These waits use `sequencing`, whether or not the caller asked to wait.
+    ///
+    /// Returns the report and the started operations not already waited for.
     async fn apply_plan(
         &self,
         group_path: &str,
         plan: &FirestoreIndexPlan,
+        sequencing: &FirestoreOperationWaitOptions,
     ) -> FirestoreResult<(FirestoreIndexSyncReport, Vec<PendingOperation>)> {
         let mut report = FirestoreIndexSyncReport {
             unchanged: plan.unchanged.clone(),
@@ -621,28 +725,44 @@ impl FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
-        let mut pending_operations = Vec::new();
+        let mut writes = StartedWrites::default();
 
         let apply_result: FirestoreResult<()> = async {
             for index in &plan.create_indexes {
                 match self.apply_create_index(group_path, index).await? {
                     CreateIndexOutcome::Created(op) => {
-                        pending_operations.push(op);
+                        writes.push(None, op);
                         report.created_indexes.push(index.clone());
                     }
                     CreateIndexOutcome::AlreadyExists => report.unchanged.push(index.clone()),
                 }
             }
             for declared in &plan.update_fields {
+                let field = field_resource_name(group_path, declared.target.as_str());
+                self.settle_field(&mut writes, &field, sequencing).await?;
                 let op = self
                     .apply_update_field_override(group_path, declared)
                     .await?;
-                pending_operations.push(op);
+                writes.push(Some(field), op);
                 report.updated_fields.push(declared.clone());
             }
+            let mut ttl_disables = Vec::new();
+            for listed in &plan.disable_ttl {
+                self.settle_field(&mut writes, &listed.name, sequencing)
+                    .await?;
+                let op = self.apply_disable_ttl(group_path, listed).await?;
+                ttl_disables.push(writes.push(Some(listed.name.clone()), op));
+                report.disabled_ttl.push(listed.clone());
+            }
+            if !plan.enable_ttl.is_empty() {
+                self.settle_writes(&mut writes, &ttl_disables, sequencing)
+                    .await?;
+            }
             for path in &plan.enable_ttl {
+                let field = field_resource_name(group_path, path);
+                self.settle_field(&mut writes, &field, sequencing).await?;
                 let op = self.apply_enable_ttl(group_path, path).await?;
-                pending_operations.push(op);
+                writes.push(Some(field), op);
                 report.enabled_ttl.push(path.clone());
             }
             for listed in &plan.delete_indexes {
@@ -650,14 +770,11 @@ impl FirestoreDb {
                 report.deleted_indexes.push(listed.clone());
             }
             for listed in &plan.revert_fields {
+                self.settle_field(&mut writes, &listed.name, sequencing)
+                    .await?;
                 let op = self.apply_revert_field_override(group_path, listed).await?;
-                pending_operations.push(op);
+                writes.push(Some(listed.name.clone()), op);
                 report.reverted_fields.push(listed.clone());
-            }
-            for listed in &plan.disable_ttl {
-                let op = self.apply_disable_ttl(group_path, listed).await?;
-                pending_operations.push(op);
-                report.disabled_ttl.push(listed.clone());
             }
             Ok(())
         }
@@ -668,7 +785,7 @@ impl FirestoreDb {
         span.record("/firestore/response_time", elapsed.as_millis());
         apply_result?;
 
-        Ok((report, pending_operations))
+        Ok((report, writes.into_unsettled()))
     }
 
     /// Waits for every operation `.sync()` started under one shared deadline (see
@@ -773,7 +890,12 @@ impl FirestoreIndexSupport for FirestoreDb {
         let began = FirestoreInstant::now();
         let report = async {
             let (group_path, plan) = self.plan_against_server(&params, options.prune).await?;
-            let (report, pending_operations) = self.apply_plan(&group_path, &plan).await?;
+            let sequencing = options
+                .wait
+                .clone()
+                .unwrap_or_else(|| FirestoreOperationWaitOptions::new(SEQUENCING_TIMEOUT));
+            let (report, pending_operations) =
+                self.apply_plan(&group_path, &plan, &sequencing).await?;
             if let Some(wait_options) = &options.wait {
                 if let Err(err) = self
                     .wait_for_index_operations(&pending_operations, wait_options)
@@ -823,7 +945,6 @@ mod tests {
     use gcloud_sdk::tonic::Code;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc as StdArc, Mutex};
-    use std::time::Duration;
 
     const LIST_INDEXES: &str = "/google.firestore.admin.v1.FirestoreAdmin/ListIndexes";
     const CREATE_INDEX: &str = "/google.firestore.admin.v1.FirestoreAdmin/CreateIndex";
@@ -1078,6 +1199,189 @@ mod tests {
         assert_eq!(keeping.kept_undeclared_indexes.len(), 1);
         assert_eq!(keeping.kept_undeclared_fields.len(), 1);
         assert_eq!(keeping.kept_undeclared_ttl.len(), 1);
+    }
+
+    /// Answers each `UpdateField` with a pending operation named after its mask and field path,
+    /// e.g. `op-ttl_config-expires_at`, each `GetOperation` with that operation done, each
+    /// `CreateIndex` with a pending `op-create` and each `DeleteIndex` with success. Every call is
+    /// logged with what it targeted, so a test can assert the exact write sequence.
+    fn recording_writes(method: &str, bytes: &[u8]) -> (String, FakeResponse) {
+        match method {
+            UPDATE_FIELD => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::UpdateFieldRequest::decode(bytes)
+                        .unwrap();
+                let mask = request.update_mask.unwrap().paths.join(",");
+                let field = request.field.unwrap().name;
+                let path = field.rsplit("/fields/").next().unwrap().to_string();
+                (
+                    format!("UpdateField({mask} {path})"),
+                    pending_operation_response(&operation_name(&format!("op-{mask}-{path}"))),
+                )
+            }
+            GET_OPERATION => {
+                let name = get_operation_name(bytes);
+                let id = name.rsplit('/').next().unwrap().to_string();
+                (
+                    format!("GetOperation({id})"),
+                    done_operation_response(&name),
+                )
+            }
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                pending_operation_response(&operation_name("op-create")),
+            ),
+            DELETE_INDEX => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::DeleteIndexRequest::decode(bytes)
+                        .unwrap();
+                let id = request.name.rsplit('/').next().unwrap().to_string();
+                (format!("DeleteIndex({id})"), FakeResponse::empty())
+            }
+            other => panic!("unexpected RPC: {other}"),
+        }
+    }
+
+    /// Every call after the listing, whose three RPCs run concurrently in no fixed order.
+    fn writes_and_polls(fake: &FakeFirestore) -> Vec<String> {
+        fake.calls()
+            .into_iter()
+            .filter(|call| !call.starts_with("List"))
+            .collect()
+    }
+
+    fn active_ttl() -> gcloud_sdk::google::firestore::admin::v1::field::TtlConfig {
+        use gcloud_sdk::google::firestore::admin::v1::field;
+        field::TtlConfig {
+            state: field::ttl_config::State::Active as i32,
+            expiration_offset: None,
+        }
+    }
+
+    fn exempt_override() -> gcloud_sdk::google::firestore::admin::v1::field::IndexConfig {
+        gcloud_sdk::google::firestore::admin::v1::field::IndexConfig {
+            indexes: vec![],
+            uses_ancestor_config: false,
+            ancestor_field: String::new(),
+            reverting: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_ttl_move_disables_the_old_field_and_waits_before_enabling_the_new_one() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, bytes| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => (
+                "ListFields".to_string(),
+                list_fields_response(vec![field_resource("old_expiry", None, Some(active_ttl()))]),
+            ),
+            other => recording_writes(other, bytes),
+        })
+        .await;
+
+        let params = FirestoreIndexParams::new(group()).with_ttl_fields(vec!["new_expiry".into()]);
+        let report = fake
+            .db
+            .sync_indexes(params, FirestoreIndexSyncOptions::new().with_prune(true))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            writes_and_polls(&fake),
+            vec![
+                "UpdateField(ttl_config old_expiry)",
+                "GetOperation(op-ttl_config-old_expiry)",
+                "UpdateField(ttl_config new_expiry)",
+            ]
+        );
+        assert_eq!(report.disabled_ttl.len(), 1);
+        assert_eq!(report.enabled_ttl, vec!["new_expiry".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_write_to_a_field_waits_for_that_fields_previous_write_only() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, bytes| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => recording_writes(other, bytes),
+        })
+        .await;
+
+        let exempt = |path: &str| FirestoreFieldOverride {
+            target: FirestoreFieldOverrideTarget::Field(path.to_string()),
+            indexes: vec![],
+        };
+        let params = FirestoreIndexParams::new(group())
+            .with_field_overrides(vec![exempt("expires_at"), exempt("bio")])
+            .with_ttl_fields(vec!["expires_at".into()]);
+        fake.db
+            .sync_indexes(params, FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            writes_and_polls(&fake),
+            vec![
+                "UpdateField(index_config expires_at)",
+                "UpdateField(index_config bio)",
+                "GetOperation(op-index_config-expires_at)",
+                "UpdateField(ttl_config expires_at)",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pruning_sync_sends_its_writes_in_one_fixed_order() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, bytes| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_index(
+                    vec![order_field(
+                        "legacy",
+                        gcloud_sdk::google::firestore::admin::v1::index::index_field::Order::Ascending,
+                    ), order_field(
+                        "other",
+                        gcloud_sdk::google::firestore::admin::v1::index::index_field::Order::Ascending,
+                    )],
+                    ProtoQueryScope::Collection,
+                    ProtoState::Ready,
+                )]),
+            ),
+            LIST_FIELDS => (
+                "ListFields".to_string(),
+                list_fields_response(vec![field_resource(
+                    "old_expiry",
+                    Some(exempt_override()),
+                    Some(active_ttl()),
+                )]),
+            ),
+            other => recording_writes(other, bytes),
+        })
+        .await;
+
+        let params = params_with_index().with_ttl_fields(vec!["new_expiry".into()]);
+        fake.db
+            .sync_indexes(params, FirestoreIndexSyncOptions::new().with_prune(true))
+            .await
+            .unwrap();
+
+        // Creates come before deletes, so a replaced index is never missing in between; a TTL
+        // disable finishes before the enable, since a group has one TTL field; the revert of
+        // `old_expiry`'s override follows its TTL disable, already finished, without a poll.
+        assert_eq!(
+            writes_and_polls(&fake),
+            vec![
+                "CreateIndex",
+                "UpdateField(ttl_config old_expiry)",
+                "GetOperation(op-ttl_config-old_expiry)",
+                "UpdateField(ttl_config new_expiry)",
+                "DeleteIndex(1)",
+                "UpdateField(index_config old_expiry)",
+            ]
+        );
     }
 
     #[test]
