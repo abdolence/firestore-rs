@@ -23,6 +23,9 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 use tracing::*;
 
+#[cfg(test)]
+mod lifecycle_tests;
+
 #[derive(Debug, Clone, Builder)]
 pub struct FirestoreListenerTargetParams {
     pub target: FirestoreListenerTarget,
@@ -77,13 +80,26 @@ impl FirestoreListenSupport for FirestoreDb {
             .map(|target_params| self.create_listen_request(target_params))
             .collect::<FirestoreResult<Vec<ListenRequest>>>()?;
 
+        // Closing the response must also end the request producer owned by the HTTP/2 transport.
+        let (keep_request_open, response_closed) = tokio::sync::oneshot::channel::<()>();
         let request = gcloud_sdk::tonic::Request::new(
-            futures::stream::iter(listen_requests).chain(futures::stream::pending()),
+            futures::stream::iter(listen_requests)
+                .chain(futures::stream::pending())
+                .take_until(response_closed),
         );
 
         let response = self.client().get().listen(request).await?;
 
-        Ok(response.into_inner().map_err(|e| e.into()).boxed())
+        Ok(futures::stream::unfold(
+            (response.into_inner(), keep_request_open),
+            |(mut response, keep_request_open)| async move {
+                response
+                    .next()
+                    .await
+                    .map(|item| (item.map_err(Into::into), (response, keep_request_open)))
+            },
+        )
+        .boxed())
     }
 }
 
@@ -576,11 +592,13 @@ where
         self.control_writer
             .send(FirestoreListenerControl::Shutdown)
             .ok();
-        if let Some(signaller) = self.shutdown_handle.take() {
+        // Keep ownership until joined, even if this shutdown future is cancelled.
+        if let Some(signaller) = self.shutdown_handle.as_mut() {
             if let Err(err) = signaller.await {
                 warn!(%err, "Firestore listener exit error!");
             };
         }
+        self.shutdown_handle = None;
         debug!("Shutting down Firestore listener has been finished...");
         Ok(())
     }
