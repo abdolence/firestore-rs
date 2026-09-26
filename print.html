@@ -1250,8 +1250,7 @@ latency noticeably.</p>
 <a href="https://github.com/cberner/redb">redb</a> and protobuf.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="usage-1"><a href="#usage-1" class="header">Usage</a></h1>
-<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
+<h1 id="usage"><a class="header" href="#usage">Usage</a></h1>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::{Deserialize, Serialize};
 </span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1307,8 +1306,7 @@ with <code>.collection_with(name, |c| c.listener_target(...))</code>.</p>
 documents, and the persistent cache closes its database file, so another cache can be opened over
 the same directory.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="caching-named-documents"><a href="#caching-named-documents" class="header">Caching named documents</a></h1>
-<h2 id="caching-named-documents-instead-of-a-whole-collection"><a class="header" href="#caching-named-documents-instead-of-a-whole-collection">Caching named documents instead of a whole collection</a></h2>
+<h1 id="caching-named-documents-instead-of-a-whole-collection"><a class="header" href="#caching-named-documents-instead-of-a-whole-collection">Caching named documents instead of a whole collection</a></h1>
 <p><code>.collection(name)</code> subscribes the listener to the <strong>entire</strong> collection, even though it does not
 preload it - “lazy” only means the initial download is skipped. When you know which documents you
 care about, say so:</p>
@@ -1329,8 +1327,7 @@ the shape to reach for with configuration, feature flags and reference data.</p>
 <p>Such a collection is never listable, whatever its load mode: it holds a chosen subset, so <code>list</code>
 and <code>query</code> would return a partial answer that looks complete.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="changing-cached-collections-at-runtime"><a href="#changing-cached-collections-at-runtime" class="header">Changing cached collections at runtime</a></h1>
-<h2 id="changing-the-cached-collections-at-runtime"><a class="header" href="#changing-the-cached-collections-at-runtime">Changing the cached collections at runtime</a></h2>
+<h1 id="changing-the-cached-collections-at-runtime"><a class="header" href="#changing-the-cached-collections-at-runtime">Changing the cached collections at runtime</a></h1>
 <p>The set of cached collections does not have to be fixed when the cache is built:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example(cache: FirestoreMemoryCache) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
@@ -1350,8 +1347,7 @@ Use <code>remove_collection_at</code> for a sub-collection, whose absolute path 
 immediately: they share the cache’s backend rather than a copy of it. A cache can also be built
 with no collections at all and populated entirely at runtime.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="choosing-a-cache-mode-1"><a href="#choosing-a-cache-mode-1" class="header">Choosing a cache mode</a></h1>
-<h2 id="choosing-a-cache-mode"><a class="header" href="#choosing-a-cache-mode">Choosing a cache mode</a></h2>
+<h1 id="choosing-a-cache-mode"><a class="header" href="#choosing-a-cache-mode">Choosing a cache mode</a></h1>
 <ul>
 <li><code>db.read_through_cache(&amp;cache)</code> serves what it can from the cache and goes to Firestore for the
 rest. This is the mode to reach for by default.</li>
@@ -1373,8 +1369,7 @@ requests the cache cannot answer completely return an error.</li>
 </table>
 </div>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="load-modes-and-preloading"><a href="#load-modes-and-preloading" class="header">Load modes and preloading</a></h1>
-<h2 id="load-modes-and-why-listings-need-preloading"><a class="header" href="#load-modes-and-why-listings-need-preloading">Load modes, and why listings need preloading</a></h2>
+<h1 id="load-modes-and-why-listings-need-preloading"><a class="header" href="#load-modes-and-why-listings-need-preloading">Load modes, and why listings need preloading</a></h1>
 <ul>
 <li><code>PreloadNone</code> (<code>.collection(name)</code>): don’t preload anything, just fill the cache while working;</li>
 <li><code>PreloadAllDocs</code> (<code>.collection_with(name, |c| c.preload_all())</code>): preload all documents in the
@@ -1391,8 +1386,7 @@ the library refuses to do so: <code>read_through_cache</code> quietly falls back
 acceptable, opt in with
 <code>.incomplete_collection_policy(FirestoreCacheIncompleteCollectionPolicy::PartialResults)</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="how-the-cache-is-updated-1"><a href="#how-the-cache-is-updated-1" class="header">How the cache is updated</a></h1>
-<h2 id="how-the-cache-is-updated"><a class="header" href="#how-the-cache-is-updated">How the cache is updated</a></h2>
+<h1 id="how-the-cache-is-updated"><a class="header" href="#how-the-cache-is-updated">How the cache is updated</a></h1>
 <ul>
 <li>When you read a document by ID through the cache and it is not there, it is fetched from
 Firestore and cached;</li>
