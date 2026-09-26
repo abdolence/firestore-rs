@@ -139,6 +139,15 @@ where
     /// Without this, undeclared items are only reported. Either way, a *declared* index matched
     /// to a listed `NEEDS_REPAIR` index is only ever reported: `.sync()` never deletes or
     /// recreates it automatically.
+    ///
+    /// Deletes are sent last, and only once every index the same sync created has finished
+    /// building, so a replaced index keeps serving queries until its replacement can. That wait
+    /// happens with or without [`wait_until_ready`](Self::wait_until_ready), can take minutes,
+    /// and ends by the sync's deadline. When a new index fails to build, or is still building at
+    /// the deadline, the sync deletes nothing and returns the error. It also deletes nothing when
+    /// Firestore answers a create with `ALREADY_EXISTS`, since the index Firestore already holds
+    /// may be one planned for deletion. Either way the report's `withheld_deletes` says which
+    /// indexes were left in place and why. Reverts and TTL disables do not wait for new indexes.
     #[inline]
     pub fn prune_undeclared(self) -> Self {
         Self {
@@ -147,16 +156,21 @@ where
         }
     }
 
-    /// Waits for created indexes and enabled TTL to reach a terminal state before `.sync()`
-    /// returns, up to `timeout`, polling at the default interval. Without this, `.sync()` returns
-    /// once changes are requested.
+    /// Waits for every started change to reach a terminal state before `.sync()` returns,
+    /// polling at the default interval. `timeout` bounds the whole sync, from the start of the
+    /// call: see [`FirestoreOperationWaitOptions`].
+    ///
+    /// Without this, `.sync()` returns once the last change is requested, but it still waits
+    /// where one write depends on another: a second write to the same field waits for the first,
+    /// a TTL enable waits for the TTL disables, and a pruning sync's deletes wait for its new
+    /// indexes (see [`prune_undeclared`](Self::prune_undeclared)). Those waits end within
+    /// 30 minutes of the start of the sync.
     #[inline]
     pub fn wait_until_ready(self, timeout: Duration) -> Self {
         self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))
     }
 
-    /// Waits for created indexes and enabled TTL to reach a terminal state before `.sync()`
-    /// returns, per `options`. Without this, `.sync()` returns once changes are requested.
+    /// Like [`wait_until_ready`](Self::wait_until_ready), with the poll interval set too.
     #[inline]
     pub fn wait_until_ready_with_options(self, options: FirestoreOperationWaitOptions) -> Self {
         Self {
@@ -196,10 +210,15 @@ where
 
     /// Reconciles Firestore with this declaration.
     ///
-    /// When waiting was requested and the wait fails (an operation fails, a poll fails with a
-    /// non-retryable error, or the timeout passes), the error is returned and the report of what
-    /// was already applied is logged at `warn` just before, since the changes it lists were sent
-    /// and are not rolled back.
+    /// Once `.sync()` has started writing, any failure (a write is refused, an operation fails,
+    /// a poll fails with a non-retryable error, or the deadline passes, whether in a wait between
+    /// dependent writes or in the final wait) returns the error and logs the report of what was
+    /// already applied at `warn` just before, since the changes it lists were sent and are not
+    /// rolled back.
+    ///
+    /// A sync can wait even without [`wait_until_ready`](Self::wait_until_ready), where one
+    /// write depends on another; those waits end within 30 minutes of the start of the sync, or
+    /// by the `wait_until_ready` timeout when one is set.
     pub async fn sync(self) -> FirestoreResult<FirestoreIndexSyncReport> {
         let (db, params, options) = self.build_params()?;
         db.sync_indexes(params, options).await

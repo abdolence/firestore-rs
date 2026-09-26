@@ -441,15 +441,22 @@ pub struct FirestoreIndexParams {
     pub ttl_fields: Vec<String>,
 }
 
-/// How long a long-running Firestore operation is polled for before giving up.
+/// How long long-running Firestore operations are polled for before giving up, shared by index
+/// sync and bulk delete.
 ///
-/// Not index-specific: any long-running admin operation that waits for a terminal state - index
-/// and TTL sync today - can reuse this same options type.
+/// `timeout` sets one deadline, fixed when the call starts: every wait of the call ends by it,
+/// including an index sync's waits between writes that depend on each other. Until then, each
+/// round polls every pending operation and then sleeps `poll_interval`, or only until the
+/// deadline when that comes first, so the last round goes out at the deadline itself. One poll
+/// may take up to 10 seconds to answer, or the whole `timeout` when that is shorter; a poll that
+/// takes longer is abandoned and sent again next round. So a wait that times out returns at most
+/// that long after the deadline, with an error naming the operations still pending. A `timeout`
+/// too long to represent, such as `Duration::MAX`, means no practical deadline.
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreOperationWaitOptions {
-    /// The maximum time to wait before returning an error naming the operations still pending.
+    /// How long after the call starts every wait of it must end.
     pub timeout: Duration,
-    /// The interval between polls.
+    /// The pause between two rounds of polls.
     #[default = "Duration::from_secs(5)"]
     pub poll_interval: Duration,
 }
@@ -463,8 +470,10 @@ pub struct FirestoreIndexSyncOptions {
     /// items are only reported.
     #[default = "false"]
     pub prune: bool,
-    /// Whether, and how long, to wait for started changes to finish. `None` returns as soon as
-    /// changes are requested; `Some` waits for every started change to reach a terminal state.
+    /// Whether, and how long, to wait for started changes to finish. `Some` waits for every
+    /// started change to reach a terminal state, and its timeout bounds the whole sync. `None`
+    /// returns once the last change is requested; the waits between writes that depend on each
+    /// other still happen, under a 30-minute deadline for the whole sync.
     #[default = "None"]
     pub wait: Option<FirestoreOperationWaitOptions>,
 }
@@ -561,6 +570,9 @@ pub struct FirestoreIndexSyncReport {
     pub needs_repair_ttl: Vec<String>,
     /// Undeclared composite indexes this sync deleted, because `prune` was set.
     pub deleted_indexes: Vec<FirestoreListedCompositeIndex>,
+    /// Undeclared composite indexes a pruning sync planned to delete but left in place, and why;
+    /// `None` when it withheld no delete.
+    pub withheld_deletes: Option<FirestoreIndexDeletesWithheld>,
     /// Undeclared field overrides this sync reverted to automatic indexing, because `prune` was
     /// set.
     pub reverted_fields: Vec<FirestoreListedField>,
@@ -581,6 +593,29 @@ pub struct FirestoreIndexSyncReport {
     pub timings: FirestoreIndexSyncTimings,
 }
 
+/// Undeclared composite indexes a pruning `.sync()` planned to delete but left in place, because
+/// deleting them could have left queries without an index.
+#[derive(Debug, PartialEq, Clone)]
+pub struct FirestoreIndexDeletesWithheld {
+    /// The undeclared indexes left in place.
+    pub indexes: Vec<FirestoreListedCompositeIndex>,
+    /// Why they were left in place.
+    pub reason: FirestoreIndexDeletesWithheldReason,
+}
+
+/// Why a pruning `.sync()` sent none of its planned index deletes.
+#[derive(Debug, PartialEq, Clone)]
+pub enum FirestoreIndexDeletesWithheldReason {
+    /// `CreateIndex` answered `ALREADY_EXISTS` for these declared indexes, although the listing
+    /// matched none of them. Firestore holds an index it counts as equivalent, which may be one of
+    /// the indexes planned for deletion.
+    AlreadyExists(Vec<FirestoreCompositeIndex>),
+    /// These indexes, created by the same sync, had not finished building: an operation failed,
+    /// or the sync's deadline passed first. A delete sent then could remove the index queries use
+    /// while its replacement cannot serve them yet.
+    CreatesUnfinished(Vec<FirestoreCompositeIndex>),
+}
+
 /// Why a `.sync()` returned without contacting Firestore.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum FirestoreIndexSyncSkipReason {
@@ -596,7 +631,8 @@ pub struct FirestoreIndexSyncTimings {
     pub total: Duration,
     /// Listing the group's indexes and fields.
     pub list: Option<Duration>,
-    /// Sending the changes, including any wait between two writes that depend on each other.
+    /// Sending the changes, including any wait between two writes that depend on each other and
+    /// the wait for new indexes before a pruning sync deletes old ones.
     pub apply: Option<Duration>,
     /// Waiting for the started changes to finish.
     pub wait: Option<Duration>,
@@ -1088,6 +1124,17 @@ impl Display for FirestoreIndexSyncReport {
         write_section(f, "pending_ttl", &self.pending_ttl)?;
         write_section(f, "needs_repair_ttl", &self.needs_repair_ttl)?;
         write_section(f, "deleted_indexes", &self.deleted_indexes)?;
+        if let Some(withheld) = &self.withheld_deletes {
+            writeln!(
+                f,
+                "  withheld_deletes: {}, because {}",
+                withheld.indexes.len(),
+                withheld.reason
+            )?;
+            for index in &withheld.indexes {
+                writeln!(f, "    {index}")?;
+            }
+        }
         write_section(f, "reverted_fields", &self.reverted_fields)?;
         write_section(f, "disabled_ttl", &self.disabled_ttl)?;
         write_section(f, "kept_undeclared_indexes", &self.kept_undeclared_indexes)?;
@@ -1098,6 +1145,21 @@ impl Display for FirestoreIndexSyncReport {
             writeln!(f, "  skipped: {reason}")?;
         }
         writeln!(f, "  timings: {}", self.timings)
+    }
+}
+
+impl Display for FirestoreIndexDeletesWithheldReason {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            FirestoreIndexDeletesWithheldReason::AlreadyExists(indexes) => {
+                write!(f, "CreateIndex answered ALREADY_EXISTS for ")?;
+                write_comma_joined(f, indexes)
+            }
+            FirestoreIndexDeletesWithheldReason::CreatesUnfinished(indexes) => {
+                write!(f, "these new indexes had not finished building: ")?;
+                write_comma_joined(f, indexes)
+            }
+        }
     }
 }
 

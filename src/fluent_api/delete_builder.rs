@@ -333,8 +333,9 @@ where
     }
 
     /// Waits for the bulk delete to reach a terminal state before [`execute`](Self::execute)
-    /// returns, up to `timeout`, polling at the default interval. Without this, `execute` returns
-    /// once the operation is requested.
+    /// returns, up to `timeout` (see [`FirestoreOperationWaitOptions`] for exactly how it is
+    /// applied), polling at the default interval. Without this, `execute` returns once the
+    /// operation is requested.
     #[inline]
     pub fn wait_until_done(self, timeout: std::time::Duration) -> Self {
         self.wait_until_done_with_options(FirestoreOperationWaitOptions::new(timeout))

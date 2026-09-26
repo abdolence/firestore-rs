@@ -141,6 +141,21 @@ pruning is on; Firestore does not exempt it. A *declared* index matched to a lis
 `NEEDS_REPAIR` index is different: `.sync()` only ever reports that one, never deletes or
 recreates it automatically.
 
+A pruning sync sends its deletes last, and only after every index the same sync created has
+finished building, so a replaced index keeps serving queries until the new one can. The sync
+waits for that even without `.wait_until_ready(...)`, and a composite index build can take
+minutes. The wait ends by the sync's deadline: the `.wait_until_ready(timeout)` timeout when you
+set one, 30 minutes from the start of the sync otherwise. If a new index fails to build, or is
+still building at the deadline, the sync deletes nothing and returns the error.
+
+The sync also deletes nothing when Firestore answers a `CreateIndex` with `ALREADY_EXISTS`. That
+means Firestore holds an index it counts as the declared one, but the library did not match it to
+any listed index, so it can be one of the indexes planned for deletion. The sync logs a warning
+naming the declared index and carries on with everything else.
+
+In both cases `withheld_deletes` on the report lists the indexes left in place and the reason.
+Reverts and TTL disables do not wait for new indexes.
+
 `.prune_undeclared().plan()` previews a pruning sync without writing anything: `delete_indexes`,
 `revert_fields` and `disable_ttl` list exactly what a pruning `.sync()` would remove, and
 `kept_undeclared_indexes`, `kept_undeclared_fields` and `kept_undeclared_ttl` list what it would
@@ -148,18 +163,24 @@ leave alone without `.prune_undeclared()`.
 
 ## The order `.sync()` writes changes in
 
-`.sync()` applies one plan in a fixed order, stopping at the first write that fails: it creates
-missing composite indexes, writes declared field overrides, disables undeclared TTL fields,
-enables declared TTL fields, deletes undeclared composite indexes, and reverts undeclared field
-overrides. Creates come before deletes so a replaced index is never missing in between, and every
-TTL disable finishes before any TTL enable is sent, since Firestore allows only one TTL field per
-collection group.
+`.sync()` applies one plan in a fixed order, stopping at the first write that fails:
+
+- creates missing composite indexes;
+- writes declared field overrides;
+- disables undeclared TTL fields;
+- enables declared TTL fields;
+- reverts undeclared field overrides;
+- deletes undeclared composite indexes, once the new ones have finished building.
+
+Every TTL disable finishes before any TTL enable is sent, since Firestore allows only one TTL
+field per collection group.
 
 ## Waiting for changes to finish
 
-By default `.sync()` returns as soon as changes are requested; a created index or a newly enabled
-TTL field can still be building. `.wait_until_ready(timeout)` polls until every started change
-reaches a terminal state, or returns an error naming what is still pending once `timeout` is up:
+By default `.sync()` returns as soon as the last change is requested; a created index or a newly
+enabled TTL field can still be building. `.wait_until_ready(timeout)` polls until every started
+change reaches a terminal state, or returns an error naming what is still pending once `timeout`
+is up:
 
 ```rust,no_run
 # use firestore::*;
@@ -176,12 +197,20 @@ db.fluent()
 ```
 
 `.wait_until_ready_with_options(...)` also sets the poll interval, 5 seconds by default. A
-composite or vector index build is not instant even on an empty collection; budget minutes, not
-seconds.
+composite or vector index build is not instant even on an empty collection, so budget minutes
+for it.
 
-A failed wait leaves the index and field writes already applied in place, since `.sync()` never
-rolls those back; it logs the report built so far at `warn` before returning the error, so what
-went through survives in the log even though the returned `Result` is an error.
+The timeout covers the whole sync, from the start of the call, and every wait inside it ends by
+the same deadline. The last round of polls goes out at the deadline itself. One poll may take up
+to 10 seconds to answer (or the whole timeout, if that is shorter), so an error can arrive that
+long after the deadline. A poll that takes longer is sent again next round, and so is one that
+Firestore answers with `UNAVAILABLE`, `DEADLINE_EXCEEDED` or `NOT_FOUND`.
+
+A sync that fails after it started writing leaves the writes already applied in place, since
+`.sync()` never rolls those back. It logs the report built so far at `warn` before returning the
+error, so what went through survives in the log even though the returned `Result` is an error.
+This holds for any failure: a refused write, a failed operation, or a deadline passed in the
+final wait or in a wait between two writes.
 
 ## A write to a field waits for its own earlier write in the same sync
 
@@ -192,9 +221,10 @@ that same field, and to a TTL move in particular: disabling the old TTL field, t
 new one, waits for the disable to settle before the enable is sent. Writes to different fields are
 sent back to back, since Firestore accepts that.
 
-This wait uses `.wait_until_ready(timeout)`'s own timeout when you set one. Without it, `.sync()`
-still waits, under a default of 30 minutes, long enough for a field override's own single-field
-index build; there is no separate way to configure this default today.
+These waits happen even without `.wait_until_ready(...)`. They end by the sync's deadline: the
+`.wait_until_ready(timeout)` timeout when you set one, 30 minutes from the start of the sync
+otherwise, which is long enough for a field override's own single-field index build. There is no
+separate way to configure that default today.
 
 ## Indexing only chosen fields
 
@@ -239,11 +269,12 @@ to maintain for a field, never one index to add to what is already there. An emp
 
 ## `__name__` handling
 
-A composite index declared without `__name__` matches a listed index that has it. Firestore
-appends `__name__` to every composite index at creation time, in the direction implied by the
-index's last field (ascending, unless the last field is descending). Declare `__name__` yourself
-only when a query needs a direction other than the implied one; an explicit declaration then
-matches only a listed index whose `__name__` direction is exactly the same.
+A composite index declared without `__name__` matches a listed index that has it where Firestore
+puts it: last in an ordinary index, or directly before the vector field in a vector index. The
+direction of that `__name__` does not matter for the match. A `__name__` anywhere else makes the
+listed index a different one. Declare `__name__` yourself only when a query needs a specific
+direction; an explicit declaration then matches only a listed index with exactly the same fields,
+`__name__` included.
 
 Field paths compare in one spelling, so `` `expires_at` `` and `expires_at`, or `` a.`b` `` and
 `` `a`.b ``, are the same field. A segment needs backticks only when it is not a plain identifier

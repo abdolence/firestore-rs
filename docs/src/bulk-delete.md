@@ -87,6 +87,10 @@ snapshot time and progress stay unset and print as "progress not reported", neve
 implements `Display`, so printing or logging it directly works with or without a tracing
 subscriber.
 
+The timeout works the same way as for index management's `.wait_until_ready(...)`: the last poll
+goes out at the deadline and may take up to 10 seconds to answer, or the whole timeout if that is
+shorter.
+
 A failed wait leaves the operation running on Firestore's side; the library logs the result built
 from what was polled so far at `warn` before returning the error, the same as index management's
 `.sync()` does for its own wait.
