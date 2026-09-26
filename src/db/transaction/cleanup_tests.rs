@@ -108,20 +108,47 @@ async fn callback_failures_roll_back_each_attempt_before_retrying() {
     }
 }
 
+// A callback that always fails transiently gets `1 + max_retries` attempts, whether it names
+// its own `retry_after` or leaves the delay to the backoff, and the last one is rolled back too.
 #[tokio::test]
 async fn exhausted_retries_roll_back_the_last_attempt() {
-    let server = fixture(Code::Ok, Code::Ok).await;
-    let options =
-        FirestoreTransactionOptions::new().with_max_elapsed_time(crate::FirestoreDuration::ZERO);
-    let result: FirestoreResult<()> = server
-        .db
-        .run_transaction_with_options(
-            |_, _| Box::pin(async { Err(BackoffError::transient(std::io::Error::other("retry"))) }),
-            options,
+    for retry_after in [None, Some(Duration::ZERO)] {
+        let server = fixture(Code::Ok, Code::Ok).await;
+        let options = FirestoreTransactionOptions::new().with_max_retries(2);
+        let result: FirestoreResult<()> = tokio::time::timeout(
+            Duration::from_secs(10),
+            server.db.run_transaction_with_options(
+                move |_, _| {
+                    Box::pin(async move {
+                        let err = std::io::Error::other("retry");
+                        Err(match retry_after {
+                            Some(delay) => BackoffError::retry_after(err, delay),
+                            None => BackoffError::transient(err),
+                        })
+                    })
+                },
+                options,
+            ),
         )
-        .await;
-    assert!(matches!(result, Err(FirestoreError::ErrorInTransaction(_))));
-    assert_eq!(server.calls(), vec!["Begin→1", "Rollback(1)"]);
+        .await
+        .expect("retries must be bounded by max_retries");
+        assert!(
+            matches!(result, Err(FirestoreError::ErrorInTransaction(_))),
+            "{retry_after:?}: {result:?}"
+        );
+        assert_eq!(
+            server.calls(),
+            vec![
+                "Begin→1",
+                "Rollback(1)",
+                "Begin→2",
+                "Rollback(2)",
+                "Begin→3",
+                "Rollback(3)"
+            ],
+            "{retry_after:?}"
+        );
+    }
 }
 
 #[tokio::test]

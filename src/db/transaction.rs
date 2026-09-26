@@ -402,8 +402,10 @@ impl FirestoreDb {
     /// On a transient failure - `func` returning [`BackoffError::Transient`], or an `ABORTED`
     /// answer to `Commit` (see [`FirestoreTransaction::commit`]) - the whole transaction is
     /// retried from the start: after the error's `retry_after` when it names one, and after an
-    /// exponential backoff otherwise, up to `options.max_elapsed_time`. Any other commit error is
-    /// returned without running `func` again.
+    /// exponential backoff otherwise. It is retried at most 4 times, 5 attempts in all, with no
+    /// time limit; [`run_transaction_with_options`](Self::run_transaction_with_options) changes
+    /// both bounds. Once they are reached, the last attempt's error is returned. Any other commit
+    /// error is returned without running `func` again.
     /// `func` must therefore be safe to run more than once for the same call: read the state it
     /// needs from the transaction-scoped `db` argument on every invocation rather than closing over
     /// state read before the transaction started, and avoid side effects inside the closure that
@@ -468,8 +470,10 @@ impl FirestoreDb {
 
     /// Same as [`run_transaction`](Self::run_transaction), with explicit `options`.
     ///
-    /// `options.max_elapsed_time` bounds how long the retry loop described on
-    /// [`run_transaction`](Self::run_transaction) keeps retrying before giving up.
+    /// Two options bound the retries described on [`run_transaction`](Self::run_transaction):
+    /// `options.max_retries` caps how many retries follow the first attempt (4 by default, 5
+    /// attempts in all), and `options.max_elapsed_time`, when set, also caps how long retrying
+    /// may go on, counted from the first failure. Retrying stops at whichever is reached first.
     ///
     /// Returns an error if `BeginTransaction` fails, `func` returns [`BackoffError::Permanent`],
     /// the commit fails without `retry_possible`, or retries are exhausted. Callback errors are
@@ -504,6 +508,7 @@ impl FirestoreDb {
         let mut backoff = ExponentialBackoffBuilder::new()
             .with_max_elapsed_time(max_elapsed_time)
             .build();
+        let mut retries = 0;
 
         loop {
             let (err, retry_after) = match result {
@@ -511,10 +516,14 @@ impl FirestoreDb {
                 Err(BackoffError::Permanent(err)) => return Err(err),
                 Err(BackoffError::Transient { err, retry_after }) => (err, retry_after),
             };
+            if retries == retry_options.max_retries {
+                return Err(err);
+            }
             let Some(delay) = retry_after.or_else(|| backoff.next_backoff()) else {
                 return Err(err);
             };
             tokio::time::sleep(delay).await;
+            retries += 1;
             result = match self
                 .begin_transaction_with_options(retry_options.clone())
                 .await
