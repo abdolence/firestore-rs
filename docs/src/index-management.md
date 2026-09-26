@@ -245,6 +245,10 @@ index's last field (ascending, unless the last field is descending). Declare `__
 only when a query needs a direction other than the implied one; an explicit declaration then
 matches only a listed index whose `__name__` direction is exactly the same.
 
+Field paths compare in one spelling, so `` `expires_at` `` and `expires_at`, or `` a.`b` `` and
+`` `a`.b ``, are the same field. A segment needs backticks only when it is not a plain identifier
+(letters, digits and `_`, not starting with a digit).
+
 ## Unrecognised items
 
 Firestore can list index or field shapes this crate's domain model has no representation for: a

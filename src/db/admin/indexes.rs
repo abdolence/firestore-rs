@@ -6,7 +6,9 @@
 use crate::db::admin::index_diff::{
     plan_index_changes, FirestoreIndexExistingState, FirestoreIndexListing,
 };
-use crate::db::admin::index_models::{validate_collection_group, write_section};
+use crate::db::admin::index_models::{
+    validate_collection_group, write_section, CanonicalFieldPath,
+};
 use crate::db::admin::operation_wait::{OperationAction, StartedOperation};
 use crate::db::support::FirestoreIndexSupport;
 use crate::errors::FirestoreError;
@@ -177,9 +179,9 @@ struct OwnedGroup<'a> {
 }
 
 impl OwnedGroup<'_> {
-    /// The resource name of field `path` in this group: the key writes to one field are
-    /// sequenced on, and the name an `UpdateField` request carries.
-    fn field_resource(&self, path: &str) -> String {
+    /// The resource name of field `path` in this group, the name an `UpdateField` request
+    /// carries.
+    fn field_resource(&self, path: &CanonicalFieldPath) -> String {
         format!("{}/fields/{path}", self.path)
     }
 
@@ -216,18 +218,18 @@ impl OwnedGroup<'_> {
 const SEQUENCING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// The operations one sync has started, which of them are known to have finished, and which one
-/// last wrote each field resource.
+/// last wrote each field.
 #[derive(Default)]
 struct StartedWrites {
     operations: Vec<PendingOperation>,
     settled: Vec<bool>,
-    last_write_to_field: HashMap<String, usize>,
+    last_write_to_field: HashMap<CanonicalFieldPath, usize>,
 }
 
 impl StartedWrites {
     /// Records `operation`, as the latest write to `field` when it writes one, and returns its
     /// position.
-    fn push(&mut self, field: Option<String>, operation: PendingOperation) -> usize {
+    fn push(&mut self, field: Option<CanonicalFieldPath>, operation: PendingOperation) -> usize {
         let position = self.operations.len();
         self.operations.push(operation);
         self.settled.push(false);
@@ -618,7 +620,7 @@ impl FirestoreDb {
             "/firestore/operation" = field::Empty,
             "/firestore/response_time" = field::Empty,
         );
-        let name = group.field_resource(declared.target.as_str());
+        let name = group.field_resource(&CanonicalFieldPath::from(declared.target.as_str()));
         let index_config = proto_field::IndexConfig::try_from(declared.clone())?;
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
@@ -647,7 +649,7 @@ impl FirestoreDb {
             "/firestore/operation" = field::Empty,
             "/firestore/response_time" = field::Empty,
         );
-        let name = group.field_resource(field_path);
+        let name = group.field_resource(&CanonicalFieldPath::from(field_path));
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
                 name,
@@ -753,14 +755,14 @@ impl FirestoreDb {
         Ok(())
     }
 
-    /// Waits for the last write to `field_resource`, if this sync sent one that has not settled.
+    /// Waits for the last write to `field`, if this sync sent one that has not settled.
     async fn settle_field(
         &self,
         writes: &mut StartedWrites,
-        field_resource: &str,
+        field: &CanonicalFieldPath,
         options: &FirestoreOperationWaitOptions,
     ) -> FirestoreResult<()> {
-        match writes.last_write_to_field.get(field_resource).copied() {
+        match writes.last_write_to_field.get(field).copied() {
             Some(position) => self.settle_writes(writes, &[position], options).await,
             None => Ok(()),
         }
@@ -817,7 +819,7 @@ impl FirestoreDb {
                 }
             }
             for declared in &plan.update_fields {
-                let field = group.field_resource(declared.target.as_str());
+                let field = CanonicalFieldPath::from(declared.target.as_str());
                 self.settle_field(&mut writes, &field, sequencing).await?;
                 let op = self.apply_update_field_override(group, declared).await?;
                 writes.push(Some(field), op);
@@ -825,10 +827,10 @@ impl FirestoreDb {
             }
             let mut ttl_disables = Vec::new();
             for listed in &plan.disable_ttl {
-                self.settle_field(&mut writes, &listed.name, sequencing)
-                    .await?;
+                let field = CanonicalFieldPath::from(listed.field_path.as_str());
+                self.settle_field(&mut writes, &field, sequencing).await?;
                 let op = self.apply_disable_ttl(group, listed).await?;
-                ttl_disables.push(writes.push(Some(listed.name.clone()), op));
+                ttl_disables.push(writes.push(Some(field), op));
                 report.disabled_ttl.push(listed.clone());
             }
             if !plan.enable_ttl.is_empty() {
@@ -836,7 +838,7 @@ impl FirestoreDb {
                     .await?;
             }
             for path in &plan.enable_ttl {
-                let field = group.field_resource(path);
+                let field = CanonicalFieldPath::from(path.as_str());
                 self.settle_field(&mut writes, &field, sequencing).await?;
                 let op = self.apply_enable_ttl(group, path).await?;
                 writes.push(Some(field), op);
@@ -847,10 +849,10 @@ impl FirestoreDb {
                 report.deleted_indexes.push(listed.clone());
             }
             for listed in &plan.revert_fields {
-                self.settle_field(&mut writes, &listed.name, sequencing)
-                    .await?;
+                let field = CanonicalFieldPath::from(listed.field_path.as_str());
+                self.settle_field(&mut writes, &field, sequencing).await?;
                 let op = self.apply_revert_field_override(group, listed).await?;
-                writes.push(Some(listed.name.clone()), op);
+                writes.push(Some(field), op);
                 report.reverted_fields.push(listed.clone());
             }
             Ok(())
@@ -1606,7 +1608,8 @@ mod tests {
             index_config: Some(exempt_override()),
             ttl_config: Some(active_ttl()),
         }
-        .into();
+        .try_into()
+        .unwrap();
 
         let users = group();
         let owned = owned_users_group(&users);
@@ -2170,6 +2173,37 @@ mod tests {
 
         assert!(report.created_indexes.is_empty());
         assert_eq!(report.unchanged, vec![declared_index()]);
+    }
+
+    #[tokio::test]
+    async fn writes_to_one_field_spelled_two_ways_are_still_sequenced() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, bytes| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => recording_writes(other, bytes),
+        })
+        .await;
+
+        let params = FirestoreIndexParams::new(group())
+            .with_field_overrides(vec![FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::Field("expires_at".to_string()),
+                indexes: vec![],
+            }])
+            .with_ttl_fields(vec!["`expires_at`".into()]);
+        fake.db
+            .sync_indexes(params, FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            writes_and_polls(&fake),
+            vec![
+                "UpdateField(index_config expires_at)",
+                "GetOperation(op-index_config-expires_at)",
+                "UpdateField(ttl_config expires_at)",
+            ]
+        );
     }
 
     #[tokio::test]

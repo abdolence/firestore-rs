@@ -129,6 +129,137 @@ impl FirestoreFieldOverrideIndex {
 /// literal string: see [`FirestoreFieldOverrideTarget`].
 pub(crate) const ALL_FIELDS_PATH: &str = "*";
 
+/// A field path in the one spelling Firestore's grammar allows for it, so two spellings of the
+/// same field compare and hash equal: `` `x` `` and `x`, or `` a.`b` `` and `` `a`.b ``.
+///
+/// A segment is written bare when it is a simple identifier (`[A-Za-z_][A-Za-z0-9_]*`), and in
+/// backticks otherwise, with `` \` `` and `\\` escaping a backtick and a backslash inside them.
+/// The all-fields wildcard `*` is kept as it is. A path that does not parse, such as one with an
+/// unclosed backtick, is kept exactly as written, so it only ever equals the same text.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CanonicalFieldPath(String);
+
+impl CanonicalFieldPath {
+    /// The field path of a listed field resource,
+    /// `projects/{p}/databases/{d}/collectionGroups/{group}/fields/{path}`.
+    ///
+    /// Anchored on the `/collectionGroups/{group}/fields/` markers rather than split on the last
+    /// `/`, because a quoted segment such as `` `a/b` `` can itself contain `/`, and a database ID
+    /// can contain the word `fields`.
+    ///
+    /// # Errors
+    /// [`FirestoreError::InvalidParametersError`] naming `name` when it is not a field resource
+    /// name of that shape.
+    pub(crate) fn from_field_resource_name(name: &str) -> FirestoreResult<Self> {
+        const COLLECTION_GROUPS_MARKER: &str = "/collectionGroups/";
+        const FIELDS_MARKER: &str = "fields/";
+
+        name.find(COLLECTION_GROUPS_MARKER)
+            .and_then(|groups_at| {
+                let after_groups = &name[groups_at + COLLECTION_GROUPS_MARKER.len()..];
+                let group_end = after_groups.find('/')?;
+                after_groups[group_end + 1..].strip_prefix(FIELDS_MARKER)
+            })
+            .map(Self::from)
+            .ok_or_else(|| {
+                FirestoreError::invalid_parameters(
+                    "name",
+                    format!("not a field resource name: {name}"),
+                )
+            })
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The unescaped name of every segment of `path`, or `None` when `path` does not follow the
+    /// field path grammar.
+    fn segments(path: &str) -> Option<Vec<String>> {
+        let mut segments = Vec::new();
+        let mut chars = path.chars();
+        loop {
+            let mut segment = String::new();
+            let mut rest = chars.clone();
+            let ended = if rest.next() == Some('`') {
+                chars = rest;
+                loop {
+                    match chars.next()? {
+                        '\\' => segment.push(chars.next()?),
+                        '`' => break,
+                        c => segment.push(c),
+                    }
+                }
+                match chars.next() {
+                    None => true,
+                    Some('.') => false,
+                    Some(_) => return None,
+                }
+            } else {
+                loop {
+                    match chars.next() {
+                        None => break true,
+                        Some('.') => break false,
+                        Some('`') => return None,
+                        Some(c) => segment.push(c),
+                    }
+                }
+            };
+            if segment.is_empty() {
+                return None;
+            }
+            segments.push(segment);
+            if ended {
+                return Some(segments);
+            }
+        }
+    }
+
+    fn is_simple_identifier(segment: &str) -> bool {
+        let mut chars = segment.chars();
+        chars
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+}
+
+impl From<&str> for CanonicalFieldPath {
+    fn from(path: &str) -> Self {
+        if path == ALL_FIELDS_PATH {
+            return Self(path.to_string());
+        }
+        let Some(segments) = Self::segments(path) else {
+            return Self(path.to_string());
+        };
+        let mut canonical = String::with_capacity(path.len());
+        for (position, segment) in segments.iter().enumerate() {
+            if position > 0 {
+                canonical.push('.');
+            }
+            if Self::is_simple_identifier(segment) {
+                canonical.push_str(segment);
+            } else {
+                canonical.push('`');
+                for c in segment.chars() {
+                    if c == '`' || c == '\\' {
+                        canonical.push('\\');
+                    }
+                    canonical.push(c);
+                }
+                canonical.push('`');
+            }
+        }
+        Self(canonical)
+    }
+}
+
+impl Display for CanonicalFieldPath {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// What a [`FirestoreFieldOverride`] applies to: one named field, or every field in the owned
 /// collection group.
 ///
@@ -999,6 +1130,50 @@ impl Display for FirestoreIndexSyncTimings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_field_path_has_one_canonical_spelling() {
+        for (written, canonical) in [
+            ("x", "x"),
+            ("`x`", "x"),
+            ("a.`b`", "a.b"),
+            ("`a`.b", "a.b"),
+            ("`my-field`", "`my-field`"),
+            ("my-field", "`my-field`"),
+            ("`a/b`.c", "`a/b`.c"),
+            ("`a\\`b`", "`a\\`b`"),
+            ("`back\\\\slash`", "`back\\\\slash`"),
+            ("`_ok9`", "_ok9"),
+            ("`9lives`", "`9lives`"),
+            ("`__name__`", "__name__"),
+            ("*", "*"),
+        ] {
+            assert_eq!(
+                CanonicalFieldPath::from(written).as_str(),
+                canonical,
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_field_path_outside_the_grammar_is_kept_as_written() {
+        for written in ["`open", "a..b", "a.", "``", "a`b"] {
+            assert_eq!(CanonicalFieldPath::from(written).as_str(), written);
+        }
+    }
+
+    #[test]
+    fn a_field_resource_name_yields_its_canonical_field_path() {
+        let name = "projects/p/databases/fields/collectionGroups/users/fields/`a/b`.`c`";
+        assert_eq!(
+            CanonicalFieldPath::from_field_resource_name(name)
+                .unwrap()
+                .as_str(),
+            "`a/b`.c"
+        );
+        assert!(CanonicalFieldPath::from_field_resource_name("projects/p/other/x").is_err());
+    }
 
     fn field(path: &str, mode: FirestoreIndexFieldMode) -> FirestoreIndexField {
         FirestoreIndexField::new(path.to_string(), mode)

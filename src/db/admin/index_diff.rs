@@ -5,8 +5,7 @@
 //! without a server: [`plan_index_changes`] takes the state a `ListIndexes`/`ListFields` call
 //! already fetched and never performs I/O of its own.
 
-use crate::db::admin::index_models::IMPLIED_NAME_FIELD;
-use crate::db::split_document_path;
+use crate::db::admin::index_models::{CanonicalFieldPath, IMPLIED_NAME_FIELD};
 use crate::errors::FirestoreError;
 use crate::{
     FirestoreCompositeIndex, FirestoreExplicitFieldOverride, FirestoreFieldOverride,
@@ -49,32 +48,38 @@ pub(crate) struct FirestoreIndexExistingState {
 /// The owned group's listing converted into the domain model, once, for both the existing-state
 /// log and [`plan_index_changes`].
 ///
-/// A listed composite index the domain model cannot represent is carried in
-/// `unrecognised_indexes` rather than dropped. A listed field always converts, because each of its
-/// halves carries its own outcome (see [`FirestoreListedField`]).
+/// A listed composite index or field the domain model cannot represent is carried in
+/// `unrecognised` rather than dropped. A listed field converts whenever its resource name
+/// has the field shape, because each of its halves carries its own outcome (see
+/// [`FirestoreListedField`]).
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct FirestoreIndexListing {
     pub indexes: Vec<FirestoreListedCompositeIndex>,
     pub fields: Vec<FirestoreListedField>,
-    pub unrecognised_indexes: Vec<FirestoreUnrecognisedIndexItem>,
+    pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
 }
 
 impl From<FirestoreIndexExistingState> for FirestoreIndexListing {
     fn from(existing: FirestoreIndexExistingState) -> Self {
-        let mut listing = FirestoreIndexListing {
-            fields: existing.fields.into_iter().map(Into::into).collect(),
-            ..Default::default()
-        };
+        let mut listing = FirestoreIndexListing::default();
+        for proto in existing.fields {
+            let name = proto.name.clone();
+            match FirestoreListedField::try_from(proto) {
+                Ok(listed) => listing.fields.push(listed),
+                Err(err) => listing.unrecognised.push(FirestoreUnrecognisedIndexItem {
+                    name,
+                    reason: err.unrecognised_reason(),
+                }),
+            }
+        }
         for proto in existing.indexes {
             let name = proto.name.clone();
             match FirestoreListedCompositeIndex::try_from(proto) {
                 Ok(listed) => listing.indexes.push(listed),
-                Err(err) => listing
-                    .unrecognised_indexes
-                    .push(FirestoreUnrecognisedIndexItem {
-                        name,
-                        reason: err.unrecognised_reason(),
-                    }),
+                Err(err) => listing.unrecognised.push(FirestoreUnrecognisedIndexItem {
+                    name,
+                    reason: err.unrecognised_reason(),
+                }),
             }
         }
         listing
@@ -251,7 +256,7 @@ impl TryFrom<ProtoIndexField> for FirestoreIndexField {
             FirestoreError::invalid_parameters("value_mode", "field carries no value mode")
         })?;
         Ok(FirestoreIndexField::new(
-            field.field_path,
+            CanonicalFieldPath::from(field.field_path.as_str()).to_string(),
             FirestoreIndexFieldMode::try_from(value_mode)?,
         ))
     }
@@ -492,48 +497,49 @@ impl From<field::TtlConfig> for FirestoreFieldTtlOutcome {
     }
 }
 
-/// Extracts the field path from a listed field resource name,
-/// `.../collectionGroups/{group}/fields/{path}`. Anchored on the `/collectionGroups/` and
-/// `fields/` markers rather than split on the last `/` (`split_document_path`): a group ID cannot
-/// contain `/`, but a field path can - a backtick-quoted path such as `` `a/b` `` - and the
-/// last-`/` split would then return only `` b` ``, truncating a declared override's path so it
-/// never matches its listed counterpart. Anchoring on the markers instead also makes this immune
-/// to a database ID or a field path that happens to contain the literal word "fields".
-///
-/// Falls back to `split_document_path`'s last segment when `name` does not have the expected
-/// shape at all, which should not happen for a resource Firestore itself returned.
-fn field_path_from_listed_name(name: &str) -> String {
-    const COLLECTION_GROUPS_MARKER: &str = "/collectionGroups/";
-    const FIELDS_MARKER: &str = "fields/";
-
-    name.find(COLLECTION_GROUPS_MARKER)
-        .and_then(|groups_at| {
-            let after_groups = &name[groups_at + COLLECTION_GROUPS_MARKER.len()..];
-            let group_end = after_groups.find('/')?;
-            after_groups[group_end + 1..].strip_prefix(FIELDS_MARKER)
-        })
-        .map(str::to_string)
-        .unwrap_or_else(|| split_document_path(name).1.to_string())
-}
-
-/// Converts a listed field resource. Always succeeds: the override half and the TTL half each
-/// carry their own outcome (see [`FirestoreFieldOverrideOutcome`] and [`FirestoreFieldTtlOutcome`]),
-/// so a field resource with a valid override alongside an unrecognisable TTL state - or the
-/// reverse - keeps its valid half instead of losing it to a whole-field conversion failure.
+/// Converts a listed field resource. The override half and the TTL half each carry their own
+/// outcome (see [`FirestoreFieldOverrideOutcome`] and [`FirestoreFieldTtlOutcome`]), so a field
+/// resource with a valid override alongside an unrecognisable TTL state - or the reverse - keeps
+/// its valid half instead of losing it to a whole-field conversion failure.
 /// `plan_index_changes` reads each `Unrecognised` half into the plan's own `unrecognised` list.
-impl From<ProtoField> for FirestoreListedField {
-    fn from(field: ProtoField) -> Self {
-        let field_path = field_path_from_listed_name(&field.name);
-        FirestoreListedField {
+/// The field path is kept in its canonical spelling, the one a declared path is compared in.
+///
+/// # Errors
+/// Fails only when the resource name does not have the
+/// `.../collectionGroups/{group}/fields/{path}` shape.
+impl TryFrom<ProtoField> for FirestoreListedField {
+    type Error = FirestoreError;
+
+    fn try_from(field: ProtoField) -> Result<Self, Self::Error> {
+        let field_path = CanonicalFieldPath::from_field_resource_name(&field.name)?;
+        Ok(FirestoreListedField {
             name: field.name,
-            field_path,
+            field_path: field_path.to_string(),
             index_override: field.index_config.map(Into::into),
             ttl: field.ttl_config.map(Into::into),
-        }
+        })
     }
 }
 
 impl FirestoreCompositeIndex {
+    /// This index with every field path spelled canonically (see [`CanonicalFieldPath`]), the
+    /// spelling a listed index already carries, so the two compare field by field.
+    fn with_canonical_field_paths(&self) -> Self {
+        Self {
+            fields: self
+                .fields
+                .iter()
+                .map(|field| {
+                    FirestoreIndexField::new(
+                        CanonicalFieldPath::from(field.field_path.as_str()).to_string(),
+                        field.mode.clone(),
+                    )
+                })
+                .collect(),
+            ..self.clone()
+        }
+    }
+
     /// The field list Firestore would store for this declaration if it inserted `__name__` on its
     /// own: appended after the last field in that field's direction (ascending when the last
     /// field is not directional), or, when the last field is a vector field, `__name__ ASC`
@@ -617,6 +623,8 @@ fn strip_implied_name_at_expected_position(
 /// position included, since the caller is then asserting a specific shape rather than leaving it
 /// to Firestore.
 ///
+/// Field paths compare in their canonical spelling (see [`CanonicalFieldPath`]).
+///
 /// Used both to match a declaration against a listed index and, in
 /// [`validate_index_params`](crate::validate_index_params), to reject two declarations that are
 /// really the same index.
@@ -627,6 +635,8 @@ pub(crate) fn composite_index_matches(
     if declared.query_scope != listed.query_scope {
         return false;
     }
+    let declared = declared.with_canonical_field_paths();
+    let listed = listed.with_canonical_field_paths();
     if declared
         .fields
         .iter()
@@ -701,7 +711,7 @@ pub(crate) fn plan_index_changes(
     crate::validate_index_params(params)?;
 
     let mut plan = FirestoreIndexPlan {
-        unrecognised: listing.unrecognised_indexes.clone(),
+        unrecognised: listing.unrecognised.clone(),
         ..Default::default()
     };
 
@@ -736,7 +746,9 @@ pub(crate) fn plan_index_changes(
         // Several listed indexes can match one declaration once `__name__` is ignored - the
         // default-placement one wins, so a legitimate duplicate left over from a previous
         // creation is what ends up eligible for pruning rather than the live index.
-        let default_fields = declared.with_default_implied_name();
+        let default_fields = declared
+            .with_canonical_field_paths()
+            .with_default_implied_name();
         let found = match candidates.len() {
             0 => None,
             1 => Some(candidates[0]),
@@ -771,15 +783,18 @@ pub(crate) fn plan_index_changes(
         }
     }
 
-    let declared_override_paths: HashSet<&str> = params
+    // A listed field's path is already canonical (see `TryFrom<ProtoField>`); a declared one is
+    // made so here, so two spellings of one field never read as two fields.
+    let declared_override_paths: HashSet<CanonicalFieldPath> = params
         .field_overrides
         .iter()
-        .map(|f| f.target.as_str())
+        .map(|f| CanonicalFieldPath::from(f.target.as_str()))
         .collect();
     for declared in &params.field_overrides {
+        let declared_path = CanonicalFieldPath::from(declared.target.as_str());
         let listed_override = listed_fields
             .iter()
-            .find(|f| f.field_path == declared.target.as_str())
+            .find(|f| f.field_path == declared_path.as_str())
             .and_then(|listed| {
                 listed
                     .index_override
@@ -815,7 +830,10 @@ pub(crate) fn plan_index_changes(
         };
         // A field already `reverting` has an in-flight change back to the ancestor's config;
         // planning another revert for it would just repeat a change already under way.
-        if !explicit.reverting && !declared_override_paths.contains(listed.field_path.as_str()) {
+        if !explicit.reverting
+            && !declared_override_paths
+                .contains(&CanonicalFieldPath::from(listed.field_path.as_str()))
+        {
             if prune {
                 plan.revert_fields.push(listed.clone());
             } else {
@@ -824,12 +842,16 @@ pub(crate) fn plan_index_changes(
         }
     }
 
-    let declared_ttl_paths: HashSet<&str> =
-        params.ttl_fields.iter().map(|path| path.as_str()).collect();
+    let declared_ttl_paths: HashSet<CanonicalFieldPath> = params
+        .ttl_fields
+        .iter()
+        .map(|path| CanonicalFieldPath::from(path.as_str()))
+        .collect();
     for declared_path in &params.ttl_fields {
+        let canonical_path = CanonicalFieldPath::from(declared_path.as_str());
         let listed_ttl = listed_fields
             .iter()
-            .find(|f| f.field_path == *declared_path)
+            .find(|f| f.field_path == canonical_path.as_str())
             .and_then(|f| f.ttl.as_ref());
         match listed_ttl {
             None => plan.enable_ttl.push(declared_path.clone()),
@@ -850,7 +872,7 @@ pub(crate) fn plan_index_changes(
     }
     for listed in listed_fields {
         if matches!(listed.ttl, Some(FirestoreFieldTtlOutcome::Configured(_)))
-            && !declared_ttl_paths.contains(listed.field_path.as_str())
+            && !declared_ttl_paths.contains(&CanonicalFieldPath::from(listed.field_path.as_str()))
         {
             if prune {
                 plan.disable_ttl.push(listed.clone());
@@ -1255,35 +1277,34 @@ pub(crate) mod tests {
 
     #[test]
     fn listed_field_path_keeps_a_backtick_quoted_segment_containing_a_slash() {
-        // The last-`/`-split parser this replaces would return only "b`" here, truncating the
-        // path so a declared override on `` `a/b` `` never matches its listed counterpart.
         let listed_field = field_resource("`a/b`", None, None);
-        let listed = FirestoreListedField::from(listed_field);
+        let listed = FirestoreListedField::try_from(listed_field).unwrap();
         assert_eq!(listed.field_path, "`a/b`");
     }
 
     #[test]
     fn listed_field_path_keeps_a_nested_path() {
         let listed_field = field_resource("a.b", None, None);
-        let listed = FirestoreListedField::from(listed_field);
+        let listed = FirestoreListedField::try_from(listed_field).unwrap();
         assert_eq!(listed.field_path, "a.b");
     }
 
     #[test]
     fn listed_field_path_keeps_the_all_fields_wildcard() {
         let listed_field = field_resource("*", None, None);
-        let listed = FirestoreListedField::from(listed_field);
+        let listed = FirestoreListedField::try_from(listed_field).unwrap();
         assert_eq!(listed.field_path, "*");
     }
 
     #[test]
     fn listed_field_path_survives_a_database_id_containing_the_word_fields() {
         let name = "projects/p/databases/fields/collectionGroups/users/fields/tags".to_string();
-        let listed = FirestoreListedField::from(ProtoField {
+        let listed = FirestoreListedField::try_from(ProtoField {
             name: name.clone(),
             index_config: None,
             ttl_config: None,
-        });
+        })
+        .unwrap();
         assert_eq!(listed.field_path, "tags");
         assert_eq!(listed.name, name);
     }
@@ -1348,7 +1369,7 @@ pub(crate) mod tests {
         let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
         assert_eq!(
             plan.kept_undeclared_fields,
-            vec![FirestoreListedField::from(listed_field)]
+            vec![FirestoreListedField::try_from(listed_field).unwrap()]
         );
     }
 
@@ -1459,7 +1480,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             plan.reverting_fields,
-            vec![FirestoreListedField::from(listed_field)]
+            vec![FirestoreListedField::try_from(listed_field).unwrap()]
         );
     }
 
@@ -1532,7 +1553,7 @@ pub(crate) mod tests {
         let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
         assert_eq!(
             plan.kept_undeclared_ttl,
-            vec![FirestoreListedField::from(listed_field)]
+            vec![FirestoreListedField::try_from(listed_field).unwrap()]
         );
     }
 
@@ -2052,5 +2073,97 @@ pub(crate) mod tests {
         let err =
             plan_index_changes(&params, &FirestoreIndexListing::default(), false).unwrap_err();
         assert!(err.to_string().contains("at least two fields"));
+    }
+
+    fn exempt_listed_config() -> field::IndexConfig {
+        field::IndexConfig {
+            indexes: vec![],
+            uses_ancestor_config: false,
+            ancestor_field: String::new(),
+            reverting: false,
+        }
+    }
+
+    fn exempt_declared(path: &str) -> FirestoreFieldOverride {
+        FirestoreFieldOverride {
+            target: FirestoreFieldOverrideTarget::Field(path.to_string()),
+            indexes: vec![],
+        }
+    }
+
+    #[test]
+    fn a_listed_override_quoted_differently_from_its_declaration_is_the_same_field() {
+        for (declared, listed) in [("bio", "`bio`"), ("`bio`", "bio"), ("a.`b`", "`a`.b")] {
+            let params = users_params().with_field_overrides(vec![exempt_declared(declared)]);
+            let existing = FirestoreIndexExistingState {
+                indexes: vec![],
+                fields: vec![field_resource(listed, Some(exempt_listed_config()), None)],
+            };
+            let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+            assert!(
+                plan.update_fields.is_empty(),
+                "declared {declared} against listed {listed}: {plan}"
+            );
+            assert!(
+                plan.revert_fields.is_empty(),
+                "declared {declared} against listed {listed}: {plan}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_listed_ttl_field_quoted_differently_from_its_declaration_is_the_same_field() {
+        for (declared, listed) in [
+            ("expires_at", "`expires_at`"),
+            ("`expires_at`", "expires_at"),
+        ] {
+            let params = users_params().with_ttl_fields(vec![declared.to_string()]);
+            let existing = FirestoreIndexExistingState {
+                indexes: vec![],
+                fields: vec![field_resource(listed, None, Some(active_ttl_config()))],
+            };
+            let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+            assert_eq!(plan.unchanged_ttl, vec![declared.to_string()], "{plan}");
+            assert!(plan.enable_ttl.is_empty(), "{plan}");
+            assert!(plan.disable_ttl.is_empty(), "{plan}");
+        }
+    }
+
+    #[test]
+    fn a_listed_index_field_quoted_differently_from_its_declaration_is_the_same_field() {
+        let declared = FirestoreCompositeIndex::new(vec![asc_field("a"), desc_field("`b`")]);
+        let params = users_params().with_composite_indexes(vec![declared.clone()]);
+        let listed = listed_index(
+            vec![
+                order_field("`a`", ProtoOrder::Ascending),
+                order_field("b", ProtoOrder::Descending),
+                order_field(IMPLIED_NAME_FIELD, ProtoOrder::Descending),
+            ],
+            ProtoQueryScope::Collection,
+            ProtoState::Ready,
+        );
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![listed],
+            fields: vec![],
+        };
+        let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+        assert_eq!(plan.unchanged, vec![declared], "{plan}");
+        assert!(plan.create_indexes.is_empty(), "{plan}");
+        assert!(plan.delete_indexes.is_empty(), "{plan}");
+    }
+
+    #[test]
+    fn a_listed_field_whose_name_is_not_a_field_resource_is_unrecognised() {
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![],
+            fields: vec![ProtoField {
+                name: "projects/p/databases/d/somethingElse/x".to_string(),
+                index_config: Some(exempt_listed_config()),
+                ttl_config: None,
+            }],
+        };
+        let plan = plan_index_changes(&users_params(), &existing.into(), true).unwrap();
+        assert_eq!(plan.unrecognised.len(), 1, "{plan}");
+        assert!(plan.revert_fields.is_empty(), "{plan}");
     }
 }
