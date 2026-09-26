@@ -9,7 +9,7 @@ use crate::{
     FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreIndexField,
     FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSupport,
     FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreOperationWaitOptions,
-    FirestoreQueryDirection, FirestoreResult,
+    FirestoreQueryDirection, FirestoreResult, FirestoreVectorIndexConfig,
 };
 use std::time::Duration;
 
@@ -358,7 +358,7 @@ impl FirestoreIndexFieldExprBuilder {
     pub fn vector(self, dimension: u32) -> Option<FirestoreIndexField> {
         Some(FirestoreIndexField::new(
             self.field_path,
-            FirestoreIndexFieldMode::Vector { dimension },
+            FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(dimension)),
         ))
     }
 }
@@ -555,7 +555,7 @@ mod tests {
         path, FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
         FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreIndexField,
         FirestoreIndexFieldMode, FirestoreIndexSyncOptions, FirestoreOperationWaitOptions,
-        FirestoreQueryDirection,
+        FirestoreQueryDirection, FirestoreVectorIndexConfig,
     };
     use std::time::Duration;
 
@@ -643,7 +643,7 @@ mod tests {
                     asc("country"),
                     FirestoreIndexField::new(
                         "embedding".to_string(),
-                        FirestoreIndexFieldMode::Vector { dimension: 768 }
+                        FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(768))
                     ),
                 ]),
             ]

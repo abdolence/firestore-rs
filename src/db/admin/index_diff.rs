@@ -9,11 +9,12 @@ use crate::db::admin::index_models::IMPLIED_NAME_FIELD;
 use crate::db::split_document_path;
 use crate::errors::FirestoreError;
 use crate::{
-    FirestoreCompositeIndex, FirestoreFieldOverride, FirestoreFieldOverrideIndex,
-    FirestoreFieldOverrideOutcome, FirestoreFieldTtlOutcome, FirestoreFieldTtlState,
-    FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan,
-    FirestoreIndexQueryScope, FirestoreIndexState, FirestoreListedCompositeIndex,
-    FirestoreListedField, FirestoreQueryDirection, FirestoreResult, FirestoreUnrecognisedIndexItem,
+    FirestoreCompositeIndex, FirestoreExplicitFieldOverride, FirestoreFieldOverride,
+    FirestoreFieldOverrideIndex, FirestoreFieldOverrideOutcome, FirestoreFieldTtlOutcome,
+    FirestoreFieldTtlState, FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexParams,
+    FirestoreIndexPlan, FirestoreIndexQueryScope, FirestoreIndexState,
+    FirestoreListedCompositeIndex, FirestoreListedField, FirestoreQueryDirection, FirestoreResult,
+    FirestoreUnrecognisedIndexItem, FirestoreVectorIndexConfig,
 };
 use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
     vector_config, ArrayConfig as ProtoArrayConfig, Order as ProtoOrder, ValueMode,
@@ -109,7 +110,7 @@ impl TryFrom<FirestoreIndexFieldMode> for ValueMode {
             FirestoreIndexFieldMode::ArrayContains => {
                 ValueMode::ArrayConfig(ProtoArrayConfig::Contains.into())
             }
-            FirestoreIndexFieldMode::Vector { dimension } => {
+            FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig { dimension }) => {
                 ValueMode::VectorConfig(ProtoVectorConfig {
                     dimension: i32::try_from(dimension).map_err(|_| {
                         FirestoreError::invalid_parameters(
@@ -165,7 +166,9 @@ impl TryFrom<ValueMode> for FirestoreIndexFieldMode {
                         format!("listed vector dimension {} is negative", vector.dimension),
                     )
                 })?;
-                Ok(FirestoreIndexFieldMode::Vector { dimension })
+                Ok(FirestoreIndexFieldMode::Vector(
+                    FirestoreVectorIndexConfig::new(dimension),
+                ))
             }
             ValueMode::SearchConfig(_) => Err(FirestoreError::invalid_parameters(
                 "value_mode",
@@ -413,7 +416,12 @@ impl From<field::IndexConfig> for FirestoreFieldOverrideOutcome {
             .map(FirestoreFieldOverrideIndex::try_from)
             .collect::<FirestoreResult<Vec<_>>>()
         {
-            Ok(indexes) => FirestoreFieldOverrideOutcome::Explicit { indexes, reverting },
+            Ok(indexes) => {
+                FirestoreFieldOverrideOutcome::Explicit(FirestoreExplicitFieldOverride {
+                    indexes,
+                    reverting,
+                })
+            }
             Err(err) => FirestoreFieldOverrideOutcome::Unrecognised(describe_error(&err)),
         }
     }
@@ -468,7 +476,7 @@ impl FirestoreCompositeIndex {
     fn with_default_implied_name(&self) -> Vec<FirestoreIndexField> {
         let mut fields = self.fields.clone();
         match fields.pop() {
-            Some(last) if matches!(last.mode, FirestoreIndexFieldMode::Vector { .. }) => {
+            Some(last) if matches!(last.mode, FirestoreIndexFieldMode::Vector(_)) => {
                 fields.push(FirestoreIndexField::new(
                     IMPLIED_NAME_FIELD.to_string(),
                     FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending),
@@ -547,11 +555,10 @@ fn field_override_matches(
     declared: &FirestoreFieldOverride,
     listed: &FirestoreListedField,
 ) -> bool {
-    let Some(FirestoreFieldOverrideOutcome::Explicit { indexes, .. }) = &listed.index_override
-    else {
+    let Some(FirestoreFieldOverrideOutcome::Explicit(explicit)) = &listed.index_override else {
         return false;
     };
-    override_index_set(&declared.indexes) == override_index_set(indexes)
+    override_index_set(&declared.indexes) == override_index_set(&explicit.indexes)
 }
 
 /// Describes a [`FirestoreError`] the way an unrecognised listed item's `reason` should read: a
@@ -677,7 +684,7 @@ pub(crate) fn plan_index_changes(
         let listed = listed_fields.iter().find(|f| {
             matches!(
                 f.index_override,
-                Some(FirestoreFieldOverrideOutcome::Explicit { .. })
+                Some(FirestoreFieldOverrideOutcome::Explicit(_))
             ) && f.field_path == declared.target.as_str()
         });
         let up_to_date = listed
@@ -688,14 +695,12 @@ pub(crate) fn plan_index_changes(
         }
     }
     for listed in &listed_fields {
-        let Some(FirestoreFieldOverrideOutcome::Explicit { reverting, .. }) =
-            &listed.index_override
-        else {
+        let Some(FirestoreFieldOverrideOutcome::Explicit(explicit)) = &listed.index_override else {
             continue;
         };
         // A field already `reverting` has an in-flight change back to the ancestor's config;
         // planning another revert for it would just repeat a change already under way.
-        if !reverting && !declared_override_paths.contains(listed.field_path.as_str()) {
+        if !explicit.reverting && !declared_override_paths.contains(listed.field_path.as_str()) {
             plan.undeclared_fields.push(listed.clone());
         }
     }
@@ -948,7 +953,7 @@ mod tests {
             desc_field("a"),
             FirestoreIndexField::new(
                 "v".to_string(),
-                FirestoreIndexFieldMode::Vector { dimension: 8 },
+                FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
             ),
         ]);
         let params = users_params().with_composite_indexes(vec![declared.clone()]);
@@ -1010,7 +1015,7 @@ mod tests {
             asc_field("country"),
             FirestoreIndexField::new(
                 "embedding".to_string(),
-                FirestoreIndexFieldMode::Vector { dimension: 768 },
+                FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(768)),
             ),
         ]);
         let params = users_params().with_composite_indexes(vec![declared.clone()]);
@@ -1271,9 +1276,7 @@ mod tests {
     fn vector_dimension_above_i32_range_is_rejected() {
         let field = FirestoreIndexField::new(
             "embedding".to_string(),
-            FirestoreIndexFieldMode::Vector {
-                dimension: u32::MAX,
-            },
+            FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(u32::MAX)),
         );
         let err = ProtoIndexField::try_from(field).unwrap_err();
         assert!(matches!(err, FirestoreError::InvalidParametersError(_)));
@@ -1344,7 +1347,7 @@ mod tests {
         // `[__name__ ASC, <vector field>]`, not `[<vector field>, __name__ ASC]`.
         let declared = FirestoreCompositeIndex::new(vec![FirestoreIndexField::new(
             "embedding".to_string(),
-            FirestoreIndexFieldMode::Vector { dimension: 8 },
+            FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
         )]);
         let params = users_params().with_composite_indexes(vec![declared.clone()]);
         let listed = listed_index(

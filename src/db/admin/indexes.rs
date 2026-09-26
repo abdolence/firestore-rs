@@ -959,6 +959,7 @@ mod tests {
     use crate::{
         FirestoreCollectionId, FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget,
         FirestoreIndexField, FirestoreIndexFieldMode, FirestoreQueryDirection,
+        FirestoreVectorIndexConfig,
     };
     use gcloud_sdk::google::firestore::admin::v1::index::{
         ApiScope, IndexField as ProtoIndexField, QueryScope as ProtoQueryScope, State as ProtoState,
@@ -1592,7 +1593,7 @@ mod tests {
         };
         let declared = FirestoreCompositeIndex::new(vec![FirestoreIndexField::new(
             "some_vec".to_string(),
-            FirestoreIndexFieldMode::Vector { dimension: 3 },
+            FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(3)),
         )]);
         let params =
             FirestoreIndexParams::new(group()).with_composite_indexes(vec![declared.clone()]);

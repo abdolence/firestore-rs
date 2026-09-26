@@ -29,6 +29,13 @@ pub enum FirestoreIndexQueryScope {
     AllDescendants,
 }
 
+/// A flat vector index's configuration, for nearest-neighbor search.
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Builder)]
+pub struct FirestoreVectorIndexConfig {
+    /// The dimension every indexed vector in this field must have.
+    pub dimension: u32,
+}
+
 /// How a single field participates in an index.
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum FirestoreIndexFieldMode {
@@ -37,10 +44,7 @@ pub enum FirestoreIndexFieldMode {
     /// Queryable with array-containment operators.
     ArrayContains,
     /// A flat vector index of a fixed dimension, for nearest-neighbor search.
-    Vector {
-        /// The dimension every indexed vector in this field must have.
-        dimension: u32,
-    },
+    Vector(FirestoreVectorIndexConfig),
 }
 
 /// One field of a composite index: its path and how it participates.
@@ -206,6 +210,18 @@ pub struct FirestoreListedCompositeIndex {
     pub index: FirestoreCompositeIndex,
 }
 
+/// An explicit, non-inherited single-field index override, as listed for one field resource.
+#[derive(Debug, PartialEq, Clone)]
+pub struct FirestoreExplicitFieldOverride {
+    /// The field's explicit single-field index set. Empty is an explicit exemption, the same as
+    /// [`exempt()`](crate::index_builder::FirestoreFieldOverrideFieldBuilder::exempt).
+    pub indexes: Vec<FirestoreFieldOverrideIndex>,
+    /// Whether Firestore is already reverting this override to the ancestor's configuration (an
+    /// in-progress `reverting` long-running change). The planner treats a field with this set as
+    /// already handled and never plans reverting it a second time.
+    pub reverting: bool,
+}
+
 /// A field resource's single-field index configuration, as read from a listed [`ProtoField`]
 /// (`gcloud_sdk::google::firestore::admin::v1::Field`).
 ///
@@ -223,15 +239,7 @@ pub enum FirestoreFieldOverrideOutcome {
     /// (no `index_config` at all), which is why the diff treats the two alike.
     Inherited,
     /// An explicit, non-inherited override.
-    Explicit {
-        /// The field's explicit single-field index set. Empty is an explicit exemption, the same
-        /// as [`exempt()`](crate::index_builder::FirestoreFieldOverrideFieldBuilder::exempt).
-        indexes: Vec<FirestoreFieldOverrideIndex>,
-        /// Whether Firestore is already reverting this override to the ancestor's configuration
-        /// (an in-progress `reverting` long-running change). The planner treats a field with this
-        /// set as already handled and never plans reverting it a second time.
-        reverting: bool,
-    },
+    Explicit(FirestoreExplicitFieldOverride),
     /// The listed `index_config` carries data this crate's domain model cannot represent (an
     /// unspecified or unknown order, array config, vector dimension, query scope or API scope).
     /// Carries why, for [`FirestoreUnrecognisedIndexItem::reason`].
@@ -440,7 +448,7 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
             .fields
             .iter()
             .enumerate()
-            .filter(|(_, field)| matches!(field.mode, FirestoreIndexFieldMode::Vector { .. }))
+            .filter(|(_, field)| matches!(field.mode, FirestoreIndexFieldMode::Vector(_)))
             .map(|(field_position, _)| field_position)
             .collect();
 
@@ -502,8 +510,8 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
         match vector_positions.as_slice() {
             [] => {}
             [only] if *only == index.fields.len() - 1 => {
-                if let FirestoreIndexFieldMode::Vector { dimension } = index.fields[*only].mode {
-                    validate_vector_dimension(dimension, "composite_indexes")?;
+                if let FirestoreIndexFieldMode::Vector(vector) = &index.fields[*only].mode {
+                    validate_vector_dimension(vector.dimension, "composite_indexes")?;
                 }
             }
             [only] => {
@@ -579,7 +587,7 @@ fn validate_field_overrides(overrides: &[FirestoreFieldOverride]) -> FirestoreRe
             ));
         }
         for index in &field_override.indexes {
-            if matches!(index.mode, FirestoreIndexFieldMode::Vector { .. }) {
+            if matches!(index.mode, FirestoreIndexFieldMode::Vector(_)) {
                 return Err(FirestoreError::invalid_parameters(
                     "field_overrides",
                     format!(
@@ -658,7 +666,7 @@ impl Display for FirestoreIndexFieldMode {
                 f.write_str("DESC")
             }
             FirestoreIndexFieldMode::ArrayContains => f.write_str("CONTAINS"),
-            FirestoreIndexFieldMode::Vector { dimension } => write!(f, "VECTOR({dimension})"),
+            FirestoreIndexFieldMode::Vector(vector) => write!(f, "VECTOR({})", vector.dimension),
         }
     }
 }
@@ -742,12 +750,12 @@ impl Display for FirestoreListedField {
         write!(f, "{}", self.field_path)?;
         match &self.index_override {
             None | Some(FirestoreFieldOverrideOutcome::Inherited) => {}
-            Some(FirestoreFieldOverrideOutcome::Explicit { indexes, reverting }) => {
-                if indexes.is_empty() {
+            Some(FirestoreFieldOverrideOutcome::Explicit(explicit)) => {
+                if explicit.indexes.is_empty() {
                     write!(f, " EXEMPT")?;
                 } else {
                     write!(f, " [")?;
-                    for (position, index) in indexes.iter().enumerate() {
+                    for (position, index) in explicit.indexes.iter().enumerate() {
                         if position > 0 {
                             write!(f, ", ")?;
                         }
@@ -755,7 +763,7 @@ impl Display for FirestoreListedField {
                     }
                     write!(f, "]")?;
                 }
-                if *reverting {
+                if explicit.reverting {
                     write!(f, " (reverting)")?;
                 }
             }
@@ -898,7 +906,10 @@ mod tests {
     #[test]
     fn vector_field_must_be_last() {
         let index = FirestoreCompositeIndex::new(vec![
-            field("v", FirestoreIndexFieldMode::Vector { dimension: 8 }),
+            field(
+                "v",
+                FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
+            ),
             asc("b"),
         ]);
         let err = validate_composite_indexes(&[index]).unwrap_err();
@@ -909,7 +920,10 @@ mod tests {
     fn vector_field_last_is_valid() {
         let index = FirestoreCompositeIndex::new(vec![
             asc("a"),
-            field("v", FirestoreIndexFieldMode::Vector { dimension: 8 }),
+            field(
+                "v",
+                FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
+            ),
         ]);
         assert!(validate_composite_indexes(&[index]).is_ok());
     }
@@ -917,8 +931,14 @@ mod tests {
     #[test]
     fn at_most_one_vector_field() {
         let index = FirestoreCompositeIndex::new(vec![
-            field("v1", FirestoreIndexFieldMode::Vector { dimension: 8 }),
-            field("v2", FirestoreIndexFieldMode::Vector { dimension: 8 }),
+            field(
+                "v1",
+                FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
+            ),
+            field(
+                "v2",
+                FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
+            ),
         ]);
         let err = validate_composite_indexes(&[index]).unwrap_err();
         assert!(err.to_string().contains("at most one is allowed"));
@@ -931,9 +951,7 @@ mod tests {
                 asc("a"),
                 field(
                     "v",
-                    FirestoreIndexFieldMode::Vector {
-                        dimension: bad_dimension,
-                    },
+                    FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(bad_dimension)),
                 ),
             ]);
             let err = validate_composite_indexes(&[index]).unwrap_err();
@@ -942,7 +960,10 @@ mod tests {
 
         let index = FirestoreCompositeIndex::new(vec![
             asc("a"),
-            field("v", FirestoreIndexFieldMode::Vector { dimension: 2048 }),
+            field(
+                "v",
+                FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(2048)),
+            ),
         ]);
         assert!(validate_composite_indexes(&[index]).is_ok());
     }
@@ -985,7 +1006,7 @@ mod tests {
     fn lone_vector_field_composite_index_is_valid() {
         let index = FirestoreCompositeIndex::new(vec![field(
             "embedding",
-            FirestoreIndexFieldMode::Vector { dimension: 8 },
+            FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
         )]);
         assert!(validate_composite_indexes(&[index]).is_ok());
     }
@@ -994,7 +1015,7 @@ mod tests {
     fn lone_vector_field_dimension_is_still_validated() {
         let index = FirestoreCompositeIndex::new(vec![field(
             "embedding",
-            FirestoreIndexFieldMode::Vector { dimension: 0 },
+            FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(0)),
         )]);
         let err = validate_composite_indexes(&[index]).unwrap_err();
         assert!(err.to_string().contains("between 1 and 2048"));
@@ -1049,7 +1070,7 @@ mod tests {
         let overrides = vec![FirestoreFieldOverride {
             target: FirestoreFieldOverrideTarget::Field("embedding".to_string()),
             indexes: vec![FirestoreFieldOverrideIndex::new(
-                FirestoreIndexFieldMode::Vector { dimension: 8 },
+                FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
             )],
         }];
         let err = validate_field_overrides(&overrides).unwrap_err();
