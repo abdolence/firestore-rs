@@ -35,6 +35,7 @@ pub(super) enum FakeResponse {
     Drop,
     /// The server never answers and keeps the stream open, simulating a call stuck in flight
     /// until the client gives up on it.
+    #[cfg(feature = "admin")]
     Hang,
 }
 
@@ -331,6 +332,7 @@ async fn answer(
             let headers = ok_headers().header("grpc-status", (code as i32).to_string());
             let _ = respond.send_response(headers.body(()).unwrap(), true);
         }
+        #[cfg(feature = "admin")]
         FakeResponse::Hang => std::future::pending::<()>().await,
         FakeResponse::Drop => {
             close.notify_one();
