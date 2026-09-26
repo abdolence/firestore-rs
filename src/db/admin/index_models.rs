@@ -359,6 +359,12 @@ pub struct FirestoreIndexPlan {
     /// Declared field overrides whose listed configuration differs from the declaration, or is
     /// absent; `.sync()` writes these.
     pub update_fields: Vec<FirestoreFieldOverride>,
+    /// Declared field overrides matched to a listed override Firestore is already reverting
+    /// (`reverting: true`, an in-flight change back to the ancestor's configuration). Classified
+    /// as pending, not unchanged: once the revert completes the field will no longer carry this
+    /// override, and only the *next* sync writes it back. `.sync()` never writes over one of
+    /// these - doing so would race Firestore's own in-flight change.
+    pub reverting_fields: Vec<FirestoreListedField>,
     /// Listed field overrides with no declared match, in the owned collection group.
     pub undeclared_fields: Vec<FirestoreListedField>,
     /// Declared TTL fields with no TTL configuration listed; `.sync()` enables these.
@@ -825,6 +831,7 @@ impl Display for FirestoreIndexPlan {
                 || !self.undeclared_ttl.is_empty());
         let anything_to_report = !self.create_indexes.is_empty()
             || !self.update_fields.is_empty()
+            || !self.reverting_fields.is_empty()
             || !self.enable_ttl.is_empty()
             || prune_has_work
             || !self.undeclared_indexes.is_empty()
@@ -846,6 +853,11 @@ impl Display for FirestoreIndexPlan {
         writeln!(f, "Firestore index plan:")?;
         write_section(f, "create_indexes", &self.create_indexes)?;
         write_section(f, "update_field_overrides", &self.update_fields)?;
+        write_section(
+            f,
+            "reverting_field_overrides (revert in progress, no write planned)",
+            &self.reverting_fields,
+        )?;
         write_section(f, "enable_ttl", &self.enable_ttl)?;
         if self.prune {
             write_section(f, "delete_indexes", &self.undeclared_indexes)?;

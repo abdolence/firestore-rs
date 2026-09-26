@@ -733,17 +733,36 @@ pub(crate) fn plan_index_changes(
         .map(|f| f.target.as_str())
         .collect();
     for declared in &params.field_overrides {
-        let listed = listed_fields.iter().find(|f| {
-            matches!(
-                f.index_override,
-                Some(FirestoreFieldOverrideOutcome::Explicit(_))
-            ) && f.field_path == declared.target.as_str()
-        });
-        let up_to_date = listed
-            .map(|f| field_override_matches(declared, f))
-            .unwrap_or(false);
-        if !up_to_date {
-            plan.update_fields.push(declared.clone());
+        let listed_override = listed_fields
+            .iter()
+            .find(|f| f.field_path == declared.target.as_str())
+            .and_then(|listed| {
+                listed
+                    .index_override
+                    .as_ref()
+                    .map(|outcome| (listed, outcome))
+            });
+        match listed_override {
+            // The listed override carries data this crate cannot read (already in
+            // `plan.unrecognised`, above); planning an update here would overwrite
+            // configuration the caller has no way to know it is about to discard.
+            Some((_, FirestoreFieldOverrideOutcome::Unrecognised(_))) => {}
+            // A revert already under way is not "up to date": once it finishes the field will no
+            // longer carry this override, and only the next sync can plan it back without racing
+            // Firestore's own in-flight change.
+            Some((listed, FirestoreFieldOverrideOutcome::Explicit(explicit)))
+                if explicit.reverting =>
+            {
+                plan.reverting_fields.push(listed.clone());
+            }
+            Some((listed, FirestoreFieldOverrideOutcome::Explicit(_))) => {
+                if !field_override_matches(declared, listed) {
+                    plan.update_fields.push(declared.clone());
+                }
+            }
+            None | Some((_, FirestoreFieldOverrideOutcome::Inherited)) => {
+                plan.update_fields.push(declared.clone());
+            }
         }
     }
     for listed in &listed_fields {
@@ -1296,6 +1315,86 @@ mod tests {
         };
         let plan = plan_index_changes(&params, &existing).unwrap();
         assert!(plan.update_fields.is_empty());
+    }
+
+    #[test]
+    fn declared_override_matching_an_unrecognised_listed_override_is_never_overwritten() {
+        // An `Unrecognised` override carries data this crate cannot read (here, an unspecified
+        // order); planning an update would overwrite it, discarding configuration the caller has
+        // no way to know it is about to lose.
+        let declared = FirestoreFieldOverride {
+            target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
+            indexes: vec![
+                FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains)
+                    .all_descendants(),
+            ],
+        };
+        let params = users_params().with_field_overrides(vec![declared]);
+        let listed_field = field_resource(
+            "tags",
+            Some(field::IndexConfig {
+                indexes: vec![single_field_index(
+                    ProtoQueryScope::Collection,
+                    ValueMode::Order(ProtoOrder::Unspecified as i32),
+                )],
+                uses_ancestor_config: false,
+                ancestor_field: String::new(),
+                reverting: false,
+            }),
+            None,
+        );
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![],
+            fields: vec![listed_field.clone()],
+        };
+        let plan = plan_index_changes(&params, &existing).unwrap();
+        assert!(
+            plan.update_fields.is_empty(),
+            "a write must never be planned over configuration this crate cannot read"
+        );
+        assert_eq!(plan.unrecognised.len(), 1);
+        assert_eq!(plan.unrecognised[0].name, listed_field.name);
+    }
+
+    #[test]
+    fn declared_override_matching_a_reverting_listed_value_is_pending_not_unchanged() {
+        // The listed value equals the declaration, but Firestore is already reverting it; writing
+        // now would race that in-flight change, and once it completes the field will no longer
+        // carry this override at all.
+        let declared = FirestoreFieldOverride {
+            target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
+            indexes: vec![
+                FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains)
+                    .all_descendants(),
+            ],
+        };
+        let params = users_params().with_field_overrides(vec![declared]);
+        let listed_field = field_resource(
+            "tags",
+            Some(field::IndexConfig {
+                indexes: vec![single_field_index(
+                    ProtoQueryScope::CollectionGroup,
+                    ValueMode::ArrayConfig(ProtoArrayConfig::Contains as i32),
+                )],
+                uses_ancestor_config: false,
+                ancestor_field: String::new(),
+                reverting: true,
+            }),
+            None,
+        );
+        let existing = FirestoreIndexExistingState {
+            indexes: vec![],
+            fields: vec![listed_field.clone()],
+        };
+        let plan = plan_index_changes(&params, &existing).unwrap();
+        assert!(
+            plan.update_fields.is_empty(),
+            "a write must never be planned over an in-flight revert"
+        );
+        assert_eq!(
+            plan.reverting_fields,
+            vec![FirestoreListedField::from(listed_field)]
+        );
     }
 
     #[test]
