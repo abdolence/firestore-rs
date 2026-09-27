@@ -234,6 +234,75 @@ Reverts and TTL disables do not wait for new indexes.
 `kept_undeclared_indexes`, `kept_undeclared_fields` and `kept_undeclared_ttl` list what it would
 leave alone without `.prune_undeclared()`.
 
+## Running from several instances
+
+Several replicas of the same application, such as a Kubernetes deployment's pods, should not each
+call `.sync()` on their own. Two replicas racing on the same collection group create, delete and
+revert the same resources at the same time, and during a rolling update old and new replicas
+declare different indexes, so `.prune_undeclared()` on both flips indexes back and forth for as
+long as the rollout takes.
+
+Run `.sync()` with `.prune_undeclared()` once per release instead, from a Kubernetes `Job`, a Helm
+`pre-install` or `pre-upgrade` hook, or a CI/CD step, before the replicas that need the new indexes
+start. `.wait_until_ready(...)` makes the job fail on a build that does not finish, rather than
+exit early while indexes are still building:
+
+```rust,no_run
+# use firestore::*;
+# use std::time::Duration;
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+let report = db
+    .fluent()
+    .indexes()
+    .collection_group("orders")
+    .prune_undeclared()
+    .wait_until_ready(Duration::from_secs(30 * 60))
+    .sync()
+    .await?;
+println!("{report}");
+# Ok(())
+# }
+```
+
+Set the Job's `backoffLimit` to `0` and `activeDeadlineSeconds` above the sync's timeout, so
+Kubernetes does not restart or kill it mid build. The `helm.sh` annotations turn the same `Job`
+into a chart hook; drop them for a plain `Job` applied by hand or from a CI/CD step:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orders-index-sync
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 2100
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: orders-index-sync
+      containers:
+        - name: sync-indexes
+          image: your-app:latest
+          args: ["--sync-indexes"]
+```
+
+The application's own replicas don't need to sync at all. If you want one to check its own
+declaration against Firestore, `.plan()` with `.prune_undeclared()` at startup is read-only and
+safe from any number of replicas at once: log the plan when any of its lists is non-empty, and
+fail the replica's readiness probe rather than its startup, since the release job may still be
+applying those changes.
+
+The job's service account needs `roles/datastore.indexAdmin`, the role `.sync()` always needs.
+Replicas that only call `.plan()` need `roles/datastore.viewer`.
+
+When two syncs do overlap regardless, creates and deletes converge on their own: a `CreateIndex`
+answered `ALREADY_EXISTS` and a `DeleteIndex` answered `NOT_FOUND` both count as done rather than
+failing the sync. A single writer per release still avoids the version skew a rolling update
+causes when replicas declare different indexes at the same time.
+
 ## The order `.sync()` writes changes in
 
 `.sync()` applies one plan in a fixed order, stopping at the first write that fails:
