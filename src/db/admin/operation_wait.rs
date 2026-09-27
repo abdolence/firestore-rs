@@ -100,12 +100,23 @@ impl OperationDeadline {
         Instant::now().min(self.at) + self.poll_timeout
     }
 
-    fn has_passed(&self) -> bool {
+    pub(super) fn has_passed(&self) -> bool {
         Instant::now() >= self.at
     }
 
+    /// The error a wait that reached this deadline fails with, still `waiting_for` something.
+    pub(super) fn timed_out(&self, waiting_for: &str) -> FirestoreError {
+        FirestoreError::SystemError(FirestoreSystemError::new(
+            FirestoreErrorPublicGenericDetails::new("OPERATION_WAIT_TIMEOUT".to_string()),
+            format!(
+                "timed out after {:?} waiting for: {waiting_for}",
+                self.timeout
+            ),
+        ))
+    }
+
     /// Sleeps one poll interval, or only until the deadline when that comes first.
-    async fn sleep_until_next_round(&self) {
+    pub(super) async fn sleep_until_next_round(&self) {
         let remaining = self.at.saturating_duration_since(Instant::now());
         tokio::time::sleep(self.poll_interval.min(remaining)).await;
     }
@@ -359,14 +370,7 @@ impl FirestoreDb {
                     timeout_ms = deadline.timeout.as_millis(),
                     "Timed out waiting for operations to finish.",
                 );
-                return Err(FirestoreError::SystemError(FirestoreSystemError::new(
-                    FirestoreErrorPublicGenericDetails::new("OPERATION_WAIT_TIMEOUT".to_string()),
-                    format!(
-                        "timed out after {:?} waiting for: {}",
-                        deadline.timeout,
-                        names.join(", ")
-                    ),
-                )));
+                return Err(deadline.timed_out(&names.join(", ")));
             }
             deadline.sleep_until_next_round().await;
         }
