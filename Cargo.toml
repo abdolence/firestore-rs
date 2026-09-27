@@ -41,7 +41,7 @@ admin = ["gcloud-sdk/google-firestore-admin-v1"]
 tracing = "0.1"
 gcloud-sdk = { version = "0.32.1", default-features = false, features = ["google-firestore-v1"] }
 hyper = { version = "1" }
-struct-path = "0.2"
+struct-path = "0.2.10"
 rvstruct = "0.3.2"
 rsb_derive = "0.5"
 serde = { version = "1", features = ["derive"] }
