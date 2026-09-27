@@ -24,12 +24,12 @@ use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field as proto_field;
 use gcloud_sdk::google::firestore::admin::v1::firestore_admin_client::FirestoreAdminClient;
 use gcloud_sdk::google::firestore::admin::v1::{
-    CreateIndexRequest, DeleteIndexRequest, Field as ProtoField, Index as ProtoIndex,
-    ListFieldsRequest, ListIndexesRequest, UpdateFieldRequest,
+    CreateIndexRequest, DeleteIndexRequest, Field as ProtoField, GetFieldRequest,
+    Index as ProtoIndex, ListFieldsRequest, ListIndexesRequest, UpdateFieldRequest,
 };
 use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
 use gcloud_sdk::prost_types::FieldMask;
-use gcloud_sdk::tonic::Code;
+use gcloud_sdk::tonic::{Code, Status};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::*;
@@ -58,6 +58,25 @@ impl IndexAction {
                 listed.field_path.clone()
             }
             IndexAction::DeleteIndex(listed) => listed.name.clone(),
+        }
+    }
+}
+
+impl IndexAction {
+    /// Whether `field`, as Firestore reads it back, is already in the state this revert or TTL
+    /// disable sets: no override of its own, or one Firestore is already reverting; or no TTL
+    /// configuration. Every other action has no such state to reach and answers `false`.
+    fn already_reached(&self, field: &ProtoField) -> bool {
+        match self {
+            IndexAction::RevertFieldOverride(_) => field
+                .index_config
+                .as_ref()
+                .is_none_or(|config| config.uses_ancestor_config || config.reverting),
+            IndexAction::DisableTtl(_) => field.ttl_config.is_none(),
+            IndexAction::CreateIndex(_)
+            | IndexAction::UpdateFieldOverride(_)
+            | IndexAction::EnableTtl(_)
+            | IndexAction::DeleteIndex(_) => false,
         }
     }
 }
@@ -100,6 +119,40 @@ type PendingOperation = StartedOperation<IndexAction>;
 enum CreateIndexOutcome {
     Created(PendingOperation),
     AlreadyExists,
+}
+
+/// The result of [`FirestoreDb::apply_delete_index`]: deleted by this sync, or already gone.
+enum DeleteIndexOutcome {
+    Deleted,
+    AlreadyDeleted,
+}
+
+/// The result of a field revert or TTL disable: started by this sync, or refused by Firestore
+/// for a field that already reads back in the state it sets, as when another caller got there
+/// first.
+enum FieldWriteOutcome {
+    Started(PendingOperation),
+    AlreadyReached,
+}
+
+/// An `UpdateField` request Firestore refused, with the action it was for, so the caller decides
+/// whether the refusal is an error.
+struct RefusedFieldWrite {
+    action: IndexAction,
+    status: Status,
+}
+
+impl RefusedFieldWrite {
+    /// Logs the refusal at `error` and turns it into the sync's error.
+    fn into_error(self) -> FirestoreError {
+        error!(
+            error = %self.status,
+            action = self.action.kind(),
+            label = %self.action,
+            "Failed to apply an index management change.",
+        );
+        FirestoreError::from(self.status)
+    }
 }
 
 /// The owned group's existing state as one grouped block, reusing the per-item `Display` impls
@@ -533,7 +586,7 @@ impl FirestoreDb {
         &self,
         group: &OwnedGroup<'_>,
         listed: &FirestoreListedCompositeIndex,
-    ) -> FirestoreResult<()> {
+    ) -> FirestoreResult<DeleteIndexOutcome> {
         group.ensure_owns("indexes", &listed.name)?;
         let action = IndexAction::DeleteIndex(listed.clone());
         // DeleteIndex answers directly rather than with a long-running operation, so this span
@@ -553,7 +606,13 @@ impl FirestoreDb {
             match self.admin_client().delete_index(request).await {
                 Ok(_) => {
                     info!(action = action.kind(), index = %listed, "Deleted an undeclared composite index.");
-                    Ok(())
+                    Ok(DeleteIndexOutcome::Deleted)
+                }
+                // Deleted by someone else since the listing, such as another caller pruning the
+                // same group: the state this delete sets is reached either way.
+                Err(status) if status.code() == Code::NotFound => {
+                    info!(action = action.kind(), index = %listed, "Firestore answered NOT_FOUND for an undeclared composite index; counting it as already deleted.");
+                    Ok(DeleteIndexOutcome::AlreadyDeleted)
                 }
                 Err(status) => {
                     error!(error = %status, action = action.kind(), index = %listed, "Failed to delete a composite index.");
@@ -576,7 +635,7 @@ impl FirestoreDb {
         span: Span,
         request: UpdateFieldRequest,
         action: IndexAction,
-    ) -> FirestoreResult<PendingOperation> {
+    ) -> Result<PendingOperation, RefusedFieldWrite> {
         let began = FirestoreInstant::now();
         let outcome = async {
             match self.admin_client().update_field(request).await {
@@ -594,15 +653,7 @@ impl FirestoreDb {
                         action,
                     })
                 }
-                Err(status) => {
-                    error!(
-                        error = %status,
-                        action = action.kind(),
-                        label = %action,
-                        "Failed to apply an index management change.",
-                    );
-                    Err(FirestoreError::from(status))
-                }
+                Err(status) => Err(RefusedFieldWrite { action, status }),
             }
         }
         .instrument(span.clone())
@@ -638,7 +689,9 @@ impl FirestoreDb {
                 paths: vec!["index_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, action).await
+        self.run_update_field(span, request, action)
+            .await
+            .map_err(RefusedFieldWrite::into_error)
     }
 
     async fn apply_enable_ttl(
@@ -666,14 +719,56 @@ impl FirestoreDb {
                 paths: vec!["ttl_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, action).await
+        self.run_update_field(span, request, action)
+            .await
+            .map_err(RefusedFieldWrite::into_error)
+    }
+
+    /// Reads field `name` back after Firestore refused `refused`, and counts the refusal as
+    /// converged when the field is already in the state the write sets. Firestore documents no
+    /// status for a revert or disable that races another caller's, so the field's state decides,
+    /// never the status code. A field Firestore no longer knows carries no configuration at all.
+    async fn settle_refused_field_write(
+        &self,
+        name: &str,
+        refused: RefusedFieldWrite,
+    ) -> FirestoreResult<FieldWriteOutcome> {
+        let reached = match self
+            .admin_client()
+            .get_field(GetFieldRequest {
+                name: name.to_string(),
+            })
+            .await
+        {
+            Ok(field) => refused.action.already_reached(&field.into_inner()),
+            Err(status) if status.code() == Code::NotFound => true,
+            Err(status) => {
+                warn!(
+                    error = %status,
+                    field = name,
+                    "Failed to read a field back after Firestore refused a write to it.",
+                );
+                false
+            }
+        };
+        if reached {
+            info!(
+                refused = %refused.status,
+                action = refused.action.kind(),
+                label = %refused.action,
+                "Firestore refused the write, but the field already reads back in the state it sets; counting it as already done.",
+            );
+            Ok(FieldWriteOutcome::AlreadyReached)
+        } else {
+            Err(refused.into_error())
+        }
     }
 
     async fn apply_revert_field_override(
         &self,
         group: &OwnedGroup<'_>,
         listed: &FirestoreListedField,
-    ) -> FirestoreResult<PendingOperation> {
+    ) -> FirestoreResult<FieldWriteOutcome> {
         group.ensure_owns("fields", &listed.name)?;
         let action = IndexAction::RevertFieldOverride(listed.clone());
         let span = span!(
@@ -694,14 +789,17 @@ impl FirestoreDb {
                 paths: vec!["index_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, action).await
+        match self.run_update_field(span, request, action).await {
+            Ok(operation) => Ok(FieldWriteOutcome::Started(operation)),
+            Err(refused) => self.settle_refused_field_write(&listed.name, refused).await,
+        }
     }
 
     async fn apply_disable_ttl(
         &self,
         group: &OwnedGroup<'_>,
         listed: &FirestoreListedField,
-    ) -> FirestoreResult<PendingOperation> {
+    ) -> FirestoreResult<FieldWriteOutcome> {
         group.ensure_owns("fields", &listed.name)?;
         let action = IndexAction::DisableTtl(listed.clone());
         let span = span!(
@@ -722,7 +820,10 @@ impl FirestoreDb {
                 paths: vec!["ttl_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, action).await
+        match self.run_update_field(span, request, action).await {
+            Ok(operation) => Ok(FieldWriteOutcome::Started(operation)),
+            Err(refused) => self.settle_refused_field_write(&listed.name, refused).await,
+        }
     }
 
     /// Waits for the given started writes to finish, then marks them settled so neither a later
@@ -848,9 +949,15 @@ impl FirestoreDb {
             for listed in &plan.disable_ttl {
                 let field = CanonicalFieldPath::from(listed.field_path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                let op = self.apply_disable_ttl(group, listed).await?;
-                ttl_disables.push(writes.push(Some(field), op));
-                report.disabled_ttl.push(listed.clone());
+                match self.apply_disable_ttl(group, listed).await? {
+                    FieldWriteOutcome::Started(op) => {
+                        ttl_disables.push(writes.push(Some(field), op));
+                        report.disabled_ttl.push(listed.clone());
+                    }
+                    FieldWriteOutcome::AlreadyReached => {
+                        report.already_disabled_ttl.push(listed.clone());
+                    }
+                }
             }
             if !plan.enable_ttl.is_empty() {
                 self.settle_writes(&mut writes, &ttl_disables, deadline)
@@ -866,9 +973,15 @@ impl FirestoreDb {
             for listed in &plan.revert_fields {
                 let field = CanonicalFieldPath::from(listed.field_path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                let op = self.apply_revert_field_override(group, listed).await?;
-                writes.push(Some(field), op);
-                report.reverted_fields.push(listed.clone());
+                match self.apply_revert_field_override(group, listed).await? {
+                    FieldWriteOutcome::Started(op) => {
+                        writes.push(Some(field), op);
+                        report.reverted_fields.push(listed.clone());
+                    }
+                    FieldWriteOutcome::AlreadyReached => {
+                        report.already_reverted_fields.push(listed.clone());
+                    }
+                }
             }
 
             if plan.delete_indexes.is_empty() {
@@ -896,8 +1009,12 @@ impl FirestoreDb {
                 return Err(err);
             }
             for listed in &plan.delete_indexes {
-                self.apply_delete_index(group, listed).await?;
-                report.deleted_indexes.push(listed.clone());
+                match self.apply_delete_index(group, listed).await? {
+                    DeleteIndexOutcome::Deleted => report.deleted_indexes.push(listed.clone()),
+                    DeleteIndexOutcome::AlreadyDeleted => {
+                        report.already_deleted_indexes.push(listed.clone())
+                    }
+                }
             }
             Ok(())
         }
@@ -1127,6 +1244,7 @@ mod tests {
     const LIST_FIELDS: &str = "/google.firestore.admin.v1.FirestoreAdmin/ListFields";
     const UPDATE_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/UpdateField";
     const GET_OPERATION: &str = "/google.longrunning.Operations/GetOperation";
+    const GET_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/GetField";
 
     const GROUP_PATH: &str = USERS_GROUP_PATH;
 
@@ -1367,6 +1485,171 @@ mod tests {
 
         assert_eq!(report.deleted_indexes.len(), 1);
         assert!(fake.calls().contains(&"DeleteIndex".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_delete_answered_not_found_counts_as_already_deleted() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_declared_index(
+                    &format!("{GROUP_PATH}/indexes/legacy"),
+                    ProtoState::Ready,
+                )]),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            DELETE_INDEX => (
+                "DeleteIndex".to_string(),
+                FakeResponse::Status(Code::NotFound),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let options = FirestoreIndexSyncOptions::new().with_prune(true);
+        let report = fake
+            .db
+            .sync_indexes(FirestoreIndexParams::new(group()), options)
+            .await
+            .unwrap();
+
+        assert!(report.deleted_indexes.is_empty());
+        assert_eq!(
+            report
+                .already_deleted_indexes
+                .iter()
+                .map(|index| index.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![format!("{GROUP_PATH}/indexes/legacy")]
+        );
+        assert!(report.to_string().contains("already_deleted_indexes"));
+    }
+
+    /// A pruning sync against one listed field, whose `UpdateField` Firestore refuses with
+    /// `FAILED_PRECONDITION` and whose `GetField` then answers `read_back`.
+    async fn sync_with_refused_field_write(
+        listed: ProtoField,
+        read_back: FakeResponse,
+    ) -> FirestoreResult<FirestoreIndexSyncReport> {
+        let read_back = Mutex::new(Some(read_back));
+        let fake = FakeFirestore::start(move |method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => (
+                "ListFields".to_string(),
+                list_fields_response(vec![listed.clone()]),
+            ),
+            UPDATE_FIELD => (
+                "UpdateField".to_string(),
+                FakeResponse::Status(Code::FailedPrecondition),
+            ),
+            GET_FIELD => (
+                "GetField".to_string(),
+                read_back
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("the field is read back once"),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+        fake.db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                FirestoreIndexSyncOptions::new().with_prune(true),
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn a_refused_revert_of_a_field_already_reverted_counts_as_done() {
+        use gcloud_sdk::google::firestore::admin::v1::field;
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let inherited = field::IndexConfig {
+            indexes: vec![],
+            uses_ancestor_config: true,
+            ancestor_field: format!("{GROUP_PATH}/fields/*"),
+            reverting: false,
+        };
+        let report = sync_with_refused_field_write(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            FakeResponse::Message(
+                field_resource("legacy_field", Some(inherited), None).encode_to_vec(),
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert!(report.reverted_fields.is_empty());
+        assert_eq!(
+            report
+                .already_reverted_fields
+                .iter()
+                .map(|listed| listed.field_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["legacy_field"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_revert_of_a_field_another_caller_is_reverting_counts_as_done() {
+        use gcloud_sdk::google::firestore::admin::v1::field;
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let reverting = field::IndexConfig {
+            reverting: true,
+            ..exempt_override()
+        };
+        let report = sync_with_refused_field_write(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            FakeResponse::Message(
+                field_resource("legacy_field", Some(reverting), None).encode_to_vec(),
+            ),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.already_reverted_fields.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_refused_ttl_disable_of_a_field_without_ttl_counts_as_done() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let report = sync_with_refused_field_write(
+            field_resource("expires_at", None, Some(active_ttl())),
+            FakeResponse::Message(field_resource("expires_at", None, None).encode_to_vec()),
+        )
+        .await
+        .unwrap();
+
+        assert!(report.disabled_ttl.is_empty());
+        assert_eq!(
+            report
+                .already_disabled_ttl
+                .iter()
+                .map(|listed| listed.field_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["expires_at"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_revert_of_a_field_still_overridden_fails() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let err = sync_with_refused_field_write(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            FakeResponse::Message(
+                field_resource("legacy_field", Some(exempt_override()), None).encode_to_vec(),
+            ),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("FailedPrecondition")
+                || err.to_string().contains("FAILED_PRECONDITION"),
+            "the refusal itself is the error: {err}"
+        );
     }
 
     /// One undeclared composite index, one undeclared exempt override on `legacy_field`, and one

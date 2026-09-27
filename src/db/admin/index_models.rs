@@ -570,14 +570,25 @@ pub struct FirestoreIndexSyncReport {
     pub needs_repair_ttl: Vec<String>,
     /// Undeclared composite indexes this sync deleted, because `prune` was set.
     pub deleted_indexes: Vec<FirestoreListedCompositeIndex>,
+    /// Undeclared composite indexes this sync set out to delete that were already gone, deleted
+    /// by someone else since the listing: `DeleteIndex` answered `NOT_FOUND`.
+    pub already_deleted_indexes: Vec<FirestoreListedCompositeIndex>,
     /// Undeclared composite indexes a pruning sync planned to delete but left in place, and why;
     /// `None` when it withheld no delete.
     pub withheld_deletes: Option<FirestoreIndexDeletesWithheld>,
     /// Undeclared field overrides this sync reverted to automatic indexing, because `prune` was
     /// set.
     pub reverted_fields: Vec<FirestoreListedField>,
+    /// Undeclared field overrides this sync set out to revert that someone else had already
+    /// reverted, or was reverting, since the listing: Firestore refused the revert, and the field
+    /// then read back without an override of its own.
+    pub already_reverted_fields: Vec<FirestoreListedField>,
     /// Undeclared TTL fields this sync disabled, because `prune` was set.
     pub disabled_ttl: Vec<FirestoreListedField>,
+    /// Undeclared TTL fields this sync set out to disable that someone else had already disabled
+    /// since the listing: Firestore refused the disable, and the field then read back without a
+    /// TTL configuration.
+    pub already_disabled_ttl: Vec<FirestoreListedField>,
     /// Undeclared composite indexes left alone, because `prune` was not set.
     pub kept_undeclared_indexes: Vec<FirestoreListedCompositeIndex>,
     /// Undeclared field overrides left alone, because `prune` was not set.
@@ -1124,6 +1135,7 @@ impl Display for FirestoreIndexSyncReport {
         write_section(f, "pending_ttl", &self.pending_ttl)?;
         write_section(f, "needs_repair_ttl", &self.needs_repair_ttl)?;
         write_section(f, "deleted_indexes", &self.deleted_indexes)?;
+        write_section(f, "already_deleted_indexes", &self.already_deleted_indexes)?;
         if let Some(withheld) = &self.withheld_deletes {
             writeln!(
                 f,
@@ -1136,7 +1148,9 @@ impl Display for FirestoreIndexSyncReport {
             }
         }
         write_section(f, "reverted_fields", &self.reverted_fields)?;
+        write_section(f, "already_reverted_fields", &self.already_reverted_fields)?;
         write_section(f, "disabled_ttl", &self.disabled_ttl)?;
+        write_section(f, "already_disabled_ttl", &self.already_disabled_ttl)?;
         write_section(f, "kept_undeclared_indexes", &self.kept_undeclared_indexes)?;
         write_section(f, "kept_undeclared_fields", &self.kept_undeclared_fields)?;
         write_section(f, "kept_undeclared_ttl", &self.kept_undeclared_ttl)?;
