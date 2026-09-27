@@ -15,6 +15,27 @@
 ///
 /// assert_eq!(path!(MyTestStructure::some_id), "some_id");
 /// ```
+///
+/// Options follow after a `;`: `delim` sets the separator between path segments, and
+/// `case="camel"` or `case="pascal"` converts each segment. The `struct_path` crate docs list
+/// the rest.
+///
+/// ```rust
+/// use firestore::path;
+///
+/// struct Child {
+///     some_value: u64,
+/// }
+///
+/// struct Parent {
+///     some_child: Child,
+/// }
+///
+/// assert_eq!(
+///     path!(Parent::some_child.some_value; delim="/", case="camel"),
+///     "someChild/someValue"
+/// );
+/// ```
 #[macro_export]
 macro_rules! path {
     ($($x:tt)*) => {{
@@ -43,7 +64,9 @@ macro_rules! path {
 ///
 /// `Struct::*` returns every field declared with plain `pub`, without listing them by hand;
 /// it needs `Struct` to carry `#[derive(firestore::struct_path::StructPath)]`.
-/// `Struct::*; visibility="all"` returns every declared field instead.
+/// `Struct::*; visibility="all"` returns every declared field instead. It only works inside the
+/// crate that defines `Struct`, because the derive caps the consts for non-`pub` fields at
+/// `pub(crate)`; from another crate the call fails with E0624.
 ///
 /// ```rust
 /// use firestore::paths;
@@ -59,6 +82,26 @@ macro_rules! path {
 ///     paths!(MyTestStructure::*; visibility="all"),
 ///     vec!["some_id".to_string(), "some_internal".to_string()]
 /// );
+/// ```
+///
+/// `Parent::child.(Child::*)` prefixes every field of `Child` with the `child` path, and
+/// `Parent::child~(Child::*)` does the same for an `Option<Child>` field.
+///
+/// ```rust
+/// use firestore::paths;
+///
+/// #[derive(firestore::struct_path::StructPath)]
+/// struct Child {
+///     pub child_id: String,
+/// }
+///
+/// struct Parent {
+///     child: Child,
+///     opt_child: Option<Child>,
+/// }
+///
+/// assert_eq!(paths!(Parent::child.(Child::*)), vec!["child.child_id".to_string()]);
+/// assert_eq!(paths!(Parent::opt_child~(Child::*)), vec!["opt_child.child_id".to_string()]);
 /// ```
 #[macro_export]
 macro_rules! paths {
@@ -82,9 +125,8 @@ macro_rules! paths {
 /// assert_eq!(path_camel_case!(MyTestStructure::one_more_string), "oneMoreString");
 /// ```
 ///
-/// Extra `struct_path` options can follow after a `;`, same as [`path!`]. This macro appends
-/// `case="camel"` after them, so a `case` passed by the caller is overridden and the path is
-/// always camelCase.
+/// Options can follow after a `;`, same as [`path!`]. This macro appends `case="camel"` after
+/// them, so a `case` passed by the caller is overridden and the path is always camelCase.
 #[macro_export]
 macro_rules! path_camel_case {
     ($($x:tt)*) => {{
@@ -113,9 +155,9 @@ macro_rules! path_camel_case {
 /// ```
 ///
 /// `Struct::*` works the same way as in [`paths!`], with the same `visibility="all"` option.
-/// This macro appends `case="camel"` after the caller's options: a field list ignores a
-/// `case` passed by the caller and stays camelCase, while `Struct::*` rejects it as a
-/// duplicate key at compile time.
+/// This macro appends `case="camel"` after the caller's options. A field list ignores a
+/// `case` passed by the caller and stays camelCase. `Struct::*` accepts `case="camel"` from
+/// the caller, and any other `case` is a compile error.
 ///
 /// ```rust
 /// use firestore::paths_camel_case;
@@ -131,6 +173,17 @@ macro_rules! path_camel_case {
 ///     paths_camel_case!(MyTestStructure::*; visibility="all"),
 ///     vec!["someId".to_string(), "someInternal".to_string()]
 /// );
+/// ```
+///
+/// ```compile_fail
+/// use firestore::paths_camel_case;
+///
+/// #[derive(firestore::struct_path::StructPath)]
+/// struct MyTestStructure {
+///     pub some_id: String,
+/// }
+///
+/// let _ = paths_camel_case!(MyTestStructure::*; case="pascal");
 /// ```
 #[macro_export]
 macro_rules! paths_camel_case {
