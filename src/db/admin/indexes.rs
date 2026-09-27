@@ -177,10 +177,7 @@ struct RefusedFieldWrite {
 }
 
 impl RefusedFieldWrite {
-    /// Logs the refusal at `error`. Call sites log before converting `self` to a
-    /// [`FirestoreError`]: the [`From`] impl below only converts, so it never logs a refusal that
-    /// its caller goes on to settle rather than fail on (see
-    /// [`FirestoreDb::settle_refused_field_write`]).
+    /// Logs the refusal at `error`.
     fn log(&self) {
         error!(
             error = %self.status,
@@ -188,6 +185,15 @@ impl RefusedFieldWrite {
             label = %self.action,
             "Failed to apply an index management change.",
         );
+    }
+
+    /// Logs the refusal, then converts it to the [`FirestoreError`] a caller that treats it as a
+    /// failure returns. The two steps are only ever taken together, through this method: [`From`]
+    /// alone never logs, because [`FirestoreDb::settle_refused_field_write`] may still resolve a
+    /// refusal without treating it as a failure, and must not log one it ends up not failing on.
+    fn into_logged_error(self) -> FirestoreError {
+        self.log();
+        self.into()
     }
 }
 
@@ -670,15 +676,24 @@ impl FirestoreDb {
         outcome
     }
 
-    /// Runs one `UpdateField` request under `span` (already created by the caller with its own
-    /// literal name, since `tracing::span!` needs a compile-time name), recording its response
-    /// time and logging its outcome.
+    /// Runs one `UpdateField` request in an `Update Field` span built from `action`, recording
+    /// its response time and logging an applied write. A refusal is returned unlogged: the caller
+    /// decides whether it is final (see [`RefusedFieldWrite::into_logged_error`]) or one
+    /// [`FirestoreDb::settle_refused_field_write`] may still resolve without treating it as a
+    /// failure.
     async fn run_update_field(
         &self,
-        span: Span,
         request: UpdateFieldRequest,
         action: IndexAction,
     ) -> Result<PendingOperation, RefusedFieldWrite> {
+        let span = span!(
+            Level::INFO,
+            "Update Field",
+            "/firestore/action" = action.kind(),
+            "/firestore/target" = action.target().as_str(),
+            "/firestore/operation" = field::Empty,
+            "/firestore/response_time" = field::Empty,
+        );
         let began = FirestoreInstant::now();
         let outcome = async {
             match self.admin_client().update_field(request).await {
@@ -712,14 +727,6 @@ impl FirestoreDb {
         declared: &FirestoreFieldOverride,
     ) -> FirestoreResult<PendingOperation> {
         let action = IndexAction::UpdateFieldOverride(declared.clone());
-        let span = span!(
-            Level::INFO,
-            "Update Field",
-            "/firestore/action" = action.kind(),
-            "/firestore/target" = action.target().as_str(),
-            "/firestore/operation" = field::Empty,
-            "/firestore/response_time" = field::Empty,
-        );
         let name = group.field_resource(&CanonicalFieldPath::from(declared.target.as_str()));
         let index_config = proto_field::IndexConfig::try_from(declared.clone())?;
         let request = UpdateFieldRequest {
@@ -732,12 +739,9 @@ impl FirestoreDb {
                 paths: vec!["index_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, action)
+        self.run_update_field(request, action)
             .await
-            .map_err(|refused| {
-                refused.log();
-                refused.into()
-            })
+            .map_err(RefusedFieldWrite::into_logged_error)
     }
 
     async fn apply_enable_ttl(
@@ -746,14 +750,6 @@ impl FirestoreDb {
         field_path: &str,
     ) -> FirestoreResult<PendingOperation> {
         let action = IndexAction::EnableTtl(field_path.to_string());
-        let span = span!(
-            Level::INFO,
-            "Update Field",
-            "/firestore/action" = action.kind(),
-            "/firestore/target" = action.target().as_str(),
-            "/firestore/operation" = field::Empty,
-            "/firestore/response_time" = field::Empty,
-        );
         let name = group.field_resource(&CanonicalFieldPath::from(field_path));
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
@@ -765,12 +761,9 @@ impl FirestoreDb {
                 paths: vec!["ttl_config".to_string()],
             }),
         };
-        self.run_update_field(span, request, action)
+        self.run_update_field(request, action)
             .await
-            .map_err(|refused| {
-                refused.log();
-                refused.into()
-            })
+            .map_err(RefusedFieldWrite::into_logged_error)
     }
 
     /// Reverts a field override or disables TTL on `listed`, the two idempotent single-field
@@ -784,14 +777,6 @@ impl FirestoreDb {
     ) -> FirestoreResult<FieldWriteOutcome> {
         group.ensure_owns("fields", &listed.name)?;
         let action = kind.action(listed.clone());
-        let span = span!(
-            Level::INFO,
-            "Update Field",
-            "/firestore/action" = action.kind(),
-            "/firestore/target" = action.target().as_str(),
-            "/firestore/operation" = field::Empty,
-            "/firestore/response_time" = field::Empty,
-        );
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
                 name: listed.name.clone(),
@@ -802,7 +787,7 @@ impl FirestoreDb {
                 paths: vec![kind.mask_path().to_string()],
             }),
         };
-        match self.run_update_field(span, request, action).await {
+        match self.run_update_field(request, action).await {
             Ok(operation) => Ok(FieldWriteOutcome::Started(operation)),
             Err(refused) => {
                 self.settle_refused_field_write(&kind, &listed.name, refused, deadline)
