@@ -63,21 +63,21 @@ struct StoredCoordination {
 struct StoredLease {
     owner: FirestoreIndexLeaseOwner,
     token: String,
-    ttl_ms: i64,
+    ttl: Duration,
     renewed_at: FirestoreInstant,
 }
 
 impl StoredLease {
     /// When the lease stops holding unless renewed, in Firestore's clock.
     fn expires_at(&self) -> FirestoreResult<FirestoreInstant> {
-        self.renewed_at
-            .checked_add(jiff::SignedDuration::from_millis(self.ttl_ms))
+        jiff::SignedDuration::try_from(self.ttl)
+            .and_then(|ttl| self.renewed_at.checked_add(ttl))
             .map_err(|err| {
                 FirestoreError::invalid_parameters(
                     "lease_ttl_ms",
                     format!(
-                        "lease renewed at {} with ttl {} ms has no representable expiry: {err}",
-                        self.renewed_at, self.ttl_ms
+                        "lease renewed at {} with ttl {:?} has no representable expiry: {err}",
+                        self.renewed_at, self.ttl
                     ),
                 )
             })
@@ -106,20 +106,19 @@ impl TryFrom<StoredCoordination> for CoordinationRecord {
             stored.lease_renewed_at,
         ) {
             (None, None, None, None) => None,
-            (Some(owner), Some(token), Some(ttl_ms), Some(renewed_at)) => {
-                if ttl_ms < 0 {
-                    return Err(FirestoreError::invalid_parameters(
-                        "lease_ttl_ms",
-                        format!("{ttl_ms} is negative"),
-                    ));
-                }
-                Some(StoredLease {
-                    owner: FirestoreIndexLeaseOwner::new(owner)?,
-                    token,
-                    ttl_ms,
-                    renewed_at: renewed_at.0,
-                })
-            }
+            (Some(owner), Some(token), Some(ttl_ms), Some(renewed_at)) => Some(StoredLease {
+                owner: FirestoreIndexLeaseOwner::new(owner)?,
+                token,
+                ttl: u64::try_from(ttl_ms)
+                    .map(Duration::from_millis)
+                    .map_err(|_| {
+                        FirestoreError::invalid_parameters(
+                            "lease_ttl_ms",
+                            format!("{ttl_ms} is negative"),
+                        )
+                    })?,
+                renewed_at: renewed_at.0,
+            }),
             (owner, token, ttl_ms, renewed_at) => {
                 return Err(FirestoreError::invalid_parameters(
                     "lease",
@@ -144,6 +143,17 @@ struct LeaseFields {
     lease_owner: String,
     lease_token: String,
     lease_ttl_ms: i64,
+}
+
+impl From<&LeaseClaim> for LeaseFields {
+    fn from(claim: &LeaseClaim) -> Self {
+        Self {
+            lease_owner: claim.owner.as_str().to_string(),
+            lease_token: claim.token.clone(),
+            lease_ttl_ms: i64::try_from(claim.ttl.as_millis())
+                .expect("LeaseClaim::new rejects a ttl whose milliseconds do not fit an i64"),
+        }
+    }
 }
 
 /// A write whose field mask removes every field it names, or names none and only transforms.
@@ -192,40 +202,31 @@ struct StoredDocument {
     update_time: FirestoreInstant,
 }
 
-/// This caller's side of a lease: who it is, the token only this claim carries, and its `ttl`.
+/// This caller's side of a lease: who it is, the token only this claim carries, and its `ttl`,
+/// whose milliseconds always fit the `i64` Firestore stores them in.
 #[derive(Debug, Clone)]
 struct LeaseClaim {
     owner: FirestoreIndexLeaseOwner,
     token: String,
     ttl: Duration,
-    ttl_ms: i64,
 }
 
 impl LeaseClaim {
     fn new(options: &FirestoreIndexLeaseOptions) -> FirestoreResult<Self> {
-        let ttl_ms = i64::try_from(options.ttl.as_millis()).map_err(|_| {
-            FirestoreError::invalid_parameters(
+        if i64::try_from(options.ttl.as_millis()).is_err() {
+            return Err(FirestoreError::invalid_parameters(
                 "lease_ttl",
                 format!(
                     "{:?} has more milliseconds than Firestore stores",
                     options.ttl
                 ),
-            )
-        })?;
+            ));
+        }
         Ok(Self {
             owner: options.owner.clone(),
             token: format!("{:016x}", rand::rng().random::<u64>()),
             ttl: options.ttl,
-            ttl_ms,
         })
-    }
-
-    fn fields(&self) -> LeaseFields {
-        LeaseFields {
-            lease_owner: self.owner.as_str().to_string(),
-            lease_token: self.token.clone(),
-            lease_ttl_ms: self.ttl_ms,
-        }
     }
 
     /// How long after sending a write that confirms the lease this caller keeps trusting it.
@@ -574,7 +575,7 @@ impl FirestoreDb {
                     };
                 match take_lease {
                     Some(claim) => update
-                        .object(&claim.fields())
+                        .object(&LeaseFields::from(claim))
                         .transforms(transforms)
                         .add_to_transaction(transaction)?,
                     None => update
@@ -609,7 +610,7 @@ impl FirestoreDb {
                         .in_col(target.collection.as_str())
                         .precondition(snapshot.precondition())
                         .document_id(target.document_id.as_str())
-                        .object(&claim.fields())
+                        .object(&LeaseFields::from(&claim))
                         .transforms(|t| {
                             t.fields([t
                                 .field(LEASE_RENEWED_AT_FIELD)
@@ -1203,7 +1204,6 @@ mod tests {
             owner: owner(name),
             token: token.to_string(),
             ttl: Duration::from_secs(60),
-            ttl_ms: 60_000,
         }
     }
 
@@ -1211,7 +1211,7 @@ mod tests {
         StoredLease {
             owner: owner("replica-b"),
             token: token.to_string(),
-            ttl_ms: 60_000,
+            ttl: Duration::from_secs(60),
             renewed_at,
         }
     }

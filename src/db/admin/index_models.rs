@@ -506,7 +506,6 @@ pub const DEFAULT_INDEX_COORDINATION_COLLECTION: &str = "firestore-rs-index-coor
 pub struct FirestoreIndexGeneration(u64);
 
 impl FirestoreIndexGeneration {
-    /// The generation as a number.
     pub fn value(self) -> u64 {
         self.0
     }
@@ -564,8 +563,6 @@ impl Display for FirestoreIndexGeneration {
 pub struct FirestoreIndexLeaseOwner(String);
 
 impl FirestoreIndexLeaseOwner {
-    /// Wraps `owner`.
-    ///
     /// # Errors
     /// Returns [`FirestoreError::InvalidParametersError`] if `owner` is empty.
     pub fn new<S: Into<String>>(owner: S) -> FirestoreResult<Self> {
@@ -590,7 +587,6 @@ impl FirestoreIndexLeaseOwner {
         }
     }
 
-    /// The owner as text.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -802,6 +798,7 @@ pub enum FirestoreIndexDeletesWithheldReason {
 
 /// Why a `.sync()` returned without sending an admin request.
 #[derive(Debug, PartialEq, Eq, Clone)]
+#[non_exhaustive]
 pub enum FirestoreIndexSyncSkipReason {
     /// The client talks to the Firestore emulator, which does not implement the admin API.
     Emulator,
