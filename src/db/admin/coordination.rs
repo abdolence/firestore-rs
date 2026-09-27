@@ -5,8 +5,8 @@
 //! lease, with the generation its holder syncs. Before every admin write, the holder reads the
 //! document again and stops when the lease is no longer its own or a higher generation is
 //! recorded; a newer generation that finds an older one holding the lease waits for it to stop
-//! and release. Every read and write goes through the crate's own data API, in transactions, so two
-//! callers deciding at once see each other's claim: Firestore aborts one of them and
+//! and release. Every read and write goes through the crate's own data API, in transactions, so
+//! two callers deciding at once see each other's claim: Firestore aborts one of them and
 //! [`FirestoreDb::run_transaction`] runs it again against the new state.
 //!
 //! A lease is judged expired from Firestore's clock alone: `lease_renewed_at`, set by the server
@@ -2830,7 +2830,7 @@ mod tests {
                 ancestor_field: String::new(),
                 reverting: false,
             }),
-            ttl_config: ttl.then(|| field::TtlConfig {
+            ttl_config: ttl.then_some(field::TtlConfig {
                 state: field::ttl_config::State::Active as i32,
                 expiration_offset: None,
             }),
