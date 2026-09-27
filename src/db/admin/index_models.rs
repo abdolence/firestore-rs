@@ -490,8 +490,8 @@ pub struct FirestoreIndexSyncOptions {
     #[default = "None"]
     pub lease: Option<FirestoreIndexLeaseOptions>,
     /// The collection holding one coordination document per collection group, named after the
-    /// group, for [`generation`](Self::generation) and [`lease`](Self::lease). It must not be a
-    /// collection group ID Firestore reserves, nor the managed group itself.
+    /// group, for [`generation`](Self::generation) and [`lease`](Self::lease). When either is
+    /// set, it must not be a collection group ID Firestore reserves, nor the managed group itself.
     #[default = "FirestoreCollectionId::from_static(DEFAULT_INDEX_COORDINATION_COLLECTION)"]
     pub coordination_collection: FirestoreCollectionId,
 }
@@ -908,7 +908,9 @@ fn reject_reserved_collection_id(
     Ok(())
 }
 
-/// Checks the coordination settings of `options` for a statement owning `params`' group.
+/// Checks the coordination settings of `options` for a statement owning `params`' group. The
+/// coordination collection is checked only when `options` sets a generation or a lease, the only
+/// settings that use it.
 ///
 /// # Errors
 /// Returns [`FirestoreError::InvalidParametersError`] if the coordination collection is a
@@ -918,6 +920,9 @@ pub(crate) fn validate_sync_options(
     params: &FirestoreIndexParams,
     options: &FirestoreIndexSyncOptions,
 ) -> FirestoreResult<()> {
+    if options.generation.is_none() && options.lease.is_none() {
+        return Ok(());
+    }
     reject_reserved_collection_id("coordination_collection", &options.coordination_collection)?;
     if options.coordination_collection == params.collection_group {
         return Err(FirestoreError::invalid_parameters(

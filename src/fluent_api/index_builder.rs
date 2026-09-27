@@ -224,7 +224,8 @@ where
     /// [`lease`](Self::lease) in `collection`, instead of
     /// [`DEFAULT_INDEX_COORDINATION_COLLECTION`](crate::DEFAULT_INDEX_COORDINATION_COLLECTION).
     /// The document is named after the collection group. Validated at `.plan()` or `.sync()`:
-    /// a valid collection ID, not one Firestore reserves, and not the managed group itself.
+    /// a valid collection ID and, when a generation or a lease is set, not one Firestore
+    /// reserves and not the managed group itself.
     #[inline]
     pub fn coordination_collection<S: AsRef<str>>(self, collection: S) -> Self {
         Self {
@@ -1100,5 +1101,31 @@ mod tests {
             assert!(err.to_string().contains(expected), "{expected}: {err}");
         }
         assert!(mock.captured().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_group_named_like_the_coordination_collection_is_rejected_only_when_coordinating() {
+        let mock = MockIndexDatabase::default();
+        let builder = || {
+            FirestoreExprBuilder { db: &mock }
+                .indexes()
+                .collection_group(DEFAULT_INDEX_COORDINATION_COLLECTION)
+        };
+
+        builder().sync().await.unwrap();
+        builder().plan().await.unwrap();
+        assert!(mock.captured().is_some());
+
+        for coordinating in [
+            builder().generation(1),
+            builder().lease(FirestoreIndexLeaseOptions::new()),
+        ] {
+            let err = coordinating.sync().await.unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("the collection group this statement owns"),
+                "{err}"
+            );
+        }
     }
 }
