@@ -265,8 +265,12 @@ println!("{report}");
 ```
 
 Set the Job's `backoffLimit` to `0` and `activeDeadlineSeconds` above the sync's timeout, so
-Kubernetes does not restart or kill it mid build. The `helm.sh` annotations turn the same `Job`
-into a chart hook; drop them for a plain `Job` applied by hand or from a CI/CD step:
+Kubernetes does not restart or kill it mid build. A Helm hook is only waited for up to
+`helm upgrade`'s own `--timeout`, 5 minutes by default, independent of `activeDeadlineSeconds`:
+pass a longer one (`helm upgrade --timeout 35m`, or more) alongside an `activeDeadlineSeconds` in
+the same range, or Helm gives up on the hook long before Kubernetes does. The `helm.sh`
+annotations turn the same `Job` into a chart hook; drop them for a plain `Job` applied by hand or
+from a CI/CD step:
 
 ```yaml
 apiVersion: batch/v1
@@ -285,24 +289,38 @@ spec:
       serviceAccountName: orders-index-sync
       containers:
         - name: sync-indexes
-          image: your-app:latest
+          image: your-app:1.4.2
           args: ["--sync-indexes"]
 ```
 
-The application's own replicas don't need to sync at all. If you want one to check its own
+A `pre-install` hook runs before Helm creates any of the chart's ordinary resources, so the
+`serviceAccountName` the Job names must already exist by then: give the `ServiceAccount` its own
+`pre-install,pre-upgrade` hook annotation, with a lower `helm.sh/hook-weight` than the Job's, so
+Helm creates it first.
+
+A plain `Job` outside Helm has no `hook-delete-policy` to remove the previous run, and a completed
+Job under the same fixed name fails a later `kubectl apply` with an immutable-field error. Set
+`ttlSecondsAfterFinished` on it, or delete the previous Job before applying the next one.
+
+The application's own replicas do not need to sync at all. If you want one to check its own
 declaration against Firestore, `.plan()` with `.prune_undeclared()` at startup is read-only and
-safe from any number of replicas at once: log the plan when any of its lists is non-empty, and
-fail the replica's readiness probe alone, since the release job may still be applying those
-changes.
+safe from any number of replicas at once: log a warning, or emit a metric, when `create_indexes`,
+`update_fields`, `enable_ttl`, `delete_indexes`, `revert_fields` or `disable_ttl` comes back
+non-empty. `unchanged` and `unchanged_ttl` are non-empty in the steady state and say nothing about
+drift on their own. Do not wire this into the replica's readiness probe: after a Helm rollback, or
+when an old pod restarts once the release job has already run, every replica would see the same
+drift and fail its probe at once.
 
 The job's service account needs `roles/datastore.indexAdmin`, the role `.sync()` always needs.
 Replicas that only call `.plan()` need `roles/datastore.viewer`.
 
-When two syncs do overlap regardless, creates, deletes, reverts and TTL disables all converge on
-their own: a `CreateIndex` answered `ALREADY_EXISTS`, a `DeleteIndex` answered `NOT_FOUND`, and a
-field revert or TTL disable Firestore refuses because another writer already applied it all count
-as done. A single writer per release still avoids the version skew a rolling update causes when
-replicas declare different indexes at the same time.
+When two syncs do overlap regardless, index creates and deletes, field reverts and TTL disables
+all converge on their own: a `CreateIndex` answered `ALREADY_EXISTS`, a `DeleteIndex` answered
+`NOT_FOUND`, and a field revert or TTL disable Firestore refuses because another writer already
+applied it all count as done. A field override write or a TTL enable that races another sync's is
+not checked against the field's current state, so it can still fail. A single writer per release
+avoids the version skew a rolling update causes when replicas declare different indexes at the
+same time.
 
 ## The order `.sync()` writes changes in
 
