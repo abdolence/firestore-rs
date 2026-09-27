@@ -93,6 +93,11 @@ path = "examples/index-whitelist.rs"
 required-features = ["admin"]
 
 [[example]]
+name = "index-subcollection"
+path = "examples/index-subcollection.rs"
+required-features = ["admin"]
+
+[[example]]
 name = "bulk-delete"
 path = "examples/bulk-delete.rs"
 required-features = ["admin"]
