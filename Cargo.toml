@@ -136,3 +136,8 @@ required-features = ["admin"]
 name = "admin-bulk-delete-tests"
 path = "tests/admin-bulk-delete-tests.rs"
 required-features = ["admin"]
+
+[[test]]
+name = "admin-index-coordination-tests"
+path = "tests/admin-index-coordination-tests.rs"
+required-features = ["admin"]
