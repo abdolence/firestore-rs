@@ -648,6 +648,31 @@ impl HeldLease {
     }
 }
 
+/// One claiming transaction's outcome, as the claim loop acts on it.
+enum ClaimAttempt {
+    Decided(ClaimVerdict),
+    /// Another caller wrote the document between the read and the commit of every try: Firestore
+    /// answered `ABORTED`, or the commit's precondition failed.
+    Contended(FirestoreError),
+    /// Anything else. The commit may still have landed, since only `ABORTED` says it did not.
+    Failed(FirestoreError),
+}
+
+impl From<FirestoreResult<ClaimVerdict>> for ClaimAttempt {
+    fn from(result: FirestoreResult<ClaimVerdict>) -> Self {
+        match result {
+            Ok(verdict) => ClaimAttempt::Decided(verdict),
+            // `From<tonic::Status>` names the code with its `Debug` form.
+            Err(FirestoreError::DatabaseError(err))
+                if matches!(err.public.code.as_str(), "Aborted" | "FailedPrecondition") =>
+            {
+                ClaimAttempt::Contended(FirestoreError::DatabaseError(err))
+            }
+            Err(err) => ClaimAttempt::Failed(err),
+        }
+    }
+}
+
 impl FirestoreDb {
     /// Reads the coordination document with a query, the read that also reports Firestore's
     /// time. Inside a transaction, `self` is the transaction-bound client.
@@ -893,14 +918,21 @@ impl FirestoreDb {
             .as_ref()
             .map(|lease| LeaseClaim::new(lease, options.generation))
             .transpose()?;
+        // Contention is tried again as long as the sync may wait, or a lease wait may, whichever
+        // is longer; past that the last contention error stands.
+        let contention_bound = match options.lease.as_ref().map(|lease| &lease.on_held) {
+            Some(FirestoreIndexLeaseOnHeld::Wait(wait)) => wait.timeout.max(sync_wait.timeout),
+            _ => sync_wait.timeout,
+        };
         let first_attempt = Instant::now();
         loop {
             let sent = Instant::now();
-            let reason = match self
-                .claim_once(&target, options.generation, claim.as_ref())
-                .await?
-            {
-                ClaimVerdict::Proceed => {
+            let attempt = ClaimAttempt::from(
+                self.claim_once(&target, options.generation, claim.as_ref())
+                    .await,
+            );
+            let reason = match attempt {
+                ClaimAttempt::Decided(ClaimVerdict::Proceed) => {
                     info!(
                         collection_group = collection_group.as_str(),
                         generation = options.generation.map(FirestoreIndexGeneration::value),
@@ -911,7 +943,31 @@ impl FirestoreDb {
                         HeldLease::new(target, collection_group.clone(), claim, sent)
                     })));
                 }
-                ClaimVerdict::Skip(reason) => reason,
+                ClaimAttempt::Decided(ClaimVerdict::Skip(reason)) => reason,
+                ClaimAttempt::Contended(err) => {
+                    if first_attempt.elapsed() >= contention_bound {
+                        error!(
+                            %err,
+                            collection_group = collection_group.as_str(),
+                            "Every claim of the collection group lost a race with another caller until the sync's deadline.",
+                        );
+                        return Err(err);
+                    }
+                    warn!(
+                        %err,
+                        collection_group = collection_group.as_str(),
+                        "Another caller wrote the coordination document during this claim; reading it again.",
+                    );
+                    // A pause of its own for each racing caller, so they do not collide again.
+                    let jitter = Duration::from_millis(rand::rng().random_range(0..=100));
+                    tokio::time::sleep(jitter).await;
+                    continue;
+                }
+                ClaimAttempt::Failed(err) => {
+                    return self
+                        .settle_failed_claim(target, collection_group, claim, sent, err)
+                        .await;
+                }
             };
             let wait = match (&reason, &options.lease) {
                 (FirestoreIndexSyncSkipReason::LeaseHeld(held), Some(lease)) => {
@@ -940,6 +996,51 @@ impl FirestoreDb {
                 "Waiting to claim the collection group for index sync: {reason}.",
             );
             tokio::time::sleep(wait.poll_interval.min(wait.timeout - waited)).await;
+        }
+    }
+
+    /// Settles a claim that failed with `err` and no verdict, sent at `sent`. Its commit may have
+    /// landed anyway, and a lease no running sync knows of would hold the group for its whole
+    /// `ttl`, so the document is read back. A lease carrying this claim's token proves the claim
+    /// succeeded: the sync holds it and runs, trusting it from `sent`, and releases it as usual.
+    /// Anything else means the claim did not land, and `err` stands.
+    async fn settle_failed_claim(
+        &self,
+        target: CoordinationTarget,
+        collection_group: &FirestoreCollectionId,
+        claim: Option<LeaseClaim>,
+        sent: Instant,
+        err: FirestoreError,
+    ) -> FirestoreResult<ClaimedCoordination> {
+        let Some(claim) = claim else {
+            return Err(err);
+        };
+        match self.read_coordination(&target).await {
+            Ok(snapshot) if LeaseCheck::of(&snapshot, &claim) == LeaseCheck::Ours => {
+                warn!(
+                    %err,
+                    collection_group = collection_group.as_str(),
+                    owner = claim.owner.as_str(),
+                    "The claim answered an error, but the lease it wrote is recorded; holding it for the sync.",
+                );
+                Ok(ClaimedCoordination::Proceed(Some(HeldLease::new(
+                    target,
+                    collection_group.clone(),
+                    claim,
+                    sent,
+                ))))
+            }
+            Ok(_) => Err(err),
+            Err(read_err) => {
+                error!(
+                    %err,
+                    %read_err,
+                    collection_group = collection_group.as_str(),
+                    owner = claim.owner.as_str(),
+                    "The claim failed and the coordination document could not be read back; a lease it may have written expires after its ttl.",
+                );
+                Err(err)
+            }
         }
     }
 
@@ -1066,6 +1167,26 @@ mod tests {
         lease_writes: Vec<FirestoreInstant>,
     }
 
+    /// A data RPC as a [`StoreHook`] sees it.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Rpc {
+        Query,
+        Commit { writes: usize },
+    }
+
+    /// What the store does with one data RPC instead of answering it at once.
+    enum Fault {
+        None,
+        /// Answers `Code` and applies nothing.
+        Refuse(Code),
+        /// Applies the commit, then answers `Code`: a commit whose reply was lost.
+        ApplyThenFail(Code),
+    }
+
+    /// Runs before the store answers each query and commit, and may change the document first,
+    /// as a rival caller writing in between would.
+    type StoreHook = Box<dyn FnMut(Rpc, &mut StoreState) -> Fault + Send>;
+
     /// One coordination document behind the data RPCs a claim, renewal and release send:
     /// transactional queries answered with the document and the server's read time, and commits
     /// applied with their masks, preconditions and transforms at the server's time. Every query
@@ -1074,6 +1195,7 @@ mod tests {
     struct FakeCoordinationStore {
         state: Arc<Mutex<StoreState>>,
         next_transaction: Arc<AtomicU8>,
+        hook: Arc<Mutex<Option<StoreHook>>>,
     }
 
     impl FakeCoordinationStore {
@@ -1097,6 +1219,21 @@ mod tests {
                     lease_writes: Vec::new(),
                 })),
                 next_transaction: Arc::new(AtomicU8::new(0)),
+                hook: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        fn set_hook<F>(&self, hook: F)
+        where
+            F: FnMut(Rpc, &mut StoreState) -> Fault + Send + 'static,
+        {
+            *self.hook.lock().unwrap() = Some(Box::new(hook));
+        }
+
+        fn fault(&self, rpc: Rpc, state: &mut StoreState) -> Fault {
+            match self.hook.lock().unwrap().as_mut() {
+                Some(hook) => hook(rpc, state),
+                None => Fault::None,
             }
         }
 
@@ -1136,9 +1273,21 @@ mod tests {
 
         /// Replaces the lease with another caller's, as a caller that took it over would.
         fn replace_lease(&self, owner: &str, token: &str) {
-            let mut state = self.state();
+            Self::put_lease(&mut self.state(), owner, token);
+        }
+
+        /// Writes another caller's hour-long lease, creating the document when there is none.
+        fn put_lease(state: &mut StoreState, owner: &str, token: &str) {
             let now = state.now;
-            let document = state.document.as_mut().expect("a lease to replace");
+            let document = state.document.get_or_insert_with(|| Document {
+                name: format!(
+                    "projects/fake-firestore/databases/(default)/documents/{}/users",
+                    crate::DEFAULT_INDEX_COORDINATION_COLLECTION
+                ),
+                fields: HashMap::new(),
+                create_time: Some(to_timestamp(now)),
+                update_time: None,
+            });
             for (name, value) in lease_fields(owner, token, Duration::from_secs(3600), now) {
                 document.fields.insert(name.to_string(), value);
             }
@@ -1167,22 +1316,35 @@ mod tests {
                 ROLLBACK => Some(("Rollback".to_string(), FakeResponse::empty())),
                 RUN_QUERY => {
                     let mut state = self.state();
+                    let fault = self.fault(Rpc::Query, &mut state);
                     let read_time = Self::tick(&mut state);
                     let response = RunQueryResponse {
                         document: state.document.clone(),
                         read_time: Some(to_timestamp(read_time)),
                         ..Default::default()
                     };
-                    Some((
-                        "RunQuery".to_string(),
-                        FakeResponse::Message(response.encode_to_vec()),
-                    ))
+                    let response = FakeResponse::Message(response.encode_to_vec());
+                    Some(match fault {
+                        Fault::None => ("RunQuery".to_string(), response),
+                        Fault::Refuse(code) => (
+                            format!("RunQuery refused: {code:?}"),
+                            FakeResponse::Status(code),
+                        ),
+                        Fault::ApplyThenFail(_) => panic!("a query applies nothing"),
+                    })
                 }
                 COMMIT => {
                     let request = CommitRequest::decode(bytes).unwrap();
                     let mut state = self.state();
-                    let commit_time = Self::tick(&mut state);
                     let writes = request.writes.len();
+                    let fault = self.fault(Rpc::Commit { writes }, &mut state);
+                    if let Fault::Refuse(code) = fault {
+                        return Some((
+                            format!("Commit refused: {code:?}"),
+                            FakeResponse::Status(code),
+                        ));
+                    }
+                    let commit_time = Self::tick(&mut state);
                     for write in request.writes {
                         if let Err(code) = Self::apply(&mut state, write, commit_time) {
                             return Some((
@@ -1200,10 +1362,15 @@ mod tests {
                             .collect(),
                         commit_time: Some(to_timestamp(commit_time)),
                     };
-                    Some((
-                        format!("Commit({writes})"),
-                        FakeResponse::Message(response.encode_to_vec()),
-                    ))
+                    let response = FakeResponse::Message(response.encode_to_vec());
+                    Some(match fault {
+                        Fault::None => (format!("Commit({writes})"), response),
+                        Fault::ApplyThenFail(code) => (
+                            format!("Commit({writes}) applied, answered {code:?}"),
+                            FakeResponse::Status(code),
+                        ),
+                        Fault::Refuse(_) => unreachable!("refused before applying"),
+                    })
                 }
                 _ => None,
             }
@@ -2173,6 +2340,136 @@ mod tests {
                 .count();
             assert_eq!(claims, 1, "{holder_generation:?}: {:?}", fake.calls());
         }
+    }
+
+    fn lease_skip(ttl: Duration) -> FirestoreIndexSyncOptions {
+        FirestoreIndexSyncOptions::new().with_lease(lease(ttl))
+    }
+
+    #[tokio::test]
+    async fn a_claim_that_keeps_losing_the_race_skips_rather_than_failing() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![]);
+        // The rival's claim lands just before ours, and every attempt of our transaction is
+        // aborted, as Firestore answers contention.
+        let mut commits = 0;
+        store.set_hook(move |rpc, state| match rpc {
+            Rpc::Commit { .. } if commits < 5 => {
+                if commits == 0 {
+                    FakeCoordinationStore::put_lease(state, "replica-b", "b");
+                }
+                commits += 1;
+                Fault::Refuse(Code::Aborted)
+            }
+            _ => Fault::None,
+        });
+        let fake = start_with(&store, empty_group).await;
+
+        let report = fake
+            .db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                lease_skip(Duration::from_secs(60)),
+            )
+            .await
+            .unwrap();
+
+        match &report.skipped {
+            Some(FirestoreIndexSyncSkipReason::LeaseHeld(held)) => {
+                assert_eq!(held.owner, owner("replica-b"));
+            }
+            other => panic!("expected a held lease, got {other:?}"),
+        }
+        assert!(!fake.calls().iter().any(|call| is_admin(call)));
+    }
+
+    #[tokio::test]
+    async fn a_claim_contended_past_its_deadline_stops_trying() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![]);
+        store.set_hook(|rpc, _| match rpc {
+            Rpc::Commit { .. } => Fault::Refuse(Code::FailedPrecondition),
+            Rpc::Query => Fault::None,
+        });
+        let fake = start_with(&store, empty_group).await;
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            fake.db.sync_indexes(
+                FirestoreIndexParams::new(group()),
+                lease_skip(Duration::from_secs(60)).with_wait(
+                    FirestoreOperationWaitOptions::new(Duration::from_millis(300))
+                        .with_poll_interval(Duration::from_millis(20)),
+                ),
+            ),
+        )
+        .await
+        .expect("the claim loop ends by the sync's deadline");
+
+        assert!(result.is_err());
+        let attempts = fake
+            .calls()
+            .iter()
+            .filter(|call| *call == "RunQuery")
+            .count();
+        assert!(
+            attempts >= 2,
+            "tried again after losing: {:?}",
+            fake.calls()
+        );
+        assert!(!fake.calls().iter().any(|call| is_admin(call)));
+    }
+
+    #[tokio::test]
+    async fn a_claim_that_landed_but_answered_an_error_holds_the_lease_and_releases_it() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![]);
+        let mut failed = false;
+        store.set_hook(move |rpc, _| match rpc {
+            Rpc::Commit { writes } if writes > 0 && !failed => {
+                failed = true;
+                Fault::ApplyThenFail(Code::Unavailable)
+            }
+            _ => Fault::None,
+        });
+        let fake = start_with(&store, empty_group).await;
+
+        let report = fake
+            .db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                lease_skip(Duration::from_secs(60)),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(report.skipped, None);
+        assert!(fake.calls().contains(&"ListIndexes".to_string()));
+        assert_eq!(store.lease_writes().len(), 1, "claimed once");
+        assert_eq!(store.lease_owner(), None, "released after the sync");
+    }
+
+    #[tokio::test]
+    async fn a_claim_whose_commit_failed_without_landing_fails_and_leaves_no_lease() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![]);
+        store.set_hook(|rpc, _| match rpc {
+            Rpc::Commit { writes } if writes > 0 => Fault::Refuse(Code::Unavailable),
+            _ => Fault::None,
+        });
+        let fake = start_with(&store, empty_group).await;
+
+        let result = fake
+            .db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                lease_skip(Duration::from_secs(60)),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(!fake.calls().iter().any(|call| is_admin(call)));
+        assert_eq!(store.lease_owner(), None);
     }
 
     #[tokio::test]
