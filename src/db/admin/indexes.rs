@@ -1175,76 +1175,15 @@ impl FirestoreDb {
         self.release_index_lease(&lease).await;
         outcome
     }
-}
 
-#[async_trait]
-impl FirestoreIndexSupport for FirestoreDb {
-    async fn plan_indexes(
+    /// The sync behind [`FirestoreIndexSupport::sync_indexes`], for `params` and `options`
+    /// already validated, from a call that started at `started`.
+    pub(super) async fn sync_validated_indexes(
         &self,
         params: FirestoreIndexParams,
         options: FirestoreIndexSyncOptions,
-    ) -> FirestoreResult<FirestoreIndexPlan> {
-        crate::validate_index_params(&params)?;
-        crate::validate_sync_options(&params, &options)?;
-        if self.inner.is_emulator {
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "Skipping index plan: the Firestore emulator does not implement the admin API.",
-            );
-            return Ok(FirestoreIndexPlan {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                ..Default::default()
-            });
-        }
-
-        let root = span!(
-            Level::INFO,
-            "Firestore Index Plan",
-            "/firestore/collection_group" = params.collection_group.as_str(),
-            "/firestore/prune" = options.prune,
-            "/firestore/response_time" = field::Empty,
-        );
-        let began = FirestoreInstant::now();
-        let plan = async {
-            if let Some(superseded) = self
-                .read_superseded(&params.collection_group, &options)
-                .await?
-            {
-                let reason = FirestoreIndexSyncSkipReason::Superseded(superseded);
-                info!(
-                    collection_group = params.collection_group.as_str(),
-                    "plan() reports nothing to change: a sync would skip, because {reason}.",
-                );
-                return Ok(FirestoreIndexPlan {
-                    skipped: Some(reason),
-                    ..Default::default()
-                });
-            }
-            let group = self.owned_group(&params.collection_group);
-            let (plan, _) = self
-                .plan_against_server(&params, &group, options.prune)
-                .await?;
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "plan() reports what sync() would change; nothing was applied.",
-            );
-            Ok::<_, FirestoreError>(plan)
-        }
-        .instrument(root.clone())
-        .await?;
-        let elapsed = FirestoreInstant::now().duration_since(began);
-        root.record("/firestore/response_time", elapsed.as_millis());
-        Ok(plan)
-    }
-
-    async fn sync_indexes(
-        &self,
-        params: FirestoreIndexParams,
-        options: FirestoreIndexSyncOptions,
+        started: Instant,
     ) -> FirestoreResult<FirestoreIndexSyncReport> {
-        let started = Instant::now();
-        crate::validate_index_params(&params)?;
-        crate::validate_sync_options(&params, &options)?;
         if self.inner.is_emulator {
             info!(
                 collection_group = params.collection_group.as_str(),
@@ -1317,6 +1256,78 @@ impl FirestoreIndexSupport for FirestoreDb {
         let elapsed = FirestoreInstant::now().duration_since(began);
         root.record("/firestore/response_time", elapsed.as_millis());
         Ok(report)
+    }
+}
+
+#[async_trait]
+impl FirestoreIndexSupport for FirestoreDb {
+    async fn plan_indexes(
+        &self,
+        params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
+    ) -> FirestoreResult<FirestoreIndexPlan> {
+        crate::validate_index_params(&params)?;
+        crate::validate_sync_options(&params, &options)?;
+        if self.inner.is_emulator {
+            info!(
+                collection_group = params.collection_group.as_str(),
+                "Skipping index plan: the Firestore emulator does not implement the admin API.",
+            );
+            return Ok(FirestoreIndexPlan {
+                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
+                ..Default::default()
+            });
+        }
+
+        let root = span!(
+            Level::INFO,
+            "Firestore Index Plan",
+            "/firestore/collection_group" = params.collection_group.as_str(),
+            "/firestore/prune" = options.prune,
+            "/firestore/response_time" = field::Empty,
+        );
+        let began = FirestoreInstant::now();
+        let plan = async {
+            if let Some(superseded) = self
+                .read_superseded(&params.collection_group, &options)
+                .await?
+            {
+                let reason = FirestoreIndexSyncSkipReason::Superseded(superseded);
+                info!(
+                    collection_group = params.collection_group.as_str(),
+                    "plan() reports nothing to change: a sync would skip, because {reason}.",
+                );
+                return Ok(FirestoreIndexPlan {
+                    skipped: Some(reason),
+                    ..Default::default()
+                });
+            }
+            let group = self.owned_group(&params.collection_group);
+            let (plan, _) = self
+                .plan_against_server(&params, &group, options.prune)
+                .await?;
+            info!(
+                collection_group = params.collection_group.as_str(),
+                "plan() reports what sync() would change; nothing was applied.",
+            );
+            Ok::<_, FirestoreError>(plan)
+        }
+        .instrument(root.clone())
+        .await?;
+        let elapsed = FirestoreInstant::now().duration_since(began);
+        root.record("/firestore/response_time", elapsed.as_millis());
+        Ok(plan)
+    }
+
+    async fn sync_indexes(
+        &self,
+        params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
+    ) -> FirestoreResult<FirestoreIndexSyncReport> {
+        let started = Instant::now();
+        crate::validate_index_params(&params)?;
+        crate::validate_sync_options(&params, &options)?;
+        self.sync_validated_indexes(params, options, started).await
     }
 }
 

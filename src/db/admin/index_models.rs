@@ -496,6 +496,11 @@ pub struct FirestoreIndexSyncOptions {
     pub coordination_collection: FirestoreCollectionId,
 }
 
+/// The shortest [`FirestoreIndexLeaseOptions::ttl`]: one minute. A holder renews its lease every
+/// third of the `ttl` and stops trusting it a tenth of the `ttl` before it expires, so this keeps
+/// at least 20 seconds between renewals and 6 seconds for an admin write already in flight.
+pub const MIN_INDEX_LEASE_TTL: Duration = Duration::from_secs(60);
+
 /// The default [`FirestoreIndexSyncOptions::coordination_collection`].
 pub const DEFAULT_INDEX_COORDINATION_COLLECTION: &str = "firestore-rs-index-coordination";
 
@@ -604,19 +609,27 @@ impl Display for FirestoreIndexLeaseOwner {
 /// server time of its last claim or renewal plus its `ttl`, compared with the server time a
 /// claiming transaction reads at. While the sync runs, the lease is renewed every third of its
 /// `ttl`. The sync releases it when it returns, whether it succeeded or failed; a process that
-/// crashes, or a sync future that is dropped, leaves it to expire. A holder whose lease was taken
-/// over, or not renewed within `ttl` of its last confirmed claim or renewal, sends no further
-/// admin write and fails with [`FirestoreError::DataConflictError`].
+/// crashes, or a sync future that is dropped, leaves it to expire.
+///
+/// Before every admin write, the holder checks that it may still send it, and otherwise sends
+/// no further admin write and fails with [`FirestoreError::DataConflictError`]. It stops when no
+/// claim or renewal of its own was confirmed within nine tenths of `ttl` of sending it, and when
+/// a fresh read of the coordination document shows the lease taken by another caller, cleared,
+/// or expired in Firestore's clock, or a higher generation than its own recorded. The error's
+/// public code says which: `IndexLeaseSuperseded` for a higher generation, `IndexLeaseTaken`
+/// for a lease another caller took or cleared, and `IndexLeaseExpired` otherwise.
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreIndexLeaseOptions {
     /// How long a claim or a renewal keeps the lease without another renewal. The default,
     /// 35 minutes, outlasts the 30-minute deadline of a sync that does not wait, so the lease
     /// stays held for a whole sync even if every renewal fails. It is also how long a crashed
-    /// holder keeps the group from being synced. At least one millisecond, the unit it is stored
-    /// in.
+    /// holder keeps the group from being synced. At least [`MIN_INDEX_LEASE_TTL`], one minute.
     #[default = "Duration::from_secs(35 * 60)"]
     pub ttl: Duration,
-    /// What to do when another caller holds an unexpired lease.
+    /// What to do when another caller holds an unexpired lease. A holder of a lower
+    /// [`generation`](FirestoreIndexSyncOptions::generation) than this caller's is waited for
+    /// either way, since it stops before its next admin write, for as long as the sync's own
+    /// deadline or this wait's timeout allows, whichever is longer.
     #[default = "FirestoreIndexLeaseOnHeld::Skip"]
     pub on_held: FirestoreIndexLeaseOnHeld,
     /// Who this caller is, as other callers see it.
@@ -627,7 +640,9 @@ pub struct FirestoreIndexLeaseOptions {
 /// What `.sync()` does when another caller holds the lease.
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreIndexLeaseOnHeld {
-    /// Return at once with a report marked skipped, naming the holder and the lease's expiry.
+    /// Return at once with a report marked skipped, naming the holder and the lease's expiry;
+    /// a holder of an older generation is waited for instead, as
+    /// [`on_held`](FirestoreIndexLeaseOptions::on_held) describes.
     Skip,
     /// Try to claim again until the lease is free or the wait times out; a timed-out wait
     /// returns the same skipped report [`Skip`](Self::Skip) does.
@@ -914,7 +929,7 @@ fn reject_reserved_collection_id(
 /// # Errors
 /// Returns [`FirestoreError::InvalidParametersError`] if the coordination collection is a
 /// collection group ID Firestore reserves or the owned group itself, if the lease `ttl` is under
-/// one millisecond, or if a lease wait's `poll_interval` is zero.
+/// [`MIN_INDEX_LEASE_TTL`], or if a lease wait's `poll_interval` is zero.
 pub(crate) fn validate_sync_options(
     params: &FirestoreIndexParams,
     options: &FirestoreIndexSyncOptions,
@@ -934,11 +949,12 @@ pub(crate) fn validate_sync_options(
         ));
     }
     if let Some(lease) = &options.lease {
-        if lease.ttl < Duration::from_millis(1) {
+        if lease.ttl < MIN_INDEX_LEASE_TTL {
             return Err(FirestoreError::invalid_parameters(
                 "lease_ttl",
                 format!(
-                    "{:?} is under one millisecond, the unit a lease is stored in",
+                    "{:?} is under one minute, the shortest lease that leaves room for renewals \
+                     and for the writes in flight when a holder stops trusting it",
                     lease.ttl
                 ),
             ));

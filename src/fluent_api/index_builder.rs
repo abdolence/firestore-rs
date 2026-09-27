@@ -1082,7 +1082,14 @@ mod tests {
             ),
             (
                 builder().lease(FirestoreIndexLeaseOptions::new().with_ttl(Duration::ZERO)),
-                "under one millisecond",
+                "under one minute",
+            ),
+            (
+                builder().lease(
+                    FirestoreIndexLeaseOptions::new()
+                        .with_ttl(Duration::from_secs(60) - Duration::from_millis(1)),
+                ),
+                "under one minute",
             ),
             (
                 builder().lease(
@@ -1101,6 +1108,19 @@ mod tests {
             assert!(err.to_string().contains(expected), "{expected}: {err}");
         }
         assert!(mock.captured().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_lease_of_one_minute_is_accepted() {
+        let mock = MockIndexDatabase::default();
+        FirestoreExprBuilder { db: &mock }
+            .indexes()
+            .collection_group("users")
+            .lease(FirestoreIndexLeaseOptions::new().with_ttl(Duration::from_secs(60)))
+            .sync()
+            .await
+            .unwrap();
+        assert!(mock.captured().is_some());
     }
 
     #[tokio::test]

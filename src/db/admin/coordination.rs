@@ -2099,16 +2099,15 @@ mod tests {
         )
         .await;
 
-        let report = fake
-            .db
-            .sync_indexes(
-                FirestoreIndexParams::new(group()).with_composite_indexes(vec![declared_index()]),
-                FirestoreIndexSyncOptions::new()
-                    .with_wait(polling_wait())
-                    .with_lease(lease(Duration::from_millis(600))),
-            )
-            .await
-            .unwrap();
+        let report = sync_short_lease(
+            &fake.db,
+            FirestoreIndexParams::new(group()).with_composite_indexes(vec![declared_index()]),
+            FirestoreIndexSyncOptions::new()
+                .with_wait(polling_wait())
+                .with_lease(lease(Duration::from_millis(600))),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(report.created_indexes, vec![declared_index()]);
         let writes = store.lease_writes();
@@ -2164,7 +2163,7 @@ mod tests {
             .with_prune(true)
             .with_wait(polling_wait())
             .with_lease(lease(Duration::from_millis(600)));
-        let (result, ()) = tokio::join!(fake.db.sync_indexes(params, options), async {
+        let (result, ()) = tokio::join!(sync_short_lease(&fake.db, params, options), async {
             tokio::time::timeout(Duration::from_secs(5), async {
                 while !fake.calls().iter().any(|call| call == "GetOperation") {
                     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -2368,6 +2367,17 @@ mod tests {
         }
     }
 
+    /// Syncs past the public validation, which asks a lease for at least a minute, so a test can
+    /// hold one for a fraction of a second.
+    async fn sync_short_lease(
+        db: &FirestoreDb,
+        params: FirestoreIndexParams,
+        options: FirestoreIndexSyncOptions,
+    ) -> FirestoreResult<crate::FirestoreIndexSyncReport> {
+        db.sync_validated_indexes(params, options, Instant::now())
+            .await
+    }
+
     fn lease_skip(ttl: Duration) -> FirestoreIndexSyncOptions {
         FirestoreIndexSyncOptions::new().with_lease(lease(ttl))
     }
@@ -2528,14 +2538,13 @@ mod tests {
         })
         .await;
 
-        let report = fake
-            .db
-            .sync_indexes(
-                FirestoreIndexParams::new(group()),
-                lease_skip(Duration::from_millis(300)),
-            )
-            .await
-            .unwrap();
+        let report = sync_short_lease(
+            &fake.db,
+            FirestoreIndexParams::new(group()),
+            lease_skip(Duration::from_millis(300)),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(report.skipped, None);
         assert_eq!(store.lease_owner(), None, "released after the sync");
@@ -2568,15 +2577,14 @@ mod tests {
         )
         .await;
 
-        let result = fake
-            .db
-            .sync_indexes(
-                FirestoreIndexParams::new(group()).with_composite_indexes(vec![declared_index()]),
-                FirestoreIndexSyncOptions::new()
-                    .with_wait(polling_wait())
-                    .with_lease(lease(Duration::from_millis(300))),
-            )
-            .await;
+        let result = sync_short_lease(
+            &fake.db,
+            FirestoreIndexParams::new(group()).with_composite_indexes(vec![declared_index()]),
+            FirestoreIndexSyncOptions::new()
+                .with_wait(polling_wait())
+                .with_lease(lease(Duration::from_millis(300))),
+        )
+        .await;
 
         assert!(result.is_err());
         let writes = store.lease_writes();
@@ -2602,7 +2610,8 @@ mod tests {
 
         let cancelled = tokio::time::timeout(
             Duration::from_millis(350),
-            fake.db.sync_indexes(
+            sync_short_lease(
+                &fake.db,
                 FirestoreIndexParams::new(group()).with_composite_indexes(vec![declared_index()]),
                 FirestoreIndexSyncOptions::new().with_lease(lease(Duration::from_millis(300))),
             ),
