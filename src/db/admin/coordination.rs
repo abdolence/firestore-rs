@@ -2,7 +2,10 @@
 //! deployment, through one document per group: `{coordination_collection}/{collection_group}`.
 //!
 //! The document holds the highest generation any caller claimed the group with, and at most one
-//! lease. Every read and write goes through the crate's own data API, in transactions, so two
+//! lease, with the generation its holder syncs. Before every admin write, the holder reads the
+//! document again and stops when the lease is no longer its own or a higher generation is
+//! recorded; a newer generation that finds an older one holding the lease waits for it to stop
+//! and release. Every read and write goes through the crate's own data API, in transactions, so two
 //! callers deciding at once see each other's claim: Firestore aborts one of them and
 //! [`FirestoreDb::run_transaction`] runs it again against the new state.
 //!
@@ -23,9 +26,10 @@ use crate::timestamp_utils::from_timestamp;
 use crate::{
     FirestoreCollectionId, FirestoreDb, FirestoreDocumentId, FirestoreIndexGeneration,
     FirestoreIndexLeaseHeld, FirestoreIndexLeaseOnHeld, FirestoreIndexLeaseOptions,
-    FirestoreIndexLeaseOwner, FirestoreIndexSuperseded, FirestoreIndexSyncOptions,
-    FirestoreIndexSyncSkipReason, FirestoreInstant, FirestoreReference, FirestoreResult,
-    FirestoreTimestamp, FirestoreTransformServerValue, FirestoreWritePrecondition,
+    FirestoreIndexLeaseOwner, FirestoreIndexLeaseWait, FirestoreIndexSuperseded,
+    FirestoreIndexSyncOptions, FirestoreIndexSyncSkipReason, FirestoreInstant,
+    FirestoreOperationWaitOptions, FirestoreReference, FirestoreResult, FirestoreTimestamp,
+    FirestoreTransformServerValue, FirestoreWritePrecondition,
 };
 use backoff::Error as BackoffError;
 use futures::{FutureExt, StreamExt};
@@ -40,11 +44,18 @@ use tracing::*;
 const GENERATION_FIELD: &str = "generation";
 const LEASE_RENEWED_AT_FIELD: &str = "lease_renewed_at";
 /// The lease fields a claim or renewal writes itself; `lease_renewed_at` is set by the server.
-const LEASE_WRITTEN_FIELDS: [&str; 3] = ["lease_owner", "lease_token", "lease_ttl_ms"];
-const LEASE_ALL_FIELDS: [&str; 4] = [
+/// `lease_generation` is removed by a write that has none, so it never outlives its lease.
+const LEASE_WRITTEN_FIELDS: [&str; 4] = [
     "lease_owner",
     "lease_token",
     "lease_ttl_ms",
+    "lease_generation",
+];
+const LEASE_ALL_FIELDS: [&str; 5] = [
+    "lease_owner",
+    "lease_token",
+    "lease_ttl_ms",
+    "lease_generation",
     LEASE_RENEWED_AT_FIELD,
 ];
 
@@ -55,15 +66,18 @@ struct StoredCoordination {
     lease_owner: Option<String>,
     lease_token: Option<String>,
     lease_ttl_ms: Option<i64>,
+    lease_generation: Option<i64>,
     lease_renewed_at: Option<FirestoreTimestamp>,
 }
 
-/// A lease as stored, all of its fields present.
+/// A lease as stored, all of its fields present; `generation` is the one its holder claimed
+/// with, when it gave one.
 #[derive(Debug, Clone, PartialEq)]
 struct StoredLease {
     owner: FirestoreIndexLeaseOwner,
     token: String,
     ttl: Duration,
+    generation: Option<FirestoreIndexGeneration>,
     renewed_at: FirestoreInstant,
 }
 
@@ -99,13 +113,25 @@ impl TryFrom<StoredCoordination> for CoordinationRecord {
             .generation
             .map(FirestoreIndexGeneration::try_from)
             .transpose()?;
+        let lease_generation = stored
+            .lease_generation
+            .map(FirestoreIndexGeneration::try_from)
+            .transpose()?;
         let lease = match (
             stored.lease_owner,
             stored.lease_token,
             stored.lease_ttl_ms,
             stored.lease_renewed_at,
         ) {
-            (None, None, None, None) => None,
+            (None, None, None, None) => match lease_generation {
+                None => None,
+                Some(orphan) => {
+                    return Err(FirestoreError::invalid_parameters(
+                        "lease_generation",
+                        format!("{orphan} is stored without a lease"),
+                    ))
+                }
+            },
             (Some(owner), Some(token), Some(ttl_ms), Some(renewed_at)) => Some(StoredLease {
                 owner: FirestoreIndexLeaseOwner::new(owner)?,
                 token,
@@ -117,6 +143,7 @@ impl TryFrom<StoredCoordination> for CoordinationRecord {
                             format!("{ttl_ms} is negative"),
                         )
                     })?,
+                generation: lease_generation,
                 renewed_at: renewed_at.0,
             }),
             (owner, token, ttl_ms, renewed_at) => {
@@ -143,6 +170,8 @@ struct LeaseFields {
     lease_owner: String,
     lease_token: String,
     lease_ttl_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lease_generation: Option<i64>,
 }
 
 impl From<&LeaseClaim> for LeaseFields {
@@ -152,6 +181,7 @@ impl From<&LeaseClaim> for LeaseFields {
             lease_token: claim.token.clone(),
             lease_ttl_ms: i64::try_from(claim.ttl.as_millis())
                 .expect("LeaseClaim::new rejects a ttl whose milliseconds do not fit an i64"),
+            lease_generation: claim.generation.map(i64::from),
         }
     }
 }
@@ -202,17 +232,21 @@ struct StoredDocument {
     update_time: FirestoreInstant,
 }
 
-/// This caller's side of a lease: who it is, the token only this claim carries, and its `ttl`,
-/// whose milliseconds always fit the `i64` Firestore stores them in.
+/// This caller's side of a lease: who it is, the token only this claim carries, its `ttl`, whose
+/// milliseconds always fit the `i64` Firestore stores them in, and the generation it syncs.
 #[derive(Debug, Clone)]
 struct LeaseClaim {
     owner: FirestoreIndexLeaseOwner,
     token: String,
     ttl: Duration,
+    generation: Option<FirestoreIndexGeneration>,
 }
 
 impl LeaseClaim {
-    fn new(options: &FirestoreIndexLeaseOptions) -> FirestoreResult<Self> {
+    fn new(
+        options: &FirestoreIndexLeaseOptions,
+        generation: Option<FirestoreIndexGeneration>,
+    ) -> FirestoreResult<Self> {
         if i64::try_from(options.ttl.as_millis()).is_err() {
             return Err(FirestoreError::invalid_parameters(
                 "lease_ttl",
@@ -226,6 +260,7 @@ impl LeaseClaim {
             owner: options.owner.clone(),
             token: format!("{:016x}", rand::rng().random::<u64>()),
             ttl: options.ttl,
+            generation,
         })
     }
 
@@ -278,22 +313,16 @@ impl CoordinationSnapshot {
             .map(|stored| FirestoreIndexSuperseded { stored, ours })
     }
 
-    /// The stored lease when it belongs to another claim and has not expired at this snapshot's
-    /// read time.
+    fn lease(&self) -> Option<&StoredLease> {
+        self.record().and_then(|record| record.lease.as_ref())
+    }
+
+    /// Whether `lease` still holds at this snapshot's read time, and when it expires.
     ///
     /// # Errors
-    /// Fails when there is such a lease and Firestore reported no read time to judge it by; a
-    /// lease is never taken over on the client's own clock.
-    fn held_by_another(
-        &self,
-        claim: &LeaseClaim,
-    ) -> FirestoreResult<Option<FirestoreIndexLeaseHeld>> {
-        let Some(lease) = self.record().and_then(|record| record.lease.as_ref()) else {
-            return Ok(None);
-        };
-        if claim.is_ours(lease) {
-            return Ok(None);
-        }
+    /// Fails when Firestore reported no read time to judge it by; a lease is never judged on the
+    /// client's own clock.
+    fn standing(&self, lease: &StoredLease) -> FirestoreResult<LeaseStanding> {
         let expires_at = lease.expires_at()?;
         let read_time = self.read_time.ok_or_else(|| {
             FirestoreError::invalid_parameters(
@@ -305,10 +334,30 @@ impl CoordinationSnapshot {
                 ),
             )
         })?;
-        Ok((read_time < expires_at).then(|| FirestoreIndexLeaseHeld {
-            owner: lease.owner.clone(),
-            expires_at,
-        }))
+        Ok(if read_time < expires_at {
+            LeaseStanding::Holds(expires_at)
+        } else {
+            LeaseStanding::Expired(expires_at)
+        })
+    }
+
+    /// The stored lease when it belongs to another claim and has not expired at this snapshot's
+    /// read time.
+    fn held_by_another(
+        &self,
+        claim: &LeaseClaim,
+    ) -> FirestoreResult<Option<FirestoreIndexLeaseHeld>> {
+        let Some(lease) = self.lease().filter(|lease| !claim.is_ours(lease)) else {
+            return Ok(None);
+        };
+        Ok(match self.standing(lease)? {
+            LeaseStanding::Holds(expires_at) => Some(FirestoreIndexLeaseHeld {
+                owner: lease.owner.clone(),
+                expires_at,
+                generation: lease.generation,
+            }),
+            LeaseStanding::Expired(_) => None,
+        })
     }
 
     fn decide_claim(
@@ -339,40 +388,133 @@ impl CoordinationSnapshot {
     }
 }
 
-/// The outcome of trying to renew or release a lease.
+/// Whether a stored lease still holds at a snapshot's read time, with its expiry in Firestore's
+/// clock.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum LeaseStanding {
+    Holds(FirestoreInstant),
+    Expired(FirestoreInstant),
+}
+
+/// The outcome of checking a lease before a renewal, a release or an admin write.
 #[derive(Debug, Clone, PartialEq)]
 enum LeaseCheck {
-    /// The lease was still this claim's, and the write went through.
+    /// The lease is still this claim's; a renewal or release went through.
     Ours,
-    /// The lease is no longer this claim's, and nothing was written.
+    /// The lease is no longer this claim's to write under, and nothing was written.
     Lost(LeaseLoss),
 }
 
-/// How a lease stopped being this claim's.
+/// How a lease stopped being this claim's to write under.
 #[derive(Debug, Clone, PartialEq)]
 enum LeaseLoss {
+    /// A higher generation than the claim's is recorded for the group.
+    Superseded(FirestoreIndexSuperseded),
     /// Another claim holds it now.
-    HeldBy(FirestoreIndexLeaseOwner),
+    TakenBy(FirestoreIndexLeaseOwner),
     /// No claim holds it: its fields were cleared by someone else.
     Cleared,
+    /// It expired at this instant, in Firestore's clock, and was not renewed since.
+    Expired(FirestoreInstant),
+    /// No claim or renewal was confirmed within this long of sending it.
+    Unconfirmed(Duration),
+}
+
+impl LeaseLoss {
+    /// The public code of the error a sync stops with, one per kind of loss a caller may treat
+    /// differently: superseded by a newer release, taken by another caller, or expired.
+    fn code(&self) -> &'static str {
+        match self {
+            LeaseLoss::Superseded(_) => "IndexLeaseSuperseded",
+            LeaseLoss::TakenBy(_) | LeaseLoss::Cleared => "IndexLeaseTaken",
+            LeaseLoss::Expired(_) | LeaseLoss::Unconfirmed(_) => "IndexLeaseExpired",
+        }
+    }
 }
 
 impl std::fmt::Display for LeaseLoss {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LeaseLoss::HeldBy(owner) => write!(f, "it is now held by {owner}"),
+            LeaseLoss::Superseded(superseded) => write!(
+                f,
+                "generation {} is recorded, superseding this caller's {}",
+                superseded.stored, superseded.ours
+            ),
+            LeaseLoss::TakenBy(owner) => write!(f, "it is now held by {owner}"),
             LeaseLoss::Cleared => write!(f, "someone else cleared it"),
+            LeaseLoss::Expired(at) => write!(f, "it expired at {at}, in Firestore's clock"),
+            LeaseLoss::Unconfirmed(trusted_for) => write!(
+                f,
+                "no claim or renewal was confirmed within {trusted_for:?} of sending it"
+            ),
         }
     }
 }
 
 impl LeaseCheck {
+    /// Whether `snapshot` shows `claim`'s token on the lease: the check before a renewal or a
+    /// release. Either may go ahead past the lease's expiry, since the token shows no one else
+    /// claimed it meanwhile, and a superseded holder still renews until it stops, and releases.
     fn of(snapshot: &CoordinationSnapshot, claim: &LeaseClaim) -> Self {
-        match snapshot.record().and_then(|record| record.lease.as_ref()) {
+        match snapshot.lease() {
             Some(lease) if claim.is_ours(lease) => LeaseCheck::Ours,
-            Some(lease) => LeaseCheck::Lost(LeaseLoss::HeldBy(lease.owner.clone())),
+            Some(lease) => LeaseCheck::Lost(LeaseLoss::TakenBy(lease.owner.clone())),
             None => LeaseCheck::Lost(LeaseLoss::Cleared),
         }
+    }
+
+    /// The check before an admin write: on top of [`LeaseCheck::of`], no generation higher than
+    /// the claim's may be recorded, and the lease must not have expired at the read time, since
+    /// another caller may take an expired lease the moment after this read.
+    fn before_write(snapshot: &CoordinationSnapshot, claim: &LeaseClaim) -> FirestoreResult<Self> {
+        if let Some(superseded) = claim.generation.and_then(|ours| snapshot.superseded(ours)) {
+            return Ok(LeaseCheck::Lost(LeaseLoss::Superseded(superseded)));
+        }
+        match snapshot.lease().filter(|lease| claim.is_ours(lease)) {
+            Some(lease) => Ok(match snapshot.standing(lease)? {
+                LeaseStanding::Holds(_) => LeaseCheck::Ours,
+                LeaseStanding::Expired(at) => LeaseCheck::Lost(LeaseLoss::Expired(at)),
+            }),
+            None => Ok(LeaseCheck::of(snapshot, claim)),
+        }
+    }
+}
+
+impl FirestoreIndexLeaseOptions {
+    /// How long, and how often, a claim that found `held` keeps trying, or `None` to skip.
+    ///
+    /// A holder of a lower generation than `ours` is waited for whatever `on_held` says: it stops
+    /// before its next admin write once it reads the higher generation, then releases. That wait
+    /// lasts as long as the sync's own deadline, `sync_wait`, or the lease wait's timeout when
+    /// that is longer, and polls as the lease wait does, or as `sync_wait` does under `Skip`.
+    /// Any other holder is waited for only as `on_held` says.
+    fn patience(
+        &self,
+        held: &FirestoreIndexLeaseHeld,
+        ours: Option<FirestoreIndexGeneration>,
+        sync_wait: &FirestoreOperationWaitOptions,
+    ) -> Option<FirestoreIndexLeaseWait> {
+        let configured = match &self.on_held {
+            FirestoreIndexLeaseOnHeld::Skip => None,
+            FirestoreIndexLeaseOnHeld::Wait(wait) => Some(wait),
+        };
+        let holder_is_older = held
+            .generation
+            .zip(ours)
+            .is_some_and(|(holder, ours)| holder < ours);
+        if !holder_is_older {
+            return configured.cloned();
+        }
+        Some(match configured {
+            Some(wait) => FirestoreIndexLeaseWait {
+                timeout: wait.timeout.max(sync_wait.timeout),
+                poll_interval: wait.poll_interval,
+            },
+            None => FirestoreIndexLeaseWait {
+                timeout: sync_wait.timeout,
+                poll_interval: sync_wait.poll_interval,
+            },
+        })
     }
 }
 
@@ -398,42 +540,74 @@ struct LeaseState {
 }
 
 impl HeldLease {
+    /// The lease `claim` holds once the claim sent at `sent` is confirmed.
+    fn new(
+        target: CoordinationTarget,
+        collection_group: FirestoreCollectionId,
+        claim: LeaseClaim,
+        sent: Instant,
+    ) -> Self {
+        Self {
+            target,
+            collection_group,
+            state: Mutex::new(LeaseState {
+                trusted_until: sent + claim.trusted_for(),
+                lost: None,
+            }),
+            claim,
+        }
+    }
+
     fn state(&self) -> std::sync::MutexGuard<'_, LeaseState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Fails when the lease was taken over, or was not confirmed recently enough to still be
-    /// trusted; the sync calls this before every admin write.
-    pub(super) fn ensure_held(&self) -> FirestoreResult<()> {
-        let state = self.state();
-        let problem = match &state.lost {
-            Some(loss) => Some(loss.to_string()),
-            None if Instant::now() >= state.trusted_until => Some(format!(
-                "no renewal was confirmed within {:?}",
-                self.claim.trusted_for()
-            )),
-            None => None,
-        };
-        match problem {
-            None => Ok(()),
-            Some(problem) => {
-                error!(
-                    collection_group = self.collection_group.as_str(),
-                    owner = self.claim.owner.as_str(),
-                    "Lost the index lease, so no further admin write is sent: {problem}.",
-                );
-                Err(FirestoreError::DataConflictError(
-                    FirestoreDataConflictError::new(
-                        FirestoreErrorPublicGenericDetails::new("IndexLeaseLost".to_string()),
-                        format!(
-                            "the index lease on collection group {} for {} is lost: {problem}",
-                            self.collection_group.as_str(),
-                            self.claim.owner
-                        ),
-                    ),
-                ))
+    /// Confirms that the sync may send its next admin write: the lease is not known lost, a
+    /// claim or renewal was confirmed within its trust window, and a fresh read of the
+    /// coordination document still shows it this claim's, unexpired, with no higher generation
+    /// recorded. The sync calls this before every admin write.
+    ///
+    /// # Errors
+    /// Returns [`FirestoreError::DataConflictError`] when the lease is lost, with the public code
+    /// `IndexLeaseSuperseded`, `IndexLeaseTaken` or `IndexLeaseExpired`, or the read's own error.
+    pub(super) async fn ensure_held(&self, db: &FirestoreDb) -> FirestoreResult<()> {
+        let known = {
+            let state = self.state();
+            match &state.lost {
+                Some(loss) => Some(loss.clone()),
+                None if Instant::now() >= state.trusted_until => {
+                    Some(LeaseLoss::Unconfirmed(self.claim.trusted_for()))
+                }
+                None => None,
             }
-        }
+        };
+        let loss = match known {
+            Some(loss) => loss,
+            None => match db
+                .check_lease_before_write(&self.target, &self.claim)
+                .await?
+            {
+                LeaseCheck::Ours => return Ok(()),
+                LeaseCheck::Lost(loss) => loss,
+            },
+        };
+        self.state().lost = Some(loss.clone());
+        error!(
+            collection_group = self.collection_group.as_str(),
+            owner = self.claim.owner.as_str(),
+            code = loss.code(),
+            "Lost the index lease, so no further admin write is sent: {loss}.",
+        );
+        Err(FirestoreError::DataConflictError(
+            FirestoreDataConflictError::new(
+                FirestoreErrorPublicGenericDetails::new(loss.code().to_string()),
+                format!(
+                    "the index lease on collection group {} for {} is lost: {loss}",
+                    self.collection_group.as_str(),
+                    self.claim.owner
+                ),
+            ),
+        ))
     }
 
     /// Renews the lease every third of its `ttl` until the lease is lost, then stays pending so
@@ -590,6 +764,25 @@ impl FirestoreDb {
         .await
     }
 
+    /// The check [`HeldLease::ensure_held`] reads Firestore with, in a transaction that writes
+    /// nothing.
+    async fn check_lease_before_write(
+        &self,
+        target: &CoordinationTarget,
+        claim: &LeaseClaim,
+    ) -> FirestoreResult<LeaseCheck> {
+        self.run_transaction(|db, _transaction| {
+            let target = target.clone();
+            let claim = claim.clone();
+            async move {
+                let snapshot = db.read_coordination(&target).await?;
+                LeaseCheck::before_write(&snapshot, &claim).map_err(BackoffError::permanent)
+            }
+            .boxed()
+        })
+        .await
+    }
+
     /// One renewing transaction: rewrites the lease, with a fresh server time, when it is still
     /// this claim's.
     async fn renew_lease_once(
@@ -658,10 +851,14 @@ impl FirestoreDb {
     /// Claims the group for a sync, as `options.generation` and `options.lease` ask: records the
     /// generation, takes the lease, and waits for a held lease when told to. Sends nothing when
     /// neither is set.
+    ///
+    /// `sync_wait` is the sync's own wait, or its implicit one: a newer generation waits for an
+    /// older lease holder within it (see [`FirestoreIndexLeaseOptions::patience`]).
     pub(super) async fn claim_index_coordination(
         &self,
         collection_group: &FirestoreCollectionId,
         options: &FirestoreIndexSyncOptions,
+        sync_wait: &FirestoreOperationWaitOptions,
     ) -> FirestoreResult<ClaimedCoordination> {
         if options.generation.is_none() && options.lease.is_none() {
             return Ok(ClaimedCoordination::Proceed(None));
@@ -677,7 +874,7 @@ impl FirestoreDb {
         );
         let began = Instant::now();
         let claimed = self
-            .claim_waiting_while_held(collection_group, options)
+            .claim_waiting_while_held(collection_group, options, sync_wait)
             .instrument(span.clone())
             .await;
         span.record("/firestore/response_time", began.elapsed().as_millis());
@@ -688,17 +885,15 @@ impl FirestoreDb {
         &self,
         collection_group: &FirestoreCollectionId,
         options: &FirestoreIndexSyncOptions,
+        sync_wait: &FirestoreOperationWaitOptions,
     ) -> FirestoreResult<ClaimedCoordination> {
         let target = CoordinationTarget::new(options, collection_group)?;
-        let claim = options.lease.as_ref().map(LeaseClaim::new).transpose()?;
-        let first_attempt = Instant::now();
-        let wait = options
+        let claim = options
             .lease
             .as_ref()
-            .and_then(|lease| match &lease.on_held {
-                FirestoreIndexLeaseOnHeld::Skip => None,
-                FirestoreIndexLeaseOnHeld::Wait(wait) => Some(wait),
-            });
+            .map(|lease| LeaseClaim::new(lease, options.generation))
+            .transpose()?;
+        let first_attempt = Instant::now();
         loop {
             let sent = Instant::now();
             let reason = match self
@@ -712,27 +907,24 @@ impl FirestoreDb {
                         owner = claim.as_ref().map(|claim| claim.owner.as_str()),
                         "Claimed the collection group for index sync.",
                     );
-                    return Ok(ClaimedCoordination::Proceed(claim.map(|claim| HeldLease {
-                        target,
-                        collection_group: collection_group.clone(),
-                        state: Mutex::new(LeaseState {
-                            trusted_until: sent + claim.trusted_for(),
-                            lost: None,
-                        }),
-                        claim,
+                    return Ok(ClaimedCoordination::Proceed(claim.map(|claim| {
+                        HeldLease::new(target, collection_group.clone(), claim, sent)
                     })));
                 }
                 ClaimVerdict::Skip(reason) => reason,
             };
-            let wait = match (&reason, wait) {
-                (FirestoreIndexSyncSkipReason::LeaseHeld(_), Some(wait)) => wait,
-                _ => {
-                    info!(
-                        collection_group = collection_group.as_str(),
-                        "Skipping index sync: {reason}.",
-                    );
-                    return Ok(ClaimedCoordination::Skip(reason));
+            let wait = match (&reason, &options.lease) {
+                (FirestoreIndexSyncSkipReason::LeaseHeld(held), Some(lease)) => {
+                    lease.patience(held, options.generation, sync_wait)
                 }
+                _ => None,
+            };
+            let Some(wait) = wait else {
+                info!(
+                    collection_group = collection_group.as_str(),
+                    "Skipping index sync: {reason}.",
+                );
+                return Ok(ClaimedCoordination::Skip(reason));
             };
             let waited = first_attempt.elapsed();
             if waited >= wait.timeout {
@@ -1204,6 +1396,7 @@ mod tests {
             owner: owner(name),
             token: token.to_string(),
             ttl: Duration::from_secs(60),
+            generation: None,
         }
     }
 
@@ -1212,6 +1405,7 @@ mod tests {
             owner: owner("replica-b"),
             token: token.to_string(),
             ttl: Duration::from_secs(60),
+            generation: None,
             renewed_at,
         }
     }
@@ -1235,6 +1429,7 @@ mod tests {
                 FirestoreIndexLeaseHeld {
                     owner: owner("replica-b"),
                     expires_at: expiry,
+                    generation: None,
                 }
             ))
         );
@@ -1357,9 +1552,66 @@ mod tests {
         };
         assert_eq!(
             check(Some(same_owner_other_claim)),
-            LeaseCheck::Lost(LeaseLoss::HeldBy(owner("replica-a")))
+            LeaseCheck::Lost(LeaseLoss::TakenBy(owner("replica-a")))
         );
         assert_eq!(check(None), LeaseCheck::Lost(LeaseLoss::Cleared));
+    }
+
+    #[test]
+    fn the_check_before_a_write_names_why_the_lease_is_lost() {
+        let claim = LeaseClaim {
+            generation: Some(generation(5)),
+            ..claim_by("replica-a", "a")
+        };
+        let ours = StoredLease {
+            owner: owner("replica-a"),
+            ..stored_lease("a", server_epoch())
+        };
+        let check = |stored: Option<u64>, lease: Option<StoredLease>, read: Duration| {
+            LeaseCheck::before_write(&snapshot(stored, lease, Some(at(read))), &claim).unwrap()
+        };
+        let second = Duration::from_secs(1);
+
+        assert_eq!(check(Some(5), Some(ours.clone()), second), LeaseCheck::Ours);
+        assert_eq!(
+            check(Some(7), Some(ours.clone()), second),
+            LeaseCheck::Lost(LeaseLoss::Superseded(FirestoreIndexSuperseded {
+                stored: generation(7),
+                ours: generation(5),
+            }))
+        );
+        assert_eq!(
+            check(Some(5), Some(stored_lease("b", server_epoch())), second),
+            LeaseCheck::Lost(LeaseLoss::TakenBy(owner("replica-b")))
+        );
+        assert_eq!(
+            check(Some(5), None, second),
+            LeaseCheck::Lost(LeaseLoss::Cleared)
+        );
+        assert_eq!(
+            check(Some(5), Some(ours), Duration::from_secs(60)),
+            LeaseCheck::Lost(LeaseLoss::Expired(at(Duration::from_secs(60))))
+        );
+        assert_eq!(
+            [
+                LeaseLoss::Superseded(FirestoreIndexSuperseded {
+                    stored: generation(7),
+                    ours: generation(5),
+                }),
+                LeaseLoss::TakenBy(owner("replica-b")),
+                LeaseLoss::Cleared,
+                LeaseLoss::Expired(server_epoch()),
+                LeaseLoss::Unconfirmed(Duration::from_secs(54)),
+            ]
+            .map(|loss| loss.code()),
+            [
+                "IndexLeaseSuperseded",
+                "IndexLeaseTaken",
+                "IndexLeaseTaken",
+                "IndexLeaseExpired",
+                "IndexLeaseExpired",
+            ]
+        );
     }
 
     #[test]
@@ -1369,6 +1621,7 @@ mod tests {
             lease_owner: Some("replica-b".to_string()),
             lease_token: None,
             lease_ttl_ms: Some(1000),
+            lease_generation: None,
             lease_renewed_at: None,
         })
         .unwrap_err();
@@ -1521,6 +1774,7 @@ mod tests {
                 FirestoreIndexLeaseHeld {
                     owner: owner("replica-b"),
                     expires_at: at(Duration::from_secs(60)),
+                    generation: None,
                 }
             ))
         );
@@ -1729,7 +1983,7 @@ mod tests {
         });
 
         let err = result.unwrap_err();
-        assert!(matches!(err, FirestoreError::DataConflictError(_)), "{err}");
+        assert_eq!(lease_error_code(&err), "IndexLeaseTaken", "{err}");
         assert!(err.to_string().contains("held by thief"), "{err}");
         let calls = fake.calls();
         assert!(calls.contains(&"CreateIndex".to_string()), "{calls:?}");
@@ -1739,6 +1993,186 @@ mod tests {
             Some("thief".to_string()),
             "a release leaves another caller's lease alone"
         );
+    }
+
+    /// The legacy index an older release declared and a newer one no longer declares: the
+    /// `[b ASC, c ASC]` shape the newer release replaces with [`declared_index`].
+    fn b_c_index() -> crate::FirestoreCompositeIndex {
+        crate::FirestoreCompositeIndex::new(vec![
+            crate::FirestoreIndexField::new(
+                "b".to_string(),
+                crate::FirestoreIndexFieldMode::Order(crate::FirestoreQueryDirection::Ascending),
+            ),
+            crate::FirestoreIndexField::new(
+                "c".to_string(),
+                crate::FirestoreIndexFieldMode::Order(crate::FirestoreQueryDirection::Ascending),
+            ),
+        ])
+    }
+
+    fn lease_error_code(err: &FirestoreError) -> &str {
+        match err {
+            FirestoreError::DataConflictError(conflict) => conflict.public.code.as_str(),
+            other => panic!("not a lost-lease error: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_newer_generation_stops_an_older_lease_holder_before_its_next_write_and_then_applies()
+    {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![]);
+        // Firestore lists the index generation 7 declares; generation 5 declares `[b, c]`
+        // instead, so it creates that and, once the build finishes, would prune the listed one.
+        let create = slow_create(
+            12,
+            crate::db::fake_firestore::done_operation_response(&operation_name("op1")),
+        );
+        let fake = start_with(&store, move |method, bytes| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_declared_index(
+                    &format!("{GROUP_PATH}/indexes/current"),
+                    ProtoState::Ready,
+                )]),
+            ),
+            DELETE_INDEX => ("DeleteIndex".to_string(), FakeResponse::empty()),
+            other => create(other, bytes),
+        })
+        .await;
+        let older = FirestoreIndexSyncOptions::new()
+            .with_generation(generation(5))
+            .with_prune(true)
+            .with_wait(polling_wait())
+            .with_lease(lease(Duration::from_secs(60)));
+        let newer = FirestoreIndexSyncOptions::new()
+            .with_generation(generation(7))
+            .with_prune(true)
+            .with_wait(polling_wait())
+            .with_lease(
+                lease(Duration::from_secs(60))
+                    .with_owner(owner("replica-b"))
+                    .with_on_held(FirestoreIndexLeaseOnHeld::Wait(
+                        FirestoreIndexLeaseWait::new(Duration::from_secs(10))
+                            .with_poll_interval(Duration::from_millis(20)),
+                    )),
+            );
+
+        let (older_result, newer_result) = tokio::join!(
+            fake.db.sync_indexes(
+                FirestoreIndexParams::new(group()).with_composite_indexes(vec![b_c_index()]),
+                older
+            ),
+            async {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while !fake.calls().iter().any(|call| call == "GetOperation") {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .expect("the older sync polls its create within five seconds");
+                fake.db
+                    .sync_indexes(
+                        FirestoreIndexParams::new(group())
+                            .with_composite_indexes(vec![declared_index()]),
+                        newer,
+                    )
+                    .await
+            }
+        );
+
+        let err = older_result.unwrap_err();
+        assert_eq!(lease_error_code(&err), "IndexLeaseSuperseded", "{err}");
+        let newer = newer_result.unwrap();
+        assert_eq!(newer.skipped, None, "{newer}");
+        let calls = fake.calls();
+        assert!(calls.contains(&"CreateIndex".to_string()), "{calls:?}");
+        assert!(!calls.contains(&"DeleteIndex".to_string()), "{calls:?}");
+        assert_eq!(store.generation(), Some(7));
+        assert_eq!(store.lease_owner(), None, "both leases released");
+        let polls_done = calls
+            .iter()
+            .rposition(|call| call == "GetOperation")
+            .unwrap();
+        let last_list = calls
+            .iter()
+            .rposition(|call| call == "ListIndexes")
+            .unwrap();
+        assert!(
+            polls_done < last_list,
+            "the newer sync lists only once the older one stopped: {calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_newer_generation_waits_for_an_older_holder_even_when_told_to_skip() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let mut fields = lease_fields("replica-b", "b", Duration::from_secs(60), server_epoch());
+        fields.push(("lease_generation", integer(5)));
+        fields.push((GENERATION_FIELD, integer(5)));
+        let store = FakeCoordinationStore::new(fields);
+        let fake = start_with(&store, empty_group).await;
+        let options = FirestoreIndexSyncOptions::new()
+            .with_generation(generation(7))
+            .with_wait(polling_wait())
+            .with_lease(lease(Duration::from_secs(60)));
+
+        let (report, ()) = tokio::join!(
+            fake.db
+                .sync_indexes(FirestoreIndexParams::new(group()), options),
+            async {
+                tokio::time::timeout(Duration::from_secs(5), fake.wait_for_calls(6))
+                    .await
+                    .expect("two claim attempts within five seconds");
+                store.clear_lease();
+            }
+        );
+
+        let report = report.unwrap();
+        assert_eq!(report.skipped, None, "{report}");
+        assert_eq!(store.generation(), Some(7));
+        assert!(fake.calls().contains(&"ListIndexes".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_holder_of_the_same_or_no_generation_is_skipped_as_on_held_says() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        for holder_generation in [Some(7), None] {
+            let mut fields =
+                lease_fields("replica-b", "b", Duration::from_secs(60), server_epoch());
+            fields.push((GENERATION_FIELD, integer(7)));
+            if let Some(holder_generation) = holder_generation {
+                fields.push(("lease_generation", integer(holder_generation)));
+            }
+            let store = FakeCoordinationStore::new(fields);
+            let fake = start_with(&store, empty_group).await;
+
+            let report = fake
+                .db
+                .sync_indexes(
+                    FirestoreIndexParams::new(group()),
+                    FirestoreIndexSyncOptions::new()
+                        .with_generation(generation(7))
+                        .with_wait(polling_wait())
+                        .with_lease(lease(Duration::from_secs(60))),
+                )
+                .await
+                .unwrap();
+
+            assert!(
+                matches!(
+                    report.skipped,
+                    Some(FirestoreIndexSyncSkipReason::LeaseHeld(_))
+                ),
+                "{holder_generation:?}: {report}"
+            );
+            let claims = fake
+                .calls()
+                .iter()
+                .filter(|call| *call == "RunQuery")
+                .count();
+            assert_eq!(claims, 1, "{holder_generation:?}: {:?}", fake.calls());
+        }
     }
 
     #[tokio::test]

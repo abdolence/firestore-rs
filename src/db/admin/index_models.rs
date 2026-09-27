@@ -825,6 +825,8 @@ pub struct FirestoreIndexLeaseHeld {
     pub owner: FirestoreIndexLeaseOwner,
     /// When the lease expires unless its holder renews it, in Firestore's clock.
     pub expires_at: FirestoreInstant,
+    /// The generation the holder syncs, when it set one.
+    pub generation: Option<FirestoreIndexGeneration>,
 }
 
 /// How long a `.sync()` took, in total and per phase. A phase is `None` when it did not run:
@@ -1440,11 +1442,13 @@ impl Display for FirestoreIndexSyncSkipReason {
                 "generation {} is recorded, superseding this caller's {}",
                 superseded.stored, superseded.ours
             ),
-            FirestoreIndexSyncSkipReason::LeaseHeld(held) => write!(
-                f,
-                "the lease is held by {} until {}",
-                held.owner, held.expires_at
-            ),
+            FirestoreIndexSyncSkipReason::LeaseHeld(held) => {
+                write!(f, "the lease is held by {}", held.owner)?;
+                if let Some(generation) = held.generation {
+                    write!(f, " at generation {generation}")?;
+                }
+                write!(f, " until {}", held.expires_at)
+            }
         }
     }
 }

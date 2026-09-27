@@ -927,13 +927,18 @@ impl FirestoreDb {
         );
         let began = FirestoreInstant::now();
         let mut writes = StartedWrites::default();
-        let ensure_held = || lease.map_or(Ok(()), HeldLease::ensure_held);
+        let ensure_held = || async {
+            match lease {
+                Some(lease) => lease.ensure_held(self).await,
+                None => Ok(()),
+            }
+        };
 
         let apply_result: FirestoreResult<()> = async {
             let mut creates = Vec::new();
             let mut already_existing = Vec::new();
             for index in &plan.create_indexes {
-                ensure_held()?;
+                ensure_held().await?;
                 match self.apply_create_index(group, index).await? {
                     CreateIndexOutcome::Created(op) => {
                         creates.push(writes.push(None, op));
@@ -948,7 +953,7 @@ impl FirestoreDb {
             for declared in &plan.update_fields {
                 let field = CanonicalFieldPath::from(declared.target.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                ensure_held()?;
+                ensure_held().await?;
                 let op = self.apply_update_field_override(group, declared).await?;
                 writes.push(Some(field), op);
                 report.updated_fields.push(declared.clone());
@@ -957,7 +962,7 @@ impl FirestoreDb {
             for listed in &plan.disable_ttl {
                 let field = CanonicalFieldPath::from(listed.field_path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                ensure_held()?;
+                ensure_held().await?;
                 match self.apply_disable_ttl(group, listed).await? {
                     FieldWriteOutcome::Started(op) => {
                         ttl_disables.push(writes.push(Some(field), op));
@@ -975,7 +980,7 @@ impl FirestoreDb {
             for path in &plan.enable_ttl {
                 let field = CanonicalFieldPath::from(path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                ensure_held()?;
+                ensure_held().await?;
                 let op = self.apply_enable_ttl(group, path).await?;
                 writes.push(Some(field), op);
                 report.enabled_ttl.push(path.clone());
@@ -983,7 +988,7 @@ impl FirestoreDb {
             for listed in &plan.revert_fields {
                 let field = CanonicalFieldPath::from(listed.field_path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                ensure_held()?;
+                ensure_held().await?;
                 match self.apply_revert_field_override(group, listed).await? {
                     FieldWriteOutcome::Started(op) => {
                         writes.push(Some(field), op);
@@ -1020,7 +1025,7 @@ impl FirestoreDb {
                 return Err(err);
             }
             for listed in &plan.delete_indexes {
-                ensure_held()?;
+                ensure_held().await?;
                 match self.apply_delete_index(group, listed).await? {
                     DeleteIndexOutcome::Deleted => report.deleted_indexes.push(listed.clone()),
                     DeleteIndexOutcome::AlreadyDeleted => {
@@ -1263,13 +1268,15 @@ impl FirestoreIndexSupport for FirestoreDb {
         let began = FirestoreInstant::now();
         let report = async {
             let coordinated = options.generation.is_some() || options.lease.is_some();
+            let sync_wait = options
+                .wait
+                .clone()
+                .unwrap_or_else(|| FirestoreOperationWaitOptions::new(SEQUENCING_TIMEOUT));
             let claimed = self
-                .claim_index_coordination(&params.collection_group, &options)
+                .claim_index_coordination(&params.collection_group, &options, &sync_wait)
                 .await?;
             let coordination = coordinated.then(|| started.elapsed());
-            let implicit_wait = FirestoreOperationWaitOptions::new(SEQUENCING_TIMEOUT);
-            let deadline =
-                OperationDeadline::from_now(options.wait.as_ref().unwrap_or(&implicit_wait));
+            let deadline = OperationDeadline::from_now(&sync_wait);
             let mut report = match claimed {
                 ClaimedCoordination::Skip(reason) => FirestoreIndexSyncReport {
                     skipped: Some(reason),
