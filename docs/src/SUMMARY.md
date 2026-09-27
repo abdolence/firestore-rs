@@ -42,6 +42,7 @@
 # Administration
 
 - [Index management](./index-management.md)
+    - [Running from several instances](./index-management/multiple-instances.md)
 - [Bulk delete](./bulk-delete.md)
 
 # Environment and operations

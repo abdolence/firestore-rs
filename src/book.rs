@@ -95,6 +95,10 @@ mod updates {}
 mod index_management {}
 
 #[cfg(feature = "admin")]
+#[doc = include_str!("../docs/src/index-management/multiple-instances.md")]
+mod multiple_instances {}
+
+#[cfg(feature = "admin")]
 #[doc = include_str!("../docs/src/bulk-delete.md")]
 mod bulk_delete {}
 

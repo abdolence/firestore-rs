@@ -116,6 +116,10 @@ There is no name prefix for a statement's own indexes. Firestore's `Index` and `
 are server-assigned and carry no label or description, so ownership is expressed entirely by
 which collection group a statement names, never by anything stored on the index itself.
 
+For running the same statement from several instances of one application, such as the replicas
+of a Kubernetes deployment, see [Running from several
+instances](./index-management/multiple-instances.md).
+
 ## Subcollections
 
 `.collection_group(...)` takes a subcollection's ID the same way it takes a top-level
