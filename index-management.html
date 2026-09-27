@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-4e649290.js";
+            window.path_to_searchindex_js = "searchindex-3c7a9363.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-61f90fc3.js"></script>
@@ -269,6 +269,72 @@ function typically runs one per group in turn.</p>
 <p>There is no name prefix for a statement’s own indexes. Firestore’s <code>Index</code> and <code>Field</code> resources
 are server-assigned and carry no label or description, so ownership is expressed entirely by
 which collection group a statement names, never by anything stored on the index itself.</p>
+<h2 id="subcollections"><a class="header" href="#subcollections">Subcollections</a></h2>
+<p><code>.collection_group(...)</code> takes a subcollection’s ID the same way it takes a top-level
+collection’s: <code>.collection_group("posts")</code> names every collection anywhere in the database whose
+ID is <code>posts</code>, at any depth. A slash-delimited path is rejected the same way <code>FirestoreCollectionId</code>
+rejects one everywhere else in the library, with a message pointing at
+<code>.parent(db.parent_path(...))</code>.</p>
+<p>Collection scope, the default, declares an index for a query scoped to one subcollection through
+<code>.from("posts").parent(parent_path)</code>. Add <code>.all_descendants()</code> to the same index for a query
+across every <code>posts</code> subcollection at once, through <code>.from("posts").all_descendants()</code>. The two
+scopes are different query shapes, so a group can declare both at the same time, one index for
+each:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+</span><span class="boring">struct Post {
+</span><span class="boring">    published: bool,
+</span><span class="boring">    created_at: FirestoreTimestamp,
+</span><span class="boring">    tags: Vec&lt;String&gt;,
+</span><span class="boring">}
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .indexes()
+    .collection_group("posts")
+    .composite(|i| {
+        i.indexes([
+            i.index([
+                i.field(path!(Post::published)).asc(),
+                i.field(path!(Post::created_at)).desc(),
+            ]),
+            i.index([
+                i.field(path!(Post::tags)).array_contains(),
+                i.field(path!(Post::created_at)).desc(),
+            ])
+            .all_descendants(),
+        ])
+    })
+    .sync()
+    .await?;
+
+let user_path = db.parent_path("users", "alice")?;
+let own_posts: Vec&lt;Post&gt; = db
+    .fluent()
+    .select()
+    .from("posts")
+    .parent(&amp;user_path)
+    .filter(|q| q.for_all([q.field(path!(Post::published)).eq(true)]))
+    .order(|o| o.fields([o.field(path!(Post::created_at)).desc()]))
+    .obj()
+    .query()
+    .await?;
+
+let tagged_rust: Vec&lt;Post&gt; = db
+    .fluent()
+    .select()
+    .from("posts")
+    .all_descendants()
+    .filter(|q| q.for_all([q.field(path!(Post::tags)).array_contains("rust")]))
+    .order(|o| o.fields([o.field(path!(Post::created_at)).desc()]))
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = (own_posts, tagged_rust);
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>The ID is shared across the whole database, including subcollections your own code never writes
+to. A statement owns the collection group, so <code>.prune_undeclared()</code> on <code>collection_group("posts")</code>
+reaches the indexes of every <code>posts</code> collection in the database.</p>
 <h2 id="removing-what-you-no-longer-declare"><a class="header" href="#removing-what-you-no-longer-declare">Removing what you no longer declare</a></h2>
 <p>By default, an index, override or TTL field Firestore lists for the owned group but this
 statement does not declare is only reported, never touched. Add <code>.prune_undeclared()</code> to also
@@ -458,8 +524,9 @@ carry <code>#[ignore]</code> and only run explicitly:</p>
 <pre><code class="language-bash">GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture
 </code></pre>
 <p>Full examples available
-<a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-management.rs">here</a> and
-<a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-whitelist.rs">here</a>.</p>
+<a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-management.rs">here</a>,
+<a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-whitelist.rs">here</a> and
+<a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-subcollection.rs">here</a>.</p>
 
                     </main>
 
