@@ -32,11 +32,12 @@ use crate::{
     FirestoreTransformServerValue, FirestoreWritePrecondition,
 };
 use backoff::Error as BackoffError;
+use futures::channel::oneshot;
 use futures::{FutureExt, StreamExt};
 use gcloud_sdk::google::firestore::v1::Document;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
+use std::ops::ControlFlow;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tracing::*;
@@ -610,39 +611,54 @@ impl HeldLease {
         ))
     }
 
-    /// Renews the lease every third of its `ttl` until the lease is lost, then stays pending so
-    /// the sync, which it runs beside, decides when both end. Never completes: dropping it is
-    /// how it stops, so it outlives neither the sync nor a cancelled sync future.
-    pub(super) async fn keep_renewed(&self, db: &FirestoreDb) -> Infallible {
+    /// Renews the lease every third of its `ttl` until `stop` fires or the lease is lost. A
+    /// renewal already sent when `stop` fires runs to its end first, so no renewal transaction is
+    /// left open on the document for the release that follows to wait behind. Dropping this
+    /// future mid-renewal, as a dropped sync future does, leaves that transaction to expire.
+    pub(super) async fn keep_renewed(&self, db: &FirestoreDb, mut stop: oneshot::Receiver<()>) {
         loop {
-            tokio::time::sleep(self.claim.ttl / 3).await;
-            let sent = Instant::now();
-            match db.renew_lease_once(&self.target, &self.claim).await {
-                Ok(LeaseCheck::Ours) => {
-                    self.state().trusted_until = sent + self.claim.trusted_for();
-                    info!(
-                        collection_group = self.collection_group.as_str(),
-                        owner = self.claim.owner.as_str(),
-                        "Renewed the index lease.",
-                    );
-                }
-                Ok(LeaseCheck::Lost(loss)) => {
-                    warn!(
-                        collection_group = self.collection_group.as_str(),
-                        owner = self.claim.owner.as_str(),
-                        "The index lease is no longer ours, {loss}; the sync stops before its next admin write.",
-                    );
-                    self.state().lost = Some(loss);
-                    return std::future::pending().await;
-                }
-                Err(err) => {
-                    warn!(
-                        %err,
-                        collection_group = self.collection_group.as_str(),
-                        owner = self.claim.owner.as_str(),
-                        "Failed to renew the index lease; trying again in a third of its ttl.",
-                    );
-                }
+            tokio::select! {
+                biased;
+                _ = &mut stop => return,
+                () = tokio::time::sleep(self.claim.ttl / 3) => {}
+            }
+            if self.renew(db).await.is_break() {
+                return;
+            }
+        }
+    }
+
+    /// One renewal: extends the trust window from when it was sent, or breaks once the lease is
+    /// lost. A failed renewal leaves the trust window as it was, for the next one to extend.
+    async fn renew(&self, db: &FirestoreDb) -> ControlFlow<()> {
+        let sent = Instant::now();
+        match db.renew_lease_once(&self.target, &self.claim).await {
+            Ok(LeaseCheck::Ours) => {
+                self.state().trusted_until = sent + self.claim.trusted_for();
+                info!(
+                    collection_group = self.collection_group.as_str(),
+                    owner = self.claim.owner.as_str(),
+                    "Renewed the index lease.",
+                );
+                ControlFlow::Continue(())
+            }
+            Ok(LeaseCheck::Lost(loss)) => {
+                warn!(
+                    collection_group = self.collection_group.as_str(),
+                    owner = self.claim.owner.as_str(),
+                    "The index lease is no longer ours, {loss}; the sync stops before its next admin write.",
+                );
+                self.state().lost = Some(loss);
+                ControlFlow::Break(())
+            }
+            Err(err) => {
+                warn!(
+                    %err,
+                    collection_group = self.collection_group.as_str(),
+                    owner = self.claim.owner.as_str(),
+                    "Failed to renew the index lease; trying again in a third of its ttl.",
+                );
+                ControlFlow::Continue(())
             }
         }
     }
@@ -1181,6 +1197,8 @@ mod tests {
         Refuse(Code),
         /// Applies the commit, then answers `Code`: a commit whose reply was lost.
         ApplyThenFail(Code),
+        /// Answers as usual, this much later.
+        Delay(Duration),
     }
 
     /// Runs before the store answers each query and commit, and may change the document first,
@@ -1326,6 +1344,10 @@ mod tests {
                     let response = FakeResponse::Message(response.encode_to_vec());
                     Some(match fault {
                         Fault::None => ("RunQuery".to_string(), response),
+                        Fault::Delay(delay) => (
+                            "RunQuery".to_string(),
+                            FakeResponse::Delayed(delay, Box::new(response)),
+                        ),
                         Fault::Refuse(code) => (
                             format!("RunQuery refused: {code:?}"),
                             FakeResponse::Status(code),
@@ -1365,6 +1387,10 @@ mod tests {
                     let response = FakeResponse::Message(response.encode_to_vec());
                     Some(match fault {
                         Fault::None => (format!("Commit({writes})"), response),
+                        Fault::Delay(delay) => (
+                            format!("Commit({writes})"),
+                            FakeResponse::Delayed(delay, Box::new(response)),
+                        ),
                         Fault::ApplyThenFail(code) => (
                             format!("Commit({writes}) applied, answered {code:?}"),
                             FakeResponse::Status(code),
@@ -2470,6 +2496,63 @@ mod tests {
         assert!(result.is_err());
         assert!(!fake.calls().iter().any(|call| is_admin(call)));
         assert_eq!(store.lease_owner(), None);
+    }
+
+    #[tokio::test]
+    async fn the_release_waits_for_a_renewal_already_in_flight() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![]);
+        // The claim is the first query; the first renewal, a third of the ttl later, is the
+        // second, and its read is still in flight when the sync ends.
+        let mut queries = 0;
+        store.set_hook(move |rpc, _| match rpc {
+            Rpc::Query => {
+                queries += 1;
+                if queries == 2 {
+                    Fault::Delay(Duration::from_millis(500))
+                } else {
+                    Fault::None
+                }
+            }
+            Rpc::Commit { .. } => Fault::None,
+        });
+        let fake = start_with(&store, |method, bytes| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                FakeResponse::Delayed(
+                    Duration::from_millis(250),
+                    Box::new(list_indexes_response(vec![])),
+                ),
+            ),
+            other => empty_group(other, bytes),
+        })
+        .await;
+
+        let report = fake
+            .db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                lease_skip(Duration::from_millis(300)),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(report.skipped, None);
+        assert_eq!(store.lease_owner(), None, "released after the sync");
+        let calls = fake.calls();
+        let mut open = None;
+        for call in &calls {
+            if call.starts_with("Begin") {
+                assert_eq!(
+                    open, None,
+                    "{call} began inside another transaction: {calls:?}"
+                );
+                open = Some(call.clone());
+            } else if call.starts_with("Commit") || call.starts_with("Rollback") {
+                open = None;
+            }
+        }
+        assert_eq!(open, None, "a transaction was left open: {calls:?}");
     }
 
     #[tokio::test]

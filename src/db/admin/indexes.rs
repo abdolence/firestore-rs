@@ -1151,8 +1151,9 @@ impl FirestoreDb {
     }
 
     /// Runs the sync beside `lease`'s renewal, then releases the lease, whether the sync
-    /// succeeded or failed. Both run in this one future, so the renewal ends with the sync, and
-    /// a dropped sync future takes the renewal with it and leaves the lease to expire.
+    /// succeeded or failed. Both run in this one future: the sync's end stops the renewal, which
+    /// finishes a renewal already in flight before the release starts, and a dropped sync future
+    /// takes the renewal with it and leaves the lease to expire.
     async fn run_index_sync_holding(
         &self,
         params: &FirestoreIndexParams,
@@ -1161,11 +1162,16 @@ impl FirestoreDb {
         lease: HeldLease,
         started: Instant,
     ) -> FirestoreResult<FirestoreIndexSyncReport> {
-        let outcome = tokio::select! {
-            biased;
-            outcome = self.run_index_sync(params, options, deadline, Some(&lease), started) => outcome,
-            never = lease.keep_renewed(self) => match never {},
+        let (stop, stopped) = futures::channel::oneshot::channel();
+        let sync = async {
+            let outcome = self
+                .run_index_sync(params, options, deadline, Some(&lease), started)
+                .await;
+            // The renewal may have ended already, when it found the lease lost.
+            let _ = stop.send(());
+            outcome
         };
+        let (outcome, ()) = tokio::join!(sync, lease.keep_renewed(self, stopped));
         self.release_index_lease(&lease).await;
         outcome
     }

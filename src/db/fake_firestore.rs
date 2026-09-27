@@ -37,6 +37,9 @@ pub(super) enum FakeResponse {
     /// until the client gives up on it.
     #[cfg(feature = "admin")]
     Hang,
+    /// The inner answer, sent only after the delay: an RPC still in flight for that long.
+    #[cfg(feature = "admin")]
+    Delayed(std::time::Duration, Box<FakeResponse>),
 }
 
 impl FakeResponse {
@@ -309,6 +312,14 @@ async fn answer(
     if listening {
         return;
     }
+    #[cfg(feature = "admin")]
+    let response = match response {
+        FakeResponse::Delayed(delay, response) => {
+            tokio::time::sleep(delay).await;
+            *response
+        }
+        response => response,
+    };
     match response {
         FakeResponse::Message(message) => {
             let Ok(mut send) = respond.send_response(ok_headers().body(()).unwrap(), false) else {
@@ -334,6 +345,8 @@ async fn answer(
         }
         #[cfg(feature = "admin")]
         FakeResponse::Hang => std::future::pending::<()>().await,
+        #[cfg(feature = "admin")]
+        FakeResponse::Delayed(..) => unreachable!("a delay is unwrapped before answering"),
         FakeResponse::Drop => {
             close.notify_one();
             // Dropping `respond` while the connection is still up would reset just this stream,
