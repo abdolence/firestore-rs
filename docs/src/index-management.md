@@ -242,11 +242,11 @@ revert the same resources at the same time, and during a rolling update old and 
 declare different indexes, so `.prune_undeclared()` on both flips indexes back and forth for as
 long as the rollout takes.
 
-Run `.sync()` once per release instead of from the replicas, but not as one call: a sync that
-prunes before the new replicas are up deletes an index the still-running old ones query, and their
-queries fail with `FAILED_PRECONDITION` for as long as the rollout takes. Split it in two: create
-and update what the release declares before the rollout, without `.prune_undeclared()`, then prune
-what it no longer declares once the rollout has finished:
+Run `.sync()` once per release, in two steps. A sync that prunes before the new replicas are up
+deletes an index the still-running old ones query, and their queries fail with
+`FAILED_PRECONDITION` for as long as the rollout takes. So create and update what the release
+declares before the rollout, without `.prune_undeclared()`, then prune what it no longer declares
+once the rollout has finished:
 
 ```rust,no_run
 # use firestore::*;
@@ -343,11 +343,10 @@ Replicas that only call `.plan()` need `roles/datastore.viewer`.
 When two syncs do overlap regardless, index creates and deletes converge on their own: a
 `CreateIndex` answered `ALREADY_EXISTS`, and a `DeleteIndex` answered `NOT_FOUND`, both count as
 done. A field revert Firestore refuses because another writer already reverted it counts as done
-too, and one refused while another writer's revert is still in progress is not simply retried:
-this sync polls the field until that revert finishes, within its own deadline, then counts it as
-done. A TTL disable does not get that wait: Firestore reports no in-progress state for a TTL
-field, so a disable refused while another writer's disable is still running fails, rather than
-waiting for it, and only converges when the other writer's disable had already finished. A field
+too. One refused while another writer's revert is still in progress is polled until that revert
+finishes, within this sync's deadline, and then counts as done. A TTL disable does not get that wait: Firestore reports no in-progress state for a TTL
+field, so a disable refused while another writer's disable is still running fails. It converges
+only when the other writer's disable had already finished. A field
 override write or a TTL enable that races another sync's is not checked against the field's
 current state either, so it can still fail.
 
