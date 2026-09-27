@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-3c7a9363.js";
+            window.path_to_searchindex_js = "searchindex-2fe7c3f8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-61f90fc3.js"></script>
@@ -219,6 +219,11 @@
 <li>Persistent cache;</li>
 </ul>
 </li>
+<li><a href="#index-management">Declarative index management</a> behind an opt-in <code>admin</code> feature:
+composite indexes, vector indexes, single-field overrides and TTL policy, planned and synced
+with one call;</li>
+<li><a href="#bulk-delete">Bulk delete</a> behind the same <code>admin</code> feature: removes every document in named
+collection groups, at any depth across the whole database, in the background;</li>
 <li>Works with the Firestore emulator through <code>FIRESTORE_EMULATOR_HOST</code>, no credentials needed;</li>
 <li>Google client based on <a href="https://github.com/abdolence/gcloud-sdk-rs">gcloud-sdk library</a>
 that automatically detects GCE environment or application default accounts for local development;</li>
