@@ -1887,6 +1887,8 @@ mod tests {
     #[tokio::test]
     async fn a_refused_revert_another_caller_is_still_reverting_is_waited_for_until_done() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
+        const POLL_INTERVAL: Duration = Duration::from_millis(20);
+        let started = std::time::Instant::now();
         let (result, reads) = sync_with_field_read_backs(
             field_resource("legacy_field", Some(exempt_override()), None),
             |read| match read {
@@ -1898,10 +1900,22 @@ mod tests {
                 .with_wait(fast_wait(Duration::from_secs(10))),
         )
         .await;
+        let elapsed = started.elapsed();
 
         let report = result.unwrap();
         assert_eq!(report.reverted_fields.len(), 1);
         assert_eq!(reads, 3, "read back until the revert finished");
+        // Converging in 3 reads by itself does not prove the two in-progress reads were paced by
+        // `POLL_INTERVAL`: a mutant that drops the sleep between them still reads exactly 3 times,
+        // just without spending the two poll intervals that separate them. Bound the read count by
+        // how much wall time actually elapsed to catch that.
+        let max_reads_for_elapsed =
+            (elapsed.as_secs_f64() / POLL_INTERVAL.as_secs_f64()).ceil() as usize + 1;
+        assert!(
+            reads <= max_reads_for_elapsed,
+            "{reads} reads in {elapsed:?} is faster than one every {POLL_INTERVAL:?}; the wait \
+             between in-progress reads must have been skipped"
+        );
     }
 
     #[tokio::test]
@@ -1918,7 +1932,64 @@ mod tests {
 
         let err = result.unwrap_err();
         assert!(err.to_string().contains("legacy_field"), "{err}");
+        assert!(
+            err.to_string().contains("FailedPrecondition")
+                || err.to_string().contains("FAILED_PRECONDITION"),
+            "a timeout while waiting on another caller's revert must still name the refusal that \
+             started the wait: {err}"
+        );
         assert!(reads >= 2, "{reads}");
+    }
+
+    #[tokio::test]
+    async fn a_refused_revert_still_in_progress_at_the_deadline_names_the_refusal() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => (
+                "ListFields".to_string(),
+                list_fields_response(vec![field_resource(
+                    "legacy_field",
+                    Some(exempt_override()),
+                    None,
+                )]),
+            ),
+            UPDATE_FIELD => (
+                "UpdateField".to_string(),
+                FakeResponse::StatusWithMessage(
+                    Code::FailedPrecondition,
+                    "field legacy_field is already being reverted",
+                ),
+            ),
+            GET_FIELD => (
+                "GetField".to_string(),
+                FakeResponse::Message(reverting_field()),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let err = fake
+            .db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                FirestoreIndexSyncOptions::new()
+                    .with_prune(true)
+                    .with_wait(fast_wait(Duration::from_millis(150))),
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("FailedPrecondition"), "{err}");
+        assert!(
+            err.contains("field legacy_field is already being reverted"),
+            "the timeout must carry the refusal's own message, not just its code: {err}"
+        );
+        assert!(
+            err.contains("to finish"),
+            "an in-progress timeout must say it was waiting on another caller, not on a read: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1955,12 +2026,66 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_field_read_back_that_cannot_be_decoded_fails_with_the_original_refusal() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let undecodable = ProtoField {
+            name: "not-a-field-resource-name".to_string(),
+            index_config: None,
+            ttl_config: None,
+        };
+        let err = sync_with_refused_field_write(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            FakeResponse::Message(undecodable.encode_to_vec()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("FailedPrecondition")
+                || err.to_string().contains("FAILED_PRECONDITION"),
+            "a read-back that cannot be decoded must keep the write's own refusal, not report the \
+             decode error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deadline_exceeded_get_field_error_is_retried_until_the_read_succeeds() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let (result, reads) = sync_with_field_read_backs(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            |read| match read {
+                0 => FakeResponse::Status(Code::DeadlineExceeded),
+                _ => FakeResponse::Message(reverted_field()),
+            },
+            FirestoreIndexSyncOptions::new()
+                .with_prune(true)
+                .with_wait(fast_wait(Duration::from_secs(10))),
+        )
+        .await;
+
+        let report = result.expect(
+            "GetField is a read: a DEADLINE_EXCEEDED there must be retried like any other read, \
+             not treated as the write's own refusal",
+        );
+        assert_eq!(report.reverted_fields.len(), 1);
+        assert_eq!(
+            reads, 2,
+            "the DEADLINE_EXCEEDED read must be retried, not counted as final"
+        );
+    }
+
     /// A pruning sync against one listed field, whose `UpdateField` Firestore refuses with
-    /// `write_status`, panicking if that refusal ever leads to a `GetField` read-back.
+    /// `write_status`, panicking if that refusal ever leads to a `GetField` read-back. Bounded by
+    /// a short deadline rather than the sync's 30-minute default: a regression that stops
+    /// skipping the read-back for this refusal either panics the fake at once or, since the fake
+    /// server runs the panicking handler on its own task, leaves the client waiting on a response
+    /// that will never come - the short deadline turns that into a fast failure instead of a wait
+    /// out to the real timeout.
     async fn sync_with_unread_write_refusal(
         listed: ProtoField,
         write_status: Code,
-    ) -> FirestoreResult<FirestoreIndexSyncReport> {
+    ) -> (FirestoreResult<FirestoreIndexSyncReport>, Duration) {
         let fake = FakeFirestore::start(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
@@ -1974,29 +2099,80 @@ mod tests {
             other => panic!("no read-back is expected for this refusal: {other}"),
         })
         .await;
-        fake.db
+        let started = std::time::Instant::now();
+        let result = fake
+            .db
             .sync_indexes(
                 FirestoreIndexParams::new(group()),
-                FirestoreIndexSyncOptions::new().with_prune(true),
+                FirestoreIndexSyncOptions::new()
+                    .with_prune(true)
+                    .with_wait(fast_wait(Duration::from_millis(200))),
             )
-            .await
+            .await;
+        (result, started.elapsed())
+    }
+
+    /// A refusal that skips the read-back must fail well within [`sync_with_unread_write_refusal`]'s
+    /// short deadline; only a regression that starts reading the field back would run out the clock.
+    fn assert_failed_at_once(elapsed: Duration) {
+        assert!(
+            elapsed < Duration::from_millis(150),
+            "a refusal that skips the read-back must fail at once, not wait out the deadline: {elapsed:?}"
+        );
     }
 
     #[tokio::test]
     async fn a_permission_denied_refusal_fails_without_reading_the_field_back() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let err = sync_with_unread_write_refusal(
+        let (result, elapsed) = sync_with_unread_write_refusal(
             field_resource("legacy_field", Some(exempt_override()), None),
             Code::PermissionDenied,
         )
-        .await
-        .unwrap_err();
+        .await;
+        let err = result.unwrap_err();
 
         assert!(
             err.to_string().contains("PermissionDenied")
                 || err.to_string().contains("PERMISSION_DENIED"),
             "{err}"
         );
+        assert_failed_at_once(elapsed);
+    }
+
+    #[tokio::test]
+    async fn an_unauthenticated_refusal_fails_without_reading_the_field_back() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let (result, elapsed) = sync_with_unread_write_refusal(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            Code::Unauthenticated,
+        )
+        .await;
+        let err = result.unwrap_err();
+
+        assert!(
+            err.to_string().contains("Unauthenticated")
+                || err.to_string().contains("UNAUTHENTICATED"),
+            "{err}"
+        );
+        assert_failed_at_once(elapsed);
+    }
+
+    #[tokio::test]
+    async fn an_invalid_argument_refusal_fails_without_reading_the_field_back() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let (result, elapsed) = sync_with_unread_write_refusal(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            Code::InvalidArgument,
+        )
+        .await;
+        let err = result.unwrap_err();
+
+        assert!(
+            err.to_string().contains("InvalidArgument")
+                || err.to_string().contains("INVALID_ARGUMENT"),
+            "{err}"
+        );
+        assert_failed_at_once(elapsed);
     }
 
     #[tokio::test]
@@ -2015,8 +2191,17 @@ mod tests {
         .await
         .expect("a hung GetField must not hold the sync past its deadline");
 
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("legacy_field"), "{err}");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("legacy_field"), "{err}");
+        assert!(
+            err.contains("FailedPrecondition") || err.contains("FAILED_PRECONDITION"),
+            "a timeout while the read-back itself is stuck must still name the refusal that \
+             started the wait: {err}"
+        );
+        assert!(
+            err.contains("reading") && err.contains("back after a refused"),
+            "a read-failure timeout must read differently from an in-progress-wait timeout: {err}"
+        );
     }
 
     #[tokio::test]
@@ -2046,14 +2231,21 @@ mod tests {
     #[tokio::test]
     async fn a_persistently_retryable_get_field_error_is_not_polled_in_a_hot_loop() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let (result, reads) = sync_with_field_read_backs(
-            field_resource("legacy_field", Some(exempt_override()), None),
-            |_| FakeResponse::Status(Code::Unavailable),
-            FirestoreIndexSyncOptions::new()
-                .with_prune(true)
-                .with_wait(fast_wait(Duration::from_millis(150))),
+        // A regression that stops pacing these reads by the poll interval does not just poll
+        // faster, it can spin without ever checking the deadline; bound the whole call so that
+        // failure is a fast assertion instead of a CI job stuck for the sync's full timeout.
+        let (result, reads) = tokio::time::timeout(
+            Duration::from_secs(5),
+            sync_with_field_read_backs(
+                field_resource("legacy_field", Some(exempt_override()), None),
+                |_| FakeResponse::Status(Code::Unavailable),
+                FirestoreIndexSyncOptions::new()
+                    .with_prune(true)
+                    .with_wait(fast_wait(Duration::from_millis(150))),
+            ),
         )
-        .await;
+        .await
+        .expect("a persistently retryable read must still end at its own deadline");
 
         result.unwrap_err();
         assert!(
@@ -2098,6 +2290,96 @@ mod tests {
             err.to_string().contains("FailedPrecondition")
                 || err.to_string().contains("FAILED_PRECONDITION"),
             "the refusal itself is the error: {err}"
+        );
+    }
+
+    type CapturedUpdateFieldRequests =
+        StdArc<Mutex<Vec<gcloud_sdk::google::firestore::admin::v1::UpdateFieldRequest>>>;
+
+    /// Runs one non-pruning-refused write against `listed`, capturing every `UpdateField` request
+    /// sent.
+    async fn capture_update_field_requests(
+        listed: ProtoField,
+    ) -> Vec<gcloud_sdk::google::firestore::admin::v1::UpdateFieldRequest> {
+        let captured: CapturedUpdateFieldRequests = StdArc::new(Mutex::new(Vec::new()));
+        let captured_in_handler = captured.clone();
+        let fake = FakeFirestore::start(move |method, bytes| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => (
+                "ListFields".to_string(),
+                list_fields_response(vec![listed.clone()]),
+            ),
+            UPDATE_FIELD => {
+                let request =
+                    gcloud_sdk::google::firestore::admin::v1::UpdateFieldRequest::decode(bytes)
+                        .unwrap();
+                captured_in_handler.lock().unwrap().push(request);
+                (
+                    "UpdateField".to_string(),
+                    done_operation_response(&operation_name("op")),
+                )
+            }
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        fake.db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                FirestoreIndexSyncOptions::new().with_prune(true),
+            )
+            .await
+            .unwrap();
+
+        let requests = captured.lock().unwrap().clone();
+        requests
+    }
+
+    #[tokio::test]
+    async fn a_revert_request_carries_only_the_field_and_its_mask() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let requests = capture_update_field_requests(field_resource(
+            "legacy_field",
+            Some(exempt_override()),
+            None,
+        ))
+        .await;
+
+        assert_eq!(requests.len(), 1);
+        let field = requests[0].field.as_ref().unwrap();
+        assert_eq!(field.name, format!("{GROUP_PATH}/fields/legacy_field"));
+        assert_eq!(
+            field.index_config, None,
+            "a revert must not resend an index_config"
+        );
+        assert_eq!(field.ttl_config, None, "a revert must not touch ttl_config");
+        assert_eq!(
+            requests[0].update_mask.as_ref().unwrap().paths,
+            vec!["index_config".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_disable_ttl_request_carries_only_the_field_and_its_mask() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let requests =
+            capture_update_field_requests(field_resource("expires_at", None, Some(active_ttl())))
+                .await;
+
+        assert_eq!(requests.len(), 1);
+        let field = requests[0].field.as_ref().unwrap();
+        assert_eq!(field.name, format!("{GROUP_PATH}/fields/expires_at"));
+        assert_eq!(
+            field.index_config, None,
+            "a TTL disable must not touch index_config"
+        );
+        assert_eq!(
+            field.ttl_config, None,
+            "a disable must not resend a ttl_config"
+        );
+        assert_eq!(
+            requests[0].update_mask.as_ref().unwrap().paths,
+            vec!["ttl_config".to_string()]
         );
     }
 

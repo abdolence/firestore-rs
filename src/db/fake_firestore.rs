@@ -30,6 +30,10 @@ pub(super) enum FakeResponse {
     /// visible at its initial `await` rather than only once polled. Never `Code::Ok`: a unary
     /// call answered that way fails for want of a response message; use [`FakeResponse::empty`].
     Status(Code),
+    /// Like [`FakeResponse::Status`], with a `grpc-message` trailer a test can assert the client
+    /// surfaced, rather than the empty message every bare `Status(code)` carries.
+    #[cfg(feature = "admin")]
+    StatusWithMessage(Code, &'static str),
     /// The server closes the whole connection without answering, simulating a response lost in
     /// transit: the client sees a transport error, not a `grpc-status` it can read off the wire.
     Drop,
@@ -330,6 +334,14 @@ async fn answer(
         FakeResponse::Status(code) => {
             assert_ne!(code, Code::Ok, "answer success with FakeResponse::empty");
             let headers = ok_headers().header("grpc-status", (code as i32).to_string());
+            let _ = respond.send_response(headers.body(()).unwrap(), true);
+        }
+        #[cfg(feature = "admin")]
+        FakeResponse::StatusWithMessage(code, message) => {
+            assert_ne!(code, Code::Ok, "answer success with FakeResponse::empty");
+            let headers = ok_headers()
+                .header("grpc-status", (code as i32).to_string())
+                .header("grpc-message", message);
             let _ = respond.send_response(headers.body(()).unwrap(), true);
         }
         #[cfg(feature = "admin")]
