@@ -763,9 +763,10 @@ pub struct FirestoreIndexSyncReport {
     /// Undeclared field overrides this sync reverted to automatic indexing, because `prune` was
     /// set.
     pub reverted_fields: Vec<FirestoreListedField>,
-    /// Undeclared field overrides this sync set out to revert that someone else had already
-    /// reverted, or was reverting, since the listing: Firestore refused the revert, and the field
-    /// then read back without an override of its own.
+    /// Undeclared field overrides this sync set out to revert that someone else reverted since
+    /// the listing: Firestore refused the revert, and the field then read back without an
+    /// override of its own, at once or once the other caller's revert still in progress
+    /// finished.
     pub already_reverted_fields: Vec<FirestoreListedField>,
     /// Undeclared TTL fields this sync disabled, because `prune` was set.
     pub disabled_ttl: Vec<FirestoreListedField>,

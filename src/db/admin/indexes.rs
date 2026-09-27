@@ -64,22 +64,35 @@ impl IndexAction {
 }
 
 impl IndexAction {
-    /// Whether `field`, as Firestore reads it back, is already in the state this revert or TTL
-    /// disable sets: no override of its own, or one Firestore is already reverting; or no TTL
-    /// configuration. Every other action has no such state to reach and answers `false`.
-    fn already_reached(&self, field: &ProtoField) -> bool {
+    /// Where `field`, as Firestore reads it back, stands against the state this revert or TTL
+    /// disable sets: no override of its own, or no TTL configuration. Only a revert has a state
+    /// on the way there, `reverting`; Firestore reports none for a TTL disable. Every other
+    /// action has no such state to reach and answers [`FieldReadBack::NotReached`].
+    fn read_back(&self, field: &ProtoField) -> FieldReadBack {
         match self {
-            IndexAction::RevertFieldOverride(_) => field
-                .index_config
-                .as_ref()
-                .is_none_or(|config| config.uses_ancestor_config || config.reverting),
-            IndexAction::DisableTtl(_) => field.ttl_config.is_none(),
-            IndexAction::CreateIndex(_)
+            IndexAction::RevertFieldOverride(_) => match &field.index_config {
+                None => FieldReadBack::Reached,
+                Some(config) if config.uses_ancestor_config => FieldReadBack::Reached,
+                Some(config) if config.reverting => FieldReadBack::InProgress,
+                Some(_) => FieldReadBack::NotReached,
+            },
+            IndexAction::DisableTtl(_) if field.ttl_config.is_none() => FieldReadBack::Reached,
+            IndexAction::DisableTtl(_)
+            | IndexAction::CreateIndex(_)
             | IndexAction::UpdateFieldOverride(_)
             | IndexAction::EnableTtl(_)
-            | IndexAction::DeleteIndex(_) => false,
+            | IndexAction::DeleteIndex(_) => FieldReadBack::NotReached,
         }
     }
+}
+
+/// A field read back after Firestore refused a revert or TTL disable to it.
+enum FieldReadBack {
+    /// In the state the write sets.
+    Reached,
+    /// On its way there, through another caller's change still in progress.
+    InProgress,
+    NotReached,
 }
 
 impl OperationAction for IndexAction {
@@ -726,42 +739,62 @@ impl FirestoreDb {
     }
 
     /// Reads field `name` back after Firestore refused `refused`, and counts the refusal as
-    /// converged when the field is already in the state the write sets. Firestore documents no
-    /// status for a revert or disable that races another caller's, so the field's state decides,
-    /// never the status code. A field Firestore no longer knows carries no configuration at all.
+    /// converged once the field is in the state the write sets. Firestore documents no status for
+    /// a revert or disable that races another caller's, so the field's state decides, never the
+    /// status code. A field Firestore no longer knows carries no configuration at all. A change
+    /// another caller started and Firestore reports in progress is read again every poll until
+    /// it finishes, by `deadline`, as this sync would wait for a change of its own.
     async fn settle_refused_field_write(
         &self,
         name: &str,
         refused: RefusedFieldWrite,
+        deadline: &OperationDeadline,
     ) -> FirestoreResult<FieldWriteOutcome> {
-        let reached = match self
-            .admin_client()
-            .get_field(GetFieldRequest {
-                name: name.to_string(),
-            })
-            .await
-        {
-            Ok(field) => refused.action.already_reached(&field.into_inner()),
-            Err(status) if status.code() == Code::NotFound => true,
-            Err(status) => {
-                warn!(
-                    error = %status,
-                    field = name,
-                    "Failed to read a field back after Firestore refused a write to it.",
-                );
-                false
+        loop {
+            let read_back = match self
+                .admin_client()
+                .get_field(GetFieldRequest {
+                    name: name.to_string(),
+                })
+                .await
+            {
+                Ok(field) => refused.action.read_back(&field.into_inner()),
+                Err(status) if status.code() == Code::NotFound => FieldReadBack::Reached,
+                Err(status) => {
+                    warn!(
+                        error = %status,
+                        field = name,
+                        "Failed to read a field back after Firestore refused a write to it.",
+                    );
+                    FieldReadBack::NotReached
+                }
+            };
+            match read_back {
+                FieldReadBack::Reached => {
+                    info!(
+                        refused = %refused.status,
+                        action = refused.action.kind(),
+                        label = %refused.action,
+                        "Firestore refused the write, but the field already reads back in the state it sets; counting it as already done.",
+                    );
+                    return Ok(FieldWriteOutcome::AlreadyReached);
+                }
+                FieldReadBack::NotReached => return Err(refused.into_error()),
+                FieldReadBack::InProgress if deadline.has_passed() => {
+                    return Err(deadline.timed_out(&format!(
+                        "another caller's {} of {name}",
+                        refused.action.kind()
+                    )));
+                }
+                FieldReadBack::InProgress => {
+                    info!(
+                        action = refused.action.kind(),
+                        label = %refused.action,
+                        "Firestore refused the write while another caller's change to the field is still in progress; waiting for it to finish.",
+                    );
+                    deadline.sleep_until_next_round().await;
+                }
             }
-        };
-        if reached {
-            info!(
-                refused = %refused.status,
-                action = refused.action.kind(),
-                label = %refused.action,
-                "Firestore refused the write, but the field already reads back in the state it sets; counting it as already done.",
-            );
-            Ok(FieldWriteOutcome::AlreadyReached)
-        } else {
-            Err(refused.into_error())
         }
     }
 
@@ -769,6 +802,7 @@ impl FirestoreDb {
         &self,
         group: &OwnedGroup<'_>,
         listed: &FirestoreListedField,
+        deadline: &OperationDeadline,
     ) -> FirestoreResult<FieldWriteOutcome> {
         group.ensure_owns("fields", &listed.name)?;
         let action = IndexAction::RevertFieldOverride(listed.clone());
@@ -792,7 +826,10 @@ impl FirestoreDb {
         };
         match self.run_update_field(span, request, action).await {
             Ok(operation) => Ok(FieldWriteOutcome::Started(operation)),
-            Err(refused) => self.settle_refused_field_write(&listed.name, refused).await,
+            Err(refused) => {
+                self.settle_refused_field_write(&listed.name, refused, deadline)
+                    .await
+            }
         }
     }
 
@@ -800,6 +837,7 @@ impl FirestoreDb {
         &self,
         group: &OwnedGroup<'_>,
         listed: &FirestoreListedField,
+        deadline: &OperationDeadline,
     ) -> FirestoreResult<FieldWriteOutcome> {
         group.ensure_owns("fields", &listed.name)?;
         let action = IndexAction::DisableTtl(listed.clone());
@@ -823,7 +861,10 @@ impl FirestoreDb {
         };
         match self.run_update_field(span, request, action).await {
             Ok(operation) => Ok(FieldWriteOutcome::Started(operation)),
-            Err(refused) => self.settle_refused_field_write(&listed.name, refused).await,
+            Err(refused) => {
+                self.settle_refused_field_write(&listed.name, refused, deadline)
+                    .await
+            }
         }
     }
 
@@ -963,7 +1004,7 @@ impl FirestoreDb {
                 let field = CanonicalFieldPath::from(listed.field_path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
                 ensure_held().await?;
-                match self.apply_disable_ttl(group, listed).await? {
+                match self.apply_disable_ttl(group, listed, deadline).await? {
                     FieldWriteOutcome::Started(op) => {
                         ttl_disables.push(writes.push(Some(field), op));
                         report.disabled_ttl.push(listed.clone());
@@ -989,7 +1030,7 @@ impl FirestoreDb {
                 let field = CanonicalFieldPath::from(listed.field_path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
                 ensure_held().await?;
-                match self.apply_revert_field_override(group, listed).await? {
+                match self.apply_revert_field_override(group, listed, deadline).await? {
                     FieldWriteOutcome::Started(op) => {
                         writes.push(Some(field), op);
                         report.reverted_fields.push(listed.clone());
@@ -1650,6 +1691,33 @@ pub(crate) mod tests {
         read_back: FakeResponse,
     ) -> FirestoreResult<FirestoreIndexSyncReport> {
         let read_back = Mutex::new(Some(read_back));
+        let (result, _) = sync_with_field_read_backs(
+            listed,
+            move |_| {
+                read_back
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("the field is read back once")
+            },
+            FirestoreIndexSyncOptions::new().with_prune(true),
+        )
+        .await;
+        result
+    }
+
+    /// Like [`sync_with_refused_field_write`], with `options`, and with `read_back` answering
+    /// each `GetField` by its index from 0; also returns how many times the field was read.
+    async fn sync_with_field_read_backs<F>(
+        listed: ProtoField,
+        read_back: F,
+        options: FirestoreIndexSyncOptions,
+    ) -> (FirestoreResult<FirestoreIndexSyncReport>, usize)
+    where
+        F: Fn(usize) -> FakeResponse + Send + Sync + 'static,
+    {
+        let reads = StdArc::new(AtomicU32::new(0));
+        let counted = reads.clone();
         let fake = FakeFirestore::start(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
@@ -1662,21 +1730,20 @@ pub(crate) mod tests {
             ),
             GET_FIELD => (
                 "GetField".to_string(),
-                read_back
-                    .lock()
-                    .unwrap()
-                    .take()
-                    .expect("the field is read back once"),
+                read_back(counted.fetch_add(1, Ordering::SeqCst) as usize),
             ),
             other => panic!("unexpected RPC: {other}"),
         })
         .await;
-        fake.db
-            .sync_indexes(
-                FirestoreIndexParams::new(group()),
-                FirestoreIndexSyncOptions::new().with_prune(true),
-            )
-            .await
+        let result = fake
+            .db
+            .sync_indexes(FirestoreIndexParams::new(group()), options)
+            .await;
+        (result, reads.load(Ordering::SeqCst) as usize)
+    }
+
+    fn fast_wait(timeout: Duration) -> FirestoreOperationWaitOptions {
+        FirestoreOperationWaitOptions::new(timeout).with_poll_interval(Duration::from_millis(20))
     }
 
     #[tokio::test]
@@ -1709,24 +1776,91 @@ pub(crate) mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_refused_revert_of_a_field_another_caller_is_reverting_counts_as_done() {
+    fn reverting_field() -> Vec<u8> {
         use gcloud_sdk::google::firestore::admin::v1::field;
-        let _serialize = MODULE_TEST_LOCK.lock().await;
         let reverting = field::IndexConfig {
             reverting: true,
             ..exempt_override()
         };
+        field_resource("legacy_field", Some(reverting), None).encode_to_vec()
+    }
+
+    fn reverted_field() -> Vec<u8> {
+        use gcloud_sdk::google::firestore::admin::v1::field;
+        let inherited = field::IndexConfig {
+            indexes: vec![],
+            uses_ancestor_config: true,
+            ancestor_field: format!("{GROUP_PATH}/fields/*"),
+            reverting: false,
+        };
+        field_resource("legacy_field", Some(inherited), None).encode_to_vec()
+    }
+
+    #[tokio::test]
+    async fn a_refused_revert_another_caller_is_still_reverting_is_waited_for_until_done() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let (result, reads) = sync_with_field_read_backs(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            |read| match read {
+                0 | 1 => FakeResponse::Message(reverting_field()),
+                _ => FakeResponse::Message(reverted_field()),
+            },
+            FirestoreIndexSyncOptions::new()
+                .with_prune(true)
+                .with_wait(fast_wait(Duration::from_secs(10))),
+        )
+        .await;
+
+        let report = result.unwrap();
+        assert_eq!(report.already_reverted_fields.len(), 1);
+        assert!(report.reverted_fields.is_empty());
+        assert_eq!(reads, 3, "read back until the revert finished");
+    }
+
+    #[tokio::test]
+    async fn a_refused_revert_still_in_progress_at_the_deadline_fails() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let (result, reads) = sync_with_field_read_backs(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            |_| FakeResponse::Message(reverting_field()),
+            FirestoreIndexSyncOptions::new()
+                .with_prune(true)
+                .with_wait(fast_wait(Duration::from_millis(200))),
+        )
+        .await;
+
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("legacy_field"), "{err}");
+        assert!(reads >= 2, "{reads}");
+    }
+
+    #[tokio::test]
+    async fn a_refused_field_write_on_a_field_firestore_no_longer_knows_counts_as_done() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
         let report = sync_with_refused_field_write(
             field_resource("legacy_field", Some(exempt_override()), None),
-            FakeResponse::Message(
-                field_resource("legacy_field", Some(reverting), None).encode_to_vec(),
-            ),
+            FakeResponse::Status(Code::NotFound),
         )
         .await
         .unwrap();
 
         assert_eq!(report.already_reverted_fields.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_refused_field_write_whose_read_back_fails_fails_with_the_refusal() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let err = sync_with_refused_field_write(
+            field_resource("legacy_field", Some(exempt_override()), None),
+            FakeResponse::Status(Code::PermissionDenied),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("FailedPrecondition"),
+            "the refusal itself is the error: {err}"
+        );
     }
 
     #[tokio::test]
