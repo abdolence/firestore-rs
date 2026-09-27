@@ -244,8 +244,8 @@ long as the rollout takes.
 
 Run `.sync()` with `.prune_undeclared()` once per release instead, from a Kubernetes `Job`, a Helm
 `pre-install` or `pre-upgrade` hook, or a CI/CD step, before the replicas that need the new indexes
-start. `.wait_until_ready(...)` makes the job fail on a build that does not finish, rather than
-exit early while indexes are still building:
+start. `.wait_until_ready(...)` makes the job fail when a build does not finish in time, so it
+never reports success while indexes are still building:
 
 ```rust,no_run
 # use firestore::*;
@@ -292,16 +292,17 @@ spec:
 The application's own replicas don't need to sync at all. If you want one to check its own
 declaration against Firestore, `.plan()` with `.prune_undeclared()` at startup is read-only and
 safe from any number of replicas at once: log the plan when any of its lists is non-empty, and
-fail the replica's readiness probe rather than its startup, since the release job may still be
-applying those changes.
+fail the replica's readiness probe alone, since the release job may still be applying those
+changes.
 
 The job's service account needs `roles/datastore.indexAdmin`, the role `.sync()` always needs.
 Replicas that only call `.plan()` need `roles/datastore.viewer`.
 
-When two syncs do overlap regardless, creates and deletes converge on their own: a `CreateIndex`
-answered `ALREADY_EXISTS` and a `DeleteIndex` answered `NOT_FOUND` both count as done rather than
-failing the sync. A single writer per release still avoids the version skew a rolling update
-causes when replicas declare different indexes at the same time.
+When two syncs do overlap regardless, creates, deletes, reverts and TTL disables all converge on
+their own: a `CreateIndex` answered `ALREADY_EXISTS`, a `DeleteIndex` answered `NOT_FOUND`, and a
+field revert or TTL disable Firestore refuses because another writer already applied it all count
+as done. A single writer per release still avoids the version skew a rolling update causes when
+replicas declare different indexes at the same time.
 
 ## The order `.sync()` writes changes in
 
