@@ -64,7 +64,30 @@ async fn lease_claimed(db: &FirestoreDb) -> TestResult<()> {
         if document.is_some_and(|document| document.fields.contains_key("lease_owner")) {
             return Ok(());
         }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
+}
+
+/// A sync at `generation` holding a lease that skips a held lease, and polls once a second for
+/// anything it waits on.
+async fn sync_at_generation_holding_lease(
+    db: &FirestoreDb,
+    generation: u64,
+    owner: &str,
+) -> TestResult<FirestoreIndexSyncReport> {
+    Ok(db
+        .fluent()
+        .indexes()
+        .collection_group(GROUP)
+        .coordination_collection(COORDINATION_COLLECTION)
+        .generation(generation)
+        .lease(FirestoreIndexLeaseOptions::new().with_owner(FirestoreIndexLeaseOwner::new(owner)?))
+        .wait_until_ready_with_options(
+            FirestoreOperationWaitOptions::new(std::time::Duration::from_secs(60))
+                .with_poll_interval(std::time::Duration::from_secs(1)),
+        )
+        .sync()
+        .await?)
 }
 
 fn applied_and_held(reports: &[FirestoreIndexSyncReport]) -> (usize, usize) {
@@ -147,6 +170,43 @@ async fn coordinate(db: &FirestoreDb) -> TestResult<()> {
         }
         other => panic!("generation 1 after 2 must be superseded, got {other:?}"),
     }
+
+    // A newer generation that finds an older one holding the lease waits for it, although it is
+    // told to skip a held lease. Waiting shows as a claim that took at least one poll interval,
+    // a second; a round whose newer claim came only after the older sync released is tried
+    // again, up to five times, as above.
+    let mut waited = false;
+    for round in 1..=5u64 {
+        let (older, newer) = tokio::join!(
+            sync_at_generation_holding_lease(db, 2 * round + 1, "live-replica-a"),
+            async {
+                tokio::time::timeout(std::time::Duration::from_secs(20), lease_claimed(db))
+                    .await??;
+                sync_at_generation_holding_lease(db, 2 * round + 2, "live-replica-b").await
+            }
+        );
+        let (older, newer) = (older?, newer?);
+        println!(
+            "[newer generation, round {round}] older skipped: {:?}; newer skipped: {:?}, claimed in {:?}",
+            older.skipped, newer.skipped, newer.timings.coordination
+        );
+        assert_eq!(
+            newer.skipped, None,
+            "a newer generation never skips an older holder"
+        );
+        if newer
+            .timings
+            .coordination
+            .is_some_and(|claimed| claimed >= std::time::Duration::from_secs(1))
+        {
+            waited = true;
+            break;
+        }
+    }
+    assert!(
+        waited,
+        "a newer generation never found an older one holding the lease"
+    );
     Ok(())
 }
 
