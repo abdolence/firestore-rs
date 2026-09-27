@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2fe7c3f8.js";
+            window.path_to_searchindex_js = "searchindex-c7b027c1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-61f90fc3.js"></script>
@@ -1611,6 +1611,104 @@ Reverts and TTL disables do not wait for new indexes.</p>
 <code>revert_fields</code> and <code>disable_ttl</code> list exactly what a pruning <code>.sync()</code> would remove, and
 <code>kept_undeclared_indexes</code>, <code>kept_undeclared_fields</code> and <code>kept_undeclared_ttl</code> list what it would
 leave alone without <code>.prune_undeclared()</code>.</p>
+<h2 id="running-from-several-instances"><a class="header" href="#running-from-several-instances">Running from several instances</a></h2>
+<p>Several replicas of the same application, such as a Kubernetes deployment’s pods, should not each
+call <code>.sync()</code> on their own. Two replicas racing on the same collection group create, delete and
+revert the same resources at the same time, and during a rolling update old and new replicas
+declare different indexes, so <code>.prune_undeclared()</code> on both flips indexes back and forth for as
+long as the rollout takes.</p>
+<p>Run <code>.sync()</code> once per release, in two steps. A sync that prunes before the new replicas are up
+deletes an index the still-running old ones query, and their queries fail with
+<code>FAILED_PRECONDITION</code> for as long as the rollout takes. So create and update what the release
+declares before the rollout, without <code>.prune_undeclared()</code>, then prune what it no longer declares
+once the rollout has finished:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::Duration;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let report = db
+    .fluent()
+    .indexes()
+    .collection_group("orders")
+    .wait_until_ready(Duration::from_secs(30 * 60))
+    .sync()
+    .await?;
+println!("{report}");
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Add <code>.prune_undeclared()</code> for the second run. <code>.wait_until_ready(...)</code> makes either run fail when a
+build does not finish in time, so neither reports success while indexes are still building.</p>
+<p>From a Kubernetes <code>Job</code>, run the first as an early step and the second once the rollout is
+serving; from a CI/CD step, the same split before and after the deploy step. From Helm, the
+<code>helm.sh</code> annotations turn a <code>Job</code> into a chart hook; a <code>pre-install,pre-upgrade</code> hook runs the
+create-only sync, and a <code>post-upgrade</code> hook the pruning one:</p>
+<pre><code class="language-yaml">apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orders-index-sync-create
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 2100
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: orders-index-sync
+      containers:
+        - name: sync-indexes
+          image: your-app:1.4.2
+          args: ["--sync-indexes"]
+</code></pre>
+<p>The pruning hook is the same manifest under a different name, <code>"helm.sh/hook": post-upgrade</code>, and
+<code>--sync-indexes --prune</code> (or whatever flag your binary uses to turn on <code>.prune_undeclared()</code>) in
+<code>args</code>. Run <code>helm upgrade</code> with <code>--wait</code> or <code>--atomic</code> (which implies <code>--wait</code>): Helm’s documented
+install lifecycle waits for the chart’s resources to reach a ready state before running
+<code>post-install</code>, and <code>post-upgrade</code> is documented the same way, “after all resources have been
+upgraded”; without <code>--wait</code>, nothing holds <code>post-upgrade</code> back until the new pods are actually
+serving, and pruning at that point can still delete an index one of them still queries. See
+<a href="https://helm.sh/docs/topics/charts_hooks/">Helm’s chart hooks</a> and the
+<a href="https://helm.sh/docs/v3/helm/helm_upgrade/"><code>--wait</code> and <code>--atomic</code> flags on <code>helm upgrade</code></a>.</p>
+<p>Set the Job’s <code>backoffLimit</code> to <code>0</code> and <code>activeDeadlineSeconds</code> above the sync’s timeout, so
+Kubernetes does not restart or kill it mid build. A Helm hook is only waited for up to
+<code>helm upgrade</code>’s own <code>--timeout</code>, 5 minutes by default, independent of <code>activeDeadlineSeconds</code>:
+pass a longer one (<code>helm upgrade --timeout 35m</code>, or more) alongside an <code>activeDeadlineSeconds</code> in
+the same range, or Helm gives up on the hook long before Kubernetes does.</p>
+<p>A <code>pre-install</code> hook runs before Helm creates any of the chart’s ordinary resources, so the
+<code>serviceAccountName</code> the Job names must already exist by then: give the <code>ServiceAccount</code> its own
+<code>pre-install,pre-upgrade</code> hook annotation, at <code>helm.sh/hook-weight: "-1"</code>, a lower weight than the
+create Job’s <code>0</code>, so Helm creates it first.</p>
+<p>Helm’s documented hook ordering also names <code>pre-rollback</code> and <code>post-rollback</code>: <code>pre-rollback</code> runs
+“after templates are rendered, but before any resources are rolled back”, the same shape as
+<code>pre-install</code> and <code>pre-upgrade</code>. Put the create-only Job on <code>pre-rollback</code> too, so the indexes the
+restored release needs exist before its pods come back; Helm’s docs do not say whether a
+rollback’s hooks are rendered from the revision being restored or the one currently installed, so
+confirm which one runs in your own cluster before relying on it. Leave the pruning Job off
+<code>post-rollback</code>: a rollback has no record of what the release you are rolling back from declared,
+so pruning there can delete an index the restored release still needs.</p>
+<p>A plain <code>Job</code> outside Helm has no <code>hook-delete-policy</code> to remove the previous run, and a completed
+Job under the same fixed name fails a later <code>kubectl apply</code> with an immutable-field error. Set
+<code>ttlSecondsAfterFinished</code> on it, or delete the previous Job before applying the next one.</p>
+<p>The application’s own replicas do not need to sync at all. If you want one to check its own
+declaration against Firestore, <code>.plan()</code> with <code>.prune_undeclared()</code> at startup is read-only and
+safe from any number of replicas at once: log a warning, or emit a metric, when <code>create_indexes</code>,
+<code>update_fields</code>, <code>enable_ttl</code>, <code>delete_indexes</code>, <code>revert_fields</code> or <code>disable_ttl</code> comes back
+non-empty. <code>unchanged</code> and <code>unchanged_ttl</code> are non-empty in the steady state and say nothing about
+drift on their own. Do not wire this into the replica’s readiness probe: after a Helm rollback, or
+when an old pod restarts once the release job has already run, every replica would see the same
+drift and fail its probe at once.</p>
+<p>The job’s service account needs <code>roles/datastore.indexAdmin</code>, the role <code>.sync()</code> always needs.
+Replicas that only call <code>.plan()</code> need <code>roles/datastore.viewer</code>.</p>
+<p>When two syncs do overlap regardless, index creates and deletes converge on their own: a
+<code>CreateIndex</code> answered <code>ALREADY_EXISTS</code>, and a <code>DeleteIndex</code> answered <code>NOT_FOUND</code>, both count as
+done. A field revert Firestore refuses because another writer already reverted it counts as done
+too. One refused while another writer’s revert is still in progress is polled until that revert
+finishes, within this sync’s deadline, and then counts as done. A TTL disable does not get that wait: Firestore reports no in-progress state for a TTL
+field, so a disable refused while another writer’s disable is still running fails. It converges
+only when the other writer’s disable had already finished. A field
+override write or a TTL enable that races another sync’s is not checked against the field’s
+current state either, so it can still fail.</p>
 <h2 id="the-order-sync-writes-changes-in"><a class="header" href="#the-order-sync-writes-changes-in">The order <code>.sync()</code> writes changes in</a></h2>
 <p><code>.sync()</code> applies one plan in a fixed order, stopping at the first write that fails:</p>
 <ul>
@@ -1663,6 +1761,8 @@ sent back to back, since Firestore accepts that.</p>
 <code>.wait_until_ready(timeout)</code> timeout when you set one, 30 minutes from the start of the sync
 otherwise, which is long enough for a field override’s own single-field index build. There is no
 separate way to configure that default today.</p>
+<p>A revert can wait the same way for a different sync’s write, not this one’s own: see
+<a href="#running-from-several-instances">Running from several instances</a>.</p>
 <h2 id="indexing-only-chosen-fields"><a class="header" href="#indexing-only-chosen-fields">Indexing only chosen fields</a></h2>
 <p><code>f.all_fields()</code> targets Firestore’s special <code>*</code> field path, scoped to the owned collection group.
 Combined with <code>.exempt()</code>, it excludes every field in the group from automatic single-field
