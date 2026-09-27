@@ -95,8 +95,10 @@ impl OperationDeadline {
     }
 
     /// When a poll sent now is abandoned. A poll sent after the deadline gets only what is left
-    /// of the poll timeout past it, so a late wait cannot extend the call further.
-    fn poll_cutoff(&self) -> Instant {
+    /// of the poll timeout past it, so a late wait cannot extend the call further. Shared with
+    /// index sync's `GetField` read-back after a refused write, the only other per-poll read this
+    /// crate bounds against the same deadline.
+    pub(super) fn poll_cutoff(&self) -> Instant {
         Instant::now().min(self.at) + self.poll_timeout
     }
 
