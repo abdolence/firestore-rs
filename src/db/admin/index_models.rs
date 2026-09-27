@@ -5,7 +5,8 @@
 //! on to Firestore.
 
 use crate::errors::FirestoreError;
-use crate::{FirestoreCollectionId, FirestoreQueryDirection, FirestoreResult};
+use crate::{FirestoreCollectionId, FirestoreInstant, FirestoreQueryDirection, FirestoreResult};
+use rand::RngExt;
 use rsb_derive::Builder;
 use std::collections::HashSet;
 use std::fmt::{self, Display, Formatter};
@@ -473,9 +474,181 @@ pub struct FirestoreIndexSyncOptions {
     /// Whether, and how long, to wait for started changes to finish. `Some` waits for every
     /// started change to reach a terminal state, and its timeout bounds the whole sync. `None`
     /// returns once the last change is requested; the waits between writes that depend on each
-    /// other still happen, under a 30-minute deadline for the whole sync.
+    /// other still happen, under a 30-minute deadline for the whole sync. With a
+    /// [`lease`](Self::lease), the deadline starts once the lease is claimed.
     #[default = "None"]
     pub wait: Option<FirestoreOperationWaitOptions>,
+    /// The generation this declaration belongs to, such as a release build number that only
+    /// increases. When set, `.sync()` first records it in the group's coordination document, and
+    /// skips, changing nothing, when a higher generation is already recorded there; `.plan()`
+    /// only reads the document. `None` reads and writes no coordination document for it.
+    #[default = "None"]
+    pub generation: Option<FirestoreIndexGeneration>,
+    /// When set, `.sync()` holds a lease on the group's coordination document while it runs, so
+    /// only one caller at a time applies changes to the group; the others skip or wait, as
+    /// [`FirestoreIndexLeaseOptions::on_held`] says. `.plan()` ignores it. `None` takes no lease.
+    #[default = "None"]
+    pub lease: Option<FirestoreIndexLeaseOptions>,
+    /// The collection holding one coordination document per collection group, named after the
+    /// group, for [`generation`](Self::generation) and [`lease`](Self::lease). It must not be a
+    /// collection group ID Firestore reserves, nor the managed group itself.
+    #[default = "FirestoreCollectionId::from_static(DEFAULT_INDEX_COORDINATION_COLLECTION)"]
+    pub coordination_collection: FirestoreCollectionId,
+}
+
+/// The default [`FirestoreIndexSyncOptions::coordination_collection`].
+pub const DEFAULT_INDEX_COORDINATION_COLLECTION: &str = "firestore-rs-index-coordination";
+
+/// The generation of an index declaration, such as a release build number, that only ever
+/// increases from one release to the next. Stored as a Firestore integer, so it is at most
+/// `i64::MAX`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FirestoreIndexGeneration(u64);
+
+impl FirestoreIndexGeneration {
+    /// The generation as a number.
+    pub fn value(self) -> u64 {
+        self.0
+    }
+}
+
+impl TryFrom<u64> for FirestoreIndexGeneration {
+    type Error = FirestoreError;
+
+    /// Fails for a value above `i64::MAX`, the largest integer Firestore stores.
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        if i64::try_from(value).is_err() {
+            return Err(FirestoreError::invalid_parameters(
+                "generation",
+                format!(
+                    "{value} is above {}, the largest integer Firestore stores",
+                    i64::MAX
+                ),
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+
+impl TryFrom<i64> for FirestoreIndexGeneration {
+    type Error = FirestoreError;
+
+    /// Fails for a negative value, which no caller can have recorded.
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        u64::try_from(value).map(Self).map_err(|_| {
+            FirestoreError::invalid_parameters(
+                "generation",
+                format!("{value} is negative; a generation is never below 0"),
+            )
+        })
+    }
+}
+
+impl From<FirestoreIndexGeneration> for i64 {
+    fn from(generation: FirestoreIndexGeneration) -> Self {
+        i64::try_from(generation.0)
+            .expect("construction rejects a generation above i64::MAX, so it always fits")
+    }
+}
+
+impl Display for FirestoreIndexGeneration {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Who holds an index lease: a label for logs and for the reports of the callers that find it
+/// held. Each claim also carries its own random token, so two callers given the same owner still
+/// never share a lease.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FirestoreIndexLeaseOwner(String);
+
+impl FirestoreIndexLeaseOwner {
+    /// Wraps `owner`.
+    ///
+    /// # Errors
+    /// Returns [`FirestoreError::InvalidParametersError`] if `owner` is empty.
+    pub fn new<S: Into<String>>(owner: S) -> FirestoreResult<Self> {
+        let owner = owner.into();
+        if owner.is_empty() {
+            return Err(FirestoreError::invalid_parameters(
+                "lease_owner",
+                "the lease owner must not be empty",
+            ));
+        }
+        Ok(Self(owner))
+    }
+
+    /// `HOSTNAME`, which is the pod name on Kubernetes, followed by a random suffix, so two
+    /// processes on one host never share an owner. Without `HOSTNAME`, the process ID stands in
+    /// for the host.
+    pub fn from_environment() -> Self {
+        let suffix = format!("{:08x}", rand::rng().random::<u32>());
+        match std::env::var("HOSTNAME") {
+            Ok(host) if !host.is_empty() => Self(format!("{host}-{suffix}")),
+            _ => Self(format!("process-{}-{suffix}", std::process::id())),
+        }
+    }
+
+    /// The owner as text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Display for FirestoreIndexLeaseOwner {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// How `.sync()` holds the lease on a collection group's coordination document.
+///
+/// Whether a lease has expired is judged only from Firestore's clock: a lease holds until the
+/// server time of its last claim or renewal plus its `ttl`, compared with the server time a
+/// claiming transaction reads at. While the sync runs, the lease is renewed every third of its
+/// `ttl`. The sync releases it when it returns, whether it succeeded or failed; a process that
+/// crashes, or a sync future that is dropped, leaves it to expire. A holder whose lease was taken
+/// over, or not renewed within `ttl` of its last confirmed claim or renewal, sends no further
+/// admin write and fails with [`FirestoreError::DataConflictError`].
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreIndexLeaseOptions {
+    /// How long a claim or a renewal keeps the lease without another renewal. The default,
+    /// 35 minutes, outlasts the 30-minute deadline of a sync that does not wait, so the lease
+    /// stays held for a whole sync even if every renewal fails. It is also how long a crashed
+    /// holder keeps the group from being synced. At least one millisecond, the unit it is stored
+    /// in.
+    #[default = "Duration::from_secs(35 * 60)"]
+    pub ttl: Duration,
+    /// What to do when another caller holds an unexpired lease.
+    #[default = "FirestoreIndexLeaseOnHeld::Skip"]
+    pub on_held: FirestoreIndexLeaseOnHeld,
+    /// Who this caller is, as other callers see it.
+    #[default = "FirestoreIndexLeaseOwner::from_environment()"]
+    pub owner: FirestoreIndexLeaseOwner,
+}
+
+/// What `.sync()` does when another caller holds the lease.
+#[derive(Debug, PartialEq, Clone)]
+pub enum FirestoreIndexLeaseOnHeld {
+    /// Return at once with a report marked skipped, naming the holder and the lease's expiry.
+    Skip,
+    /// Try to claim again until the lease is free or the wait times out; a timed-out wait
+    /// returns the same skipped report [`Skip`](Self::Skip) does.
+    Wait(FirestoreIndexLeaseWait),
+}
+
+/// How long, and how often, `.sync()` tries again to claim a held lease.
+///
+/// The sync's own deadline, [`FirestoreIndexSyncOptions::wait`] or the 30-minute default, starts
+/// once the lease is claimed, so time spent here does not shorten it.
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreIndexLeaseWait {
+    /// How long after the first attempt to stop trying.
+    pub timeout: Duration,
+    /// The pause between two attempts; more than zero.
+    #[default = "Duration::from_secs(5)"]
+    pub poll_interval: Duration,
 }
 
 /// The outcome of comparing a declared [`FirestoreIndexParams`] against one collection group's
@@ -536,10 +709,10 @@ pub struct FirestoreIndexPlan {
     /// Listed indexes or fields this crate's domain model cannot represent; never planned for
     /// deletion or revert, even when pruning.
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
-    /// Why this plan did nothing without contacting Firestore; `None` when it ran. Mirrors
-    /// [`FirestoreIndexSyncReport::skipped`], so a plan made against the emulator carries the
-    /// same explicit marker a sync against it reports, rather than the plain default a caller
-    /// could otherwise mistake for "nothing to do".
+    /// Why this plan did nothing without sending an admin request; `None` when it ran. Mirrors
+    /// [`FirestoreIndexSyncReport::skipped`], so a plan made against the emulator, or with a
+    /// superseded generation, carries the same explicit marker the sync would report, rather than
+    /// the plain default a caller could otherwise mistake for "nothing to do".
     pub skipped: Option<FirestoreIndexSyncSkipReason>,
 }
 
@@ -598,7 +771,7 @@ pub struct FirestoreIndexSyncReport {
     /// Listed indexes or fields this crate's domain model cannot represent; never deleted or
     /// reverted, even when pruning.
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
-    /// Why this sync did nothing without contacting Firestore; `None` when it ran.
+    /// Why this sync changed nothing without sending an admin request; `None` when it ran.
     pub skipped: Option<FirestoreIndexSyncSkipReason>,
     /// How long the sync and each of its phases took.
     pub timings: FirestoreIndexSyncTimings,
@@ -627,19 +800,46 @@ pub enum FirestoreIndexDeletesWithheldReason {
     CreatesUnfinished(Vec<FirestoreCompositeIndex>),
 }
 
-/// Why a `.sync()` returned without contacting Firestore.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+/// Why a `.sync()` returned without sending an admin request.
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum FirestoreIndexSyncSkipReason {
     /// The client talks to the Firestore emulator, which does not implement the admin API.
     Emulator,
+    /// A higher generation than this caller's is recorded for the group.
+    Superseded(FirestoreIndexSuperseded),
+    /// Another caller holds the group's lease.
+    LeaseHeld(FirestoreIndexLeaseHeld),
 }
 
-/// How long a `.sync()` took, in total and per phase. A phase is `None` when it did not run: all
-/// of them for a skipped sync, and `wait` when the caller did not ask to wait.
+/// The generations behind [`FirestoreIndexSyncSkipReason::Superseded`].
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct FirestoreIndexSuperseded {
+    /// The highest generation stored for the group.
+    pub stored: FirestoreIndexGeneration,
+    /// This caller's generation, lower than `stored`.
+    pub ours: FirestoreIndexGeneration,
+}
+
+/// The lease behind [`FirestoreIndexSyncSkipReason::LeaseHeld`], as the claiming transaction
+/// read it.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct FirestoreIndexLeaseHeld {
+    /// The caller holding the lease.
+    pub owner: FirestoreIndexLeaseOwner,
+    /// When the lease expires unless its holder renews it, in Firestore's clock.
+    pub expires_at: FirestoreInstant,
+}
+
+/// How long a `.sync()` took, in total and per phase. A phase is `None` when it did not run:
+/// `coordination` without a generation or a lease, `list`, `apply` and `wait` for a skipped sync,
+/// and `wait` when the caller did not ask to wait.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct FirestoreIndexSyncTimings {
     /// The whole call.
     pub total: Duration,
+    /// Reading and writing the coordination document before the sync, including any wait for a
+    /// held lease.
+    pub coordination: Option<Duration>,
     /// Listing the group's indexes and fields.
     pub list: Option<Duration>,
     /// Sending the changes, including any wait between two writes that depend on each other and
@@ -687,16 +887,66 @@ pub(crate) fn validate_index_params(params: &FirestoreIndexParams) -> FirestoreR
 pub(crate) fn validate_collection_group(
     collection_group: &FirestoreCollectionId,
 ) -> FirestoreResult<()> {
-    let id = collection_group.as_str();
+    reject_reserved_collection_id("collection_group", collection_group)
+}
+
+fn reject_reserved_collection_id(
+    field: &str,
+    collection_id: &FirestoreCollectionId,
+) -> FirestoreResult<()> {
+    let id = collection_id.as_str();
     let is_reserved = id == "-" || (id.len() >= 4 && id.starts_with("__") && id.ends_with("__"));
     if is_reserved {
         return Err(FirestoreError::invalid_parameters(
-            "collection_group",
+            field,
             format!(
                 "\"{id}\" is a collection group ID Firestore reserves (\"-\", or __*__ such as \
                  __default__); index management must not target it"
             ),
         ));
+    }
+    Ok(())
+}
+
+/// Checks the coordination settings of `options` for a statement owning `params`' group.
+///
+/// # Errors
+/// Returns [`FirestoreError::InvalidParametersError`] if the coordination collection is a
+/// collection group ID Firestore reserves or the owned group itself, if the lease `ttl` is under
+/// one millisecond, or if a lease wait's `poll_interval` is zero.
+pub(crate) fn validate_sync_options(
+    params: &FirestoreIndexParams,
+    options: &FirestoreIndexSyncOptions,
+) -> FirestoreResult<()> {
+    reject_reserved_collection_id("coordination_collection", &options.coordination_collection)?;
+    if options.coordination_collection == params.collection_group {
+        return Err(FirestoreError::invalid_parameters(
+            "coordination_collection",
+            format!(
+                "\"{}\" is the collection group this statement owns; keep coordination documents \
+                 in a collection of their own",
+                params.collection_group.as_str()
+            ),
+        ));
+    }
+    if let Some(lease) = &options.lease {
+        if lease.ttl < Duration::from_millis(1) {
+            return Err(FirestoreError::invalid_parameters(
+                "lease_ttl",
+                format!(
+                    "{:?} is under one millisecond, the unit a lease is stored in",
+                    lease.ttl
+                ),
+            ));
+        }
+        if let FirestoreIndexLeaseOnHeld::Wait(wait) = &lease.on_held {
+            if wait.poll_interval.is_zero() {
+                return Err(FirestoreError::invalid_parameters(
+                    "lease_poll_interval",
+                    "a lease wait must pause between two attempts to claim",
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -1183,6 +1433,16 @@ impl Display for FirestoreIndexSyncSkipReason {
             FirestoreIndexSyncSkipReason::Emulator => {
                 write!(f, "the Firestore emulator does not implement the admin API")
             }
+            FirestoreIndexSyncSkipReason::Superseded(superseded) => write!(
+                f,
+                "generation {} is recorded, superseding this caller's {}",
+                superseded.stored, superseded.ours
+            ),
+            FirestoreIndexSyncSkipReason::LeaseHeld(held) => write!(
+                f,
+                "the lease is held by {} until {}",
+                held.owner, held.expires_at
+            ),
         }
     }
 }
@@ -1191,6 +1451,7 @@ impl Display for FirestoreIndexSyncTimings {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "total {} ms", self.total.as_millis())?;
         for (phase, duration) in [
+            ("coordination", self.coordination),
             ("list", self.list),
             ("apply", self.apply),
             ("wait", self.wait),

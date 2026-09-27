@@ -12,6 +12,8 @@ mod index_diff;
 
 mod indexes;
 
+mod coordination;
+
 mod bulk_delete_models;
 pub use bulk_delete_models::*;
 

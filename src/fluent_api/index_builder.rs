@@ -7,9 +7,10 @@
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
     FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreIndexField,
-    FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSupport,
-    FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreOperationWaitOptions,
-    FirestoreQueryDirection, FirestoreResult, FirestoreVectorIndexConfig,
+    FirestoreIndexFieldMode, FirestoreIndexGeneration, FirestoreIndexLeaseOptions,
+    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSupport, FirestoreIndexSyncOptions,
+    FirestoreIndexSyncReport, FirestoreOperationWaitOptions, FirestoreQueryDirection,
+    FirestoreResult, FirestoreVectorIndexConfig, DEFAULT_INDEX_COORDINATION_COLLECTION,
 };
 use std::time::Duration;
 
@@ -63,6 +64,9 @@ where
     ttl_fields: Vec<String>,
     prune: bool,
     wait: Option<FirestoreOperationWaitOptions>,
+    generation: Option<u64>,
+    lease: Option<FirestoreIndexLeaseOptions>,
+    coordination_collection: Option<String>,
 }
 
 impl<'a, D> FirestoreIndexesBuilder<'a, D>
@@ -79,6 +83,9 @@ where
             ttl_fields: Vec::new(),
             prune: false,
             wait: None,
+            generation: None,
+            lease: None,
+            coordination_collection: None,
         }
     }
 
@@ -158,7 +165,8 @@ where
 
     /// Waits for every started change to reach a terminal state before `.sync()` returns,
     /// polling at the default interval. `timeout` bounds the whole sync, from the start of the
-    /// call: see [`FirestoreOperationWaitOptions`].
+    /// call, or from the moment a [`lease`](Self::lease) is claimed: see
+    /// [`FirestoreOperationWaitOptions`].
     ///
     /// Without this, `.sync()` returns once the last change is requested, but it still waits
     /// where one write depends on another: a second write to the same field waits for the first,
@@ -179,6 +187,52 @@ where
         }
     }
 
+    /// Sets the generation this declaration belongs to, such as a release build number that
+    /// only increases, so an older release never undoes a newer one.
+    ///
+    /// `.sync()` records the generation in the group's coordination document before it changes
+    /// anything, and when a higher generation is already recorded there it changes nothing and
+    /// returns a report whose `skipped` is
+    /// [`Superseded`](crate::FirestoreIndexSyncSkipReason::Superseded). The generation is
+    /// recorded when the sync starts, so it blocks older releases even while the sync still runs,
+    /// and it stays recorded if the sync fails. `.plan()` only reads it. A sync that started
+    /// before a newer one recorded its generation is not stopped by it; hold a
+    /// [`lease`](Self::lease) to keep syncs of one group from overlapping at all.
+    ///
+    /// Validated at `.plan()` or `.sync()`: at most `i64::MAX`.
+    #[inline]
+    pub fn generation(self, generation: u64) -> Self {
+        Self {
+            generation: Some(generation),
+            ..self
+        }
+    }
+
+    /// Holds a lease on the group's coordination document for the whole sync, so that of many
+    /// callers syncing the same group at once, such as the replicas of one deployment, only one
+    /// applies changes while the others skip or wait. See [`FirestoreIndexLeaseOptions`] for how
+    /// the lease is claimed, renewed, released and judged expired. `.plan()` ignores it.
+    #[inline]
+    pub fn lease(self, options: FirestoreIndexLeaseOptions) -> Self {
+        Self {
+            lease: Some(options),
+            ..self
+        }
+    }
+
+    /// Keeps the coordination document for [`generation`](Self::generation) and
+    /// [`lease`](Self::lease) in `collection`, instead of
+    /// [`DEFAULT_INDEX_COORDINATION_COLLECTION`](crate::DEFAULT_INDEX_COORDINATION_COLLECTION).
+    /// The document is named after the collection group. Validated at `.plan()` or `.sync()`:
+    /// a valid collection ID, not one Firestore reserves, and not the managed group itself.
+    #[inline]
+    pub fn coordination_collection<S: AsRef<str>>(self, collection: S) -> Self {
+        Self {
+            coordination_collection: Some(collection.as_ref().to_string()),
+            ..self
+        }
+    }
+
     /// Validates the declaration and assembles the params and options the trait methods take.
     ///
     /// Kept separate from `plan`/`sync` so the two terminals share one validation path.
@@ -193,9 +247,24 @@ where
             .with_ttl_fields(self.ttl_fields);
         crate::validate_index_params(&params)?;
 
+        let generation = self
+            .generation
+            .map(FirestoreIndexGeneration::try_from)
+            .transpose()?;
+        let coordination_collection = self
+            .coordination_collection
+            .map(FirestoreCollectionId::new)
+            .transpose()?
+            .unwrap_or_else(|| {
+                FirestoreCollectionId::from_static(DEFAULT_INDEX_COORDINATION_COLLECTION)
+            });
         let options = FirestoreIndexSyncOptions::new()
             .with_prune(self.prune)
-            .opt_wait(self.wait);
+            .opt_wait(self.wait)
+            .opt_generation(generation)
+            .opt_lease(self.lease)
+            .with_coordination_collection(coordination_collection);
+        crate::validate_sync_options(&params, &options)?;
 
         Ok((db, params, options))
     }
@@ -219,6 +288,12 @@ where
     /// A sync can wait even without [`wait_until_ready`](Self::wait_until_ready), where one
     /// write depends on another; those waits end within 30 minutes of the start of the sync, or
     /// by the `wait_until_ready` timeout when one is set.
+    ///
+    /// With a [`generation`](Self::generation) or a [`lease`](Self::lease), the sync first claims
+    /// the group in its coordination document; a sync that is superseded or finds the lease held
+    /// changes nothing and returns a report whose `skipped` says why. A sync holding the lease
+    /// that loses it fails before its next admin write with
+    /// [`FirestoreError::DataConflictError`](crate::errors::FirestoreError::DataConflictError).
     pub async fn sync(self) -> FirestoreResult<FirestoreIndexSyncReport> {
         let (db, params, options) = self.build_params()?;
         db.sync_indexes(params, options).await
@@ -578,8 +653,10 @@ mod tests {
     use crate::{
         path, FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
         FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreIndexField,
-        FirestoreIndexFieldMode, FirestoreIndexSyncOptions, FirestoreOperationWaitOptions,
-        FirestoreQueryDirection, FirestoreVectorIndexConfig,
+        FirestoreIndexFieldMode, FirestoreIndexGeneration, FirestoreIndexLeaseOnHeld,
+        FirestoreIndexLeaseOptions, FirestoreIndexLeaseOwner, FirestoreIndexLeaseWait,
+        FirestoreIndexSyncOptions, FirestoreOperationWaitOptions, FirestoreQueryDirection,
+        FirestoreVectorIndexConfig, DEFAULT_INDEX_COORDINATION_COLLECTION,
     };
     use std::time::Duration;
 
@@ -929,5 +1006,99 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("must be last"));
+    }
+
+    #[tokio::test]
+    async fn generation_lease_and_coordination_collection_pass_through() {
+        let mock = MockIndexDatabase::default();
+        let lease = FirestoreIndexLeaseOptions::new()
+            .with_ttl(Duration::from_secs(120))
+            .with_owner(FirestoreIndexLeaseOwner::new("replica-a").unwrap())
+            .with_on_held(FirestoreIndexLeaseOnHeld::Wait(
+                FirestoreIndexLeaseWait::new(Duration::from_secs(60)),
+            ));
+        FirestoreExprBuilder { db: &mock }
+            .indexes()
+            .collection_group("users")
+            .generation(42)
+            .lease(lease.clone())
+            .coordination_collection("index-locks")
+            .sync()
+            .await
+            .unwrap();
+
+        let (_, options) = mock.captured().unwrap();
+        assert_eq!(
+            options.generation,
+            Some(FirestoreIndexGeneration::try_from(42u64).unwrap())
+        );
+        assert_eq!(options.lease, Some(lease));
+        assert_eq!(
+            options.coordination_collection,
+            FirestoreCollectionId::new("index-locks").unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn without_coordination_the_default_collection_is_set_and_nothing_else() {
+        let mock = MockIndexDatabase::default();
+        FirestoreExprBuilder { db: &mock }
+            .indexes()
+            .collection_group("users")
+            .sync()
+            .await
+            .unwrap();
+
+        let (_, options) = mock.captured().unwrap();
+        assert_eq!(options.generation, None);
+        assert_eq!(options.lease, None);
+        assert_eq!(
+            options.coordination_collection.as_str(),
+            DEFAULT_INDEX_COORDINATION_COLLECTION
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_coordination_settings_are_rejected_at_the_terminal() {
+        let mock = MockIndexDatabase::default();
+        let builder = || {
+            FirestoreExprBuilder { db: &mock }
+                .indexes()
+                .collection_group("users")
+        };
+        let rejected = [
+            (
+                builder().generation(u64::MAX),
+                "the largest integer Firestore stores",
+            ),
+            (
+                builder().generation(1).coordination_collection("__locks__"),
+                "reserves",
+            ),
+            (
+                builder().generation(1).coordination_collection("users"),
+                "the collection group this statement owns",
+            ),
+            (
+                builder().lease(FirestoreIndexLeaseOptions::new().with_ttl(Duration::ZERO)),
+                "under one millisecond",
+            ),
+            (
+                builder().lease(
+                    FirestoreIndexLeaseOptions::new().with_on_held(
+                        FirestoreIndexLeaseOnHeld::Wait(
+                            FirestoreIndexLeaseWait::new(Duration::from_secs(1))
+                                .with_poll_interval(Duration::ZERO),
+                        ),
+                    ),
+                ),
+                "must pause between two attempts",
+            ),
+        ];
+        for (builder, expected) in rejected {
+            let err = builder.sync().await.unwrap_err();
+            assert!(err.to_string().contains(expected), "{expected}: {err}");
+        }
+        assert!(mock.captured().is_none());
     }
 }
