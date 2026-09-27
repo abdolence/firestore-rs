@@ -68,8 +68,13 @@ async fn lease_claimed(db: &FirestoreDb) -> TestResult<()> {
     }
 }
 
-/// A sync at `generation` holding a lease that skips a held lease, and polls once a second for
-/// anything it waits on.
+/// How often a sync of [`sync_at_generation_holding_lease`] polls for anything it waits on:
+/// longer than a claim that Firestore aborts and the transaction retries after its backoff, so
+/// a claim that took this long shows a wait for the lease.
+const LEASE_POLL: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// A sync at `generation` holding a lease that skips a held lease, and polls every
+/// [`LEASE_POLL`] for anything it waits on.
 async fn sync_at_generation_holding_lease(
     db: &FirestoreDb,
     generation: u64,
@@ -84,7 +89,7 @@ async fn sync_at_generation_holding_lease(
         .lease(FirestoreIndexLeaseOptions::new().with_owner(FirestoreIndexLeaseOwner::new(owner)?))
         .wait_until_ready_with_options(
             FirestoreOperationWaitOptions::new(std::time::Duration::from_secs(60))
-                .with_poll_interval(std::time::Duration::from_secs(1)),
+                .with_poll_interval(LEASE_POLL),
         )
         .sync()
         .await?)
@@ -172,9 +177,9 @@ async fn coordinate(db: &FirestoreDb) -> TestResult<()> {
     }
 
     // A newer generation that finds an older one holding the lease waits for it, although it is
-    // told to skip a held lease. Waiting shows as a claim that took at least one poll interval,
-    // a second; a round whose newer claim came only after the older sync released is tried
-    // again, up to five times, as above.
+    // told to skip a held lease. Waiting shows as a claim that took at least one poll interval;
+    // a round whose newer claim came only after the older sync released is tried again, up to
+    // five times, as above.
     let mut waited = false;
     for round in 1..=5u64 {
         let (older, newer) = tokio::join!(
@@ -197,7 +202,7 @@ async fn coordinate(db: &FirestoreDb) -> TestResult<()> {
         if newer
             .timings
             .coordination
-            .is_some_and(|claimed| claimed >= std::time::Duration::from_secs(1))
+            .is_some_and(|claimed| claimed >= LEASE_POLL)
         {
             waited = true;
             break;
