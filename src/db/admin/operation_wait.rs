@@ -15,7 +15,7 @@ use crate::{FirestoreDb, FirestoreOperationWaitOptions, FirestoreResult};
 use futures::StreamExt;
 use gcloud_sdk::google::longrunning::operation::Result as LroResult;
 use gcloud_sdk::google::longrunning::{GetOperationRequest, Operation};
-use gcloud_sdk::tonic::Code;
+use gcloud_sdk::tonic::{Code, Status};
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 use tokio::time::error::Elapsed;
@@ -95,17 +95,30 @@ impl OperationDeadline {
     }
 
     /// When a poll sent now is abandoned. A poll sent after the deadline gets only what is left
-    /// of the poll timeout past it, so a late wait cannot extend the call further.
-    fn poll_cutoff(&self) -> Instant {
+    /// of the poll timeout past it, so a late wait cannot extend the call further. Shared with
+    /// index sync's `GetField` read-back after a refused write, the only other per-poll read this
+    /// crate bounds against the same deadline.
+    pub(super) fn poll_cutoff(&self) -> Instant {
         Instant::now().min(self.at) + self.poll_timeout
     }
 
-    fn has_passed(&self) -> bool {
+    pub(super) fn has_passed(&self) -> bool {
         Instant::now() >= self.at
     }
 
+    /// The error a wait that reached this deadline fails with, still `waiting_for` something.
+    pub(super) fn timed_out(&self, waiting_for: &str) -> FirestoreError {
+        FirestoreError::SystemError(FirestoreSystemError::new(
+            FirestoreErrorPublicGenericDetails::new("OPERATION_WAIT_TIMEOUT".to_string()),
+            format!(
+                "timed out after {:?} waiting for: {waiting_for}",
+                self.timeout
+            ),
+        ))
+    }
+
     /// Sleeps one poll interval, or only until the deadline when that comes first.
-    async fn sleep_until_next_round(&self) {
+    pub(super) async fn sleep_until_next_round(&self) {
         let remaining = self.at.saturating_duration_since(Instant::now());
         tokio::time::sleep(self.poll_interval.min(remaining)).await;
     }
@@ -227,6 +240,20 @@ impl<A: OperationAction> TrackedOperation<'_, A> {
     }
 }
 
+/// Marks `status` retryable regardless of the crate-wide classification, which also covers
+/// writes and so cannot treat every code a pure read may safely retry as such. Shared rather than
+/// duplicated so a poll's and a read-back's retry codes are each declared in exactly one place;
+/// callers choose which of a read's codes qualify by matching on `status.code()` before calling
+/// this (`GetOperation`'s poll below also retries `NOT_FOUND`, for an operation too new to be
+/// visible yet, which a `GetField` read-back must not).
+pub(super) fn retryable_read(status: Status) -> FirestoreError {
+    FirestoreError::DatabaseError(FirestoreDatabaseError::new(
+        FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
+        status.to_string(),
+        true,
+    ))
+}
+
 impl FirestoreDb {
     /// Polls one operation. `GetOperation` only reads, so a poll answered `DEADLINE_EXCEEDED`,
     /// or `NOT_FOUND` for an operation too new to be visible yet, is marked retryable here even
@@ -239,13 +266,7 @@ impl FirestoreDb {
             .await
             .map(|response| response.into_inner())
             .map_err(|status| match status.code() {
-                Code::DeadlineExceeded | Code::NotFound => {
-                    FirestoreError::DatabaseError(FirestoreDatabaseError::new(
-                        FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-                        status.to_string(),
-                        true,
-                    ))
-                }
+                Code::DeadlineExceeded | Code::NotFound => retryable_read(status),
                 _ => FirestoreError::from(status),
             })
     }
@@ -359,14 +380,7 @@ impl FirestoreDb {
                     timeout_ms = deadline.timeout.as_millis(),
                     "Timed out waiting for operations to finish.",
                 );
-                return Err(FirestoreError::SystemError(FirestoreSystemError::new(
-                    FirestoreErrorPublicGenericDetails::new("OPERATION_WAIT_TIMEOUT".to_string()),
-                    format!(
-                        "timed out after {:?} waiting for: {}",
-                        deadline.timeout,
-                        names.join(", ")
-                    ),
-                )));
+                return Err(deadline.timed_out(&names.join(", ")));
             }
             deadline.sleep_until_next_round().await;
         }

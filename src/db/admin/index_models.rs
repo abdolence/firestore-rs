@@ -568,15 +568,20 @@ pub struct FirestoreIndexSyncReport {
     /// Declared TTL fields matched to a listed TTL configuration in state `NEEDS_REPAIR`,
     /// reported only.
     pub needs_repair_ttl: Vec<String>,
-    /// Undeclared composite indexes this sync deleted, because `prune` was set.
+    /// Undeclared composite indexes this sync deleted, because `prune` was set. Includes one
+    /// another writer deleted first: the two converge on the same absence, and the log line for
+    /// that delete, not this list, is where the two are told apart.
     pub deleted_indexes: Vec<FirestoreListedCompositeIndex>,
     /// Undeclared composite indexes a pruning sync planned to delete but left in place, and why;
     /// `None` when it withheld no delete.
     pub withheld_deletes: Option<FirestoreIndexDeletesWithheld>,
     /// Undeclared field overrides this sync reverted to automatic indexing, because `prune` was
-    /// set.
+    /// set. Includes one another writer reverted first: the two converge on the same state, and
+    /// the log line for that write, not this list, is where the two are told apart.
     pub reverted_fields: Vec<FirestoreListedField>,
-    /// Undeclared TTL fields this sync disabled, because `prune` was set.
+    /// Undeclared TTL fields this sync disabled, because `prune` was set. Includes one another
+    /// writer disabled first: the two converge on the same state, and the log line for that
+    /// write, not this list, is where the two are told apart.
     pub disabled_ttl: Vec<FirestoreListedField>,
     /// Undeclared composite indexes left alone, because `prune` was not set.
     pub kept_undeclared_indexes: Vec<FirestoreListedCompositeIndex>,

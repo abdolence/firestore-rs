@@ -162,9 +162,10 @@ where
     ///
     /// Without this, `.sync()` returns once the last change is requested, but it still waits
     /// where one write depends on another: a second write to the same field waits for the first,
-    /// a TTL enable waits for the TTL disables, and a pruning sync's deletes wait for its new
-    /// indexes (see [`prune_undeclared`](Self::prune_undeclared)). Those waits end within
-    /// 30 minutes of the start of the sync.
+    /// a TTL enable waits for the TTL disables, a pruning sync's deletes wait for its new indexes
+    /// (see [`prune_undeclared`](Self::prune_undeclared)), and a revert Firestore refuses because
+    /// another caller is already reverting the same field waits for that revert to finish. Those
+    /// waits end within 30 minutes of the start of the sync.
     #[inline]
     pub fn wait_until_ready(self, timeout: Duration) -> Self {
         self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))
