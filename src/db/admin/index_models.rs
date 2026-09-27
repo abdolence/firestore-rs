@@ -481,12 +481,16 @@ pub struct FirestoreIndexSyncOptions {
     /// The generation this declaration belongs to, such as a release build number that only
     /// increases. When set, `.sync()` first records it in the group's coordination document, and
     /// skips, changing nothing, when a higher generation is already recorded there; `.plan()`
-    /// only reads the document. `None` reads and writes no coordination document for it.
+    /// only reads the document. With a [`lease`](Self::lease), the lease is also stored with the
+    /// generation, and a sync holding it stops before its next admin write once a higher
+    /// generation is recorded. `None` reads and writes no coordination document for it.
     #[default = "None"]
     pub generation: Option<FirestoreIndexGeneration>,
     /// When set, `.sync()` holds a lease on the group's coordination document while it runs, so
     /// only one caller at a time applies changes to the group; the others skip or wait, as
-    /// [`FirestoreIndexLeaseOptions::on_held`] says. `.plan()` ignores it. `None` takes no lease.
+    /// [`FirestoreIndexLeaseOptions::on_held`] says, and a caller of a newer
+    /// [`generation`](Self::generation) waits for a holder of an older one. `.plan()` ignores
+    /// it. `None` takes no lease.
     #[default = "None"]
     pub lease: Option<FirestoreIndexLeaseOptions>,
     /// The collection holding one coordination document per collection group, named after the

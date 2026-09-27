@@ -195,9 +195,10 @@ where
     /// returns a report whose `skipped` is
     /// [`Superseded`](crate::FirestoreIndexSyncSkipReason::Superseded). The generation is
     /// recorded when the sync starts, so it blocks older releases even while the sync still runs,
-    /// and it stays recorded if the sync fails. `.plan()` only reads it. A sync that started
-    /// before a newer one recorded its generation is not stopped by it; hold a
-    /// [`lease`](Self::lease) to keep syncs of one group from overlapping at all.
+    /// and it stays recorded if the sync fails. `.plan()` only reads it. Without a
+    /// [`lease`](Self::lease), a sync that started before a newer one recorded its generation
+    /// runs to its end. With one, it stops before its next admin write once it reads the newer
+    /// generation, and the newer sync waits for it to release the lease.
     ///
     /// Validated at `.plan()` or `.sync()`: at most `i64::MAX`.
     #[inline]
@@ -293,7 +294,7 @@ where
     /// With a [`generation`](Self::generation) or a [`lease`](Self::lease), the sync first claims
     /// the group in its coordination document; a sync that is superseded or finds the lease held
     /// changes nothing and returns a report whose `skipped` says why. A sync holding the lease
-    /// that loses it fails before its next admin write with
+    /// that loses it, or reads a newer generation, fails before its next admin write with
     /// [`FirestoreError::DataConflictError`](crate::errors::FirestoreError::DataConflictError).
     pub async fn sync(self) -> FirestoreResult<FirestoreIndexSyncReport> {
         let (db, params, options) = self.build_params()?;
