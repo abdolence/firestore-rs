@@ -37,11 +37,11 @@ jobs:
       - name: 'Checking formatting and clippy'
         run: |
           cargo fmt -- --check
-          cargo clippy --all-targets --features "caching-memory,caching-persistent" -- -Dwarnings
+          cargo clippy --all-targets --features "admin,caching-memory,caching-persistent" -- -Dwarnings
       - name: 'Checking documentation'
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features "caching-memory,caching-persistent"
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features "admin,caching-memory,caching-persistent"
       - name: 'Compiling the book examples'
-        run: cargo test --doc --features "caching-memory,caching-persistent"
+        run: cargo test --doc --features "admin,caching-memory,caching-persistent"
       - uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: '0.5.4'
@@ -50,10 +50,10 @@ jobs:
       - name: 'Checking the minimum supported Rust version'
         uses: dtolnay/rust-toolchain@1.90.0
       - name: 'Building on the minimum supported Rust version'
-        run: cargo +1.90.0 check --lib --features "caching-memory,caching-persistent"
+        run: cargo +1.90.0 check --lib --features "admin,caching-memory,caching-persistent"
       - name: 'Run lib tests'
-        run: cargo test --lib --features "caching-memory,caching-persistent"
+        run: cargo test --lib --features "admin,caching-memory,caching-persistent"
         if: github.ref != 'refs/heads/master'
       - name: 'Run all tests'
-        run: cargo test --features "caching-memory,caching-persistent"
+        run: cargo test --features "admin,caching-memory,caching-persistent"
         if: github.ref == 'refs/heads/master'
