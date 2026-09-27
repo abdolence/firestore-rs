@@ -242,10 +242,11 @@ revert the same resources at the same time, and during a rolling update old and 
 declare different indexes, so `.prune_undeclared()` on both flips indexes back and forth for as
 long as the rollout takes.
 
-Run `.sync()` with `.prune_undeclared()` once per release instead, from a Kubernetes `Job`, a Helm
-`pre-install` or `pre-upgrade` hook, or a CI/CD step, before the replicas that need the new indexes
-start. `.wait_until_ready(...)` makes the job fail when a build does not finish in time, so it
-never reports success while indexes are still building:
+Run `.sync()` once per release instead of from the replicas, but not as one call: a sync that
+prunes before the new replicas are up deletes an index the still-running old ones query, and their
+queries fail with `FAILED_PRECONDITION` for as long as the rollout takes. Split it in two: create
+and update what the release declares before the rollout, without `.prune_undeclared()`, then prune
+what it no longer declares once the rollout has finished:
 
 ```rust,no_run
 # use firestore::*;
@@ -255,7 +256,6 @@ let report = db
     .fluent()
     .indexes()
     .collection_group("orders")
-    .prune_undeclared()
     .wait_until_ready(Duration::from_secs(30 * 60))
     .sync()
     .await?;
@@ -264,21 +264,22 @@ println!("{report}");
 # }
 ```
 
-Set the Job's `backoffLimit` to `0` and `activeDeadlineSeconds` above the sync's timeout, so
-Kubernetes does not restart or kill it mid build. A Helm hook is only waited for up to
-`helm upgrade`'s own `--timeout`, 5 minutes by default, independent of `activeDeadlineSeconds`:
-pass a longer one (`helm upgrade --timeout 35m`, or more) alongside an `activeDeadlineSeconds` in
-the same range, or Helm gives up on the hook long before Kubernetes does. The `helm.sh`
-annotations turn the same `Job` into a chart hook; drop them for a plain `Job` applied by hand or
-from a CI/CD step:
+Add `.prune_undeclared()` for the second run. `.wait_until_ready(...)` makes either run fail when a
+build does not finish in time, so neither reports success while indexes are still building.
+
+From a Kubernetes `Job`, run the first as an early step and the second once the rollout is
+serving; from a CI/CD step, the same split before and after the deploy step. From Helm, the
+`helm.sh` annotations turn a `Job` into a chart hook; a `pre-install,pre-upgrade` hook runs the
+create-only sync, and a `post-upgrade` hook the pruning one:
 
 ```yaml
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: orders-index-sync
+  name: orders-index-sync-create
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 0
@@ -293,10 +294,35 @@ spec:
           args: ["--sync-indexes"]
 ```
 
+The pruning hook is the same manifest under a different name, `"helm.sh/hook": post-upgrade`, and
+`--sync-indexes --prune` (or whatever flag your binary uses to turn on `.prune_undeclared()`) in
+`args`. Run `helm upgrade` with `--wait` or `--atomic` (which implies `--wait`): Helm's documented
+install lifecycle waits for the chart's resources to reach a ready state before running
+`post-install`, and `post-upgrade` is documented the same way, "after all resources have been
+upgraded"; without `--wait`, nothing holds `post-upgrade` back until the new pods are actually
+serving, and pruning at that point can still delete an index one of them still queries. See
+[Helm's chart hooks](https://helm.sh/docs/topics/charts_hooks/) and the
+[`--wait` and `--atomic` flags on `helm upgrade`](https://helm.sh/docs/v3/helm/helm_upgrade/).
+
+Set the Job's `backoffLimit` to `0` and `activeDeadlineSeconds` above the sync's timeout, so
+Kubernetes does not restart or kill it mid build. A Helm hook is only waited for up to
+`helm upgrade`'s own `--timeout`, 5 minutes by default, independent of `activeDeadlineSeconds`:
+pass a longer one (`helm upgrade --timeout 35m`, or more) alongside an `activeDeadlineSeconds` in
+the same range, or Helm gives up on the hook long before Kubernetes does.
+
 A `pre-install` hook runs before Helm creates any of the chart's ordinary resources, so the
 `serviceAccountName` the Job names must already exist by then: give the `ServiceAccount` its own
-`pre-install,pre-upgrade` hook annotation, with a lower `helm.sh/hook-weight` than the Job's, so
-Helm creates it first.
+`pre-install,pre-upgrade` hook annotation, at `helm.sh/hook-weight: "-1"`, a lower weight than the
+create Job's `0`, so Helm creates it first.
+
+Helm's documented hook ordering also names `pre-rollback` and `post-rollback`: `pre-rollback` runs
+"after templates are rendered, but before any resources are rolled back", the same shape as
+`pre-install` and `pre-upgrade`. Put the create-only Job on `pre-rollback` too, so the indexes the
+restored release needs exist before its pods come back; Helm's docs do not say whether a
+rollback's hooks are rendered from the revision being restored or the one currently installed, so
+confirm which one runs in your own cluster before relying on it. Leave the pruning Job off
+`post-rollback`: a rollback has no record of what the release you are rolling back from declared,
+so pruning there can delete an index the restored release still needs.
 
 A plain `Job` outside Helm has no `hook-delete-policy` to remove the previous run, and a completed
 Job under the same fixed name fails a later `kubectl apply` with an immutable-field error. Set
@@ -314,13 +340,16 @@ drift and fail its probe at once.
 The job's service account needs `roles/datastore.indexAdmin`, the role `.sync()` always needs.
 Replicas that only call `.plan()` need `roles/datastore.viewer`.
 
-When two syncs do overlap regardless, index creates and deletes, field reverts and TTL disables
-all converge on their own: a `CreateIndex` answered `ALREADY_EXISTS`, a `DeleteIndex` answered
-`NOT_FOUND`, and a field revert or TTL disable Firestore refuses because another writer already
-applied it all count as done. A field override write or a TTL enable that races another sync's is
-not checked against the field's current state, so it can still fail. A single writer per release
-avoids the version skew a rolling update causes when replicas declare different indexes at the
-same time.
+When two syncs do overlap regardless, index creates and deletes converge on their own: a
+`CreateIndex` answered `ALREADY_EXISTS`, and a `DeleteIndex` answered `NOT_FOUND`, both count as
+done. A field revert Firestore refuses because another writer already reverted it counts as done
+too, and one refused while another writer's revert is still in progress is not simply retried:
+this sync polls the field until that revert finishes, within its own deadline, then counts it as
+done. A TTL disable does not get that wait: Firestore reports no in-progress state for a TTL
+field, so a disable refused while another writer's disable is still running fails, rather than
+waiting for it, and only converges when the other writer's disable had already finished. A field
+override write or a TTL enable that races another sync's is not checked against the field's
+current state either, so it can still fail.
 
 ## The order `.sync()` writes changes in
 
@@ -386,6 +415,9 @@ These waits happen even without `.wait_until_ready(...)`. They end by the sync's
 `.wait_until_ready(timeout)` timeout when you set one, 30 minutes from the start of the sync
 otherwise, which is long enough for a field override's own single-field index build. There is no
 separate way to configure that default today.
+
+A revert can wait the same way for a different sync's write, not this one's own: see
+[Running from several instances](#running-from-several-instances).
 
 ## Indexing only chosen fields
 
