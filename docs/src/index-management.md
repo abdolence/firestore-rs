@@ -185,9 +185,9 @@ let tagged_rust: Vec<Post> = db
 # }
 ```
 
-The ID is shared across the whole database, not only the subcollections your own code writes to.
-`.prune_undeclared()` on `collection_group("posts")` reaches every `posts` subcollection's indexes
-in the database, since the collection group, not any one parent, is what it owns.
+The ID is shared across the whole database, including subcollections your own code never writes
+to. A statement owns the collection group, so `.prune_undeclared()` on `collection_group("posts")`
+reaches the indexes of every `posts` collection in the database.
 
 ## Removing what you no longer declare
 
