@@ -15,7 +15,7 @@ use crate::{FirestoreDb, FirestoreOperationWaitOptions, FirestoreResult};
 use futures::StreamExt;
 use gcloud_sdk::google::longrunning::operation::Result as LroResult;
 use gcloud_sdk::google::longrunning::{GetOperationRequest, Operation};
-use gcloud_sdk::tonic::Code;
+use gcloud_sdk::tonic::{Code, Status};
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 use tokio::time::error::Elapsed;
@@ -240,6 +240,20 @@ impl<A: OperationAction> TrackedOperation<'_, A> {
     }
 }
 
+/// Marks `status` retryable regardless of the crate-wide classification, which also covers
+/// writes and so cannot treat every code a pure read may safely retry as such. Shared rather than
+/// duplicated so a poll's and a read-back's retry codes are each declared in exactly one place;
+/// callers choose which of a read's codes qualify by matching on `status.code()` before calling
+/// this (`GetOperation`'s poll below also retries `NOT_FOUND`, for an operation too new to be
+/// visible yet, which a `GetField` read-back must not).
+pub(super) fn retryable_read(status: Status) -> FirestoreError {
+    FirestoreError::DatabaseError(FirestoreDatabaseError::new(
+        FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
+        status.to_string(),
+        true,
+    ))
+}
+
 impl FirestoreDb {
     /// Polls one operation. `GetOperation` only reads, so a poll answered `DEADLINE_EXCEEDED`,
     /// or `NOT_FOUND` for an operation too new to be visible yet, is marked retryable here even
@@ -252,13 +266,7 @@ impl FirestoreDb {
             .await
             .map(|response| response.into_inner())
             .map_err(|status| match status.code() {
-                Code::DeadlineExceeded | Code::NotFound => {
-                    FirestoreError::DatabaseError(FirestoreDatabaseError::new(
-                        FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-                        status.to_string(),
-                        true,
-                    ))
-                }
+                Code::DeadlineExceeded | Code::NotFound => retryable_read(status),
                 _ => FirestoreError::from(status),
             })
     }

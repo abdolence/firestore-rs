@@ -9,7 +9,9 @@ use crate::db::admin::index_diff::{
 use crate::db::admin::index_models::{
     validate_collection_group, write_section, CanonicalFieldPath,
 };
-use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
+use crate::db::admin::operation_wait::{
+    retryable_read, OperationAction, OperationDeadline, StartedOperation,
+};
 use crate::db::support::FirestoreIndexSupport;
 use crate::errors::FirestoreError;
 use crate::{
@@ -816,8 +818,7 @@ impl FirestoreDb {
             refused.status.code(),
             Code::PermissionDenied | Code::Unauthenticated | Code::InvalidArgument
         ) {
-            refused.log();
-            return Err(refused.into());
+            return Err(refused.into_logged_error());
         }
         loop {
             let polled = tokio::time::timeout_at(
@@ -836,26 +837,56 @@ impl FirestoreDb {
                     );
                     None
                 }
-                Ok(Ok(field)) => Some(kind.read_back(field.into_inner())?),
-                Ok(Err(status)) => match FirestoreError::from(status) {
-                    FirestoreError::DatabaseError(err) if err.retry_possible => {
+                // A read that answers but decodes into nothing usable is not evidence the write
+                // still stands: keep the refusal that is actually known, rather than fail on a
+                // decode error that says nothing about whether the write took effect.
+                Ok(Ok(field)) => match kind.read_back(field.into_inner()) {
+                    Ok(read_back) => Some(read_back),
+                    Err(decode_err) => {
                         warn!(
-                            error = %err,
+                            error = %decode_err,
                             field = name,
-                            "Reading a field back after a refused write failed with a retryable \
-                             error; reading it again.",
+                            "Could not read back a field after a refused write; keeping the \
+                             original refusal.",
                         );
-                        None
-                    }
-                    err => {
-                        warn!(
-                            error = %err,
-                            field = name,
-                            "Failed to read a field back after Firestore refused a write to it.",
-                        );
-                        Some(FieldReadBack::NotReached)
+                        return Err(refused.into_logged_error());
                     }
                 },
+                // GetField is a read: a DEADLINE_EXCEEDED here is retried within the deadline like
+                // any other read, even though the crate-wide classification a plain write refusal
+                // goes through does not retry it. NOT_FOUND is not added to that: unlike
+                // GetOperation's poll, a GetField after this sync's own write to that same field
+                // has no "too new to be visible yet" case, so NOT_FOUND here means the field or
+                // database is gone, not a race with propagation.
+                Ok(Err(status)) => {
+                    let err = match status.code() {
+                        Code::DeadlineExceeded => retryable_read(status),
+                        _ => FirestoreError::from(status),
+                    };
+                    match err {
+                        FirestoreError::DatabaseError(db_err) if db_err.retry_possible => {
+                            warn!(
+                                error = %db_err,
+                                field = name,
+                                "Reading a field back after a refused write failed with a \
+                                 retryable error; reading it again.",
+                            );
+                            None
+                        }
+                        // A read failure is not itself evidence of the field's state: it leaves
+                        // the original refusal as the only known outcome, never a stand-in verdict
+                        // for a state that was never actually read.
+                        err => {
+                            warn!(
+                                error = %err,
+                                field = name,
+                                "Failed to read a field back after Firestore refused a write to \
+                                 it; keeping the original refusal.",
+                            );
+                            return Err(refused.into_logged_error());
+                        }
+                    }
+                }
             };
             match read_back {
                 Some(FieldReadBack::Reached) => {
@@ -868,13 +899,16 @@ impl FirestoreDb {
                     return Ok(FieldWriteOutcome::AlreadyReached);
                 }
                 Some(FieldReadBack::NotReached) => {
-                    refused.log();
-                    return Err(refused.into());
+                    return Err(refused.into_logged_error());
                 }
                 Some(FieldReadBack::InProgress) if deadline.has_passed() => {
+                    refused.log();
                     return Err(deadline.timed_out(&format!(
-                        "another caller's {} of {name}",
-                        refused.action.kind()
+                        "another caller's {} of {name} to finish; Firestore refused this sync's \
+                         own write with {:?}: {}",
+                        refused.action.kind(),
+                        refused.status.code(),
+                        refused.status.message(),
                     )));
                 }
                 Some(FieldReadBack::InProgress) => {
@@ -886,9 +920,12 @@ impl FirestoreDb {
                     deadline.sleep_until_next_round().await;
                 }
                 None if deadline.has_passed() => {
+                    refused.log();
                     return Err(deadline.timed_out(&format!(
-                        "reading {name} back after a refused {}",
-                        refused.action.kind()
+                        "reading {name} back after a refused {} ({:?}: {})",
+                        refused.action.kind(),
+                        refused.status.code(),
+                        refused.status.message(),
                     )));
                 }
                 None => deadline.sleep_until_next_round().await,
