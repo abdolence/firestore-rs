@@ -116,6 +116,79 @@ There is no name prefix for a statement's own indexes. Firestore's `Index` and `
 are server-assigned and carry no label or description, so ownership is expressed entirely by
 which collection group a statement names, never by anything stored on the index itself.
 
+## Subcollections
+
+`.collection_group(...)` takes a subcollection's ID the same way it takes a top-level
+collection's: `.collection_group("posts")` names every collection anywhere in the database whose
+ID is `posts`, at any depth. A slash-delimited path is rejected the same way `FirestoreCollectionId`
+rejects one everywhere else in the library, with a message pointing at
+`.parent(db.parent_path(...))`.
+
+Collection scope, the default, declares an index for a query scoped to one subcollection through
+`.from("posts").parent(parent_path)`. Add `.all_descendants()` to the same index for a query
+across every `posts` subcollection at once, through `.from("posts").all_descendants()`. The two
+scopes are different query shapes, so a group can declare both at the same time, one index for
+each:
+
+```rust,no_run
+# use firestore::*;
+# #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+# struct Post {
+#     published: bool,
+#     created_at: FirestoreTimestamp,
+#     tags: Vec<String>,
+# }
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+db.fluent()
+    .indexes()
+    .collection_group("posts")
+    .composite(|i| {
+        i.indexes([
+            i.index([
+                i.field(path!(Post::published)).asc(),
+                i.field(path!(Post::created_at)).desc(),
+            ]),
+            i.index([
+                i.field(path!(Post::tags)).array_contains(),
+                i.field(path!(Post::created_at)).desc(),
+            ])
+            .all_descendants(),
+        ])
+    })
+    .sync()
+    .await?;
+
+let user_path = db.parent_path("users", "alice")?;
+let own_posts: Vec<Post> = db
+    .fluent()
+    .select()
+    .from("posts")
+    .parent(&user_path)
+    .filter(|q| q.for_all([q.field(path!(Post::published)).eq(true)]))
+    .order(|o| o.fields([o.field(path!(Post::created_at)).desc()]))
+    .obj()
+    .query()
+    .await?;
+
+let tagged_rust: Vec<Post> = db
+    .fluent()
+    .select()
+    .from("posts")
+    .all_descendants()
+    .filter(|q| q.for_all([q.field(path!(Post::tags)).array_contains("rust")]))
+    .order(|o| o.fields([o.field(path!(Post::created_at)).desc()]))
+    .obj()
+    .query()
+    .await?;
+# let _ = (own_posts, tagged_rust);
+# Ok(())
+# }
+```
+
+The ID is shared across the whole database, not only the subcollections your own code writes to.
+`.prune_undeclared()` on `collection_group("posts")` reaches every `posts` subcollection's indexes
+in the database, since the collection group, not any one parent, is what it owns.
+
 ## Removing what you no longer declare
 
 By default, an index, override or TTL field Firestore lists for the owned group but this
@@ -365,5 +438,6 @@ GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin 
 ```
 
 Full examples available
-[here](https://github.com/abdolence/firestore-rs/blob/master/examples/index-management.rs) and
-[here](https://github.com/abdolence/firestore-rs/blob/master/examples/index-whitelist.rs).
+[here](https://github.com/abdolence/firestore-rs/blob/master/examples/index-management.rs),
+[here](https://github.com/abdolence/firestore-rs/blob/master/examples/index-whitelist.rs) and
+[here](https://github.com/abdolence/firestore-rs/blob/master/examples/index-subcollection.rs).
