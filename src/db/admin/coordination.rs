@@ -1651,6 +1651,27 @@ mod tests {
     }
 
     #[test]
+    fn a_lease_expires_by_its_holders_ttl_never_the_claimants() {
+        // Held for a minute from the epoch, read half a minute later by a claimant whose own ttl
+        // is ten seconds.
+        let claimant = LeaseClaim {
+            ttl: Duration::from_secs(10),
+            ..claim_by("replica-a", "a")
+        };
+        let decision = snapshot(
+            None,
+            Some(stored_lease("b", server_epoch())),
+            Some(at(Duration::from_secs(30))),
+        )
+        .decide_claim(None, Some(&claimant))
+        .unwrap();
+        assert!(matches!(
+            decision.verdict,
+            ClaimVerdict::Skip(FirestoreIndexSyncSkipReason::LeaseHeld(_))
+        ));
+    }
+
+    #[test]
     fn a_foreign_lease_without_a_server_read_time_fails_rather_than_being_taken() {
         let err = snapshot(None, Some(stored_lease("b", server_epoch())), None)
             .decide_claim(None, Some(&claim_by("replica-a", "a")))
@@ -2562,6 +2583,339 @@ mod tests {
             }
         }
         assert_eq!(open, None, "a transaction was left open: {calls:?}");
+    }
+
+    #[tokio::test]
+    async fn a_superseded_sync_skips_at_once_even_when_told_to_wait_for_the_lease() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![(GENERATION_FIELD, integer(7))]);
+        let fake = start_with(&store, empty_group).await;
+
+        let report = fake
+            .db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                FirestoreIndexSyncOptions::new()
+                    .with_generation(generation(5))
+                    .with_lease(
+                        lease(Duration::from_secs(60)).with_on_held(
+                            FirestoreIndexLeaseOnHeld::Wait(
+                                FirestoreIndexLeaseWait::new(Duration::from_secs(10))
+                                    .with_poll_interval(Duration::from_millis(20)),
+                            ),
+                        ),
+                    ),
+            )
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            report.skipped,
+            Some(FirestoreIndexSyncSkipReason::Superseded(_))
+        ));
+        let claims = fake
+            .calls()
+            .iter()
+            .filter(|call| *call == "RunQuery")
+            .count();
+        assert_eq!(claims, 1, "{:?}", fake.calls());
+    }
+
+    #[tokio::test]
+    async fn a_claim_never_overwrites_a_rival_claim_that_landed_after_its_read() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![]);
+        let mut rivalled = false;
+        store.set_hook(move |rpc, state| {
+            if matches!(rpc, Rpc::Commit { writes: 1 }) && !rivalled {
+                rivalled = true;
+                FakeCoordinationStore::put_lease(state, "replica-b", "b");
+            }
+            Fault::None
+        });
+        let fake = start_with(&store, empty_group).await;
+
+        let report = fake
+            .db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                lease_skip(Duration::from_secs(60)),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            matches!(
+                report.skipped,
+                Some(FirestoreIndexSyncSkipReason::LeaseHeld(_))
+            ),
+            "{report}"
+        );
+        assert_eq!(store.lease_owner(), Some("replica-b".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_renewal_never_overwrites_a_lease_taken_after_its_read() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![]);
+        // The claim is the first commit that writes; the first renewal is the second.
+        let mut lease_commits = 0;
+        store.set_hook(move |rpc, state| {
+            if matches!(rpc, Rpc::Commit { writes: 1 }) {
+                lease_commits += 1;
+                if lease_commits == 2 {
+                    FakeCoordinationStore::put_lease(state, "thief", "t");
+                }
+            }
+            Fault::None
+        });
+        let create = slow_create(
+            12,
+            crate::db::fake_firestore::done_operation_response(&operation_name("op1")),
+        );
+        let fake = start_with(&store, move |method, bytes| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_declared_index(
+                    &format!("{GROUP_PATH}/indexes/legacy"),
+                    ProtoState::Ready,
+                )]),
+            ),
+            DELETE_INDEX => ("DeleteIndex".to_string(), FakeResponse::empty()),
+            other => create(other, bytes),
+        })
+        .await;
+
+        let err = sync_short_lease(
+            &fake.db,
+            FirestoreIndexParams::new(group()).with_composite_indexes(vec![b_c_index()]),
+            FirestoreIndexSyncOptions::new()
+                .with_prune(true)
+                .with_wait(polling_wait())
+                .with_lease(lease(Duration::from_millis(600))),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(lease_error_code(&err), "IndexLeaseTaken", "{err}");
+        assert!(!fake.calls().contains(&"DeleteIndex".to_string()));
+        assert_eq!(store.lease_owner(), Some("thief".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_release_never_clears_a_lease_taken_after_its_read() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let store = FakeCoordinationStore::new(vec![]);
+        // The claim is the first commit that writes; with no admin write and no renewal, the
+        // release is the second.
+        let mut lease_commits = 0;
+        store.set_hook(move |rpc, state| {
+            if matches!(rpc, Rpc::Commit { writes: 1 }) {
+                lease_commits += 1;
+                if lease_commits == 2 {
+                    FakeCoordinationStore::put_lease(state, "thief", "t");
+                }
+            }
+            Fault::None
+        });
+        let fake = start_with(&store, empty_group).await;
+
+        fake.db
+            .sync_indexes(
+                FirestoreIndexParams::new(group()),
+                lease_skip(Duration::from_secs(60)),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(store.lease_owner(), Some("thief".to_string()));
+    }
+
+    /// Claims a lease of `ttl` directly, with the claim's commit answered `claim_delay` late, and
+    /// returns the store, the server, the lease and when the claim was about to be sent. Later
+    /// commits that write the lease, renewals, are answered `renewal_delay` late.
+    async fn claim_directly(
+        ttl: Duration,
+        claim_delay: Duration,
+        renewal_delay: Duration,
+    ) -> (FakeCoordinationStore, FakeFirestore, HeldLease, Instant) {
+        let store = FakeCoordinationStore::new(vec![]);
+        let mut lease_commits = 0;
+        store.set_hook(move |rpc, _| match rpc {
+            Rpc::Commit { writes: 1 } => {
+                lease_commits += 1;
+                Fault::Delay(if lease_commits == 1 {
+                    claim_delay
+                } else {
+                    renewal_delay
+                })
+            }
+            _ => Fault::None,
+        });
+        let fake = start_with(&store, empty_group).await;
+        let before = Instant::now();
+        let claimed = fake
+            .db
+            .claim_index_coordination(
+                &group(),
+                &FirestoreIndexSyncOptions::new().with_lease(lease(ttl)),
+                &polling_wait(),
+            )
+            .await
+            .unwrap();
+        let ClaimedCoordination::Proceed(Some(held)) = claimed else {
+            panic!("the claim of a free group proceeds with its lease");
+        };
+        (store, fake, held, before)
+    }
+
+    async fn sleep_until(instant: Instant) {
+        tokio::time::sleep(instant.saturating_duration_since(Instant::now())).await;
+    }
+
+    #[tokio::test]
+    async fn a_claim_is_trusted_for_nine_tenths_of_its_ttl_from_when_it_was_sent() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let (_store, fake, held, before) = claim_directly(
+            Duration::from_secs(2),
+            Duration::from_millis(300),
+            Duration::ZERO,
+        )
+        .await;
+
+        sleep_until(before + Duration::from_millis(1500)).await;
+        held.ensure_held(&fake.db).await.unwrap();
+
+        // Trusted until 1.8 s after the claim was sent, though its reply came 0.3 s later and its
+        // ttl runs to 2 s.
+        sleep_until(before + Duration::from_millis(1900)).await;
+        let err = held.ensure_held(&fake.db).await.unwrap_err();
+        assert_eq!(lease_error_code(&err), "IndexLeaseExpired", "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_renewal_extends_the_trust_from_when_it_was_sent() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let (_store, fake, held, before) = claim_directly(
+            Duration::from_secs(2),
+            Duration::ZERO,
+            Duration::from_millis(500),
+        )
+        .await;
+
+        // Sent a second after the claim, answered half a second later: trusted until 2.8 s.
+        sleep_until(before + Duration::from_secs(1)).await;
+        assert!(held.renew(&fake.db).await.is_continue());
+
+        sleep_until(before + Duration::from_millis(2000)).await;
+        held.ensure_held(&fake.db).await.unwrap();
+
+        sleep_until(before + Duration::from_millis(2900)).await;
+        let err = held.ensure_held(&fake.db).await.unwrap_err();
+        assert_eq!(lease_error_code(&err), "IndexLeaseExpired", "{err}");
+    }
+
+    /// A listed field under the test group, with an exempt override of its own, a TTL, or both.
+    fn listed_field(
+        path: &str,
+        exempt: bool,
+        ttl: bool,
+    ) -> gcloud_sdk::google::firestore::admin::v1::Field {
+        use gcloud_sdk::google::firestore::admin::v1::field;
+        gcloud_sdk::google::firestore::admin::v1::Field {
+            name: format!("{GROUP_PATH}/fields/{path}"),
+            index_config: exempt.then(|| field::IndexConfig {
+                indexes: vec![],
+                uses_ancestor_config: false,
+                ancestor_field: String::new(),
+                reverting: false,
+            }),
+            ttl_config: ttl.then(|| field::TtlConfig {
+                state: field::ttl_config::State::Active as i32,
+                expiration_offset: None,
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn every_kind_of_admin_write_waits_for_the_lease_check() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let empty = || FirestoreIndexParams::new(group());
+        let cases: Vec<(
+            &str,
+            FirestoreIndexParams,
+            Vec<gcloud_sdk::google::firestore::admin::v1::Field>,
+            bool,
+        )> = vec![
+            (
+                "create",
+                empty().with_composite_indexes(vec![declared_index()]),
+                vec![],
+                false,
+            ),
+            (
+                "update a field override",
+                empty().with_field_overrides(vec![crate::FirestoreFieldOverride {
+                    target: crate::FirestoreFieldOverrideTarget::Field("bio".to_string()),
+                    indexes: vec![],
+                }]),
+                vec![],
+                false,
+            ),
+            (
+                "enable a TTL",
+                empty().with_ttl_fields(vec!["expires_at".to_string()]),
+                vec![],
+                false,
+            ),
+            (
+                "disable a TTL",
+                empty(),
+                vec![listed_field("expires_at", false, true)],
+                true,
+            ),
+            (
+                "revert a field override",
+                empty(),
+                vec![listed_field("legacy_field", true, false)],
+                true,
+            ),
+        ];
+        for (write, params, listed_fields, prune) in cases {
+            let store = FakeCoordinationStore::new(vec![]);
+            let thief = store.clone();
+            let fake = start_with(&store, move |method, _| match method {
+                LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+                LIST_FIELDS => {
+                    // The listing is the last read before the first admin write.
+                    thief.replace_lease("thief", "t");
+                    (
+                        "ListFields".to_string(),
+                        list_fields_response(listed_fields.clone()),
+                    )
+                }
+                other => panic!("{other} was sent after the lease was taken"),
+            })
+            .await;
+
+            let err = fake
+                .db
+                .sync_indexes(
+                    params,
+                    lease_skip(Duration::from_secs(60)).with_prune(prune),
+                )
+                .await
+                .unwrap_err();
+
+            assert_eq!(lease_error_code(&err), "IndexLeaseTaken", "{write}: {err}");
+            assert!(
+                fake.calls().iter().all(
+                    |call| !call.starts_with("CreateIndex") && !call.starts_with("UpdateField")
+                ),
+                "{write}: {:?}",
+                fake.calls()
+            );
+        }
     }
 
     #[tokio::test]
