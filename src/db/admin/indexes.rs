@@ -62,31 +62,35 @@ impl IndexAction {
     }
 }
 
-/// Which of the two idempotent single-field writes [`FirestoreDb::apply_field_write`] sends:
-/// reverting an override to the ancestor's configuration, or disabling TTL. The two share every
-/// step except the [`IndexAction`] a write becomes, the field mask path, and the state a refused
-/// write is read back against, so this is the one value that picks all three together and keeps
-/// them from drifting apart.
+/// A declared field override already converted to the proto `IndexConfig` it writes, kept
+/// alongside the override itself since [`IndexAction::UpdateFieldOverride`] and the resource
+/// name both need the declared value, not the wire shape it produced.
+struct FieldOverrideWrite {
+    declared: FirestoreFieldOverride,
+    index_config: proto_field::IndexConfig,
+}
+
+/// Which of the four single-field `UpdateField` writes [`FirestoreDb::apply_field_write`] sends:
+/// setting a declared override, enabling TTL, reverting an override to the ancestor's
+/// configuration, or disabling TTL. `apply_field_write` is the one place that switches on this
+/// value, so the action, span, target, mask path and payload of all four stay picked together
+/// instead of drifting apart across separate copies.
 enum FieldWriteKind {
+    SetOverride(FieldOverrideWrite),
+    EnableTtl(String),
+    RevertOverride(FirestoreListedField),
+    DisableTtl(FirestoreListedField),
+}
+
+/// Which state a refused revert or TTL disable's read-back is checked against. Only these two
+/// writes are idempotent enough for Firestore's refusal to mean "another caller already got
+/// there"; a refused set-override or enable-TTL is always the caller's error.
+enum RefusedWriteTarget {
     RevertOverride,
     DisableTtl,
 }
 
-impl FieldWriteKind {
-    fn action(&self, listed: FirestoreListedField) -> IndexAction {
-        match self {
-            FieldWriteKind::RevertOverride => IndexAction::RevertFieldOverride(listed),
-            FieldWriteKind::DisableTtl => IndexAction::DisableTtl(listed),
-        }
-    }
-
-    fn mask_path(&self) -> &'static str {
-        match self {
-            FieldWriteKind::RevertOverride => "index_config",
-            FieldWriteKind::DisableTtl => "ttl_config",
-        }
-    }
-
+impl RefusedWriteTarget {
     /// Where `field`, as Firestore reads it back, stands against the state this write sets: no
     /// override of its own for a revert, no TTL configuration for a disable. Only a revert has a
     /// state on the way there, `reverting`; Firestore reports none for a TTL disable. Reuses the
@@ -95,7 +99,7 @@ impl FieldWriteKind {
     fn read_back(&self, field: ProtoField) -> FirestoreResult<FieldReadBack> {
         let listed = FirestoreListedField::try_from(field)?;
         Ok(match self {
-            FieldWriteKind::RevertOverride => match listed.index_override {
+            RefusedWriteTarget::RevertOverride => match listed.index_override {
                 None | Some(FirestoreFieldOverrideOutcome::Inherited) => FieldReadBack::Reached,
                 Some(FirestoreFieldOverrideOutcome::Explicit(FirestoreExplicitFieldOverride {
                     reverting: true,
@@ -104,7 +108,7 @@ impl FieldWriteKind {
                 Some(FirestoreFieldOverrideOutcome::Explicit(_))
                 | Some(FirestoreFieldOverrideOutcome::Unrecognised(_)) => FieldReadBack::NotReached,
             },
-            FieldWriteKind::DisableTtl => match listed.ttl {
+            RefusedWriteTarget::DisableTtl => match listed.ttl {
                 None => FieldReadBack::Reached,
                 Some(_) => FieldReadBack::NotReached,
             },
@@ -161,12 +165,29 @@ enum CreateIndexOutcome {
     AlreadyExists,
 }
 
-/// The result of a field revert or TTL disable: started by this sync, or refused by Firestore
-/// for a field that already reads back in the state it sets, as when another caller got there
-/// first.
+/// The result of a single-field write: started by this sync, or refused by Firestore for a
+/// revert or TTL disable that already reads back in the state it sets, as when another caller
+/// got there first. A set-override or enable-TTL is always `Started`, since a refusal to either
+/// is never read back (see [`FirestoreDb::apply_field_write`]).
 enum FieldWriteOutcome {
     Started(PendingOperation),
     AlreadyReached,
+}
+
+impl FieldWriteOutcome {
+    /// Records a started write into `writes` as the latest write to `field`, returning its
+    /// position for a caller that must wait on it later; does nothing for a write already
+    /// reached before this sync sent it.
+    fn record(
+        self,
+        writes: &mut StartedWrites,
+        field: Option<CanonicalFieldPath>,
+    ) -> Option<usize> {
+        match self {
+            FieldWriteOutcome::Started(op) => Some(writes.push(field, op)),
+            FieldWriteOutcome::AlreadyReached => None,
+        }
+    }
 }
 
 /// An `UpdateField` request Firestore refused, with the action it was for, so the caller decides
@@ -706,125 +727,132 @@ impl FirestoreDb {
         outcome
     }
 
-    async fn apply_update_field_override(
-        &self,
-        group: &OwnedGroup<'_>,
-        declared: &FirestoreFieldOverride,
-    ) -> FirestoreResult<PendingOperation> {
-        let action = IndexAction::UpdateFieldOverride(declared.clone());
-        let span = span!(
-            Level::INFO,
-            "Update Field",
-            "/firestore/action" = action.kind(),
-            "/firestore/target" = action.target().as_str(),
-            "/firestore/operation" = field::Empty,
-            "/firestore/response_time" = field::Empty,
-        );
-        let name = group.field_resource(&CanonicalFieldPath::from(declared.target.as_str()));
-        let index_config = proto_field::IndexConfig::try_from(declared.clone())?;
-        let request = UpdateFieldRequest {
-            field: Some(ProtoField {
-                name,
-                index_config: Some(index_config),
-                ttl_config: None,
-            }),
-            update_mask: Some(FieldMask {
-                paths: vec!["index_config".to_string()],
-            }),
-        };
-        self.run_update_field(span, request, action)
-            .await
-            .map_err(|refused| {
-                refused.log();
-                refused.into()
-            })
-    }
-
-    async fn apply_enable_ttl(
-        &self,
-        group: &OwnedGroup<'_>,
-        field_path: &str,
-    ) -> FirestoreResult<PendingOperation> {
-        let action = IndexAction::EnableTtl(field_path.to_string());
-        let span = span!(
-            Level::INFO,
-            "Enable TTL",
-            "/firestore/action" = action.kind(),
-            "/firestore/target" = action.target().as_str(),
-            "/firestore/operation" = field::Empty,
-            "/firestore/response_time" = field::Empty,
-        );
-        let name = group.field_resource(&CanonicalFieldPath::from(field_path));
-        let request = UpdateFieldRequest {
-            field: Some(ProtoField {
-                name,
-                index_config: None,
-                ttl_config: Some(proto_field::TtlConfig::default()),
-            }),
-            update_mask: Some(FieldMask {
-                paths: vec!["ttl_config".to_string()],
-            }),
-        };
-        self.run_update_field(span, request, action)
-            .await
-            .map_err(|refused| {
-                refused.log();
-                refused.into()
-            })
-    }
-
-    /// Reverts a field override or disables TTL on `listed`, the two idempotent single-field
-    /// writes a pruning sync sends, told apart only by `kind` (see [`FieldWriteKind`]).
+    /// Sends any of the four single-field `UpdateField` writes a sync makes (see
+    /// [`FieldWriteKind`]). A revert or disable targets a field Firestore listed, so it is gated
+    /// by [`OwnedGroup::ensure_owns`] first; a set-override or enable-TTL targets a field this
+    /// sync's own group name already owns. `tracing::span!` needs a literal name, so the four
+    /// writes' spans cannot themselves be built by a shared helper; this one match is where their
+    /// action, span, target, mask path and payload are picked together instead.
     async fn apply_field_write(
         &self,
         group: &OwnedGroup<'_>,
         kind: FieldWriteKind,
-        listed: &FirestoreListedField,
         deadline: &OperationDeadline,
     ) -> FirestoreResult<FieldWriteOutcome> {
-        group.ensure_owns("fields", &listed.name)?;
-        let action = kind.action(listed.clone());
-        // `tracing::span!` needs a literal name, so the two writes' spans cannot themselves be
-        // built by a shared helper.
-        let span = match kind {
-            FieldWriteKind::RevertOverride => span!(
-                Level::INFO,
-                "Revert Field Override",
-                "/firestore/action" = action.kind(),
-                "/firestore/target" = action.target().as_str(),
-                "/firestore/operation" = field::Empty,
-                "/firestore/response_time" = field::Empty,
-            ),
-            FieldWriteKind::DisableTtl => span!(
-                Level::INFO,
-                "Disable TTL",
-                "/firestore/action" = action.kind(),
-                "/firestore/target" = action.target().as_str(),
-                "/firestore/operation" = field::Empty,
-                "/firestore/response_time" = field::Empty,
-            ),
+        let (action, span, name, mask_path, index_config, ttl_config, read_back) = match kind {
+            FieldWriteKind::SetOverride(write) => {
+                let action = IndexAction::UpdateFieldOverride(write.declared.clone());
+                let span = span!(
+                    Level::INFO,
+                    "Update Field",
+                    "/firestore/action" = action.kind(),
+                    "/firestore/target" = action.target().as_str(),
+                    "/firestore/operation" = field::Empty,
+                    "/firestore/response_time" = field::Empty,
+                );
+                let name =
+                    group.field_resource(&CanonicalFieldPath::from(write.declared.target.as_str()));
+                (
+                    action,
+                    span,
+                    name,
+                    "index_config",
+                    Some(write.index_config),
+                    None,
+                    None,
+                )
+            }
+            FieldWriteKind::EnableTtl(field_path) => {
+                let action = IndexAction::EnableTtl(field_path.clone());
+                let span = span!(
+                    Level::INFO,
+                    "Enable TTL",
+                    "/firestore/action" = action.kind(),
+                    "/firestore/target" = action.target().as_str(),
+                    "/firestore/operation" = field::Empty,
+                    "/firestore/response_time" = field::Empty,
+                );
+                let name = group.field_resource(&CanonicalFieldPath::from(field_path.as_str()));
+                (
+                    action,
+                    span,
+                    name,
+                    "ttl_config",
+                    None,
+                    Some(proto_field::TtlConfig::default()),
+                    None,
+                )
+            }
+            FieldWriteKind::RevertOverride(listed) => {
+                group.ensure_owns("fields", &listed.name)?;
+                let action = IndexAction::RevertFieldOverride(listed.clone());
+                let span = span!(
+                    Level::INFO,
+                    "Revert Field Override",
+                    "/firestore/action" = action.kind(),
+                    "/firestore/target" = action.target().as_str(),
+                    "/firestore/operation" = field::Empty,
+                    "/firestore/response_time" = field::Empty,
+                );
+                (
+                    action,
+                    span,
+                    listed.name.clone(),
+                    "index_config",
+                    None,
+                    None,
+                    Some((RefusedWriteTarget::RevertOverride, listed.name)),
+                )
+            }
+            FieldWriteKind::DisableTtl(listed) => {
+                group.ensure_owns("fields", &listed.name)?;
+                let action = IndexAction::DisableTtl(listed.clone());
+                let span = span!(
+                    Level::INFO,
+                    "Disable TTL",
+                    "/firestore/action" = action.kind(),
+                    "/firestore/target" = action.target().as_str(),
+                    "/firestore/operation" = field::Empty,
+                    "/firestore/response_time" = field::Empty,
+                );
+                (
+                    action,
+                    span,
+                    listed.name.clone(),
+                    "ttl_config",
+                    None,
+                    None,
+                    Some((RefusedWriteTarget::DisableTtl, listed.name)),
+                )
+            }
         };
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
-                name: listed.name.clone(),
-                index_config: None,
-                ttl_config: None,
+                name,
+                index_config,
+                ttl_config,
             }),
             update_mask: Some(FieldMask {
-                paths: vec![kind.mask_path().to_string()],
+                paths: vec![mask_path.to_string()],
             }),
         };
         match self.run_update_field(span, request, action).await {
             Ok(operation) => Ok(FieldWriteOutcome::Started(operation)),
-            Err(refused) => {
-                self.settle_refused_field_write(&kind, &listed.name, refused, deadline)
-                    .await
-            }
+            Err(refused) => match read_back {
+                Some((target, name)) => {
+                    self.settle_refused_field_write(target, &name, refused, deadline)
+                        .await
+                }
+                None => {
+                    refused.log();
+                    Err(refused.into())
+                }
+            },
         }
     }
 
     /// Reads field `name` back after Firestore refused `refused`, and counts the refusal as
-    /// converged once the field is in the state `kind`'s write sets. Firestore documents no
+    /// converged once the field is in the state `target`'s write sets. Firestore documents no
     /// status for a revert or disable that races another caller's, so the field's state decides,
     /// never the status code - except a permission, authentication or argument refusal, which is
     /// never masked by a read-back: Firestore refuses those independently of the field's state, so
@@ -834,7 +862,7 @@ impl FirestoreDb {
     /// retryable status, all within `deadline`.
     async fn settle_refused_field_write(
         &self,
-        kind: &FieldWriteKind,
+        target: RefusedWriteTarget,
         name: &str,
         refused: RefusedFieldWrite,
         deadline: &OperationDeadline,
@@ -863,7 +891,7 @@ impl FirestoreDb {
                     );
                     None
                 }
-                Ok(Ok(field)) => Some(kind.read_back(field.into_inner())?),
+                Ok(Ok(field)) => Some(target.read_back(field.into_inner())?),
                 Ok(Err(status)) => match FirestoreError::from(status) {
                     FirestoreError::DatabaseError(err) if err.retry_possible => {
                         warn!(
@@ -1038,23 +1066,25 @@ impl FirestoreDb {
             for declared in &plan.update_fields {
                 let field = CanonicalFieldPath::from(declared.target.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                let op = self.apply_update_field_override(group, declared).await?;
-                writes.push(Some(field), op);
+                let index_config = proto_field::IndexConfig::try_from(declared.clone())?;
+                let write = FieldOverrideWrite {
+                    declared: declared.clone(),
+                    index_config,
+                };
+                self.apply_field_write(group, FieldWriteKind::SetOverride(write), deadline)
+                    .await?
+                    .record(&mut writes, Some(field));
                 report.updated_fields.push(declared.clone());
             }
             let mut ttl_disables = Vec::new();
             for listed in &plan.disable_ttl {
                 let field = CanonicalFieldPath::from(listed.field_path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                match self
-                    .apply_field_write(group, FieldWriteKind::DisableTtl, listed, deadline)
+                let position = self
+                    .apply_field_write(group, FieldWriteKind::DisableTtl(listed.clone()), deadline)
                     .await?
-                {
-                    FieldWriteOutcome::Started(op) => {
-                        ttl_disables.push(writes.push(Some(field), op));
-                    }
-                    FieldWriteOutcome::AlreadyReached => {}
-                }
+                    .record(&mut writes, Some(field));
+                ttl_disables.extend(position);
                 report.disabled_ttl.push(listed.clone());
             }
             if !plan.enable_ttl.is_empty() {
@@ -1064,22 +1094,17 @@ impl FirestoreDb {
             for path in &plan.enable_ttl {
                 let field = CanonicalFieldPath::from(path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                let op = self.apply_enable_ttl(group, path).await?;
-                writes.push(Some(field), op);
+                self.apply_field_write(group, FieldWriteKind::EnableTtl(path.clone()), deadline)
+                    .await?
+                    .record(&mut writes, Some(field));
                 report.enabled_ttl.push(path.clone());
             }
             for listed in &plan.revert_fields {
                 let field = CanonicalFieldPath::from(listed.field_path.as_str());
                 self.settle_field(&mut writes, &field, deadline).await?;
-                match self
-                    .apply_field_write(group, FieldWriteKind::RevertOverride, listed, deadline)
+                self.apply_field_write(group, FieldWriteKind::RevertOverride(listed.clone()), deadline)
                     .await?
-                {
-                    FieldWriteOutcome::Started(op) => {
-                        writes.push(Some(field), op);
-                    }
-                    FieldWriteOutcome::AlreadyReached => {}
-                }
+                    .record(&mut writes, Some(field));
                 report.reverted_fields.push(listed.clone());
             }
 
