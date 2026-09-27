@@ -555,6 +555,13 @@ impl FirestoreDb {
                     info!(action = action.kind(), index = %listed, "Deleted an undeclared composite index.");
                     Ok(())
                 }
+                // A concurrent sync, or a retry of this one after a prior response was lost, may
+                // have deleted this index already; counting it as deleted rather than failing lets
+                // a rolling deployment's overlapping syncs converge on the same end state.
+                Err(status) if status.code() == Code::NotFound => {
+                    info!(action = action.kind(), index = %listed, "Index was already deleted, likely by a concurrent sync.");
+                    Ok(())
+                }
                 Err(status) => {
                     error!(error = %status, action = action.kind(), index = %listed, "Failed to delete a composite index.");
                     Err(FirestoreError::from(status))
@@ -1367,6 +1374,36 @@ mod tests {
 
         assert_eq!(report.deleted_indexes.len(), 1);
         assert!(fake.calls().contains(&"DeleteIndex".to_string()));
+    }
+
+    #[tokio::test]
+    async fn not_found_on_delete_counts_index_as_already_deleted() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, _| match method {
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![listed_declared_index(
+                    &format!("{GROUP_PATH}/indexes/legacy"),
+                    ProtoState::Ready,
+                )]),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            DELETE_INDEX => (
+                "DeleteIndex (not found)".to_string(),
+                FakeResponse::Status(Code::NotFound),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let params = FirestoreIndexParams::new(group());
+        let options = FirestoreIndexSyncOptions::new().with_prune(true);
+        let report = fake.db.sync_indexes(params, options).await.unwrap();
+
+        assert_eq!(report.deleted_indexes.len(), 1, "{report}");
+        assert!(fake
+            .calls()
+            .contains(&"DeleteIndex (not found)".to_string()));
     }
 
     /// One undeclared composite index, one undeclared exempt override on `legacy_field`, and one
