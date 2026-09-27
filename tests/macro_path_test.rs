@@ -122,6 +122,74 @@ fn test_paths_camel_case_nested_star() {
     );
 }
 
+#[allow(dead_code)]
+#[derive(firestore::struct_path::StructPath)]
+struct NestedPrivateChild {
+    pub child_id: String,
+    child_secret: u64,
+}
+
+#[allow(dead_code)]
+struct NestedPrivateParent {
+    child: NestedPrivateChild,
+}
+
+#[test]
+fn test_paths_nested_star_with_private_field() {
+    assert_eq!(
+        firestore::paths!(NestedPrivateParent::child.(NestedPrivateChild::*)),
+        vec!["child.child_id".to_string()]
+    );
+    assert_eq!(
+        firestore::paths!(NestedPrivateParent::child.(NestedPrivateChild::*); visibility = "all"),
+        vec![
+            "child.child_id".to_string(),
+            "child.child_secret".to_string()
+        ]
+    );
+    assert_eq!(
+        firestore::paths_camel_case!(NestedPrivateParent::child.(NestedPrivateChild::*)),
+        vec!["child.childId".to_string()]
+    );
+    assert_eq!(
+        firestore::paths_camel_case!(
+            NestedPrivateParent::child.(NestedPrivateChild::*); visibility = "all"
+        ),
+        vec!["child.childId".to_string(), "child.childSecret".to_string()]
+    );
+}
+
+#[test]
+fn test_camel_case_star_options_trailing_comma() {
+    #[derive(firestore::struct_path::StructPath)]
+    #[allow(dead_code)]
+    struct MyTestStructure {
+        pub one_more_string: String,
+        some_internal: u64,
+    }
+    assert_eq!(
+        firestore::paths_camel_case!(MyTestStructure::*; visibility = "all",),
+        vec!["oneMoreString".to_string(), "someInternal".to_string()]
+    );
+    assert_eq!(
+        firestore::paths_camel_case!(NestedParent::child.(NestedChild::*); delim = "/",),
+        vec!["child/childId".to_string(), "child/childValue".to_string()]
+    );
+}
+
+#[test]
+fn test_camel_case_star_accepts_caller_camel_case() {
+    #[derive(firestore::struct_path::StructPath)]
+    #[allow(dead_code)]
+    struct MyTestStructure {
+        pub one_more_string: String,
+    }
+    assert_eq!(
+        firestore::paths_camel_case!(MyTestStructure::*; case = "camel"),
+        vec!["oneMoreString".to_string()]
+    );
+}
+
 #[test]
 fn test_path_camel_case_with_options() {
     assert_eq!(
