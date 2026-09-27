@@ -40,6 +40,26 @@ macro_rules! path {
 ///     vec!["some_id".to_string(), "some_num".to_string()]
 /// );
 /// ```
+///
+/// `Struct::*` returns every field declared with plain `pub`, without listing them by hand;
+/// it needs `Struct` to carry `#[derive(firestore::struct_path::StructPath)]`.
+/// `Struct::*; visibility="all"` returns every declared field instead.
+///
+/// ```rust
+/// use firestore::paths;
+///
+/// #[derive(firestore::struct_path::StructPath)]
+/// struct MyTestStructure {
+///     pub some_id: String,
+///     some_internal: u64,
+/// }
+///
+/// assert_eq!(paths!(MyTestStructure::*), vec!["some_id".to_string()]);
+/// assert_eq!(
+///     paths!(MyTestStructure::*; visibility="all"),
+///     vec!["some_id".to_string(), "some_internal".to_string()]
+/// );
+/// ```
 #[macro_export]
 macro_rules! paths {
     ($($x:tt)*) => {{
@@ -61,10 +81,14 @@ macro_rules! paths {
 ///
 /// assert_eq!(path_camel_case!(MyTestStructure::one_more_string), "oneMoreString");
 /// ```
+///
+/// Extra `struct_path` options can follow after a `;`, same as [`path!`]. This macro appends
+/// `case="camel"` after them, so a `case` passed by the caller is overridden and the path is
+/// always camelCase.
 #[macro_export]
 macro_rules! path_camel_case {
     ($($x:tt)*) => {{
-        $crate::struct_path::path!($($x)*;case="camel").to_string()
+        $crate::struct_path::path!($($x)*; case="camel").to_string()
     }};
 }
 
@@ -87,9 +111,30 @@ macro_rules! path_camel_case {
 ///     vec!["someId".to_string(), "oneMoreString".to_string()]
 /// );
 /// ```
+///
+/// `Struct::*` works the same way as in [`paths!`], with the same `visibility="all"` option.
+/// This macro appends `case="camel"` after the caller's options: a field list ignores a
+/// `case` passed by the caller and stays camelCase, while `Struct::*` rejects it as a
+/// duplicate key at compile time.
+///
+/// ```rust
+/// use firestore::paths_camel_case;
+///
+/// #[derive(firestore::struct_path::StructPath)]
+/// struct MyTestStructure {
+///     pub some_id: String,
+///     some_internal: u64,
+/// }
+///
+/// assert_eq!(paths_camel_case!(MyTestStructure::*), vec!["someId".to_string()]);
+/// assert_eq!(
+///     paths_camel_case!(MyTestStructure::*; visibility="all"),
+///     vec!["someId".to_string(), "someInternal".to_string()]
+/// );
+/// ```
 #[macro_export]
 macro_rules! paths_camel_case {
     ($($x:tt)*) => {{
-        $crate::struct_path::paths!($($x)*;case="camel").into_iter().map(|s| s.to_string()).collect::<Vec<String>>()
-    }}
+        $crate::struct_path::paths!($($x)*; case="camel").into_iter().map(|s| s.to_string()).collect::<Vec<String>>()
+    }};
 }
