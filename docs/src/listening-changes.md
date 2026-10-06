@@ -73,4 +73,9 @@ listener.shutdown().await?;
 # }
 ```
 
+`shutdown()` finishes the current callback and resume-state writes before returning.
+Use `shutdown_with_timeout(Duration::from_secs(5))` to allow five seconds for graceful shutdown,
+then abort and join the task. Aborting can interrupt callbacks and token writes, so changes may
+be replayed.
+
 See complete example in examples directory.
