@@ -2,7 +2,6 @@ name: tests & formatting
 on:
   push:
   pull_request:
-    types: [ opened ]
   workflow_dispatch:
 env:
   GCP_PROJECT: latestbit
@@ -12,6 +11,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
+    # Same-repository branches already run on push; pull_request runs only for forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'

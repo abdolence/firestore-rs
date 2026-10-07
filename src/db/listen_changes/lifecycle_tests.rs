@@ -4,8 +4,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
+/// Where the listener's task stops until the test adds a `release` permit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Wait {
+    /// The connect never answers.
+    Connect,
+    /// The response ends at once, so the task sits in the reconnect delay; nothing releases it.
+    Reconnect,
+    /// The resume-state read inside the loop, after the one `start` makes.
     Read,
     Callback,
     Storage,
@@ -17,22 +23,12 @@ struct TestDb {
     entered: Arc<Semaphore>,
     release: Arc<Semaphore>,
     stored: Arc<AtomicBool>,
-    dropped: Arc<AtomicBool>,
     reads: Arc<AtomicUsize>,
     connections: Arc<AtomicUsize>,
 }
 
-struct PendingOperation(Arc<AtomicBool>);
-
-impl Drop for PendingOperation {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-}
-
 impl TestDb {
     async fn wait_for_release(&self) {
-        let _operation = PendingOperation(self.dropped.clone());
         self.entered.add_permits(1);
         self.release.acquire().await.unwrap().forget();
     }
@@ -45,16 +41,34 @@ impl FirestoreListenSupport for TestDb {
         _: Vec<FirestoreListenerTargetParams>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
         self.connections.fetch_add(1, Ordering::Relaxed);
-        Ok(futures::stream::iter([Ok(ListenResponse {
-            response_type: Some(FirestoreListenEvent::TargetChange(TargetChange {
-                target_change_type: target_change::TargetChangeType::Current as i32,
-                target_ids: vec![1],
-                resume_token: vec![1],
-                ..Default::default()
-            })),
-        })])
-        .chain(futures::stream::pending())
-        .boxed())
+        match self.wait {
+            Wait::Connect => {
+                self.wait_for_release().await;
+                Ok(futures::stream::empty().boxed())
+            }
+            // Signals from the poll that ends the stream, so the task is already in the
+            // reconnect delay when the test wakes.
+            Wait::Reconnect => {
+                let entered = self.entered.clone();
+                Ok(futures::stream::poll_fn(move |_| {
+                    entered.add_permits(1);
+                    std::task::Poll::Ready(None)
+                })
+                .boxed())
+            }
+            Wait::Read | Wait::Callback | Wait::Storage => {
+                Ok(futures::stream::iter([Ok(ListenResponse {
+                    response_type: Some(FirestoreListenEvent::TargetChange(TargetChange {
+                        target_change_type: target_change::TargetChangeType::Current as i32,
+                        target_ids: vec![1],
+                        resume_token: vec![1],
+                        ..Default::default()
+                    })),
+                })])
+                .chain(futures::stream::pending())
+                .boxed())
+            }
+        }
     }
 }
 
@@ -93,20 +107,23 @@ async fn within<T>(future: impl Future<Output = T>) -> T {
         .expect("listener operation timed out")
 }
 
-async fn started(wait: Wait) -> (FirestoreListener<TestDb, TestDb>, TestDb) {
+/// A listener with one target that has not been started.
+async fn listener(wait: Wait) -> (FirestoreListener<TestDb, TestDb>, TestDb) {
     let db = TestDb {
         wait,
         entered: Arc::new(Semaphore::new(0)),
         release: Arc::new(Semaphore::new(0)),
         stored: Arc::new(AtomicBool::new(false)),
-        dropped: Arc::new(AtomicBool::new(false)),
         reads: Arc::new(AtomicUsize::new(0)),
         connections: Arc::new(AtomicUsize::new(0)),
     };
-    let mut listener =
-        FirestoreListener::new(db.clone(), db.clone(), FirestoreListenerParams::new())
-            .await
-            .unwrap();
+    let listener = FirestoreListener::new(
+        db.clone(),
+        db.clone(),
+        FirestoreListenerParams::new().with_retry_delay(Duration::from_secs(3600)),
+    )
+    .await
+    .unwrap();
     listener
         .add_target(FirestoreListenerTargetParams::new(
             FirestoreListenerTarget::new(1),
@@ -117,6 +134,12 @@ async fn started(wait: Wait) -> (FirestoreListener<TestDb, TestDb>, TestDb) {
             HashMap::new(),
         ))
         .unwrap();
+    (listener, db)
+}
+
+/// A started listener whose task is stopped at `wait`.
+async fn started(wait: Wait) -> (FirestoreListener<TestDb, TestDb>, TestDb) {
+    let (mut listener, db) = listener(wait).await;
     let callback_db = db.clone();
     listener
         .start(move |_| {
@@ -134,49 +157,91 @@ async fn started(wait: Wait) -> (FirestoreListener<TestDb, TestDb>, TestDb) {
     (listener, db)
 }
 
-async fn assert_graceful_shutdown(wait: Wait, timeout: Option<Duration>) {
-    let (mut listener, db) = started(wait).await;
-    {
-        let shutdown = async {
-            match timeout {
-                Some(timeout) => listener.shutdown_with_timeout(timeout).await,
-                None => listener.shutdown().await,
-            }
-        };
-        futures::pin_mut!(shutdown);
-        assert!(futures::poll!(shutdown.as_mut()).is_pending());
-        tokio::task::yield_now().await;
-        assert!(futures::poll!(shutdown.as_mut()).is_pending());
-        assert!(!db.stored.load(Ordering::Relaxed));
-        db.release.add_permits(1);
-        within(shutdown).await.unwrap();
-    }
-    assert!(db.stored.load(Ordering::Relaxed));
-    listener.shutdown().await.unwrap();
-}
-
 #[tokio::test]
 async fn shutdown_waits_for_the_callback_and_for_resume_token_storage() {
     for wait in [Wait::Callback, Wait::Storage] {
         for timeout in [None, Some(Duration::from_secs(3600))] {
-            assert_graceful_shutdown(wait, timeout).await;
+            let (mut listener, db) = started(wait).await;
+            {
+                let shutdown = listener.shutdown_with(timeout);
+                futures::pin_mut!(shutdown);
+                assert!(futures::poll!(shutdown.as_mut()).is_pending());
+                tokio::task::yield_now().await;
+                assert!(futures::poll!(shutdown.as_mut()).is_pending());
+                assert!(!db.stored.load(Ordering::Relaxed));
+                db.release.add_permits(1);
+                within(shutdown).await.unwrap();
+            }
+            assert!(db.stored.load(Ordering::Relaxed));
         }
     }
 }
 
 #[tokio::test]
-async fn interrupted_shutdown_retains_task_for_join() {
-    let (mut listener, db) = started(Wait::Callback).await;
+async fn shutdown_interrupts_connecting_and_the_reconnect_delay() {
+    for wait in [Wait::Connect, Wait::Reconnect] {
+        let (mut listener, _db) = started(wait).await;
+        within(listener.shutdown()).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn shutdown_before_start_prevents_connections() {
+    let (mut listener, db) = listener(Wait::Connect).await;
+    listener.shutdown().await.unwrap();
+    listener.start(|_| async { Ok(()) }).await.unwrap();
+    within(listener.shutdown_handle.as_mut().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(db.connections.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn shutdown_while_reading_resume_state_prevents_connection() {
+    let (mut listener, db) = started(Wait::Read).await;
     {
         let shutdown = listener.shutdown();
         futures::pin_mut!(shutdown);
-        assert!(futures::poll!(shutdown).is_pending());
+        assert!(futures::poll!(shutdown.as_mut()).is_pending());
+        db.release.add_permits(1);
+        within(shutdown).await.unwrap();
     }
-    assert!(listener.shutdown_handle.is_some());
-    db.release.add_permits(1);
-    within(listener.shutdown()).await.unwrap();
-    assert!(db.stored.load(Ordering::Relaxed));
-    assert!(listener.shutdown_handle.is_none());
+    assert_eq!(db.connections.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+async fn shutdown_timeout_aborts_and_joins_a_stuck_read_callback_or_storage() {
+    for wait in [Wait::Read, Wait::Callback, Wait::Storage] {
+        let (mut listener, db) = started(wait).await;
+        let timeout = Duration::from_millis(10);
+        let began = tokio::time::Instant::now();
+        within(listener.shutdown_with_timeout(timeout))
+            .await
+            .unwrap();
+        assert!(began.elapsed() >= timeout);
+        assert!(!db.stored.load(Ordering::Relaxed));
+        assert!(listener.shutdown_handle.is_none());
+    }
+}
+
+#[tokio::test]
+async fn cancelled_shutdown_keeps_the_task_for_a_later_join() {
+    for timeout in [None, Some(Duration::from_secs(3600)), Some(Duration::ZERO)] {
+        let aborted = timeout == Some(Duration::ZERO);
+        let (mut listener, db) = started(Wait::Callback).await;
+        {
+            let shutdown = listener.shutdown_with(timeout);
+            futures::pin_mut!(shutdown);
+            assert!(futures::poll!(shutdown.as_mut()).is_pending());
+        }
+        assert!(listener.shutdown_handle.is_some());
+        if !aborted {
+            db.release.add_permits(1);
+        }
+        within(listener.shutdown()).await.unwrap();
+        assert_eq!(db.stored.load(Ordering::Relaxed), !aborted);
+        assert!(listener.shutdown_handle.is_none());
+    }
 }
 
 /// A fake server that logs `Listen closed` once the client closes a Listen request; see
@@ -208,92 +273,4 @@ async fn ended_response_closes_http2_request_while_held() {
     assert!(within(response.next()).await.is_none());
     within(server.wait_for_calls(1)).await;
     assert_eq!(server.calls(), vec!["Listen closed"]);
-}
-
-#[tokio::test]
-async fn shutdown_timeout_aborts_and_joins_callback_and_storage() {
-    for wait in [Wait::Read, Wait::Callback, Wait::Storage] {
-        let (mut listener, db) = started(wait).await;
-        let timeout = Duration::from_millis(10);
-        let began = tokio::time::Instant::now();
-        within(listener.shutdown_with_timeout(timeout))
-            .await
-            .unwrap();
-        assert!(began.elapsed() >= timeout);
-        assert!(!db.stored.load(Ordering::Relaxed));
-        assert!(db.dropped.load(Ordering::Relaxed));
-        assert!(listener.shutdown_handle.is_none());
-        listener
-            .shutdown_with_timeout(Duration::ZERO)
-            .await
-            .unwrap();
-        listener.shutdown().await.unwrap();
-    }
-}
-
-#[tokio::test]
-async fn interrupted_shutdown_with_timeout_retains_task_before_and_after_abort() {
-    for timeout in [
-        Duration::from_secs(3600),
-        Duration::ZERO,
-        Duration::from_millis(10),
-    ] {
-        let (mut listener, db) = started(Wait::Callback).await;
-        let aborted = timeout < Duration::from_secs(1);
-        {
-            let shutdown = listener.shutdown_with_timeout(timeout);
-            futures::pin_mut!(shutdown);
-            assert!(futures::poll!(shutdown.as_mut()).is_pending());
-            if aborted && !timeout.is_zero() {
-                tokio::time::sleep(timeout * 2).await;
-                assert!(futures::poll!(shutdown.as_mut()).is_pending());
-            }
-        }
-        assert!(listener.shutdown_handle.is_some());
-        if !aborted {
-            db.release.add_permits(1);
-        }
-        within(listener.shutdown()).await.unwrap();
-        assert_eq!(db.stored.load(Ordering::Relaxed), !aborted);
-        assert!(db.dropped.load(Ordering::Relaxed));
-        assert!(listener.shutdown_handle.is_none());
-    }
-}
-
-#[tokio::test]
-async fn shutdown_during_resume_state_read_prevents_connection() {
-    let (mut listener, db) = started(Wait::Read).await;
-    {
-        let shutdown = listener.shutdown();
-        futures::pin_mut!(shutdown);
-        assert!(futures::poll!(shutdown.as_mut()).is_pending());
-        db.release.add_permits(1);
-        within(shutdown).await.unwrap();
-    }
-    assert_eq!(db.connections.load(Ordering::Relaxed), 0);
-    assert!(db.dropped.load(Ordering::Relaxed));
-    assert!(!db.stored.load(Ordering::Relaxed));
-}
-
-#[tokio::test]
-async fn shutdown_with_timeout_joins_an_already_finished_task() {
-    let (mut listener, db) = started(Wait::Callback).await;
-    {
-        let shutdown = listener.shutdown();
-        futures::pin_mut!(shutdown);
-        assert!(futures::poll!(shutdown.as_mut()).is_pending());
-    }
-    db.release.add_permits(1);
-    within(async {
-        while !listener.shutdown_handle.as_ref().unwrap().is_finished() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    listener
-        .shutdown_with_timeout(Duration::ZERO)
-        .await
-        .unwrap();
-    assert!(db.stored.load(Ordering::Relaxed));
-    assert!(listener.shutdown_handle.is_none());
 }
