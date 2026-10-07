@@ -17,14 +17,18 @@ use rsb_derive::*;
 use rvstruct::ValueStruct;
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::ops::AsyncFnOnce;
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::task::JoinHandle;
+use tokio::sync::watch;
+use tokio::task::{JoinError, JoinHandle};
 use tracing::*;
 
 #[cfg(test)]
 mod lifecycle_tests;
+
+#[cfg(test)]
+mod cancellation_tests;
 
 #[derive(Debug, Clone, Builder)]
 pub struct FirestoreListenerTargetParams {
@@ -342,7 +346,7 @@ where
     storage: S,
     listener_params: FirestoreListenerParams,
     targets: FirestoreListenerTargetsState,
-    shutdown_flag: Arc<AtomicBool>,
+    shutdown_signal: watch::Sender<bool>,
     shutdown_handle: Option<JoinHandle<()>>,
     /// Created up front rather than in `start`, so that targets can be added and removed before,
     /// during and after the listener runs.
@@ -373,7 +377,7 @@ where
             storage,
             listener_params,
             targets: Arc::new(std::sync::RwLock::new(HashMap::new())),
-            shutdown_flag: Arc::new(AtomicBool::new(false)),
+            shutdown_signal: watch::Sender::new(false),
             shutdown_handle: None,
             control_writer: Arc::new(control_writer),
             control_reader: Some(control_reader),
@@ -392,7 +396,7 @@ where
     pub fn add_target(&self, target_params: FirestoreListenerTargetParams) -> FirestoreResult<()> {
         target_params.validate()?;
 
-        if self.shutdown_flag.load(Ordering::Relaxed) {
+        if *self.shutdown_signal.borrow() {
             return Err(FirestoreError::invalid_parameters(
                 "target",
                 "Cannot add a target to a listener that has been shut down",
@@ -549,14 +553,14 @@ where
         // connect with, so their queued notifications would only cause a pointless reconnect.
         while let Ok(queued) = control_reader.try_recv() {
             if queued == FirestoreListenerControl::Shutdown {
-                self.shutdown_flag.store(true, Ordering::Relaxed);
+                self.shutdown_signal.send_replace(true);
             }
         }
 
         self.shutdown_handle = Some(tokio::spawn(Self::listener_loop(
             self.db.clone(),
             self.storage.clone(),
-            self.shutdown_flag.clone(),
+            self.shutdown_signal.clone(),
             self.targets.clone(),
             self.listener_params.clone(),
             control_reader,
@@ -567,30 +571,75 @@ where
 
     /// Stops the listener's loop and waits for it to exit, releasing its connection.
     ///
+    /// Finishes the current callback and resume-state writes, but interrupts connection attempts
+    /// and reconnect delays. Use [`shutdown_with_timeout`](Self::shutdown_with_timeout) to limit
+    /// how long to wait for application work.
+    ///
     /// Safe to call on a listener that was never started, or one already shut down - both are a
     /// no-op beyond setting the shutdown flag. Never returns an error itself; if the spawned loop
     /// panicked, that is logged rather than surfaced here.
     pub async fn shutdown(&mut self) -> FirestoreResult<()> {
+        self.shutdown_with(async |handle| handle.await).await
+    }
+
+    /// Shuts down gracefully, then aborts and joins the task if it outlives `timeout`.
+    /// A zero timeout aborts immediately.
+    ///
+    /// Aborting can interrupt callbacks and resume-state writes, so changes may be replayed.
+    pub async fn shutdown_with_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> FirestoreResult<()> {
+        self.shutdown_with(async |handle| {
+            if !timeout.is_zero() {
+                if let Ok(result) = tokio::time::timeout(timeout, &mut *handle).await {
+                    return result;
+                }
+            }
+            handle.abort();
+            handle.await
+        })
+        .await
+    }
+
+    async fn shutdown_with(
+        &mut self,
+        join: impl AsyncFnOnce(&mut JoinHandle<()>) -> Result<(), JoinError>,
+    ) -> FirestoreResult<()> {
         debug!("Shutting down Firestore listener...");
-        self.shutdown_flag.store(true, Ordering::Relaxed);
+        self.shutdown_signal.send_replace(true);
         self.control_writer
             .send(FirestoreListenerControl::Shutdown)
             .ok();
         // Keep ownership until joined, even if this shutdown future is cancelled.
-        if let Some(signaller) = self.shutdown_handle.as_mut() {
-            if let Err(err) = signaller.await {
-                warn!(%err, "Firestore listener exit error!");
-            };
+        if let Some(handle) = self.shutdown_handle.as_mut() {
+            if let Err(err) = join(handle).await {
+                if !err.is_cancelled() {
+                    warn!(%err, "Firestore listener exit error!");
+                }
+            }
         }
         self.shutdown_handle = None;
         debug!("Shutting down Firestore listener has been finished...");
         Ok(())
     }
 
+    async fn until_shutdown<F: Future>(
+        shutdown: &watch::Sender<bool>,
+        future: F,
+    ) -> Option<F::Output> {
+        let mut receiver = shutdown.subscribe();
+        tokio::select! {
+            biased;
+            _ = receiver.wait_for(|stopped| *stopped) => None,
+            result = future => Some(result),
+        }
+    }
+
     async fn listener_loop<FN, F>(
         db: D,
         storage: S,
-        shutdown_flag: Arc<AtomicBool>,
+        shutdown_signal: watch::Sender<bool>,
         targets_state: FirestoreListenerTargetsState,
         listener_params: FirestoreListenerParams,
         mut control_receiver: UnboundedReceiver<FirestoreListenerControl>,
@@ -608,7 +657,7 @@ where
         // still rejects as invalid is treated as permanent instead of looping forever.
         let mut retried_without_resume_tokens = false;
 
-        while !shutdown_flag.load(Ordering::Relaxed) {
+        while !*shutdown_signal.borrow() {
             let snapshot = Self::resolve_targets(&storage, &targets_state).await;
 
             if snapshot.is_empty() {
@@ -617,7 +666,7 @@ where
                 debug!("Firestore listener has no targets. Waiting for one to be added...");
                 match control_receiver.recv().await {
                     None | Some(FirestoreListenerControl::Shutdown) => {
-                        shutdown_flag.store(true, Ordering::Relaxed);
+                        shutdown_signal.send_replace(true);
                     }
                     // Nothing is being listened to, so there is nothing to resynchronise either.
                     Some(FirestoreListenerControl::TargetsChanged)
@@ -631,14 +680,19 @@ where
                 "Start listening on targets..."
             );
 
-            match db.listen_doc_changes(snapshot).await {
+            let Some(connection) =
+                Self::until_shutdown(&shutdown_signal, db.listen_doc_changes(snapshot)).await
+            else {
+                break;
+            };
+            match connection {
                 Err(err) => {
                     Self::handle_listener_error(
                         err,
                         effective_delay,
                         &storage,
                         &targets_state,
-                        &shutdown_flag,
+                        &shutdown_signal,
                         &mut retried_without_resume_tokens,
                     )
                     .await;
@@ -649,7 +703,7 @@ where
                             match control {
                                 None => {
                                     debug!("Listener dropped. Exiting...");
-                                    shutdown_flag.store(true, Ordering::Relaxed);
+                                    shutdown_signal.send_replace(true);
                                     break;
                                 }
                                 Some(FirestoreListenerControl::Shutdown) => {
@@ -666,7 +720,7 @@ where
                                     Self::forget_resume_states(&storage, &targets_state, &[target]).await;
                                     // Without this a target that keeps diverging would reconnect
                                     // and re-download in a tight loop.
-                                    tokio::time::sleep(effective_delay).await;
+                                    Self::until_shutdown(&shutdown_signal, tokio::time::sleep(effective_delay)).await;
                                     break;
                                 }
                                 Some(FirestoreListenerControl::TargetsChanged) => {
@@ -677,7 +731,7 @@ where
                                     while let Ok(queued) = control_receiver.try_recv() {
                                         match queued {
                                             FirestoreListenerControl::Shutdown => {
-                                                shutdown_flag.store(true, Ordering::Relaxed);
+                                                shutdown_signal.send_replace(true);
                                                 control_receiver.close();
                                                 break;
                                             }
@@ -696,7 +750,7 @@ where
                             }
                         }
                         tried = listen_stream.try_next() => {
-                            if shutdown_flag.load(Ordering::Relaxed) {
+                            if *shutdown_signal.borrow() {
                                 break;
                             }
                             else {
@@ -746,7 +800,7 @@ where
                                                         Self::forget_resume_states(&storage, &targets_state, &affected).await;
                                                         // Without this a target Firestore keeps
                                                         // rejecting would reconnect in a tight loop.
-                                                        tokio::time::sleep(effective_delay).await;
+                                                        Self::until_shutdown(&shutdown_signal, tokio::time::sleep(effective_delay)).await;
                                                         break;
                                                     }
                                                     (Some(target_change::TargetChangeType::Reset), Ok(affected)) => {
@@ -779,7 +833,7 @@ where
                                         // server that closes immediately would be reconnected to in
                                         // a tight loop.
                                         debug!(?effective_delay, "Listen stream closed. Reconnecting after the specified delay...");
-                                        tokio::time::sleep(effective_delay).await;
+                                        Self::until_shutdown(&shutdown_signal, tokio::time::sleep(effective_delay)).await;
                                         break;
                                     }
                                     Err(err) => {
@@ -788,7 +842,7 @@ where
                                             effective_delay,
                                             &storage,
                                             &targets_state,
-                                            &shutdown_flag,
+                                            &shutdown_signal,
                                             &mut retried_without_resume_tokens,
                                         ).await;
                                         break;
@@ -942,13 +996,13 @@ where
         delay: std::time::Duration,
         storage: &S,
         targets_state: &FirestoreListenerTargetsState,
-        shutdown_flag: &Arc<AtomicBool>,
+        shutdown_signal: &watch::Sender<bool>,
         retried_without_resume_tokens: &mut bool,
     ) {
         match Self::classify_listener_error(&err) {
             FirestoreListenerErrorAction::Retry => {
                 debug!(%err, ?delay, "Listen EOF.. Restarting after the specified delay...");
-                tokio::time::sleep(delay).await;
+                Self::until_shutdown(shutdown_signal, tokio::time::sleep(delay)).await;
             }
             FirestoreListenerErrorAction::RetryWithoutResumeTokens
                 if !*retried_without_resume_tokens =>
@@ -968,16 +1022,16 @@ where
                     .cloned()
                     .collect();
                 Self::forget_resume_states(storage, targets_state, &all_targets).await;
-                tokio::time::sleep(delay).await;
+                Self::until_shutdown(shutdown_signal, tokio::time::sleep(delay)).await;
             }
             FirestoreListenerErrorAction::RetryWithoutResumeTokens
             | FirestoreListenerErrorAction::Fatal => {
                 error!(%err, "Listen error. Exiting...");
-                shutdown_flag.store(true, Ordering::Relaxed);
+                shutdown_signal.send_replace(true);
             }
             FirestoreListenerErrorAction::RetryAfterDelay => {
                 error!(%err, ?delay, "Listen error. Restarting after the specified delay...");
-                tokio::time::sleep(delay).await;
+                Self::until_shutdown(shutdown_signal, tokio::time::sleep(delay)).await;
             }
         }
     }
