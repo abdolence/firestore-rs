@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c7b027c1.js";
+            window.path_to_searchindex_js = "searchindex-6e125185.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-61f90fc3.js"></script>
@@ -246,6 +246,10 @@ listener
 listener.shutdown().await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<p><code>shutdown()</code> finishes the current callback and resume-state writes before returning.
+Use <code>shutdown_with_timeout(Duration::from_secs(5))</code> to allow five seconds for graceful shutdown,
+then abort and join the task. Aborting can interrupt callbacks and token writes, so changes may
+be replayed.</p>
 <p>See complete example in examples directory.</p>
 
                     </main>
