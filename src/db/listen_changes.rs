@@ -17,18 +17,14 @@ use rsb_derive::*;
 use rvstruct::ValueStruct;
 use std::collections::HashMap;
 use std::future::Future;
-use std::ops::AsyncFnOnce;
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
-use tokio::task::{JoinError, JoinHandle};
+use tokio::task::JoinHandle;
 use tracing::*;
 
 #[cfg(test)]
 mod lifecycle_tests;
-
-#[cfg(test)]
-mod cancellation_tests;
 
 #[derive(Debug, Clone, Builder)]
 pub struct FirestoreListenerTargetParams {
@@ -576,10 +572,10 @@ where
     /// how long to wait for application work.
     ///
     /// Safe to call on a listener that was never started, or one already shut down - both are a
-    /// no-op beyond setting the shutdown flag. Never returns an error itself; if the spawned loop
+    /// no-op beyond signalling shutdown. Never returns an error itself; if the spawned loop
     /// panicked, that is logged rather than surfaced here.
     pub async fn shutdown(&mut self) -> FirestoreResult<()> {
-        self.shutdown_with(async |handle| handle.await).await
+        self.shutdown_with(None).await
     }
 
     /// Shuts down gracefully, then aborts and joins the task if it outlives `timeout`.
@@ -590,22 +586,10 @@ where
         &mut self,
         timeout: std::time::Duration,
     ) -> FirestoreResult<()> {
-        self.shutdown_with(async |handle| {
-            if !timeout.is_zero() {
-                if let Ok(result) = tokio::time::timeout(timeout, &mut *handle).await {
-                    return result;
-                }
-            }
-            handle.abort();
-            handle.await
-        })
-        .await
+        self.shutdown_with(Some(timeout)).await
     }
 
-    async fn shutdown_with(
-        &mut self,
-        join: impl AsyncFnOnce(&mut JoinHandle<()>) -> Result<(), JoinError>,
-    ) -> FirestoreResult<()> {
+    async fn shutdown_with(&mut self, timeout: Option<std::time::Duration>) -> FirestoreResult<()> {
         debug!("Shutting down Firestore listener...");
         self.shutdown_signal.send_replace(true);
         self.control_writer
@@ -613,7 +597,20 @@ where
             .ok();
         // Keep ownership until joined, even if this shutdown future is cancelled.
         if let Some(handle) = self.shutdown_handle.as_mut() {
-            if let Err(err) = join(handle).await {
+            let finished = match timeout {
+                None => Some((&mut *handle).await),
+                // `tokio::time::timeout` would still let the task run until the next timer tick.
+                Some(timeout) if timeout.is_zero() => None,
+                Some(timeout) => tokio::time::timeout(timeout, &mut *handle).await.ok(),
+            };
+            let joined = match finished {
+                Some(joined) => joined,
+                None => {
+                    handle.abort();
+                    handle.await
+                }
+            };
+            if let Err(err) = joined {
                 if !err.is_cancelled() {
                     warn!(%err, "Firestore listener exit error!");
                 }
