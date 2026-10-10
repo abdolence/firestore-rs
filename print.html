@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6e125185.js";
+            window.path_to_searchindex_js = "searchindex-0f5993c8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-61f90fc3.js"></script>
@@ -232,7 +232,7 @@ that automatically detects GCE environment or application default accounts for l
 <h1 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h1>
 <p>Cargo.toml:</p>
 <pre><code class="language-toml">[dependencies]
-firestore = "0.55"
+firestore = "0.58"
 </code></pre>
 <h2 id="crypto-provider-error"><a class="header" href="#crypto-provider-error">Crypto provider error</a></h2>
 <p>Depends on your other dependencies you may see the error like:</p>
@@ -284,21 +284,35 @@ Look at the section below <a href="#google-authentication">Google authentication
 <span class="boring">;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p>or if you need even more flexibility you can use a preconfigured token source and scopes with:</p>
+<p>The key file is read as a service account key.</p>
+<p>For any other credentials use <code>FirestoreDb::with_options_auth</code>, which takes everything that converts into gcloud-sdk’s
+<code>GoogleAuthHeaders</code>:</p>
+<ul>
+<li><code>Credentials</code> from the builders of <code>firestore::gcloud_sdk::google_cloud_auth::credentials</code>: service account keys,
+user credentials, impersonation, workload identity federation, the metadata server, etc.;</li>
+<li>a <code>CredentialsProvider</code> of your own, passed to <code>Credentials::from</code>;</li>
+<li><code>GoogleAuthHeaders::from_adc_with_scopes</code> for the Application Default Credentials with other scopes;</li>
+<li><code>GoogleAuthHeaders::from_service_account_key</code> for a service account key with other scopes.</li>
+</ul>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">fn config_env_var(name: &amp;str) -&gt; Result&lt;String, String&gt; {
 </span><span class="boring">    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 </span><span class="boring">}
 </span><span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>FirestoreDb::with_options_token_source(
+</span>FirestoreDb::with_options_auth(
     FirestoreDbOptions::new(config_env_var("PROJECT_ID")?.to_string()),
-    gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
-    gcloud_sdk::TokenSourceType::File("/tmp/key.json".into()),
+    firestore::gcloud_sdk::GoogleAuthHeaders::from_adc_with_scopes(vec![
+        "https://www.googleapis.com/auth/datastore".to_string(),
+    ])
+    .await?,
 )
 .await?
 <span class="boring">;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<p>These types come from gcloud-sdk, which the library re-exports as <code>firestore::gcloud_sdk</code>,
+so your project needs no gcloud-sdk dependency of its own.</p>
+<p>Full example with a custom <code>CredentialsProvider</code> available <a href="https://github.com/abdolence/firestore-rs/tree/master/examples/token_auth.rs">here</a>.</p>
 <p>Firebase supports <a href="https://cloud.google.com/firestore/docs/manage-databases">multiple databases per project now</a>,
 so you can specify the database ID in the options:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
@@ -1992,6 +2006,19 @@ Default Credentials (ADC).
 This command is useful when you are developing code that would normally use a service account but need to run the code
 in a local development environment where it’s easier to provide user credentials.
 So to work for local development you need to use <code>gcloud auth application-default login</code>.</p>
+<h2 id="crypto-provider"><a class="header" href="#crypto-provider">Crypto provider</a></h2>
+<p>Service account keys sign their tokens with a rustls crypto provider.
+The <code>auth-default-crypto</code> feature, on by default, brings the aws-lc-rs provider of <code>google-cloud-auth</code>.
+Be aware that aws-lc-rs is built from C sources.</p>
+<p>With <code>default-features = false</code>, either enable the feature next to your TLS feature:</p>
+<pre><code class="language-toml">[dependencies]
+firestore = { version = "0.58", default-features = false, features = ["tls-webpki-roots", "auth-default-crypto"] }
+</code></pre>
+<p>or install a rustls <code>CryptoProvider</code> before creating a client.
+Without a provider <code>FirestoreDb::new</code>, <code>FirestoreDb::with_options</code> and <code>FirestoreDb::with_options_service_account_key_file</code>
+return an error with the code <code>CryptoProviderMissing</code> for a service account key.
+Credentials you build yourself with the <code>google-cloud-auth</code> builders panic on their first token request instead,
+so build them with <code>GoogleAuthHeaders::from_service_account_key</code> to get the same error.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="firestore-emulator"><a class="header" href="#firestore-emulator">Firestore emulator</a></h1>
 <p>To work with the Google Firestore emulator you can use the environment variable:</p>
@@ -2001,8 +2028,8 @@ So to work for local development you need to use <code>gcloud auth application-d
 <p>When <code>FIRESTORE_EMULATOR_HOST</code> is set, the library does not look up the Google
 credentials and uses a stub token instead, since the emulator does not
 authenticate the requests. This means you do not need any credentials
-configured to develop against it. Specifying a token source explicitly, with
-<code>FirestoreDb::with_options_token_source()</code> for example, still takes precedence.</p>
+configured to develop against it. Specifying credentials explicitly, with
+<code>FirestoreDb::with_options_auth()</code> for example, still takes precedence.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="docker-images-and-tls"><a class="header" href="#docker-images-and-tls">Docker images and TLS</a></h1>
 <p>When you design your Dockerfile make sure you either installed Root CA certificates or use base images that already
