@@ -55,7 +55,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-firestore = "0.54"
+firestore = "0.58"
 ```
 
 ```rust,no_run
@@ -168,6 +168,21 @@ Looks for credentials in the following places, preferring the first location fou
 For local development don't confuse `gcloud auth login` with `gcloud auth application-default login`,
 since the first authorize only `gcloud` tool to access the Cloud Platform.
 See [Google authentication](https://firestore-rust.abdolence.dev/auth.html) for the details.
+
+Other credentials go through `FirestoreDb::with_options_auth`, which takes the `google-cloud-auth` credentials
+gcloud-sdk re-exports, or a `GoogleAuthHeaders`.
+See [Client instance and lifecycle](https://firestore-rust.abdolence.dev/client.html) for the examples.
+
+### Upgrading to 0.58
+
+0.58 moves to gcloud-sdk 0.33, which mints the tokens with `google-cloud-auth`:
+- `FirestoreDb::with_options_token_source` and the gcloud-sdk token sources are removed,
+  `FirestoreDb::with_options_auth` replaces them;
+- `FirestoreDb::new`, `with_options` and `with_options_service_account_key_file` keep their signatures;
+- the new default feature `auth-default-crypto` brings the crypto provider service account keys sign with;
+- the MSRV is 1.91.
+
+See the [migration guide](MIGRATION.md#058) for the details.
 
 ## How this library is tested
 

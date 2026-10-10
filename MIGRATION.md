@@ -1,5 +1,40 @@
 # Migration guide
 
+## 0.58
+
+v0.58.0 moves to gcloud-sdk 0.33, which mints the tokens with `google-cloud-auth`, the authentication crate of
+Google's official Rust SDK. The gcloud-sdk token sources are removed, and so is the constructor that took one.
+
+### Constructors
+
+| 0.57 | 0.58 |
+|---|---|
+| `FirestoreDb::new`, `with_options`, `for_default_project_id` | unchanged |
+| `FirestoreDb::with_options_service_account_key_file(options, path)` | unchanged, for a service account key |
+| `with_options_token_source(options, scopes, TokenSourceType::Default)` | `with_options_auth(options, GoogleAuthHeaders::from_adc_with_scopes(scopes).await?)` |
+| `with_options_token_source(options, scopes, TokenSourceType::File(path))` | `with_options_service_account_key_file`, or `with_options_auth` with credentials from `credentials::{service_account, user_account, impersonated, external_account}::Builder::new(json)` |
+| `with_options_token_source(options, scopes, TokenSourceType::MetadataServer)` | `with_options_auth(options, credentials::mds::Builder::default().build()?)` |
+| `with_options_token_source(options, scopes, TokenSourceType::ExternalSource(..))` | implement `CredentialsProvider` and pass `Credentials::from(..)` to `with_options_auth`, see [examples/token_auth.rs](examples/token_auth.rs) |
+
+`with_options_auth` takes anything that converts into `gcloud_sdk::GoogleAuthHeaders`, such as `Credentials` or a
+`GoogleAuthHeaders`. The `credentials` paths above are modules of `gcloud_sdk::google_cloud_auth::credentials`.
+Scopes are set on the credentials builders with `with_scopes` or `with_access_specifier`. For the rest of the
+authentication API see the [gcloud-sdk migration guide](https://github.com/abdolence/gcloud-sdk-rs#migrating-from-032).
+
+### Behaviour changes
+
+- `with_options_service_account_key_file` reads only service account keys. User credentials and workload identity
+  federation files go through `with_options_auth` with the builders above.
+- Requests carry every header the credentials produce, so a quota project reaches Firestore as `x-goog-user-project`.
+- Credentials are built inside a Tokio runtime, since building them spawns their refresh task.
+
+### Features and MSRV
+
+- The MSRV is 1.91, the MSRV of `google-cloud-auth`.
+- The new default feature `auth-default-crypto` brings the aws-lc-rs rustls provider of `google-cloud-auth`, which service
+  account keys sign with. With `default-features = false`, enable it next to your TLS feature, or install a rustls
+  `CryptoProvider` before creating a client. See [Crypto provider](https://firestore-rust.abdolence.dev/auth.html#crypto-provider).
+
 ## 0.56
 
 v0.56.0 bounds how long `run_transaction` and `run_transaction_with_options` keep retrying, and

@@ -16,3 +16,21 @@ Default Credentials (ADC).
 This command is useful when you are developing code that would normally use a service account but need to run the code
 in a local development environment where it's easier to provide user credentials.
 So to work for local development you need to use `gcloud auth application-default login`.
+
+## Crypto provider
+
+Service account keys sign their tokens with a rustls crypto provider.
+The `auth-default-crypto` feature, on by default, brings the aws-lc-rs provider of `google-cloud-auth`.
+Be aware that aws-lc-rs is built from C sources.
+
+With `default-features = false`, either enable the feature next to your TLS feature:
+
+```toml
+[dependencies]
+firestore = { version = "0.58", default-features = false, features = ["tls-webpki-roots", "auth-default-crypto"] }
+```
+
+or install a rustls `CryptoProvider` before creating a client.
+Without a provider `FirestoreDb::new` and `FirestoreDb::with_options` return an error for a service account key,
+while `FirestoreDb::with_options_service_account_key_file` and credentials you build yourself panic on their first
+token request.

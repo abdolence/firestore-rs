@@ -1,4 +1,4 @@
-use crate::db::FirestoreEmulatorTokenSource;
+use crate::db::endpoint::FirestoreEmulatorCredentials;
 use crate::{FirestoreDb, FirestoreDbOptions};
 #[cfg(feature = "admin")]
 use gcloud_sdk::google::firestore::admin::v1::{
@@ -16,9 +16,10 @@ use gcloud_sdk::tonic::Code;
 use h2::server::SendResponse;
 use h2::RecvStream;
 use hyper::body::Bytes;
-use hyper::header::HeaderValue;
+use hyper::header::{HeaderValue, AUTHORIZATION};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{watch, Notify};
 
@@ -200,7 +201,8 @@ type Handler = dyn Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync;
 /// the request was closed. The handler's response to it is ignored.
 pub(super) struct FakeFirestore {
     pub db: FirestoreDb,
-    calls: Arc<watch::Sender<Vec<String>>>,
+    address: SocketAddr,
+    log: RequestLog,
 }
 
 impl FakeFirestore {
@@ -218,37 +220,48 @@ impl FakeFirestore {
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let address = listener.local_addr().unwrap();
         let handler: Arc<Handler> = Arc::new(handler);
-        let calls = Arc::new(watch::Sender::new(Vec::new()));
-        let accepted = calls.clone();
+        let log = RequestLog {
+            calls: Arc::new(watch::Sender::new(Vec::new())),
+            authorizations: Arc::new(Mutex::new(Vec::new())),
+        };
+        let served = log.clone();
         // Detached: #[tokio::test] drops every spawned task, this one included, at test end.
         tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
-                tokio::spawn(serve_connection(socket, handler.clone(), accepted.clone()));
+                tokio::spawn(serve_connection(socket, handler.clone(), served.clone()));
             }
         });
         let mut options = FirestoreDbOptions::new("fake-firestore".into());
-        options.firebase_api_url = Some(endpoint);
+        options.firebase_api_url = Some(format!("http://{address}"));
         options.max_retries = max_retries;
-        let db = FirestoreDb::with_options_token_source(
-            options,
-            Vec::new(),
-            gcloud_sdk::TokenSourceType::ExternalSource(Box::new(FirestoreEmulatorTokenSource)),
-        )
-        .await
-        .unwrap();
-        Self { db, calls }
+        let db = FirestoreDb::with_options_auth(options, FirestoreEmulatorCredentials::new())
+            .await
+            .unwrap();
+        Self { db, address, log }
+    }
+
+    /// The address the server listens on, as `FIRESTORE_EMULATOR_HOST` would name it.
+    pub fn address(&self) -> SocketAddr {
+        self.address
     }
 
     /// Every RPC handled so far, in the order the server received it.
     pub fn calls(&self) -> Vec<String> {
-        self.calls.borrow().clone()
+        self.log.calls.borrow().clone()
+    }
+
+    /// The `authorization` header of every RPC received so far, in the order the server
+    /// received them, `None` for an RPC that carried none.
+    pub fn authorizations(&self) -> Vec<Option<HeaderValue>> {
+        self.log.authorizations.lock().unwrap().clone()
     }
 
     /// Resolves once at least `count` RPCs have been handled.
     pub async fn wait_for_calls(&self, count: usize) {
-        self.calls
+        self.log
+            .calls
             .subscribe()
             .wait_for(|calls| calls.len() >= count)
             .await
@@ -256,13 +269,16 @@ impl FakeFirestore {
     }
 }
 
+/// What the server records of every RPC, shared by all its connections.
+#[derive(Clone)]
+struct RequestLog {
+    calls: Arc<watch::Sender<Vec<String>>>,
+    authorizations: Arc<Mutex<Vec<Option<HeaderValue>>>>,
+}
+
 /// Serves one client connection until the client closes it or an RPC answers
 /// [`FakeResponse::Drop`], which drops the connection and its socket.
-async fn serve_connection(
-    socket: TcpStream,
-    handler: Arc<Handler>,
-    calls: Arc<watch::Sender<Vec<String>>>,
-) {
+async fn serve_connection(socket: TcpStream, handler: Arc<Handler>, log: RequestLog) {
     let Ok(mut connection) = h2::server::handshake(socket).await else {
         return;
     };
@@ -273,7 +289,7 @@ async fn serve_connection(
                 request,
                 respond,
                 handler.clone(),
-                calls.clone(),
+                log.clone(),
                 close.clone(),
             ));
         }
@@ -288,10 +304,14 @@ async fn answer(
     request: hyper::Request<RecvStream>,
     mut respond: SendResponse<Bytes>,
     handler: Arc<Handler>,
-    calls: Arc<watch::Sender<Vec<String>>>,
+    log: RequestLog,
     close: Arc<Notify>,
 ) {
     let method = request.uri().path().to_owned();
+    log.authorizations
+        .lock()
+        .unwrap()
+        .push(request.headers().get(AUTHORIZATION).cloned());
     let listening = method.ends_with("/Listen");
     if listening {
         let headers = ok_headers().header("grpc-status", "0");
@@ -309,7 +329,7 @@ async fn answer(
         bytes.extend_from_slice(&chunk);
     }
     let (call, response) = handler(&method, bytes.get(5..).unwrap_or_default());
-    calls.send_modify(|calls| calls.push(call));
+    log.calls.send_modify(|calls| calls.push(call));
     if listening {
         return;
     }

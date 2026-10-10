@@ -66,6 +66,9 @@ use transaction_ops::*;
 
 mod retry;
 
+mod endpoint;
+use endpoint::{FirestoreDbEndpoint, FirestoreEmulatorCredentials};
+
 #[cfg(test)]
 mod fake_firestore;
 
@@ -105,7 +108,7 @@ struct FirestoreDbInner {
     options: FirestoreDbOptions,
     client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
     /// Whether this client sends its requests to the `FIRESTORE_EMULATOR_HOST` emulator rather
-    /// than the real service (see [`is_emulator_endpoint`]). The emulator does not implement the admin API's index management RPCs,
+    /// than the real service (see [`FirestoreDbEndpoint::is_emulator`]). The emulator does not implement the admin API's index management RPCs,
     /// so [`FirestoreIndexSupport`](crate::db::support::FirestoreIndexSupport) reads this to skip
     /// rather than fail every call a caller's startup code makes unconditionally. Only read under
     /// the `admin` feature, so the field only exists there.
@@ -125,30 +128,6 @@ struct FirestoreDbInner {
 pub struct FirestoreDb {
     inner: Arc<FirestoreDbInner>,
     session_params: Arc<FirestoreDbSessionParams>,
-}
-
-const GOOGLE_FIREBASE_API_URL: &str = "https://firestore.googleapis.com";
-const GOOGLE_FIRESTORE_EMULATOR_HOST_ENV: &str = "FIRESTORE_EMULATOR_HOST";
-
-/// The token the Firebase tools conventionally send to the local emulators,
-/// which do not authenticate the requests.
-const GOOGLE_FIRESTORE_EMULATOR_TOKEN: &str = "owner";
-
-/// A stub token source used when talking to the Firestore emulator.
-///
-/// The emulator does not verify the credentials, and looking up the real ones
-/// would only fail on a development machine that has none configured.
-struct FirestoreEmulatorTokenSource;
-
-#[async_trait::async_trait]
-impl gcloud_sdk::Source for FirestoreEmulatorTokenSource {
-    async fn token(&self) -> gcloud_sdk::error::Result<gcloud_sdk::Token> {
-        Ok(gcloud_sdk::Token::new(
-            "Bearer".to_string(),
-            GOOGLE_FIRESTORE_EMULATOR_TOKEN.to_string().into(),
-            jiff::Timestamp::MAX,
-        ))
-    }
 }
 
 impl FirestoreDb {
@@ -181,14 +160,34 @@ impl FirestoreDb {
     ///
     /// This method allows for detailed configuration of the Firestore client,
     /// such as setting a custom database ID or API URL.
-    /// It uses default token scopes and token source.
+    /// It authenticates with the Application Default Credentials, for the `cloud-platform`
+    /// scope. When the `FIRESTORE_EMULATOR_HOST` environment variable is set, it looks up no
+    /// credentials and sends the emulator a stub token instead.
+    ///
+    /// # Errors
+    /// Returns a [`FirestoreError::SystemError`] if no credentials are found or they cannot be
+    /// built, for example a service account key with the `auth-default-crypto` feature off and
+    /// no rustls `CryptoProvider` installed.
     pub async fn with_options(options: FirestoreDbOptions) -> FirestoreResult<Self> {
-        Self::with_options_token_source(
-            options,
-            GCP_DEFAULT_SCOPES.clone(),
-            TokenSourceType::Default,
-        )
-        .await
+        let endpoint = FirestoreDbEndpoint::from_env(&options);
+        Self::with_default_auth(options, endpoint).await
+    }
+
+    /// [`with_options`](Self::with_options) for `endpoint`, which tests point at a fake
+    /// emulator without setting `FIRESTORE_EMULATOR_HOST`.
+    async fn with_default_auth(
+        options: FirestoreDbOptions,
+        endpoint: FirestoreDbEndpoint,
+    ) -> FirestoreResult<Self> {
+        let client = if endpoint.emulator_host.is_some() {
+            debug!("Firestore emulator detected, sending a stub token instead of looking up credentials.");
+            endpoint
+                .connect(FirestoreEmulatorCredentials::new().into())
+                .await?
+        } else {
+            endpoint.connect_with_adc().await?
+        };
+        Ok(Self::with_client(options, endpoint, client))
     }
 
     /// Creates a new `FirestoreDb` instance attempting to infer the Google Project ID
@@ -209,91 +208,85 @@ impl FirestoreDb {
     }
 
     /// Creates a new `FirestoreDb` instance with the given options, authenticating with the
-    /// service account key file at `service_account_key_path`.
+    /// service account key file at `service_account_key_path`, for the `cloud-platform` scope.
+    ///
+    /// The key signs its tokens with the rustls crypto provider of the `auth-default-crypto`
+    /// feature. With that feature off, install a rustls `CryptoProvider` before calling this:
+    /// without one, every token request panics.
+    ///
+    /// # Errors
+    /// Returns a [`FirestoreError::InvalidParametersError`] if the file cannot be read or is not
+    /// JSON, and a [`FirestoreError::SystemError`] if it is not a service account key.
     pub async fn with_options_service_account_key_file(
         options: FirestoreDbOptions,
         service_account_key_path: std::path::PathBuf,
     ) -> FirestoreResult<Self> {
-        Self::with_options_token_source(
-            options,
-            gcloud_sdk::GCP_DEFAULT_SCOPES.clone(),
-            gcloud_sdk::TokenSourceType::File(service_account_key_path),
-        )
-        .await
+        let unreadable_key = |reason: String| {
+            FirestoreError::invalid_parameters(
+                "service_account_key_path",
+                format!("{}: {reason}", service_account_key_path.display()),
+            )
+        };
+        let key = std::fs::read(&service_account_key_path)
+            .map_err(|error| unreadable_key(error.to_string()))?;
+        let key =
+            serde_json::from_slice(&key).map_err(|error| unreadable_key(error.to_string()))?;
+        let credentials =
+            gcloud_sdk::google_cloud_auth::credentials::service_account::Builder::new(key)
+                .build()
+                .map_err(gcloud_sdk::error::Error::from)?;
+        Self::with_options_auth(options, credentials).await
     }
 
-    /// Creates a new `FirestoreDb` instance with full control over options, token scopes,
-    /// and token source type.
+    /// Creates a new `FirestoreDb` instance with the given options, authenticating every request
+    /// with the headers `auth` serves.
     ///
-    /// This is the most flexible constructor, allowing customization of authentication
-    /// and authorization aspects: `token_scopes` are the OAuth2 scopes to request, and
-    /// `token_source_type` is how to obtain the token (default, a key file, or a metadata
-    /// server).
-    pub async fn with_options_token_source(
+    /// `auth` is any of:
+    /// - a google-cloud-auth `Credentials`, built with the builders of
+    ///   `gcloud_sdk::google_cloud_auth::credentials`: a service account key, user credentials,
+    ///   impersonation, workload identity federation, the metadata server, custom scopes, or a
+    ///   `CredentialsProvider` of your own passed to `Credentials::from`;
+    /// - a [`gcloud_sdk::GoogleAuthHeaders`], such as
+    ///   [`GoogleAuthHeaders::from_adc_with_scopes`](gcloud_sdk::GoogleAuthHeaders::from_adc_with_scopes)
+    ///   builds.
+    ///
+    /// These credentials are used as given, also when `FIRESTORE_EMULATOR_HOST` is set.
+    ///
+    /// Credentials built from a service account key sign with a rustls crypto provider. With the
+    /// `auth-default-crypto` feature off, install a rustls `CryptoProvider` before building them.
+    pub async fn with_options_auth(
         options: FirestoreDbOptions,
-        token_scopes: Vec<String>,
-        token_source_type: TokenSourceType,
+        auth: impl Into<GoogleAuthHeaders>,
     ) -> FirestoreResult<Self> {
-        let firestore_database_path = format!(
-            "projects/{}/databases/{}",
-            options.google_project_id, options.database_id
-        );
-        let firestore_database_doc_path = format!("{firestore_database_path}/documents");
+        let endpoint = FirestoreDbEndpoint::from_env(&options);
+        let client = endpoint.connect(auth.into()).await?;
+        Ok(Self::with_client(options, endpoint, client))
+    }
 
-        let emulator_host = std::env::var(GOOGLE_FIRESTORE_EMULATOR_HOST_ENV).ok();
-
-        let effective_firebase_api_url = options
-            .firebase_api_url
-            .clone()
-            .or_else(|| emulator_host.clone().map(ensure_url_scheme))
-            .unwrap_or_else(|| GOOGLE_FIREBASE_API_URL.to_string());
-
-        // The emulator does not authenticate the requests, and there are usually no
-        // credentials available when developing against it, so looking them up would
-        // only fail. An explicitly specified token source is still respected.
-        let effective_token_source_type =
-            if emulator_host.is_some() && matches!(token_source_type, TokenSourceType::Default) {
-                debug!(
-                "Firestore emulator detected, skipping the token source and using a stub token.",
-            );
-                TokenSourceType::ExternalSource(Box::new(FirestoreEmulatorTokenSource))
-            } else {
-                token_source_type
-            };
-
+    fn with_client(
+        options: FirestoreDbOptions,
+        endpoint: FirestoreDbEndpoint,
+        client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
+    ) -> Self {
         info!(
-            database_path = firestore_database_path,
-            api_url = effective_firebase_api_url,
-            token_scopes = token_scopes.join(", "),
-            "Creating a new database client.",
+            database_path = endpoint.database_path,
+            api_url = endpoint.api_url,
+            "Created a new database client.",
         );
-
-        #[cfg(feature = "admin")]
-        let is_emulator =
-            is_emulator_endpoint(&effective_firebase_api_url, emulator_host.as_deref());
-
-        let client = GoogleApiClient::from_function_with_token_source(
-            FirestoreClient::new,
-            effective_firebase_api_url,
-            Some(firestore_database_path.clone()),
-            token_scopes,
-            effective_token_source_type,
-        )
-        .await?;
 
         let inner = FirestoreDbInner {
-            database_path: firestore_database_path,
-            doc_path: firestore_database_doc_path,
+            doc_path: format!("{}/documents", endpoint.database_path),
+            #[cfg(feature = "admin")]
+            is_emulator: endpoint.is_emulator(),
+            database_path: endpoint.database_path,
             client,
             options,
-            #[cfg(feature = "admin")]
-            is_emulator,
         };
 
-        Ok(Self {
+        Self {
             inner: Arc::new(inner),
             session_params: Arc::new(FirestoreDbSessionParams::new()),
-        })
+        }
     }
 
     /// Deserializes a Firestore [`Document`] into a Rust type `T`.
@@ -630,24 +623,6 @@ impl FirestoreDb {
     }
 }
 
-/// Ensures that a URL string has a scheme (e.g., "http://").
-/// If no scheme is present, "http://" is prepended.
-/// Whether requests sent to `effective_url` reach the `FIRESTORE_EMULATOR_HOST` emulator: only
-/// when that host is the URL actually used. An explicit `firebase_api_url` pointing elsewhere,
-/// production included, is not the emulator just because the variable is set.
-#[cfg(feature = "admin")]
-fn is_emulator_endpoint(effective_url: &str, emulator_host: Option<&str>) -> bool {
-    emulator_host.is_some_and(|host| ensure_url_scheme(host.to_string()) == effective_url)
-}
-
-fn ensure_url_scheme(url: String) -> String {
-    if !url.contains("://") {
-        format!("http://{url}")
-    } else {
-        url
-    }
-}
-
 impl std::fmt::Debug for FirestoreDb {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FirestoreDb")
@@ -690,12 +665,55 @@ pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
+    use gcloud_sdk::tonic::Code;
+
+    /// A 2048-bit RSA key in PKCS#8, generated for these tests and used nowhere else.
+    const TEST_SERVICE_ACCOUNT_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCiNMJDZM3rHRuj\nIxTKvSHs/IGI1oEh3NYbNaAxYOoRSVNbxcvR/ixaB/Um2KzLuLpFQzg+PrMJ6EVg\n9sMXPBetw42BWtE4Q9vMtjYia01RPo0jbhf9N9EAKtytbBmgBgsh+5EeYHpARr27\n+wg2CZb3pwRemiKOJjPIXzc8zT5QKCa/W0/sYHkt55Q4BUYTzPajvY2zMJgFIEcp\nkS4Vf3I/06fl6l2rAs+qrSE3VYXGIbNihQ4C+aCuPJeA6oXAHRHuGWEI3azqqKn/\nr81JsykNVElHfdzsoYl6qWu9IuhnJ7cIF/XvG6UHVum+1+Fh54r5+44ky/ixmlaz\nfSq5BjnvAgMBAAECggEAGFkeDfq8ND4uz1qtPM+OH6I5mX5FbP1WwEfY74CSMh0V\nH7H9qdxi8PK/2GBu87ebclkoQKOtwV91xpvT5hF1pnYzsAafYDhDbqOtVZZQyVC/\n4+EbRb3SqBlG/ds7r3sowaWe/3XQ9AQKaATDE0V2PV97Nu4hIMBYRowQYRaX83UN\n5PDdRzpVbEglBD4yCcuYLmYiRdA8Wvvitf625VNPS2aCz9ibH/4cWDeC8u3Z35rL\n1LwLLHfJ9SPh59KHfXcg8A4rTJ5VHBGkNB92y57RdAcwJ+Q2xRwkiYLUeHIph19b\nCu9sWo466yz9vOf9j7oqez6BeCuqoi6tLr6eG4eOwQKBgQDkWvtMdDmCbrrpGeKP\nDZp2drRHXPGTDT2NyoXmIffq2KhcNVW6EXeVOHQyiCwncKZawwfxRveIPXvU2zTc\nApYi1SnZRdwWmkHiy2GCO/vVYO404c2JXu2n3tLixh5ir39v7yauWRjZ/qQ5/qvO\nU0kKz/tBhik9fK9BJdCqJ013rwKBgQC117pLUOt4vbPSzja+x33gZUobNJKFvJy+\nWEEIvZ4gbM7iBxHco6xzY4Kcn2Wd2Ai+PdQBR6yFbRMscB4BsqIoCy4HLN0i3bz4\nyLW8eNlti06W2Qnd6/Wzyp4a2t7XhPfA982iQA4gcYiSHQC4nzjqOP2dBpfv14bz\noninztGxwQKBgQCw7RERbmd0eIiWvHh978NCj7wkIo4FKlgLuOM/qAfmzFC9iJFQ\nJeJqGiBlWn4jXLN3VO6dcSeuRjzgcaql39clS9Utw2O/m2r65is5dXIsI/rLvDu8\neHFYBFuOWoQGYAUz264znVKU7Cefy4KfzIWmO/hnDyR6wFUk+8CNZQAvfwKBgFZF\nvGABS0Zkkk1Agt6unPz6cVdI8P88Rg1Up74y4DO4C8tW2VWZ3bZ9DrmqMjbaCQPh\nJ5VX4PUIk+EwbDwX+TEQZM0Irv3cv8w0xWxe1aFQR3/wButgCJk9Vxecob8UmcrW\nhpwk0c74rnfMBMyS1hjh4wk92JX05lTuz1mmGPzBAoGAGdf4NYGrmfzlqTwHjgaA\n7K9n8YCGy9M1v17viLNiuvlOUQFVLSyJIgkXoY4ZSfi0G/JKbTXEIGiGtCCN40EC\nOqUNKtjNbnYHV7IiLhS5q1oHZlGow2tSAvT7JhWhHILm+RF5hxJY0m8sWbSkMyR1\nKaJ9dM6o2MEo9MlgXCigO+4=\n-----END PRIVATE KEY-----\n";
+
+    #[tokio::test]
+    async fn a_service_account_key_file_signs_the_bearer_token() {
+        #[cfg(not(feature = "auth-default-crypto"))]
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let server = FakeFirestore::start(|_, _| {
+            (
+                "GetDocument".to_string(),
+                FakeResponse::Status(Code::NotFound),
+            )
+        })
+        .await;
+        let key_file = tempfile::NamedTempFile::new().unwrap();
+        let key = serde_json::json!({
+            "type": "service_account",
+            "project_id": "keyed-project",
+            "private_key_id": "keyed-project-key",
+            "private_key": TEST_SERVICE_ACCOUNT_PRIVATE_KEY,
+            "client_email": "firestore-client@keyed-project.iam.gserviceaccount.com",
+        });
+        std::fs::write(key_file.path(), key.to_string()).unwrap();
+        let mut options = FirestoreDbOptions::new("keyed-project".to_string());
+        options.firebase_api_url = Some(format!("http://{}", server.address()));
+        let db =
+            FirestoreDb::with_options_service_account_key_file(options, key_file.path().into())
+                .await
+                .unwrap();
+
+        db.ping().await.unwrap();
+
+        let authorizations = server.authorizations();
+        assert_eq!(authorizations.len(), 1);
+        let authorization = authorizations[0]
+            .as_ref()
+            .expect("the request must carry an authorization header");
+        assert!(
+            authorization.as_bytes().starts_with(b"Bearer ey"),
+            "expected a signed JWT bearer token, got {authorization:?}"
+        );
+    }
 
     #[tokio::test]
     async fn test_ping_reads_a_document_under_the_documents_path() {
-        use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
         use gcloud_sdk::prost::Message as _;
-        use gcloud_sdk::tonic::Code;
 
         // The request name is logged as the "call", rather than asserted on inside the handler:
         // a failed assertion there would panic the server's task and leave the client waiting
@@ -719,40 +737,6 @@ mod tests {
                 && documents_path.ends_with("/documents"),
             "ping must read a document under the database's /documents/ path, got {:?}",
             calls[0]
-        );
-    }
-
-    #[cfg(feature = "admin")]
-    #[test]
-    fn the_emulator_host_is_the_emulator_only_when_it_is_the_url_used() {
-        assert!(is_emulator_endpoint(
-            "http://localhost:8080",
-            Some("localhost:8080")
-        ));
-        assert!(is_emulator_endpoint(
-            "http://localhost:8080",
-            Some("http://localhost:8080")
-        ));
-        assert!(!is_emulator_endpoint(GOOGLE_FIREBASE_API_URL, None));
-        assert!(
-            !is_emulator_endpoint(GOOGLE_FIREBASE_API_URL, Some("localhost:8080")),
-            "an explicit production URL is not the emulator"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_emulator_token_source() {
-        use gcloud_sdk::Source;
-
-        let token = FirestoreEmulatorTokenSource
-            .token()
-            .await
-            .expect("The emulator token source must never fail");
-
-        assert_eq!(token.token_type, "Bearer");
-        assert_eq!(
-            token.token.as_sensitive_str(),
-            GOOGLE_FIRESTORE_EMULATOR_TOKEN
         );
     }
 
@@ -824,22 +808,6 @@ mod tests {
                 "expected collection_id {bad_collection_id:?} to be rejected"
             );
         }
-    }
-
-    #[test]
-    fn test_ensure_url_scheme() {
-        assert_eq!(
-            ensure_url_scheme("localhost:8080".into()),
-            "http://localhost:8080"
-        );
-        assert_eq!(
-            ensure_url_scheme("any://localhost:8080".into()),
-            "any://localhost:8080"
-        );
-        assert_eq!(
-            ensure_url_scheme("invalid:localhost:8080".into()),
-            "http://invalid:localhost:8080"
-        );
     }
 
     #[test]

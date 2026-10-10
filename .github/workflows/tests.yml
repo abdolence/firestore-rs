@@ -49,9 +49,9 @@ jobs:
       - name: 'Building the book'
         run: cd docs && mdbook build
       - name: 'Checking the minimum supported Rust version'
-        uses: dtolnay/rust-toolchain@1.90.0
+        uses: dtolnay/rust-toolchain@1.91.0
       - name: 'Building on the minimum supported Rust version'
-        run: cargo +1.90.0 check --lib --features "admin,caching-memory,caching-persistent"
+        run: cargo +1.91.0 check --lib --features "admin,caching-memory,caching-persistent"
       - name: 'Run lib tests'
         run: cargo test --lib --features "admin,caching-memory,caching-persistent"
         if: github.ref != 'refs/heads/master'
