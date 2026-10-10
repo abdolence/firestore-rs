@@ -67,7 +67,7 @@
 //!
 //! | For | Start at |
 //! |---|---|
-//! | Creating a client | [`FirestoreDb::new`], [`FirestoreDb::with_options`] |
+//! | Creating a client | [`FirestoreDb::new`], [`FirestoreDb::with_options`], [`FirestoreDb::with_options_auth`] |
 //! | Every read and write | [`FirestoreDb::fluent`] |
 //! | Document and collection IDs | [`FirestoreDocumentId`], [`FirestoreCollectionId`], [`ParentPathBuilder`] |
 //! | Field paths in queries and updates | [`path!`], [`paths!`] |
@@ -89,6 +89,7 @@
 //! |---|---|
 //! | `tls-roots` (default) | TLS trust anchors from the platform's native root store |
 //! | `tls-webpki-roots` | TLS trust anchors bundled from the `webpki-roots` crate instead |
+//! | `auth-default-crypto` (default) | The aws-lc-rs rustls crypto provider service account keys sign their tokens with; without it, install a rustls `CryptoProvider` before creating a client |
 //! | `caching-memory` | In-memory collection and document cache, kept current by a listener |
 //! | `caching-persistent` | The same cache backed by an on-disk database |
 //! | `admin` | Declarative index management and bulk delete: composite indexes, vector indexes, single-field overrides, TTL policy, and `BulkDeleteDocuments` |
@@ -137,6 +138,10 @@ pub use async_trait::async_trait;
 /// [`FirestoreListenerTarget`] and [`FirestoreListenerToken`], whose inner fields are private.
 /// Implementations of [`FirestoreResumeStateStorage`] need it to read those values.
 pub use rvstruct::ValueStruct;
+
+/// Re-export of the gcloud-sdk version this crate compiles against, for building
+/// [`gcloud_sdk::GoogleAuthHeaders`] and `google_cloud_auth` credentials.
+pub use gcloud_sdk;
 
 /// Re-export of the [`jiff`] crate, so that the date/time API used by this
 /// library is available without depending on `jiff` explicitly.

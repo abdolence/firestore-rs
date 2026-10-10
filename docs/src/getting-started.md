@@ -4,7 +4,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-firestore = "0.55"
+firestore = "0.58"
 ```
 
 ## Crypto provider error
