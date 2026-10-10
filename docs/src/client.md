@@ -46,10 +46,11 @@ The key file is read as a service account key.
 
 For any other credentials use `FirestoreDb::with_options_auth`, which takes everything that converts into gcloud-sdk's
 `GoogleAuthHeaders`:
-- `Credentials` from the builders of `gcloud_sdk::google_cloud_auth::credentials`: service account keys, user credentials,
-  impersonation, workload identity federation, the metadata server, etc.;
+- `Credentials` from the builders of `firestore::gcloud_sdk::google_cloud_auth::credentials`: service account keys,
+  user credentials, impersonation, workload identity federation, the metadata server, etc.;
 - a `CredentialsProvider` of your own, passed to `Credentials::from`;
-- `GoogleAuthHeaders::from_adc_with_scopes` for the Application Default Credentials with other scopes.
+- `GoogleAuthHeaders::from_adc_with_scopes` for the Application Default Credentials with other scopes;
+- `GoogleAuthHeaders::from_service_account_key` for a service account key with other scopes.
 
 ```rust,no_run
 # use firestore::*;
@@ -59,7 +60,7 @@ For any other credentials use `FirestoreDb::with_options_auth`, which takes ever
 # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 FirestoreDb::with_options_auth(
     FirestoreDbOptions::new(config_env_var("PROJECT_ID")?.to_string()),
-    gcloud_sdk::GoogleAuthHeaders::from_adc_with_scopes(vec![
+    firestore::gcloud_sdk::GoogleAuthHeaders::from_adc_with_scopes(vec![
         "https://www.googleapis.com/auth/datastore".to_string(),
     ])
     .await?,
@@ -70,12 +71,8 @@ FirestoreDb::with_options_auth(
 # }
 ```
 
-These types come from gcloud-sdk, so your project needs it as a dependency at the same version as the library:
-
-```toml
-[dependencies]
-gcloud-sdk = { version = "0.33", default-features = false }
-```
+These types come from gcloud-sdk, which the library re-exports as `firestore::gcloud_sdk`,
+so your project needs no gcloud-sdk dependency of its own.
 
 Full example with a custom `CredentialsProvider` available [here](https://github.com/abdolence/firestore-rs/tree/master/examples/token_auth.rs).
 

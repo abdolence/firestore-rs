@@ -31,6 +31,7 @@ firestore = { version = "0.58", default-features = false, features = ["tls-webpk
 ```
 
 or install a rustls `CryptoProvider` before creating a client.
-Without a provider `FirestoreDb::new` and `FirestoreDb::with_options` return an error for a service account key,
-while `FirestoreDb::with_options_service_account_key_file` and credentials you build yourself panic on their first
-token request.
+Without a provider `FirestoreDb::new`, `FirestoreDb::with_options` and `FirestoreDb::with_options_service_account_key_file`
+return an error with the code `CryptoProviderMissing` for a service account key.
+Credentials you build yourself with the `google-cloud-auth` builders panic on their first token request instead,
+so build them with `GoogleAuthHeaders::from_service_account_key` to get the same error.

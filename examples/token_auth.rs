@@ -1,11 +1,11 @@
+use firestore::gcloud_sdk::google_cloud_auth::credentials::{
+    CacheableResource, Credentials, CredentialsProvider, EntityTag,
+};
+use firestore::gcloud_sdk::google_cloud_auth::errors::CredentialsError;
+use firestore::gcloud_sdk::HeaderMap;
 use firestore::*;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
-use gcloud_sdk::google_cloud_auth::credentials::{
-    CacheableResource, Credentials, CredentialsProvider, EntityTag,
-};
-use gcloud_sdk::google_cloud_auth::errors::CredentialsError;
-use gcloud_sdk::HeaderMap;
 use hyper::header::{HeaderValue, InvalidHeaderValue, AUTHORIZATION};
 use hyper::http::Extensions;
 use serde::{Deserialize, Serialize};

@@ -52,6 +52,8 @@ jobs:
         uses: dtolnay/rust-toolchain@1.91.0
       - name: 'Building on the minimum supported Rust version'
         run: cargo +1.91.0 check --lib --features "admin,caching-memory,caching-persistent"
+      - name: 'Run the test without a crypto provider'
+        run: cargo test --no-default-features --features tls-webpki-roots --test crypto_provider_missing
       - name: 'Run lib tests'
         run: cargo test --lib --features "admin,caching-memory,caching-persistent"
         if: github.ref != 'refs/heads/master'

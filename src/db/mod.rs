@@ -211,12 +211,12 @@ impl FirestoreDb {
     /// service account key file at `service_account_key_path`, for the `cloud-platform` scope.
     ///
     /// The key signs its tokens with the rustls crypto provider of the `auth-default-crypto`
-    /// feature. With that feature off, install a rustls `CryptoProvider` before calling this:
-    /// without one, every token request panics.
+    /// feature. With that feature off, install a rustls `CryptoProvider` before calling this.
     ///
     /// # Errors
     /// Returns a [`FirestoreError::InvalidParametersError`] if the file cannot be read or is not
-    /// JSON, and a [`FirestoreError::SystemError`] if it is not a service account key.
+    /// JSON, and a [`FirestoreError::SystemError`] if it is not a service account key, or if no
+    /// rustls crypto provider is available to sign with (code `CryptoProviderMissing`).
     pub async fn with_options_service_account_key_file(
         options: FirestoreDbOptions,
         service_account_key_path: std::path::PathBuf,
@@ -231,11 +231,9 @@ impl FirestoreDb {
             .map_err(|error| unreadable_key(error.to_string()))?;
         let key =
             serde_json::from_slice(&key).map_err(|error| unreadable_key(error.to_string()))?;
-        let credentials =
-            gcloud_sdk::google_cloud_auth::credentials::service_account::Builder::new(key)
-                .build()
-                .map_err(gcloud_sdk::error::Error::from)?;
-        Self::with_options_auth(options, credentials).await
+        let auth =
+            GoogleAuthHeaders::from_service_account_key(key, GCP_DEFAULT_SCOPES.clone()).await?;
+        Self::with_options_auth(options, auth).await
     }
 
     /// Creates a new `FirestoreDb` instance with the given options, authenticating every request
@@ -449,8 +447,8 @@ impl FirestoreDb {
     ///
     /// It exposes types from `gcloud-sdk`, whose version is *not* part of this crate's semver
     /// contract: this signature and the types behind it may change in any release, including a
-    /// patch release. You also need to depend on `gcloud-sdk` yourself, at a matching version,
-    /// since this crate does not re-export it.
+    /// patch release. The types are reachable through the [`gcloud_sdk`](crate::gcloud_sdk)
+    /// re-export.
     #[inline]
     pub fn client(&self) -> &GoogleApi<FirestoreClient<GoogleAuthMiddleware>> {
         &self.inner.client

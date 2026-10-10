@@ -139,6 +139,10 @@ pub use async_trait::async_trait;
 /// Implementations of [`FirestoreResumeStateStorage`] need it to read those values.
 pub use rvstruct::ValueStruct;
 
+/// Re-export of the gcloud-sdk version this crate compiles against, for building
+/// [`gcloud_sdk::GoogleAuthHeaders`] and `google_cloud_auth` credentials.
+pub use gcloud_sdk;
+
 /// Re-export of the [`jiff`] crate, so that the date/time API used by this
 /// library is available without depending on `jiff` explicitly.
 pub use jiff;

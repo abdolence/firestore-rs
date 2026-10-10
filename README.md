@@ -170,7 +170,8 @@ since the first authorize only `gcloud` tool to access the Cloud Platform.
 See [Google authentication](https://firestore-rust.abdolence.dev/auth.html) for the details.
 
 Other credentials go through `FirestoreDb::with_options_auth`, which takes the `google-cloud-auth` credentials
-gcloud-sdk re-exports, or a `GoogleAuthHeaders`.
+gcloud-sdk re-exports, or a `GoogleAuthHeaders`. The library re-exports gcloud-sdk as `firestore::gcloud_sdk`,
+so these types need no gcloud-sdk dependency of your own.
 See [Client instance and lifecycle](https://firestore-rust.abdolence.dev/client.html) for the examples.
 
 ### Upgrading to 0.58
@@ -179,6 +180,7 @@ See [Client instance and lifecycle](https://firestore-rust.abdolence.dev/client.
 - `FirestoreDb::with_options_token_source` and the gcloud-sdk token sources are removed,
   `FirestoreDb::with_options_auth` replaces them;
 - `FirestoreDb::new`, `with_options` and `with_options_service_account_key_file` keep their signatures;
+- gcloud-sdk is re-exported as `firestore::gcloud_sdk`;
 - the new default feature `auth-default-crypto` brings the crypto provider service account keys sign with;
 - the MSRV is 1.91.
 

@@ -16,8 +16,10 @@ Google's official Rust SDK. The gcloud-sdk token sources are removed, and so is 
 | `with_options_token_source(options, scopes, TokenSourceType::MetadataServer)` | `with_options_auth(options, credentials::mds::Builder::default().build()?)` |
 | `with_options_token_source(options, scopes, TokenSourceType::ExternalSource(..))` | implement `CredentialsProvider` and pass `Credentials::from(..)` to `with_options_auth`, see [examples/token_auth.rs](examples/token_auth.rs) |
 
-`with_options_auth` takes anything that converts into `gcloud_sdk::GoogleAuthHeaders`, such as `Credentials` or a
-`GoogleAuthHeaders`. The `credentials` paths above are modules of `gcloud_sdk::google_cloud_auth::credentials`.
+`with_options_auth` takes anything that converts into `firestore::gcloud_sdk::GoogleAuthHeaders`, such as `Credentials`
+or a `GoogleAuthHeaders`. The `credentials` paths above are modules of
+`firestore::gcloud_sdk::google_cloud_auth::credentials`. The library re-exports the gcloud-sdk version it compiles
+against as `firestore::gcloud_sdk`, so a direct gcloud-sdk dependency is no longer needed for these types.
 Scopes are set on the credentials builders with `with_scopes` or `with_access_specifier`. For the rest of the
 authentication API see the [gcloud-sdk migration guide](https://github.com/abdolence/gcloud-sdk-rs#migrating-from-032).
 
@@ -27,6 +29,8 @@ authentication API see the [gcloud-sdk migration guide](https://github.com/abdol
   federation files go through `with_options_auth` with the builders above.
 - Requests carry every header the credentials produce, so a quota project reaches Firestore as `x-goog-user-project`.
 - Credentials are built inside a Tokio runtime, since building them spawns their refresh task.
+- Without a rustls crypto provider, `with_options_service_account_key_file` returns a `SystemError` with the code
+  `CryptoProviderMissing`.
 
 ### Features and MSRV
 
