@@ -24,32 +24,36 @@ pub(super) type FirestoreListenerRegisteredTargets =
 /// The set of targets a listener listens on, shared between the handle and its running loop.
 ///
 /// A `std::sync::RwLock` rather than tokio's: it keeps
-/// [`FirestoreListener::add_target`](crate::FirestoreListener::add_target) synchronous, and the compiler stops a guard being held across an await. Every use site clones
-/// out what it needs and drops the guard before awaiting. Across an await a target can be removed
-/// and registered again under the same ID, so a change for a registration read before the await
-/// goes through the `_if_current` methods.
+/// [`FirestoreListener::add_target`](crate::FirestoreListener::add_target) synchronous, and the
+/// compiler stops a guard being held across an await. Every use site clones out what it needs and
+/// drops the guard before awaiting. Across an await a target can be removed and registered again
+/// under the same ID, so a change for a registration read before the await goes through the
+/// `_if_current` methods.
 #[derive(Clone, Default)]
-pub(super) struct FirestoreListenerTargetsState(
-    Arc<std::sync::RwLock<FirestoreListenerRegisteredTargets>>,
-);
+pub(super) struct FirestoreListenerTargetsState {
+    targets: Arc<std::sync::RwLock<FirestoreListenerRegisteredTargets>>,
+    /// Shared by every clone, so that a registration value is never handed out twice.
+    next_registration: Arc<AtomicU64>,
+}
 
 impl FirestoreListenerTargetsState {
     pub(super) fn read(
         &self,
     ) -> std::sync::RwLockReadGuard<'_, FirestoreListenerRegisteredTargets> {
-        self.0.read().expect("listener targets lock poisoned")
+        self.targets.read().expect("listener targets lock poisoned")
     }
 
     pub(super) fn write(
         &self,
     ) -> std::sync::RwLockWriteGuard<'_, FirestoreListenerRegisteredTargets> {
-        self.0.write().expect("listener targets lock poisoned")
+        self.targets
+            .write()
+            .expect("listener targets lock poisoned")
     }
 
     pub(super) fn register(
         &self,
         target_params: FirestoreListenerTargetParams,
-        next_registration: &AtomicU64,
     ) -> FirestoreResult<()> {
         let mut targets = self.write();
         if targets.contains_key(&target_params.target) {
@@ -62,7 +66,7 @@ impl FirestoreListenerTargetsState {
             ));
         }
         let registration =
-            FirestoreListenerRegistration(next_registration.fetch_add(1, Ordering::Relaxed));
+            FirestoreListenerRegistration(self.next_registration.fetch_add(1, Ordering::Relaxed));
         targets.insert(
             target_params.target.clone(),
             FirestoreListenerRegisteredTarget {

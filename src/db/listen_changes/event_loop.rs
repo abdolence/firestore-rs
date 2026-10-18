@@ -79,13 +79,13 @@ where
             let (requests, request_reader) = tokio::sync::mpsc::unbounded_channel();
             let mut on_stream = FirestoreListenerStreamTargets::new(requests);
             self.add_due_targets(&mut on_stream).await?;
-            if on_stream.targets.is_empty() {
+            if on_stream.is_empty() {
                 // Every target was removed while its resume state was read. A stream opened with
                 // no target could wait for an answer that never comes.
                 continue;
             }
             debug!(
-                num_targets = on_stream.targets.len(),
+                num_targets = on_stream.len(),
                 "Start listening on targets..."
             );
 
@@ -241,7 +241,7 @@ where
                     .await;
                 Ok(ControlFlow::Break(()))
             }
-            Err(FirestoreError::DataNotFoundError(err)) if on_stream.crossed_removal => {
+            Err(FirestoreError::DataNotFoundError(err)) if on_stream.crossed_removal() => {
                 // Firestore's answer to the crossed `RemoveTarget`. The other targets are added
                 // back on a new stream at once.
                 debug!(%err, "Firestore closed the listen stream over a target it had already removed. Reconnecting...");
@@ -255,7 +255,7 @@ where
     }
 
     async fn on_target_change(
-        &mut self,
+        &self,
         target_change: TargetChange,
         on_stream: &mut FirestoreListenerStreamTargets,
     ) -> FirestoreResult<ControlFlow<()>> {

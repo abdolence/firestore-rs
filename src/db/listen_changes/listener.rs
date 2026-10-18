@@ -10,7 +10,6 @@ use futures::TryFutureExt;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
 use std::future::Future;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
@@ -130,9 +129,8 @@ where
     storage: S,
     listener_params: FirestoreListenerParams,
     targets: FirestoreListenerTargetsState,
-    next_registration: AtomicU64,
     shutdown_signal: watch::Sender<bool>,
-    pub(super) shutdown_handle: Option<JoinHandle<FirestoreResult<()>>>,
+    shutdown_handle: Option<JoinHandle<FirestoreResult<()>>>,
     /// Created up front rather than in `start`, so that targets can be added and removed before,
     /// during and after the listener runs.
     control_writer: Arc<UnboundedSender<FirestoreListenerControl>>,
@@ -162,7 +160,6 @@ where
             storage,
             listener_params,
             targets: FirestoreListenerTargetsState::default(),
-            next_registration: AtomicU64::new(0),
             shutdown_signal: watch::Sender::new(false),
             shutdown_handle: None,
             control_writer: Arc::new(control_writer),
@@ -202,8 +199,7 @@ where
             ));
         }
 
-        self.targets
-            .register(target_params, &self.next_registration)?;
+        self.targets.register(target_params)?;
 
         // A send error only means the loop is gone, which the shutdown check above already covers.
         self.control_writer
@@ -402,10 +398,7 @@ where
         self.shutdown_with(Some(timeout)).await
     }
 
-    pub(super) async fn shutdown_with(
-        &mut self,
-        timeout: Option<std::time::Duration>,
-    ) -> FirestoreResult<()> {
+    async fn shutdown_with(&mut self, timeout: Option<std::time::Duration>) -> FirestoreResult<()> {
         debug!("Shutting down Firestore listener...");
         self.shutdown_signal.send_replace(true);
         self.control_writer
@@ -444,3 +437,6 @@ where
         stopped_with
     }
 }
+
+#[cfg(test)]
+mod lifecycle_tests;

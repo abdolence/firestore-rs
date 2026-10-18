@@ -1,15 +1,14 @@
 use super::*;
 use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
 use crate::db::support::FirestoreListenSupport;
-use crate::errors::*;
 use crate::{
+    FirestoreCollectionDocuments, FirestoreListenerTargetResumeType, FirestoreListenerToken,
     FirestoreMemListenStateStorage, FirestoreRequestOptions, FirestoreResult,
-    FirestoreResumeStateStorage,
+    FirestoreResumeStateStorage, FirestoreTargetType,
 };
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures::StreamExt;
-use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::tonic::{Code, Status};
 use listen_request::TargetChange as RequestedChange;
 use rvstruct::ValueStruct;

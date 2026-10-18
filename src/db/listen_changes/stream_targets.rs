@@ -81,12 +81,12 @@ pub(super) struct FirestoreListenerRemoval {
 /// The targets on one open listen stream, and the request side that changes them.
 pub(super) struct FirestoreListenerStreamTargets {
     requests: UnboundedSender<ListenRequest>,
-    pub(super) targets: HashMap<FirestoreListenerTarget, FirestoreListenerStreamTarget>,
+    targets: HashMap<FirestoreListenerTarget, FirestoreListenerStreamTarget>,
     /// A `RemoveTarget` was in flight for a target Firestore removed first, with a cause or by
     /// ending a `once` target it had reported current. Firestore answers a `RemoveTarget` for a
     /// target it no longer has by failing the stream with `NOT_FOUND` instead of acknowledging it,
     /// so that failure is expected and the stream is reopened at once.
-    pub(super) crossed_removal: bool,
+    crossed_removal: bool,
 }
 
 impl FirestoreListenerStreamTargets {
@@ -96,6 +96,18 @@ impl FirestoreListenerStreamTargets {
             targets: HashMap::new(),
             crossed_removal: false,
         }
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.targets.len()
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.targets.is_empty()
+    }
+
+    pub(super) fn crossed_removal(&self) -> bool {
+        self.crossed_removal
     }
 
     /// Whether a change that names `target` is about this registration of it.
