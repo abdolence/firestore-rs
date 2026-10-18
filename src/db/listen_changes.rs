@@ -41,10 +41,12 @@ pub struct FirestoreListenerTargetParams {
 }
 
 impl FirestoreListenerTargetParams {
-    /// Checks that the target ID is valid before the target is registered on a listener.
+    /// Checks that the target ID is valid.
     ///
     /// Returns an error if the target ID is zero or greater than `i32::MAX` - Firestore's wire
-    /// protocol represents a target ID as a signed 32-bit integer.
+    /// protocol represents a target ID as a signed 32-bit integer. There is no need to call this
+    /// before [`FirestoreListener::add_target`], which checks the ID along with the rest of the
+    /// target.
     pub fn validate(&self) -> FirestoreResult<()> {
         self.target.validate()?;
         Ok(())
@@ -322,8 +324,61 @@ type FirestoreListenerRegisteredTargets =
 ///
 /// A `std::sync::RwLock` rather than tokio's: it keeps [`FirestoreListener::add_target`]
 /// synchronous, and the compiler stops a guard being held across an await. Every use site clones
-/// out what it needs and drops the guard before awaiting.
-type FirestoreListenerTargetsState = Arc<std::sync::RwLock<FirestoreListenerRegisteredTargets>>;
+/// out what it needs and drops the guard before awaiting. Across an await a target can be removed
+/// and registered again under the same ID, so a change for a registration read before the await
+/// goes through the `_if_current` methods.
+#[derive(Clone, Default)]
+struct FirestoreListenerTargetsState(Arc<std::sync::RwLock<FirestoreListenerRegisteredTargets>>);
+
+impl FirestoreListenerTargetsState {
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, FirestoreListenerRegisteredTargets> {
+        self.0.read().expect("listener targets lock poisoned")
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, FirestoreListenerRegisteredTargets> {
+        self.0.write().expect("listener targets lock poisoned")
+    }
+
+    fn registration_of(
+        &self,
+        target: &FirestoreListenerTarget,
+    ) -> Option<FirestoreListenerRegistration> {
+        self.read()
+            .get(target)
+            .map(|registered| registered.registration)
+    }
+
+    /// Applies `update` to the target's parameters if it is still registered under
+    /// `registration`, and returns what it returned.
+    fn update_if_current<R>(
+        &self,
+        target: &FirestoreListenerTarget,
+        registration: FirestoreListenerRegistration,
+        update: impl FnOnce(&mut FirestoreListenerTargetParams) -> R,
+    ) -> Option<R> {
+        self.write()
+            .get_mut(target)
+            .filter(|registered| registered.registration == registration)
+            .map(|registered| update(&mut registered.params))
+    }
+
+    /// Unregisters the target if it is still registered under `registration`, and returns whether
+    /// it did.
+    fn remove_if_current(
+        &self,
+        target: &FirestoreListenerTarget,
+        registration: FirestoreListenerRegistration,
+    ) -> bool {
+        let mut targets = self.write();
+        let current = targets
+            .get(target)
+            .is_some_and(|registered| registered.registration == registration);
+        if current {
+            targets.remove(target);
+        }
+        current
+    }
+}
 
 /// A message to a running listener loop.
 ///
@@ -373,9 +428,6 @@ where
     targets: FirestoreListenerTargetsState,
     next_registration: AtomicU64,
     shutdown_signal: watch::Sender<bool>,
-    /// Set once the loop has ended, however it ended, and by a shutdown of a listener that never
-    /// ran.
-    stopped_signal: watch::Sender<bool>,
     shutdown_handle: Option<JoinHandle<FirestoreResult<()>>>,
     /// Created up front rather than in `start`, so that targets can be added and removed before,
     /// during and after the listener runs.
@@ -405,10 +457,9 @@ where
             db,
             storage,
             listener_params,
-            targets: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            targets: FirestoreListenerTargetsState::default(),
             next_registration: AtomicU64::new(0),
             shutdown_signal: watch::Sender::new(false),
-            stopped_signal: watch::Sender::new(false),
             shutdown_handle: None,
             control_writer: Arc::new(control_writer),
             control_reader: Some(control_reader),
@@ -420,10 +471,12 @@ where
     /// This works before and after [`start`](Self::start): a target added to a running listener
     /// is added to its open listen stream, and the other targets keep listening as they were.
     ///
-    /// Returns an error if the target cannot be turned into a listen request - an invalid ID or
-    /// document ID, for example - if the listener has been shut down or has stopped, or if a
-    /// target with the same ID is already registered - reusing an ID for a different query would
-    /// resume it from a token that does not belong to it.
+    /// Returns [`FirestoreError::InvalidParametersError`] if the target cannot be turned into a
+    /// listen request - an invalid ID or document ID, for example - if the listener has been shut
+    /// down, or if a target with the same ID is already registered - reusing an ID for a different
+    /// query would resume it from a token that does not belong to it. Returns
+    /// [`FirestoreError::SystemError`] if the listener's loop has ended on its own;
+    /// [`shutdown`](Self::shutdown) then returns why.
     pub fn add_target(&self, target_params: FirestoreListenerTargetParams) -> FirestoreResult<()> {
         // Built only to be checked, so that a target no stream could take is rejected here instead
         // of stopping the running loop for every other target.
@@ -435,18 +488,18 @@ where
                 "Cannot add a target to a listener that has been shut down",
             ));
         }
-        if *self.stopped_signal.borrow() {
-            return Err(FirestoreError::invalid_parameters(
-                "target",
-                "Cannot add a target to a listener that has stopped",
+        if self
+            .shutdown_handle
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+        {
+            return Err(FirestoreError::system_error(
+                "Cannot add a target to a listener whose loop has ended",
             ));
         }
 
         {
-            let mut targets = self
-                .targets
-                .write()
-                .expect("listener targets lock poisoned");
+            let mut targets = self.targets.write();
             if targets.contains_key(&target_params.target) {
                 return Err(FirestoreError::invalid_parameters(
                     "target",
@@ -488,12 +541,7 @@ where
     /// target change with no `cause`; a `Remove` with a `cause` is Firestore removing a target on
     /// its own.
     pub async fn remove_target(&self, target: &FirestoreListenerTarget) -> FirestoreResult<bool> {
-        let Some(removed) = self
-            .targets
-            .write()
-            .expect("listener targets lock poisoned")
-            .remove(target)
-        else {
+        let Some(removed) = self.targets.write().remove(target) else {
             return Ok(false);
         };
 
@@ -514,12 +562,7 @@ where
 
     /// The targets this listener currently listens on.
     pub fn targets(&self) -> Vec<FirestoreListenerTarget> {
-        self.targets
-            .read()
-            .expect("listener targets lock poisoned")
-            .keys()
-            .cloned()
-            .collect()
+        self.targets.read().keys().cloned().collect()
     }
 
     /// A handle for asking this listener to resynchronise a target while it runs.
@@ -531,10 +574,7 @@ where
 
     /// Whether this listener listens on the given target.
     pub fn has_target(&self, target: &FirestoreListenerTarget) -> bool {
-        self.targets
-            .read()
-            .expect("listener targets lock poisoned")
-            .contains_key(target)
+        self.targets.read().contains_key(target)
     }
 
     /// Starts listening and spawns the loop that keeps the stream open, invoking `cb` for every
@@ -548,9 +588,9 @@ where
     ///
     /// The returned future resolves once the loop is spawned, not once it exits: the loop keeps
     /// running, reconnecting on a dropped stream, until [`shutdown`](Self::shutdown) is called or
-    /// it stops on its own, when [`stopped`](Self::stopped) resolves and `shutdown` returns why.
-    /// Always call `shutdown` when the listener is no longer needed, or the spawned task and its
-    /// connection are never released.
+    /// it stops on its own, after which [`add_target`](Self::add_target) fails and `shutdown`
+    /// returns why. Always call `shutdown` when the listener is no longer needed, or the spawned
+    /// task and its connection are never released.
     ///
     /// Returns an error if this listener has already been started, or if reading a target's
     /// stored resume state fails.
@@ -559,10 +599,16 @@ where
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync + 'static,
         F: Future<Output = AnyBoxedErrResult<()>> + Send + 'static,
     {
+        if self.control_reader.is_none() {
+            return Err(FirestoreError::invalid_parameters(
+                "listener",
+                "This Firestore listener has already been started",
+            ));
+        }
+
         let initial_targets: Vec<FirestoreListenerTargetParams> = self
             .targets
             .read()
-            .expect("listener targets lock poisoned")
             .values()
             .map(|registered| registered.params.clone())
             .collect();
@@ -581,31 +627,21 @@ where
             let resume_type = self
                 .storage
                 .read_resume_state(&target_params.target)
-                .map_err(|err| {
-                    FirestoreError::SystemError(FirestoreSystemError::new(
-                        FirestoreErrorPublicGenericDetails::new("SystemError".into()),
-                        format!("Listener init error: {err}"),
-                    ))
-                })
+                .map_err(|err| FirestoreError::system_error(format!("Listener init error: {err}")))
                 .await?;
 
             if let Some(resume_type) = resume_type {
-                let mut targets = self
-                    .targets
-                    .write()
-                    .expect("listener targets lock poisoned");
+                let mut targets = self.targets.write();
                 if let Some(registered) = targets.get_mut(&target_params.target) {
                     registered.params.resume_type = Some(resume_type);
                 }
             }
         }
 
-        let Some(mut control_reader) = self.control_reader.take() else {
-            return Err(FirestoreError::invalid_parameters(
-                "listener",
-                "This Firestore listener has already been started",
-            ));
-        };
+        let mut control_reader = self
+            .control_reader
+            .take()
+            .expect("checked above, and start holds the listener exclusively");
 
         // Targets added or removed before `start` are already reflected in the shared state the
         // loop is about to connect with, so their queued notifications have nothing left to do.
@@ -624,11 +660,7 @@ where
             control_reader,
             cb,
         );
-        let stopped = FirestoreListenerStopGuard(self.stopped_signal.clone());
         self.shutdown_handle = Some(tokio::spawn(async move {
-            // Owned by the task, so that it signals however the task ends: by returning, by
-            // panicking or by being aborted.
-            let _stopped = stopped;
             listener_loop
                 .await
                 .inspect_err(|err| error!(%err, "Listen error. Exiting..."))
@@ -642,9 +674,21 @@ where
     /// and reconnect delays. Use [`shutdown_with_timeout`](Self::shutdown_with_timeout) to limit
     /// how long to wait for application work.
     ///
-    /// Returns the error the loop stopped with, if it stopped on its own (see
-    /// [`stopped`](Self::stopped)), or a [`FirestoreError::SystemError`] if it panicked. Safe to
-    /// call on a listener that was never started, or one already shut down: both return `Ok`.
+    /// Returns the error the loop stopped with, if it stopped on its own, or a
+    /// [`FirestoreError::SystemError`] if it panicked. Safe to call on a listener that was never
+    /// started, or one already shut down: both return `Ok`.
+    ///
+    /// The loop stops on its own only on an error a retry cannot fix:
+    ///
+    /// - Firestore rejecting the listen request as invalid again after every resume token was
+    ///   discarded;
+    /// - a [`FirestoreError::InvalidParametersError`] from the listen request;
+    /// - a target whose `AddTarget` or `RemoveTarget` request cannot be built;
+    /// - a panic in the callback or the resume-state storage.
+    ///
+    /// Every other error, a dropped connection or a closed stream among them, is retried after the
+    /// retry delay, and a target Firestore removes is handled on its own, without stopping the
+    /// loop.
     pub async fn shutdown(&mut self) -> FirestoreResult<()> {
         self.shutdown_with(None).await
     }
@@ -659,26 +703,6 @@ where
         timeout: std::time::Duration,
     ) -> FirestoreResult<()> {
         self.shutdown_with(Some(timeout)).await
-    }
-
-    /// Resolves once the listener's loop has ended.
-    ///
-    /// The loop ends on [`shutdown`](Self::shutdown), or on its own when it panics or gives up on
-    /// an error a retry cannot fix: Firestore rejecting the listen request as invalid again after
-    /// every resume token was discarded. Every other error, a dropped connection or a closed
-    /// stream among them, is retried after the retry delay, and a target Firestore removes is
-    /// handled on its own, without stopping the loop. The future stays pending before
-    /// [`start`](Self::start), unless the listener is shut down first. It borrows nothing from
-    /// the listener, so it can be awaited while the listener is used or shut down elsewhere.
-    ///
-    /// A listener that stopped on its own rejects new targets, and still needs `shutdown` to
-    /// release its task; `shutdown` then returns the error the loop stopped with.
-    pub fn stopped(&self) -> impl Future<Output = ()> + Send + 'static {
-        let mut stopped = self.stopped_signal.subscribe();
-        async move {
-            // An error means the listener and its task are both gone, which is a stop too.
-            let _ = stopped.wait_for(|stopped| *stopped).await;
-        }
     }
 
     async fn shutdown_with(&mut self, timeout: Option<std::time::Duration>) -> FirestoreResult<()> {
@@ -709,15 +733,13 @@ where
                     Ok(stopped_with) => stopped_with,
                     // Aborted above, as the caller's timeout asked.
                     Err(err) if err.is_cancelled() => Ok(()),
-                    Err(err) => Err(FirestoreError::SystemError(FirestoreSystemError::new(
-                        FirestoreErrorPublicGenericDetails::new("SystemError".into()),
-                        format!("Firestore listener loop panicked: {err}"),
+                    Err(err) => Err(FirestoreError::system_error(format!(
+                        "Firestore listener loop panicked: {err}"
                     ))),
                 }
             }
         };
         self.shutdown_handle = None;
-        self.stopped_signal.send_replace(true);
         debug!("Shutting down Firestore listener has been finished...");
         stopped_with
     }
@@ -757,10 +779,7 @@ where
         let mut retried_without_resume_tokens = false;
 
         while !*shutdown_signal.borrow() {
-            let no_targets = targets_state
-                .read()
-                .expect("listener targets lock poisoned")
-                .is_empty();
+            let no_targets = targets_state.read().is_empty();
             if no_targets {
                 // Nothing to listen on yet. Idle on the control channel rather than opening an
                 // empty stream, so that a listener can be started before its targets exist.
@@ -836,18 +855,13 @@ where
                                     }
                                 }
                                 Some(FirestoreListenerControl::ResyncTarget(target)) => {
-                                    let registration = targets_state
-                                        .read()
-                                        .expect("listener targets lock poisoned")
-                                        .get(&target)
-                                        .map(|registered| registered.registration);
-                                    if let Some(registration) = registration {
+                                    if let Some(registration) = targets_state.registration_of(&target) {
                                         warn!(
                                             ?target,
                                             ?effective_delay,
                                             "Resynchronising a listener target from scratch at the cache's request.",
                                         );
-                                        Self::forget_resume_states(&storage, &targets_state, std::slice::from_ref(&target)).await;
+                                        Self::forget_resume_states(&storage, &targets_state, &[(target.clone(), registration)]).await;
                                         // Without the delay a target that keeps diverging would
                                         // re-download in a tight loop.
                                         on_stream.remove(&db, &target, registration, Some(Instant::now() + effective_delay))?;
@@ -953,8 +967,6 @@ where
                                                         // disconnect in between resumes from scratch
                                                         // rather than from a point the reset has
                                                         // already invalidated.
-                                                        let affected: Vec<FirestoreListenerTarget> =
-                                                            affected.into_iter().map(|(target, _)| target).collect();
                                                         warn!(
                                                             ?affected,
                                                             "Firestore reset listener targets. Their initial state will be resent.",
@@ -1016,9 +1028,7 @@ where
         on_stream: &FirestoreListenerStreamTargets,
         target_ids: &[i32],
     ) -> Result<Vec<(FirestoreListenerTarget, FirestoreListenerRegistration)>, ()> {
-        let targets = targets_state
-            .read()
-            .expect("listener targets lock poisoned");
+        let targets = targets_state.read();
 
         if target_ids.is_empty() {
             return Ok(targets
@@ -1055,12 +1065,7 @@ where
         targets_state: &FirestoreListenerTargetsState,
         on_stream: &mut FirestoreListenerStreamTargets,
     ) -> FirestoreResult<()> {
-        let due = on_stream.take_due(
-            &targets_state
-                .read()
-                .expect("listener targets lock poisoned"),
-            Instant::now(),
-        );
+        let due = on_stream.take_due(&targets_state.read(), Instant::now());
         for target in due {
             if let Some((target_params, registration)) =
                 Self::resolve_target(storage, targets_state, &target).await
@@ -1085,9 +1090,7 @@ where
         target: &FirestoreListenerTarget,
     ) -> Option<(FirestoreListenerTargetParams, FirestoreListenerRegistration)> {
         let (registration, unresolved) = {
-            let targets = targets_state
-                .read()
-                .expect("listener targets lock poisoned");
+            let targets = targets_state.read();
             let registered = targets.get(target)?;
             (
                 registered.registration,
@@ -1095,32 +1098,24 @@ where
             )
         };
 
-        if unresolved {
-            match storage.read_resume_state(target).await {
-                Ok(Some(resume_type)) => {
-                    let mut targets = targets_state
-                        .write()
-                        .expect("listener targets lock poisoned");
-                    if let Some(registered) = targets
-                        .get_mut(target)
-                        .filter(|registered| registered.registration == registration)
-                    {
-                        registered.params.resume_type = Some(resume_type);
-                    }
-                }
-                Ok(None) => {}
-                Err(err) => {
+        let stored = if unresolved {
+            storage
+                .read_resume_state(target)
+                .await
+                .unwrap_or_else(|err| {
                     warn!(%err, ?target, "Could not read the resume state of a listener target. Listening on it from scratch.");
-                }
-            }
-        }
+                    None
+                })
+        } else {
+            None
+        };
 
-        targets_state
-            .read()
-            .expect("listener targets lock poisoned")
-            .get(target)
-            .filter(|registered| registered.registration == registration)
-            .map(|registered| (registered.params.clone(), registration))
+        targets_state.update_if_current(target, registration, |params| {
+            if let Some(stored) = stored {
+                params.resume_type = Some(stored);
+            }
+            (params.clone(), registration)
+        })
     }
 
     /// Persists a resume token for every target the change applies to.
@@ -1148,19 +1143,12 @@ where
                 error!(%err, "Listener token storage error occurred.");
                 return false;
             }
-            let still_registered = {
-                let mut targets = targets_state
-                    .write()
-                    .expect("listener targets lock poisoned");
-                match targets.get_mut(&target_id) {
-                    Some(registered) if registered.registration == registration => {
-                        registered.params.resume_type =
-                            Some(FirestoreListenerTargetResumeType::Token(new_token.clone()));
-                        true
-                    }
-                    _ => false,
-                }
-            };
+            let still_registered = targets_state
+                .update_if_current(&target_id, registration, |params| {
+                    params.resume_type =
+                        Some(FirestoreListenerTargetResumeType::Token(new_token.clone()));
+                })
+                .is_some();
             if !still_registered {
                 // Removed while the token was written, possibly after the removal forgot the
                 // stored state, so the token can still be in the storage for a later
@@ -1182,19 +1170,7 @@ where
         ended: &[(FirestoreListenerTarget, FirestoreListenerRegistration)],
     ) {
         for (target_id, registration) in ended {
-            let unregistered = {
-                let mut targets = targets_state
-                    .write()
-                    .expect("listener targets lock poisoned");
-                let current = targets
-                    .get(target_id)
-                    .is_some_and(|registered| registered.registration == *registration);
-                if current {
-                    targets.remove(target_id);
-                }
-                current
-            };
-            if unregistered {
+            if targets_state.remove_if_current(target_id, *registration) {
                 if let Err(err) = storage.forget_resume_state(target_id).await {
                     warn!(%err, ?target_id, "Could not forget the resume state of an ended listener target.");
                 }
@@ -1202,23 +1178,24 @@ where
         }
     }
 
-    /// Discards the stored resume state of the given targets, so that they are listened to from
-    /// scratch the next time the stream is opened.
+    /// Discards the stored resume state of the given registrations, so that they are listened to
+    /// from scratch the next time they are added to a stream. A target registered again since
+    /// keeps its state: it belongs to the new registration.
     async fn forget_resume_states(
         storage: &S,
         targets_state: &FirestoreListenerTargetsState,
-        targets: &[FirestoreListenerTarget],
+        targets: &[(FirestoreListenerTarget, FirestoreListenerRegistration)],
     ) {
-        for target_id in targets {
+        for (target_id, registration) in targets {
+            if targets_state.registration_of(target_id) != Some(*registration) {
+                continue;
+            }
             if let Err(err) = storage.forget_resume_state(target_id).await {
                 warn!(%err, ?target_id, "Could not forget the resume state of a listener target.");
             }
-            let mut state = targets_state
-                .write()
-                .expect("listener targets lock poisoned");
-            if let Some(registered) = state.get_mut(target_id) {
-                registered.params.resume_type = None;
-            }
+            targets_state.update_if_current(target_id, *registration, |params| {
+                params.resume_type = None;
+            });
         }
     }
 
@@ -1246,12 +1223,12 @@ where
                     %err, ?delay,
                     "Firestore rejected the listen request as invalid. Discarding all stored resume tokens and retrying once from scratch...",
                 );
-                let all_targets: Vec<FirestoreListenerTarget> = targets_state
-                    .read()
-                    .expect("listener targets lock poisoned")
-                    .keys()
-                    .cloned()
-                    .collect();
+                let all_targets: Vec<(FirestoreListenerTarget, FirestoreListenerRegistration)> =
+                    targets_state
+                        .read()
+                        .iter()
+                        .map(|(target, registered)| (target.clone(), registered.registration))
+                        .collect();
                 Self::forget_resume_states(storage, targets_state, &all_targets).await;
                 Self::until_shutdown(shutdown_signal, tokio::time::sleep(delay)).await;
             }
@@ -1321,16 +1298,13 @@ impl FirestoreListenerStreamTarget {
     fn ended_by(&self, cause: &gcloud_sdk::google::rpc::Status) -> bool {
         use gcloud_sdk::tonic::Code;
         match Code::from(cause.code) {
-            // Denied by security rules or IAM, a missing database or parent, a query that needs an
-            // index that does not exist, or one Firestore does not support: adding the target
-            // back asks for the same thing again.
-            Code::PermissionDenied
-            | Code::NotFound
-            | Code::FailedPrecondition
-            | Code::Unimplemented => true,
-            // A stale resume token is rejected as invalid too, and the add-back drops it, so only
-            // a target added from scratch shows that the query itself is invalid.
-            Code::InvalidArgument => !self.resumed,
+            // Denied by security rules or IAM, a missing database or parent, or a query Firestore
+            // does not support: adding the target back asks for the same thing again.
+            Code::PermissionDenied | Code::NotFound | Code::Unimplemented => true,
+            // An invalid query, or one that needs an index that does not exist, but a stale resume
+            // token or read time is rejected the same way, and the add-back drops it. Only a
+            // target added from scratch shows that the query itself is at fault.
+            Code::InvalidArgument | Code::FailedPrecondition => !self.resumed,
             _ => false,
         }
     }
@@ -1339,8 +1313,8 @@ impl FirestoreListenerStreamTarget {
 /// What Firestore removing targets leaves the listener to do.
 #[derive(Debug, Default)]
 struct FirestoreListenerRemoval {
-    /// Targets to add back from scratch after the retry delay.
-    retried: Vec<FirestoreListenerTarget>,
+    /// Registrations to add back from scratch after the retry delay.
+    retried: Vec<(FirestoreListenerTarget, FirestoreListenerRegistration)>,
     /// Registrations that have ended for good, to be unregistered.
     ended: Vec<(FirestoreListenerTarget, FirestoreListenerRegistration)>,
 }
@@ -1349,9 +1323,10 @@ struct FirestoreListenerRemoval {
 struct FirestoreListenerStreamTargets {
     requests: UnboundedSender<ListenRequest>,
     targets: HashMap<FirestoreListenerTarget, FirestoreListenerStreamTarget>,
-    /// Acknowledgements still due for `RemoveTarget`s whose target Firestore removed with a cause
-    /// first. Firestore answers a stream's requests in order, so one still due arrives before the
-    /// answer to any later request for the ID, and an `ADD` for the ID means none is coming.
+    /// Acknowledgements still due for `RemoveTarget`s whose target Firestore removed first, with a
+    /// cause or by ending a `once` target. Firestore answers a stream's requests in order, so one
+    /// still due arrives before the answer to any later request for the ID, and an `ADD` for the
+    /// ID means none is coming.
     unanswered_removals: HashMap<FirestoreListenerTarget, u32>,
 }
 
@@ -1395,10 +1370,7 @@ impl FirestoreListenerStreamTargets {
     /// Whether nothing is registered and the stream has nothing left to remove, so that it can
     /// close. Removals are waited for, so that their acknowledgements still reach the callback.
     fn is_idle(&self, targets_state: &FirestoreListenerTargetsState) -> bool {
-        targets_state
-            .read()
-            .expect("listener targets lock poisoned")
-            .is_empty()
+        targets_state.read().is_empty()
             && self.targets.values().all(|on_stream| {
                 matches!(
                     on_stream.state,
@@ -1550,7 +1522,11 @@ impl FirestoreListenerStreamTargets {
                 FirestoreListenerStreamTargetState::Removing {
                     add_back_at: requested,
                 } => {
-                    if cause.is_some() {
+                    // Firestore removing the target on its own, or ending a `once` one, crosses our
+                    // `RemoveTarget`, whose own acknowledgement is still to come. A `once` target's
+                    // removal may be that acknowledgement after all; the `ADD` of the next
+                    // registration then clears the count.
+                    if cause.is_some() || on_stream.once {
                         *self.unanswered_removals.entry(target.clone()).or_default() += 1;
                     }
                     requested.map(FirestoreListenerStreamTargetState::Waiting)
@@ -1565,7 +1541,9 @@ impl FirestoreListenerStreamTargets {
                         removal.ended.push((target.clone(), on_stream.registration));
                         None
                     } else {
-                        removal.retried.push(target.clone());
+                        removal
+                            .retried
+                            .push((target.clone(), on_stream.registration));
                         Some(FirestoreListenerStreamTargetState::Waiting(add_back_at))
                     }
                 }
@@ -1583,15 +1561,6 @@ impl FirestoreListenerStreamTargets {
             }
         }
         removal
-    }
-}
-
-/// Marks a listener's loop as ended when dropped.
-struct FirestoreListenerStopGuard(watch::Sender<bool>);
-
-impl Drop for FirestoreListenerStopGuard {
-    fn drop(&mut self) {
-        self.0.send_replace(true);
     }
 }
 

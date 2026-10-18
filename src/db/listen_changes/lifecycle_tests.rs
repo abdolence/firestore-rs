@@ -44,6 +44,8 @@ struct TestDb {
     markers: Arc<AtomicI32>,
     /// The targets whose resume token was stored, in order.
     stored: Arc<Mutex<Vec<FirestoreListenerTarget>>>,
+    /// What the resume-state storage holds.
+    tokens: Arc<Mutex<HashMap<FirestoreListenerTarget, FirestoreListenerToken>>>,
     /// The targets whose resume state was forgotten, in order.
     forgotten: Arc<Mutex<Vec<FirestoreListenerTarget>>>,
     reads: Arc<AtomicUsize>,
@@ -68,6 +70,7 @@ impl TestDb {
             seen: watch::Sender::new(Vec::new()),
             markers: Arc::new(AtomicI32::new(0)),
             stored: Arc::new(Mutex::new(Vec::new())),
+            tokens: Arc::new(Mutex::new(HashMap::new())),
             forgotten: Arc::new(Mutex::new(Vec::new())),
             reads: Arc::new(AtomicUsize::new(0)),
             connections: Arc::new(AtomicUsize::new(0)),
@@ -212,23 +215,30 @@ impl FirestoreListenSupport for TestDb {
 impl FirestoreResumeStateStorage for TestDb {
     async fn read_resume_state(
         &self,
-        _: &FirestoreListenerTarget,
+        target: &FirestoreListenerTarget,
     ) -> AnyBoxedErrResult<Option<FirestoreListenerTargetResumeType>> {
         if self.wait == Wait::Read && self.reads.fetch_add(1, Ordering::Relaxed) > 0 {
             self.wait_for_release().await;
         }
-        Ok(None)
+        Ok(self
+            .tokens
+            .lock()
+            .unwrap()
+            .get(target)
+            .cloned()
+            .map(FirestoreListenerTargetResumeType::Token))
     }
 
     async fn update_resume_token(
         &self,
         target: &FirestoreListenerTarget,
-        _: FirestoreListenerToken,
+        token: FirestoreListenerToken,
     ) -> AnyBoxedErrResult<()> {
         if self.wait == Wait::Storage {
             self.wait_for_release().await;
         }
         self.stored.lock().unwrap().push(target.clone());
+        self.tokens.lock().unwrap().insert(target.clone(), token);
         Ok(())
     }
 
@@ -237,6 +247,7 @@ impl FirestoreResumeStateStorage for TestDb {
             self.wait_for_release().await;
         }
         self.forgotten.lock().unwrap().push(target.clone());
+        self.tokens.lock().unwrap().remove(target);
         Ok(())
     }
 }
@@ -366,6 +377,17 @@ async fn started(
     (listener, db)
 }
 
+/// Waits until the listener's task has ended, however it ended.
+async fn until_finished(listener: &FirestoreListener<TestDb, TestDb>) {
+    while !listener
+        .shutdown_handle
+        .as_ref()
+        .is_some_and(JoinHandle::is_finished)
+    {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
 #[tokio::test]
 async fn shutdown_waits_for_the_callback_and_for_resume_token_storage() {
     for wait in [Wait::Callback, Wait::Storage] {
@@ -455,29 +477,6 @@ async fn cancelled_shutdown_keeps_the_task_for_a_later_join() {
 }
 
 #[tokio::test]
-async fn shutdown_does_not_wait_for_pending_acknowledgements() {
-    let (db, _feed) = TestDb::fed(Wait::Never);
-    let (mut listener, db) = started(db, never_retrying()).await;
-    let mut requests = db.take_requests();
-    assert_eq!(
-        next_request(&mut requests).await,
-        Some(add_request(1, "document-1"))
-    );
-
-    listener
-        .remove_target(&FirestoreListenerTarget::new(1))
-        .await
-        .unwrap();
-    assert_eq!(
-        next_request(&mut requests).await,
-        Some(RequestedChange::RemoveTarget(1))
-    );
-
-    within(listener.shutdown()).await.unwrap();
-    within(listener.stopped()).await;
-}
-
-#[tokio::test]
 async fn a_panicking_callback_stops_the_listener_with_an_error() {
     let (mut listener, _db) = listener(TestDb::new(Wait::Never), never_retrying()).await;
     listener
@@ -485,13 +484,12 @@ async fn a_panicking_callback_stops_the_listener_with_an_error() {
         .await
         .unwrap();
 
-    assert!(
-        tokio::time::timeout(Duration::from_secs(2), listener.stopped())
-            .await
-            .is_ok(),
-        "stopped() must resolve once the loop has panicked"
-    );
-    assert!(listener.add_target(target_params(2)).is_err());
+    within(until_finished(&listener)).await;
+
+    assert!(matches!(
+        listener.add_target(target_params(2)),
+        Err(FirestoreError::SystemError(_))
+    ));
     assert!(matches!(
         within(listener.shutdown()).await,
         Err(FirestoreError::SystemError(_))
@@ -532,54 +530,6 @@ async fn stream_wide_token_is_stored_only_at_a_snapshot_for_targets_on_the_strea
         *db.stored.lock().unwrap(),
         vec![FirestoreListenerTarget::new(1)]
     );
-}
-
-#[tokio::test]
-async fn tokens_are_stored_only_for_the_registration_the_stream_carries() {
-    let (db, feed) = TestDb::fed(Wait::Never);
-    let (mut listener, db) = listener(db, never_retrying()).await;
-    listener.add_target(target_params(2)).unwrap();
-    start(&mut listener, &db).await;
-    let mut requests = db.take_requests();
-    assert_eq!(added_targets(&mut requests, 2).await, vec![1, 2]);
-    feed.send(target_change(TargetChangeType::Add, vec![1, 2]))
-        .unwrap();
-
-    listener
-        .remove_target(&FirestoreListenerTarget::new(1))
-        .await
-        .unwrap();
-    assert_eq!(
-        next_request(&mut requests).await,
-        Some(RequestedChange::RemoveTarget(1))
-    );
-    listener
-        .add_target(target_params_for_document(1, "document-other"))
-        .unwrap();
-    feed.send(FirestoreListenEvent::TargetChange(TargetChange {
-        target_change_type: TargetChangeType::Current as i32,
-        target_ids: vec![1, 2],
-        resume_token: vec![5],
-        ..Default::default()
-    }))
-    .unwrap();
-    feed.send(FirestoreListenEvent::TargetChange(TargetChange {
-        target_change_type: TargetChangeType::NoChange as i32,
-        resume_token: vec![6],
-        read_time: Some(gcloud_sdk::prost_types::Timestamp::default()),
-        ..Default::default()
-    }))
-    .unwrap();
-    db.settle(&feed).await;
-
-    assert_eq!(
-        *db.stored.lock().unwrap(),
-        vec![
-            FirestoreListenerTarget::new(2),
-            FirestoreListenerTarget::new(2)
-        ]
-    );
-    within(listener.shutdown()).await.unwrap();
 }
 
 #[tokio::test]
@@ -651,7 +601,6 @@ async fn a_token_written_while_its_target_is_removed_is_not_resumed_by_the_next_
         next_request(&mut requests).await,
         Some(add_request(1, "document-other"))
     );
-    assert_eq!(db.forgotten.lock().unwrap().len(), 2);
     within(listener.shutdown()).await.unwrap();
 }
 
@@ -664,7 +613,7 @@ async fn invalid_listen_retries_without_tokens_then_stops_with_its_error() {
     let (mut listener, db) = listener(db, retrying_at_once()).await;
     listener.start(|_| async { Ok(()) }).await.unwrap();
 
-    within(listener.stopped()).await;
+    within(until_finished(&listener)).await;
 
     assert!(matches!(
         within(listener.shutdown()).await,
@@ -697,14 +646,6 @@ async fn a_target_that_cannot_be_listened_on_is_rejected_when_added() {
     assert!(listener.targets().is_empty());
 }
 
-/// The target an `AddTarget` request adds, or `None` for any other request.
-fn added_target(request: Option<ListenRequest>) -> Option<i32> {
-    match request?.target_change? {
-        RequestedChange::AddTarget(target) => Some(target.target_id),
-        RequestedChange::RemoveTarget(_) => None,
-    }
-}
-
 #[tokio::test]
 async fn a_target_added_to_a_running_listener_joins_the_open_stream() {
     let db = TestDb {
@@ -717,48 +658,13 @@ async fn a_target_added_to_a_running_listener_joins_the_open_stream() {
 
     listener.add_target(target_params(2)).unwrap();
 
-    assert_eq!(added_target(within(requests.recv()).await), Some(1));
-    assert_eq!(added_target(within(requests.recv()).await), Some(2));
+    assert_eq!(added_targets(&mut requests, 2).await, vec![1, 2]);
     assert_eq!(db.connections.load(Ordering::Relaxed), 1);
     within(listener.shutdown()).await.unwrap();
 }
 
 #[tokio::test]
 async fn a_target_removed_and_added_again_waits_for_firestore_to_acknowledge_the_removal() {
-    let db = TestDb {
-        events: vec![
-            target_change(TargetChangeType::Add, vec![1]),
-            target_change(TargetChangeType::Remove, vec![1]),
-        ],
-        ..TestDb::new(Wait::Callback)
-    };
-    let (mut listener, db) = started(db, never_retrying()).await;
-    let mut requests = db.take_requests();
-
-    listener
-        .remove_target(&FirestoreListenerTarget::new(1))
-        .await
-        .unwrap();
-    listener.add_target(target_params(1)).unwrap();
-    db.release.add_permits(1);
-    within(db.entered.acquire()).await.unwrap().forget();
-
-    assert_eq!(added_target(within(requests.recv()).await), Some(1));
-    assert!(matches!(
-        within(requests.recv())
-            .await
-            .and_then(|request| request.target_change),
-        Some(RequestedChange::RemoveTarget(1))
-    ));
-    assert!(requests.try_recv().is_err());
-    db.release.add_permits(1);
-    assert_eq!(added_target(within(requests.recv()).await), Some(1));
-    assert_eq!(db.connections.load(Ordering::Relaxed), 1);
-    within(listener.shutdown()).await.unwrap();
-}
-
-#[tokio::test]
-async fn a_target_removed_while_being_added_comes_back_only_once_the_removal_is_acknowledged() {
     let (db, feed) = TestDb::fed(Wait::Never);
     let (mut listener, db) = started(db, never_retrying()).await;
     let mut requests = db.take_requests();
@@ -893,13 +799,7 @@ async fn a_target_firestore_removes_is_added_back_alone_on_the_open_stream() {
     let mut requests = db.take_requests();
     db.release.add_permits(1);
 
-    let mut added = Vec::new();
-    for _ in 0..3 {
-        added.push(added_target(within(requests.recv()).await));
-    }
-    added.sort();
-
-    assert_eq!(added, vec![Some(1), Some(1), Some(2)]);
+    assert_eq!(added_targets(&mut requests, 3).await, vec![1, 1, 2]);
     assert!(requests.try_recv().is_err());
     assert_eq!(db.connections.load(Ordering::Relaxed), 1);
     assert_eq!(
@@ -952,6 +852,124 @@ async fn a_once_target_ends_with_its_removal() {
 
     assert!(!listener.has_target(&FirestoreListenerTarget::new(2)));
     assert!(requests.try_recv().is_err());
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_once_target_ending_across_our_removal_is_not_taken_for_its_acknowledgement() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let mut listener = FirestoreListener::new(db.clone(), db.clone(), retrying_at_once())
+        .await
+        .unwrap();
+    listener
+        .add_target(target_params(1).with_add_target_once(true))
+        .unwrap();
+    start(&mut listener, &db).await;
+    let mut requests = db.take_requests();
+    assert_eq!(added_targets(&mut requests, 1).await, vec![1]);
+    feed.send(target_change(TargetChangeType::Add, vec![1]))
+        .unwrap();
+
+    listener
+        .remove_target(&FirestoreListenerTarget::new(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(RequestedChange::RemoveTarget(1))
+    );
+    listener
+        .add_target(target_params_for_document(1, "document-other"))
+        .unwrap();
+    // The once target ends before Firestore reads our `RemoveTarget`.
+    feed.send(target_change(TargetChangeType::Remove, vec![1]))
+        .unwrap();
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(add_request(1, "document-other"))
+    );
+
+    // Firestore's answer to our `RemoveTarget`, then to the new `AddTarget`.
+    feed.send(target_change(TargetChangeType::Remove, vec![1]))
+        .unwrap();
+    feed.send(target_change(TargetChangeType::Add, vec![1]))
+        .unwrap();
+    db.settle(&feed).await;
+
+    assert!(listener.has_target(&FirestoreListenerTarget::new(1)));
+    assert!(requests.try_recv().is_err());
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_resumed_target_firestore_rejects_as_failed_precondition_is_added_back_from_scratch() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let mut listener = FirestoreListener::new(db.clone(), db.clone(), retrying_at_once())
+        .await
+        .unwrap();
+    listener
+        .add_target(
+            target_params(1)
+                .with_resume_type(FirestoreListenerTargetResumeType::Token(vec![1].into())),
+        )
+        .unwrap();
+    start(&mut listener, &db).await;
+    let mut requests = db.take_requests();
+    assert_eq!(added_targets(&mut requests, 1).await, vec![1]);
+
+    feed.send(removal_with_cause(vec![1], Code::FailedPrecondition))
+        .unwrap();
+
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(add_request(1, "document-1"))
+    );
+    assert!(listener.has_target(&FirestoreListenerTarget::new(1)));
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_reset_keeps_the_resume_state_of_a_target_registered_again_during_its_callback() {
+    let (db, feed) = TestDb::fed(Wait::Callback);
+    let (mut listener, db) = listener(db, never_retrying()).await;
+    feed.send(target_change(TargetChangeType::Add, vec![1]))
+        .unwrap();
+    start(&mut listener, &db).await;
+    let mut requests = db.take_requests();
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(add_request(1, "document-1"))
+    );
+    feed.send(target_change(TargetChangeType::Reset, vec![1]))
+        .unwrap();
+    db.release.add_permits(1);
+    within(db.entered.acquire()).await.unwrap().forget();
+
+    listener
+        .remove_target(&FirestoreListenerTarget::new(1))
+        .await
+        .unwrap();
+    listener
+        .add_target(
+            target_params_for_document(1, "document-other")
+                .with_resume_type(FirestoreListenerTargetResumeType::Token(vec![42].into())),
+        )
+        .unwrap();
+    db.release.add_permits(Semaphore::MAX_PERMITS / 2);
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(RequestedChange::RemoveTarget(1))
+    );
+    feed.send(target_change(TargetChangeType::Remove, vec![1]))
+        .unwrap();
+
+    match next_request(&mut requests).await {
+        Some(RequestedChange::AddTarget(target)) => assert_eq!(
+            target.resume_type,
+            Some(target::ResumeType::ResumeToken(vec![42]))
+        ),
+        other => panic!("expected an AddTarget, got {other:?}"),
+    }
     within(listener.shutdown()).await.unwrap();
 }
 

@@ -94,9 +94,14 @@ Target changes with the `Remove` type reach the callback in two forms:
   delay.
 
 The listener reconnects by itself after network errors, closed streams and every other error,
-after the retry delay. It stops only when Firestore rejects the listen request as invalid again
-after every resume token was discarded, or when the callback or the token storage panics.
-`stopped()` resolves once the listener has stopped, on its own or after `shutdown()`, and
-`shutdown()` returns the error it stopped with.
+after the retry delay. It stops only on an error a retry cannot fix:
+
+- Firestore rejects the listen request as invalid again after every resume token was discarded;
+- the listen request fails with `InvalidParametersError`;
+- the `AddTarget` or `RemoveTarget` request for a target cannot be built;
+- the callback or the token storage panics.
+
+A stopped listener rejects `add_target` with a `SystemError`, and `shutdown()` returns the error
+it stopped with.
 
 See complete example in examples directory.

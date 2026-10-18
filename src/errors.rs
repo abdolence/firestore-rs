@@ -54,6 +54,14 @@ impl FirestoreError {
             FirestoreInvalidParametersPublicDetails::new(field.into(), error.into()),
         ))
     }
+
+    /// Builds a [`SystemError`](FirestoreError::SystemError) with the generic `SystemError` code.
+    pub(crate) fn system_error(message: impl Into<String>) -> Self {
+        FirestoreError::SystemError(FirestoreSystemError::new(
+            FirestoreErrorPublicGenericDetails::new("SystemError".into()),
+            message.into(),
+        ))
+    }
 }
 
 impl Display for FirestoreError {
