@@ -1,6 +1,5 @@
-use super::registration::{
-    FirestoreListenerRegisteredTarget, FirestoreListenerRegistration, FirestoreListenerTargetsState,
-};
+use super::event_loop::FirestoreListenerLoop;
+use super::registration::{FirestoreListenerRegistration, FirestoreListenerTargetsState};
 use crate::db::support::FirestoreListenSupport;
 use crate::errors::*;
 use crate::{
@@ -10,9 +9,8 @@ use crate::{
 use futures::TryFutureExt;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
-use rvstruct::ValueStruct;
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
@@ -204,28 +202,8 @@ where
             ));
         }
 
-        {
-            let mut targets = self.targets.write();
-            if targets.contains_key(&target_params.target) {
-                return Err(FirestoreError::invalid_parameters(
-                    "target",
-                    format!(
-                        "Listener target {} is already registered on this listener",
-                        target_params.target.value()
-                    ),
-                ));
-            }
-            let registration = FirestoreListenerRegistration(
-                self.next_registration.fetch_add(1, Ordering::Relaxed),
-            );
-            targets.insert(
-                target_params.target.clone(),
-                FirestoreListenerRegisteredTarget {
-                    params: target_params,
-                    registration,
-                },
-            );
-        }
+        self.targets
+            .register(target_params, &self.next_registration)?;
 
         // A send error only means the loop is gone, which the shutdown check above already covers.
         self.control_writer
@@ -328,8 +306,45 @@ where
             "Starting a Firestore listener for targets...",
         );
 
-        // Resolved eagerly rather than left to the loop, so that a broken resume-state storage is
-        // reported to the caller of `start` instead of only appearing in the logs.
+        self.read_stored_resume_states(initial_targets).await?;
+
+        let mut control_reader = self
+            .control_reader
+            .take()
+            .expect("checked above, and start holds the listener exclusively");
+
+        // Targets added or removed before `start` are already reflected in the shared state the
+        // loop is about to connect with, so their queued notifications have nothing left to do.
+        while let Ok(queued) = control_reader.try_recv() {
+            if queued == FirestoreListenerControl::Shutdown {
+                self.shutdown_signal.send_replace(true);
+            }
+        }
+
+        let listener_loop = FirestoreListenerLoop::new(
+            self.db.clone(),
+            self.storage.clone(),
+            self.shutdown_signal.clone(),
+            self.targets.clone(),
+            &self.listener_params,
+            control_reader,
+            cb,
+        );
+        self.shutdown_handle = Some(tokio::spawn(async move {
+            listener_loop
+                .run()
+                .await
+                .inspect_err(|err| error!(%err, "Listen error. Exiting..."))
+        }));
+        Ok(())
+    }
+
+    /// Resolved eagerly rather than left to the loop, so that a broken resume-state storage is
+    /// reported to the caller of `start` instead of only appearing in the logs.
+    async fn read_stored_resume_states(
+        &self,
+        initial_targets: Vec<FirestoreListenerTargetParams>,
+    ) -> FirestoreResult<()> {
         for target_params in initial_targets {
             if target_params.resume_type.is_some() {
                 continue;
@@ -347,34 +362,6 @@ where
                 }
             }
         }
-
-        let mut control_reader = self
-            .control_reader
-            .take()
-            .expect("checked above, and start holds the listener exclusively");
-
-        // Targets added or removed before `start` are already reflected in the shared state the
-        // loop is about to connect with, so their queued notifications have nothing left to do.
-        while let Ok(queued) = control_reader.try_recv() {
-            if queued == FirestoreListenerControl::Shutdown {
-                self.shutdown_signal.send_replace(true);
-            }
-        }
-
-        let listener_loop = Self::listener_loop(
-            self.db.clone(),
-            self.storage.clone(),
-            self.shutdown_signal.clone(),
-            self.targets.clone(),
-            self.listener_params.clone(),
-            control_reader,
-            cb,
-        );
-        self.shutdown_handle = Some(tokio::spawn(async move {
-            listener_loop
-                .await
-                .inspect_err(|err| error!(%err, "Listen error. Exiting..."))
-        }));
         Ok(())
     }
 

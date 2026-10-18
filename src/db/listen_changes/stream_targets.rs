@@ -11,6 +11,7 @@ use gcloud_sdk::google::firestore::v1::*;
 use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
+use tracing::*;
 
 /// Where a target stands on one open listen stream, going by the requests sent on it and the
 /// target changes Firestore answered them with.
@@ -82,9 +83,9 @@ pub(super) struct FirestoreListenerStreamTargets {
     requests: UnboundedSender<ListenRequest>,
     pub(super) targets: HashMap<FirestoreListenerTarget, FirestoreListenerStreamTarget>,
     /// A `RemoveTarget` was in flight for a target Firestore removed first, with a cause or by
-    /// ending a `once` target it had reported current. Firestore answers a `RemoveTarget` for a target it no longer has by
-    /// failing the stream with `NOT_FOUND` instead of acknowledging it, so that failure is expected
-    /// and the stream is reopened at once.
+    /// ending a `once` target it had reported current. Firestore answers a `RemoveTarget` for a
+    /// target it no longer has by failing the stream with `NOT_FOUND` instead of acknowledging it,
+    /// so that failure is expected and the stream is reopened at once.
     pub(super) crossed_removal: bool,
 }
 
@@ -98,7 +99,7 @@ impl FirestoreListenerStreamTargets {
     }
 
     /// Whether a change that names `target` is about this registration of it.
-    pub(super) fn carries(
+    fn carries(
         &self,
         target: &FirestoreListenerTarget,
         registration: FirestoreListenerRegistration,
@@ -114,7 +115,7 @@ impl FirestoreListenerStreamTargets {
     }
 
     /// Whether a change for every target on the stream includes this registration of `target`.
-    pub(super) fn includes(
+    fn includes(
         &self,
         target: &FirestoreListenerTarget,
         registration: FirestoreListenerRegistration,
@@ -123,6 +124,49 @@ impl FirestoreListenerStreamTargets {
             on_stream.registration == registration
                 && on_stream.state == FirestoreListenerStreamTargetState::Listening
         })
+    }
+
+    /// Resolves the targets a target change applies to, each with the registration it applies to.
+    ///
+    /// Firestore uses an empty set of target IDs to mean every target on the stream, which is how
+    /// global resume tokens and stream-wide resets arrive. Such a change includes a target only
+    /// once Firestore has acknowledged adding it. A change that names a target applies to it only
+    /// while the stream carries the target's current registration, so a change still in flight
+    /// for a removed target is not taken for a new one under the same ID. Target IDs this listener
+    /// does not know about are ignored; an ID that is not a valid target at all is a protocol
+    /// error and returns `Err`.
+    pub(super) fn affected_targets(
+        &self,
+        targets_state: &FirestoreListenerTargetsState,
+        target_ids: &[i32],
+    ) -> Result<Vec<(FirestoreListenerTarget, FirestoreListenerRegistration)>, ()> {
+        let targets = targets_state.read();
+
+        if target_ids.is_empty() {
+            return Ok(targets
+                .iter()
+                .filter(|(target, registered)| self.includes(target, registered.registration))
+                .map(|(target, registered)| (target.clone(), registered.registration))
+                .collect());
+        }
+
+        let mut affected = Vec::with_capacity(target_ids.len());
+        for target_id_num in target_ids {
+            match FirestoreListenerTarget::try_from(*target_id_num) {
+                Ok(target_id) => {
+                    if let Some(registered) = targets.get(&target_id) {
+                        if self.carries(&target_id, registered.registration) {
+                            affected.push((target_id, registered.registration));
+                        }
+                    }
+                }
+                Err(err) => {
+                    error!(%err, target_id_num, "Listener system error - unexpected target ID.");
+                    return Err(());
+                }
+            }
+        }
+        Ok(affected)
     }
 
     /// Whether nothing is registered and the stream has nothing left to remove, so that it can

@@ -1,11 +1,14 @@
-use crate::{FirestoreListenerTarget, FirestoreListenerTargetParams};
+use crate::errors::*;
+use crate::{FirestoreListenerTarget, FirestoreListenerTargetParams, FirestoreResult};
+use rvstruct::ValueStruct;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Tells one registration of a target ID apart from an earlier or later one under the same ID, so
 /// that what a stream reports for one is never applied to the other.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(super) struct FirestoreListenerRegistration(pub(super) u64);
+pub(super) struct FirestoreListenerRegistration(u64);
 
 /// A target registered on a listener.
 #[derive(Debug, Clone)]
@@ -20,8 +23,8 @@ pub(super) type FirestoreListenerRegisteredTargets =
 
 /// The set of targets a listener listens on, shared between the handle and its running loop.
 ///
-/// A `std::sync::RwLock` rather than tokio's: it keeps [`FirestoreListener::add_target`]
-/// synchronous, and the compiler stops a guard being held across an await. Every use site clones
+/// A `std::sync::RwLock` rather than tokio's: it keeps
+/// [`FirestoreListener::add_target`](crate::FirestoreListener::add_target) synchronous, and the compiler stops a guard being held across an await. Every use site clones
 /// out what it needs and drops the guard before awaiting. Across an await a target can be removed
 /// and registered again under the same ID, so a change for a registration read before the await
 /// goes through the `_if_current` methods.
@@ -41,6 +44,33 @@ impl FirestoreListenerTargetsState {
         &self,
     ) -> std::sync::RwLockWriteGuard<'_, FirestoreListenerRegisteredTargets> {
         self.0.write().expect("listener targets lock poisoned")
+    }
+
+    pub(super) fn register(
+        &self,
+        target_params: FirestoreListenerTargetParams,
+        next_registration: &AtomicU64,
+    ) -> FirestoreResult<()> {
+        let mut targets = self.write();
+        if targets.contains_key(&target_params.target) {
+            return Err(FirestoreError::invalid_parameters(
+                "target",
+                format!(
+                    "Listener target {} is already registered on this listener",
+                    target_params.target.value()
+                ),
+            ));
+        }
+        let registration =
+            FirestoreListenerRegistration(next_registration.fetch_add(1, Ordering::Relaxed));
+        targets.insert(
+            target_params.target.clone(),
+            FirestoreListenerRegisteredTarget {
+                params: target_params,
+                registration,
+            },
+        );
+        Ok(())
     }
 
     pub(super) fn registration_of(
