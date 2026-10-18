@@ -80,10 +80,23 @@ be replayed.
 
 Targets can also be added and removed on a running listener with `add_target` and
 `remove_target`. The listener changes them on its open stream, so the other targets keep
-listening as they were.
+listening as they were. `add_target` returns an error for a target that cannot be turned into
+a listen request, so a bad target never reaches the running listener.
 
-The listener reconnects by itself after network errors and closed streams. It stops only on an
-error a retry cannot fix, such as a target that cannot be turned into a listen request, and
-`stopped()` resolves with that error. After `shutdown()` it resolves with `None`.
+Target changes with the `Remove` type reach the callback in two forms:
+
+- with no `cause`, Firestore acknowledges a `remove_target` call, or ends a target added with
+  `add_target_once`. Events for a removed target can still arrive until this acknowledgement;
+- with a `cause`, Firestore removed the target on its own. For `PERMISSION_DENIED`,
+  `NOT_FOUND`, `FAILED_PRECONDITION`, `UNIMPLEMENTED`, and `INVALID_ARGUMENT` on a target added
+  without a resume token or read time, the listener stops listening on that target only and
+  unregisters it. For any other cause it adds the target back from scratch after the retry
+  delay.
+
+The listener reconnects by itself after network errors, closed streams and every other error,
+after the retry delay. It stops only when Firestore rejects the listen request as invalid again
+after every resume token was discarded, or when the callback or the token storage panics.
+`stopped()` resolves once the listener has stopped, on its own or after `shutdown()`, and
+`shutdown()` returns the error it stopped with.
 
 See complete example in examples directory.

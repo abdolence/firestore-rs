@@ -549,6 +549,7 @@ impl FirestoreListenSupport for MockDatabase {
     fn remove_target_request(
         &self,
         target: &FirestoreListenerTarget,
+        request_options: Option<&FirestoreRequestOptions>,
     ) -> FirestoreResult<ListenRequest> {
         unreachable!()
     }

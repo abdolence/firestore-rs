@@ -472,10 +472,12 @@ pub trait FirestoreListenSupport {
         target_params: FirestoreListenerTargetParams,
     ) -> FirestoreResult<ListenRequest>;
 
-    /// The request that removes a target from a listen stream.
+    /// The request that removes a target from a listen stream, with the request options the
+    /// target was added with.
     fn remove_target_request(
         &self,
         target: &FirestoreListenerTarget,
+        request_options: Option<&FirestoreRequestOptions>,
     ) -> FirestoreResult<ListenRequest>;
 }
 
