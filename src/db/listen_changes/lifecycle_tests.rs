@@ -97,7 +97,7 @@ impl TestDb {
         (db, feed)
     }
 
-    /// Fails the fed stream with `code`, after whatever was fed to it before.
+    /// Fails the fed stream with `code`, ahead of every fed event the listener has not read yet.
     fn fail_stream(&self, code: Code) {
         self.stream_failure
             .lock()
@@ -919,6 +919,8 @@ async fn a_once_target_ending_across_our_removal_reconnects_at_once_on_not_found
         .add_target(target_params_for_document(1, "document-other"))
         .unwrap();
     // The once target ends before Firestore reads our `RemoveTarget`.
+    feed.send(target_change(TargetChangeType::Current, vec![1]))
+        .unwrap();
     feed.send(target_change(TargetChangeType::Remove, vec![1]))
         .unwrap();
     assert_eq!(
@@ -934,6 +936,75 @@ async fn a_once_target_ending_across_our_removal_reconnects_at_once_on_not_found
         next_request(&mut requests).await,
         Some(add_request(1, "document-other"))
     );
+    assert_eq!(db.connections.load(Ordering::Relaxed), 2);
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_once_target_removal_acknowledged_before_current_leaves_a_later_not_found_to_the_retry_delay(
+) {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let (mut listener, db) = listener(db, never_retrying()).await;
+    listener
+        .add_target(target_params(2).with_add_target_once(true))
+        .unwrap();
+    start(&mut listener, &db).await;
+    let mut requests = db.take_requests();
+    assert_eq!(added_targets(&mut requests, 2).await, vec![1, 2]);
+    feed.send(target_change(TargetChangeType::Add, vec![1, 2]))
+        .unwrap();
+
+    listener
+        .remove_target(&FirestoreListenerTarget::new(2))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(RequestedChange::RemoveTarget(2))
+    );
+    feed.send(target_change(TargetChangeType::Remove, vec![2]))
+        .unwrap();
+    db.settle(&feed).await;
+
+    db.fail_stream(Code::NotFound);
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), db.entered.acquire())
+            .await
+            .is_err()
+    );
+    assert_eq!(db.connections.load(Ordering::Relaxed), 1);
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_removal_crossed_by_a_stream_wide_removal_reconnects_at_once_on_not_found() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let (mut listener, db) = listener(db, never_retrying()).await;
+    listener.add_target(target_params(2)).unwrap();
+    start(&mut listener, &db).await;
+    let mut requests = db.take_requests();
+    assert_eq!(added_targets(&mut requests, 2).await, vec![1, 2]);
+    feed.send(target_change(TargetChangeType::Add, vec![1, 2]))
+        .unwrap();
+
+    listener
+        .remove_target(&FirestoreListenerTarget::new(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(RequestedChange::RemoveTarget(1))
+    );
+    feed.send(removal_with_cause(Vec::new(), Code::Unavailable))
+        .unwrap();
+    db.settle(&feed).await;
+
+    db.fail_stream(Code::NotFound);
+    within(db.entered.acquire()).await.unwrap().forget();
+    let mut requests = db.take_requests();
+
+    assert_eq!(added_targets(&mut requests, 1).await, vec![2]);
     assert_eq!(db.connections.load(Ordering::Relaxed), 2);
     within(listener.shutdown()).await.unwrap();
 }
