@@ -540,6 +540,12 @@ where
     /// reaches the callback as a [`Remove`](crate::FirestoreListenerTargetChangeType::Remove)
     /// target change with no `cause`; a `Remove` with a `cause` is Firestore removing a target on
     /// its own.
+    ///
+    /// A target added once that is already current is not removed from the stream, because
+    /// Firestore ends it by itself, and its end completes the removal. When Firestore removes a
+    /// target on its own while the removal is on its way, no acknowledgement comes: Firestore
+    /// closes the stream with `NOT_FOUND` instead, and the listener reconnects at once, resuming
+    /// the other targets.
     pub async fn remove_target(&self, target: &FirestoreListenerTarget) -> FirestoreResult<bool> {
         let Some(removed) = self.targets.write().remove(target) else {
             return Ok(false);
@@ -928,6 +934,9 @@ where
                                                     (Some(target_change::TargetChangeType::Add), _) => {
                                                         on_stream.added(&target_ids);
                                                     }
+                                                    (Some(target_change::TargetChangeType::Current), _) => {
+                                                        on_stream.current(&target_ids);
+                                                    }
                                                     (Some(target_change::TargetChangeType::Remove), _) => {
                                                         let removal = on_stream.removed(&target_ids, cause.as_ref(), Instant::now() + effective_delay);
                                                         if !removal.retried.is_empty() {
@@ -991,6 +1000,12 @@ where
                                         // a tight loop.
                                         debug!(?effective_delay, "Listen stream closed. Reconnecting after the specified delay...");
                                         Self::until_shutdown(&shutdown_signal, tokio::time::sleep(effective_delay)).await;
+                                        break;
+                                    }
+                                    Err(FirestoreError::DataNotFoundError(err)) if on_stream.crossed_removal => {
+                                        // Firestore's answer to the crossed `RemoveTarget`. The
+                                        // other targets resume from their tokens on a new stream.
+                                        debug!(%err, "Firestore closed the listen stream over a target it had already removed. Reconnecting...");
                                         break;
                                     }
                                     Err(err) => {
@@ -1271,10 +1286,17 @@ enum FirestoreListenerStreamTargetState {
     Adding,
     /// Firestore acknowledged the `AddTarget`, so a change for every target includes this one.
     Listening,
-    /// `RemoveTarget` was sent, and Firestore has not acknowledged it yet. The ID is not added
-    /// again before it does, so that changes still in flight for the removed target are never
-    /// taken for a new one. With `add_back_at`, the target comes back from scratch at that time.
-    Removing { add_back_at: Option<Instant> },
+    /// Being taken off the stream, and Firestore has not answered yet. The ID is not added again
+    /// before it does, so that changes still in flight for the removed target are never taken for
+    /// a new one. With `add_back_at`, the target comes back from scratch at that time.
+    ///
+    /// `requested` is whether a `RemoveTarget` was sent. It is not for a `once` target that is
+    /// already current: Firestore ends that one by itself, and a `RemoveTarget` crossing the end
+    /// would fail the whole stream.
+    Removing {
+        add_back_at: Option<Instant>,
+        requested: bool,
+    },
     /// Off the stream, and added back from scratch at that time.
     Waiting(Instant),
 }
@@ -1286,6 +1308,8 @@ struct FirestoreListenerStreamTarget {
     state: FirestoreListenerStreamTargetState,
     /// The `AddTarget` asked Firestore to remove the target once it is current.
     once: bool,
+    /// Firestore has reported the target current on this stream.
+    current: bool,
     /// The `AddTarget` carried a resume state, which Firestore can reject as stale.
     resumed: bool,
     /// What the target was added with, for the `RemoveTarget` that takes it off again.
@@ -1323,11 +1347,11 @@ struct FirestoreListenerRemoval {
 struct FirestoreListenerStreamTargets {
     requests: UnboundedSender<ListenRequest>,
     targets: HashMap<FirestoreListenerTarget, FirestoreListenerStreamTarget>,
-    /// Acknowledgements still due for `RemoveTarget`s whose target Firestore removed first, with a
-    /// cause or by ending a `once` target. Firestore answers a stream's requests in order, so one
-    /// still due arrives before the answer to any later request for the ID, and an `ADD` for the
-    /// ID means none is coming.
-    unanswered_removals: HashMap<FirestoreListenerTarget, u32>,
+    /// A `RemoveTarget` was in flight for a target Firestore removed first, with a cause or by
+    /// ending a `once` target. Firestore answers a `RemoveTarget` for a target it no longer has by
+    /// failing the stream with `NOT_FOUND` instead of acknowledging it, so that failure is expected
+    /// and the stream is reopened at once.
+    crossed_removal: bool,
 }
 
 impl FirestoreListenerStreamTargets {
@@ -1335,7 +1359,7 @@ impl FirestoreListenerStreamTargets {
         Self {
             requests,
             targets: HashMap::new(),
-            unanswered_removals: HashMap::new(),
+            crossed_removal: false,
         }
     }
 
@@ -1430,6 +1454,7 @@ impl FirestoreListenerStreamTargets {
             registration,
             state: FirestoreListenerStreamTargetState::Adding,
             once: target_params.add_target_once.unwrap_or(false),
+            current: false,
             resumed: target_params.resume_type.is_some(),
             request_options: target_params.request_options.clone(),
         };
@@ -1454,10 +1479,16 @@ impl FirestoreListenerStreamTargets {
             return Ok(());
         }
         if let Some(on_stream) = self.targets.get_mut(target) {
-            self.requests
-                .send(db.remove_target_request(target, on_stream.request_options.as_ref())?)
-                .ok();
-            on_stream.state = FirestoreListenerStreamTargetState::Removing { add_back_at };
+            let requested = !(on_stream.once && on_stream.current);
+            if requested {
+                self.requests
+                    .send(db.remove_target_request(target, on_stream.request_options.as_ref())?)
+                    .ok();
+            }
+            on_stream.state = FirestoreListenerStreamTargetState::Removing {
+                add_back_at,
+                requested,
+            };
         }
         Ok(())
     }
@@ -1468,7 +1499,6 @@ impl FirestoreListenerStreamTargets {
             .iter()
             .filter_map(|id| FirestoreListenerTarget::try_from(*id).ok())
         {
-            self.unanswered_removals.remove(&target);
             if let Some(on_stream) = self.targets.get_mut(&target) {
                 if on_stream.state == FirestoreListenerStreamTargetState::Adding {
                     on_stream.state = FirestoreListenerStreamTargetState::Listening;
@@ -1477,11 +1507,35 @@ impl FirestoreListenerStreamTargets {
         }
     }
 
+    /// Records that Firestore reported the targets current, every target the stream includes for
+    /// no IDs.
+    fn current(&mut self, target_ids: &[i32]) {
+        let named: Vec<FirestoreListenerTarget> = target_ids
+            .iter()
+            .filter_map(|id| FirestoreListenerTarget::try_from(*id).ok())
+            .collect();
+        for (target, on_stream) in &mut self.targets {
+            let reported = if named.is_empty() {
+                on_stream.state == FirestoreListenerStreamTargetState::Listening
+            } else {
+                named.contains(target)
+                    && matches!(
+                        on_stream.state,
+                        FirestoreListenerStreamTargetState::Adding
+                            | FirestoreListenerStreamTargetState::Listening
+                    )
+            };
+            if reported {
+                on_stream.current = true;
+            }
+        }
+    }
+
     /// Records that Firestore removed the targets, every target the stream includes for no IDs.
     ///
     /// A removal with no `cause` acknowledges a `RemoveTarget`, or ends a `once` target; one with
-    /// a `cause` is Firestore removing the target on its own, which completes a `RemoveTarget` it
-    /// crosses. The targets Firestore removed on its own are added back at `add_back_at`, unless
+    /// a `cause` is Firestore removing the target on its own. Either completes a target being
+    /// removed. The targets Firestore removed on its own are added back at `add_back_at`, unless
     /// the cause shows that they have ended for good.
     fn removed(
         &mut self,
@@ -1506,30 +1560,21 @@ impl FirestoreListenerStreamTargets {
 
         let mut removal = FirestoreListenerRemoval::default();
         for target in named {
-            if cause.is_none() {
-                if let Some(unanswered) = self.unanswered_removals.get_mut(&target) {
-                    *unanswered -= 1;
-                    if *unanswered == 0 {
-                        self.unanswered_removals.remove(&target);
-                    }
-                    continue;
-                }
-            }
             let Some(on_stream) = self.targets.get(&target) else {
                 continue;
             };
             let next_state = match on_stream.state {
                 FirestoreListenerStreamTargetState::Removing {
-                    add_back_at: requested,
+                    add_back_at,
+                    requested,
                 } => {
                     // Firestore removing the target on its own, or ending a `once` one, crosses our
-                    // `RemoveTarget`, whose own acknowledgement is still to come. A `once` target's
-                    // removal may be that acknowledgement after all; the `ADD` of the next
-                    // registration then clears the count.
-                    if cause.is_some() || on_stream.once {
-                        *self.unanswered_removals.entry(target.clone()).or_default() += 1;
+                    // `RemoveTarget`. A `once` target's removal may be the acknowledgement after
+                    // all, in which case the stream simply does not fail.
+                    if requested && (cause.is_some() || on_stream.once) {
+                        self.crossed_removal = true;
                     }
-                    requested.map(FirestoreListenerStreamTargetState::Waiting)
+                    add_back_at.map(FirestoreListenerStreamTargetState::Waiting)
                 }
                 FirestoreListenerStreamTargetState::Adding
                 | FirestoreListenerStreamTargetState::Listening => {

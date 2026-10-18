@@ -33,6 +33,9 @@ struct TestDb {
     events: Vec<FirestoreListenEvent>,
     /// What the test feeds the next stream after `events`, from [`TestDb::feed`].
     feed: Arc<Mutex<Option<UnboundedReceiver<FirestoreListenEvent>>>>,
+    /// Fails the fed stream with a status, from [`TestDb::fail_stream`].
+    stream_failure: Arc<Mutex<Option<UnboundedSender<Code>>>>,
+    stream_failure_reader: Arc<Mutex<Option<UnboundedReceiver<Code>>>>,
     /// Fails every connection with this status instead.
     connect_error: Option<Code>,
     /// The request side of the latest stream.
@@ -63,6 +66,8 @@ impl TestDb {
                 ..Default::default()
             })],
             feed: Arc::new(Mutex::new(None)),
+            stream_failure: Arc::new(Mutex::new(None)),
+            stream_failure_reader: Arc::new(Mutex::new(None)),
             connect_error: None,
             requests: Arc::new(Mutex::new(None)),
             entered: Arc::new(Semaphore::new(0)),
@@ -86,7 +91,21 @@ impl TestDb {
         };
         let (feed, feed_reader) = tokio::sync::mpsc::unbounded_channel();
         *db.feed.lock().unwrap() = Some(feed_reader);
+        let (stream_failure, stream_failure_reader) = tokio::sync::mpsc::unbounded_channel();
+        *db.stream_failure.lock().unwrap() = Some(stream_failure);
+        *db.stream_failure_reader.lock().unwrap() = Some(stream_failure_reader);
         (db, feed)
+    }
+
+    /// Fails the fed stream with `code`, after whatever was fed to it before.
+    fn fail_stream(&self, code: Code) {
+        self.stream_failure
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .send(code)
+            .unwrap();
     }
 
     async fn wait_for_release(&self) {
@@ -160,9 +179,22 @@ impl FirestoreListenSupport for TestDb {
             | Wait::Never => {
                 let events = futures::stream::iter(self.events.clone()).map(response);
                 Ok(match self.feed.lock().unwrap().take() {
-                    Some(mut feed) => events
-                        .chain(futures::stream::poll_fn(move |cx| feed.poll_recv(cx)).map(response))
-                        .boxed(),
+                    Some(mut feed) => {
+                        let mut failures = self.stream_failure_reader.lock().unwrap().take();
+                        let fed = futures::stream::poll_fn(move |cx| {
+                            if let Some(std::task::Poll::Ready(Some(code))) =
+                                failures.as_mut().map(|failures| failures.poll_recv(cx))
+                            {
+                                return std::task::Poll::Ready(Some(Err(Status::new(
+                                    code,
+                                    "failed by the test",
+                                )
+                                .into())));
+                            }
+                            feed.poll_recv(cx).map(|event| event.map(response))
+                        });
+                        events.chain(fed).boxed()
+                    }
                     None => events.chain(futures::stream::pending()).boxed(),
                 })
             }
@@ -732,7 +764,7 @@ async fn a_removal_cancelled_while_forgetting_its_resume_state_still_reaches_the
 }
 
 #[tokio::test]
-async fn a_removal_with_a_cause_that_crosses_ours_is_not_taken_for_its_acknowledgement() {
+async fn a_removal_crossed_by_firestore_removing_the_target_reconnects_at_once_on_not_found() {
     let (db, feed) = TestDb::fed(Wait::Never);
     let (mut listener, db) = started(db, never_retrying()).await;
     let mut requests = db.take_requests();
@@ -761,28 +793,33 @@ async fn a_removal_with_a_cause_that_crosses_ours_is_not_taken_for_its_acknowled
         Some(add_request(1, "document-other"))
     );
 
-    // Firestore's answer to our `RemoveTarget`, then to the new `AddTarget`.
-    feed.send(target_change(TargetChangeType::Remove, vec![1]))
-        .unwrap();
-    feed.send(target_change(TargetChangeType::Add, vec![1]))
-        .unwrap();
-    feed.send(FirestoreListenEvent::TargetChange(TargetChange {
-        target_change_type: TargetChangeType::Current as i32,
-        target_ids: vec![1],
-        resume_token: vec![7],
-        ..Default::default()
-    }))
-    .unwrap();
-    db.settle(&feed).await;
+    // Firestore's answer to a `RemoveTarget` for a target it has already removed.
+    db.fail_stream(Code::NotFound);
+    within(db.entered.acquire()).await.unwrap().forget();
+    let mut requests = db.take_requests();
 
     assert_eq!(
-        *db.forgotten.lock().unwrap(),
-        vec![FirestoreListenerTarget::new(1)]
+        next_request(&mut requests).await,
+        Some(add_request(1, "document-other"))
     );
-    assert_eq!(
-        *db.stored.lock().unwrap(),
-        vec![FirestoreListenerTarget::new(1)]
+    assert_eq!(db.connections.load(Ordering::Relaxed), 2);
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_not_found_stream_error_without_a_crossed_removal_waits_for_the_retry_delay() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let (mut listener, db) = started(db, never_retrying()).await;
+    db.settle(&feed).await;
+
+    db.fail_stream(Code::NotFound);
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), db.entered.acquire())
+            .await
+            .is_err()
     );
+    assert_eq!(db.connections.load(Ordering::Relaxed), 1);
     within(listener.shutdown()).await.unwrap();
 }
 
@@ -856,9 +893,9 @@ async fn a_once_target_ends_with_its_removal() {
 }
 
 #[tokio::test]
-async fn a_once_target_ending_across_our_removal_is_not_taken_for_its_acknowledgement() {
+async fn a_once_target_ending_across_our_removal_reconnects_at_once_on_not_found() {
     let (db, feed) = TestDb::fed(Wait::Never);
-    let mut listener = FirestoreListener::new(db.clone(), db.clone(), retrying_at_once())
+    let mut listener = FirestoreListener::new(db.clone(), db.clone(), never_retrying())
         .await
         .unwrap();
     listener
@@ -889,15 +926,53 @@ async fn a_once_target_ending_across_our_removal_is_not_taken_for_its_acknowledg
         Some(add_request(1, "document-other"))
     );
 
-    // Firestore's answer to our `RemoveTarget`, then to the new `AddTarget`.
-    feed.send(target_change(TargetChangeType::Remove, vec![1]))
+    db.fail_stream(Code::NotFound);
+    within(db.entered.acquire()).await.unwrap().forget();
+    let mut requests = db.take_requests();
+
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(add_request(1, "document-other"))
+    );
+    assert_eq!(db.connections.load(Ordering::Relaxed), 2);
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_current_once_target_is_removed_without_a_remove_target() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let mut listener = FirestoreListener::new(db.clone(), db.clone(), never_retrying())
+        .await
         .unwrap();
+    listener
+        .add_target(target_params(1).with_add_target_once(true))
+        .unwrap();
+    start(&mut listener, &db).await;
+    let mut requests = db.take_requests();
+    assert_eq!(added_targets(&mut requests, 1).await, vec![1]);
     feed.send(target_change(TargetChangeType::Add, vec![1]))
+        .unwrap();
+    feed.send(target_change(TargetChangeType::Current, vec![1]))
         .unwrap();
     db.settle(&feed).await;
 
-    assert!(listener.has_target(&FirestoreListenerTarget::new(1)));
+    listener
+        .remove_target(&FirestoreListenerTarget::new(1))
+        .await
+        .unwrap();
+    listener
+        .add_target(target_params_for_document(1, "document-other"))
+        .unwrap();
+    db.settle(&feed).await;
     assert!(requests.try_recv().is_err());
+
+    // The once target's end completes the removal.
+    feed.send(target_change(TargetChangeType::Remove, vec![1]))
+        .unwrap();
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(add_request(1, "document-other"))
+    );
     within(listener.shutdown()).await.unwrap();
 }
 

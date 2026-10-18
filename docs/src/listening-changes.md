@@ -86,12 +86,18 @@ a listen request, so a bad target never reaches the running listener.
 Target changes with the `Remove` type reach the callback in two forms:
 
 - with no `cause`, Firestore acknowledges a `remove_target` call, or ends a target added with
-  `add_target_once`. Events for a removed target can still arrive until this acknowledgement;
+  `add_target_once`. Events for a removed target can still arrive until this acknowledgement.
+  A target added once that is already current is not removed from the stream: Firestore ends it
+  by itself, and that end completes the removal;
 - with a `cause`, Firestore removed the target on its own. For `PERMISSION_DENIED`,
   `NOT_FOUND`, `FAILED_PRECONDITION`, `UNIMPLEMENTED`, and `INVALID_ARGUMENT` on a target added
   without a resume token or read time, the listener stops listening on that target only and
   unregisters it. For any other cause it adds the target back from scratch after the retry
   delay.
+
+When Firestore removes a target on its own while a `remove_target` call for it is on its way,
+Firestore does not acknowledge the removal. It closes the whole stream with `NOT_FOUND` instead,
+and the listener reconnects at once, resuming every other target from its resume token.
 
 The listener reconnects by itself after network errors, closed streams and every other error,
 after the retry delay. It stops only on an error a retry cannot fix:
