@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0f5993c8.js";
+            window.path_to_searchindex_js = "searchindex-0224f9f5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-61f90fc3.js"></script>
@@ -250,6 +250,33 @@ listener.shutdown().await?;
 Use <code>shutdown_with_timeout(Duration::from_secs(5))</code> to allow five seconds for graceful shutdown,
 then abort and join the task. Aborting can interrupt callbacks and token writes, so changes may
 be replayed.</p>
+<p>Targets can also be added and removed on a running listener with <code>add_target</code> and
+<code>remove_target</code>. The listener changes them on its open stream, so the other targets keep
+listening as they were. <code>add_target</code> returns an error for a target that cannot be turned into
+a listen request, so a bad target never reaches the running listener.</p>
+<p>Target changes with the <code>Remove</code> type reach the callback in two forms:</p>
+<ul>
+<li>with no <code>cause</code>, Firestore acknowledges a <code>remove_target</code> call, or ends a target added with
+<code>add_target_once</code>. Events for a removed target can still arrive until this acknowledgement;</li>
+<li>with a <code>cause</code>, Firestore removed the target on its own. For <code>PERMISSION_DENIED</code>,
+<code>NOT_FOUND</code>, <code>FAILED_PRECONDITION</code>, <code>UNIMPLEMENTED</code>, and <code>INVALID_ARGUMENT</code> on a target added
+without a resume token or read time, the listener stops listening on that target only and
+unregisters it. For any other cause it adds the target back from scratch after the retry
+delay.</li>
+</ul>
+<p>When Firestore removes a target on its own while a <code>remove_target</code> call for it is on its way,
+Firestore does not acknowledge the removal. It closes the whole stream with <code>NOT_FOUND</code> instead.
+The listener then reconnects, and the other targets are added back at once.</p>
+<p>The listener reconnects by itself after network errors, closed streams and every other error,
+after the retry delay. It stops only on an error a retry cannot fix:</p>
+<ul>
+<li>Firestore rejects the listen request as invalid again after every resume token was discarded;</li>
+<li>the listen request fails with <code>InvalidParametersError</code>;</li>
+<li>the <code>AddTarget</code> or <code>RemoveTarget</code> request for a target cannot be built;</li>
+<li>the callback or the token storage panics.</li>
+</ul>
+<p>A stopped listener rejects <code>add_target</code> with a <code>SystemError</code>, and <code>shutdown()</code> returns the error
+it stopped with.</p>
 <p>See complete example in examples directory.</p>
 
                     </main>

@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-0f5993c8.js";
+            window.path_to_searchindex_js = "../searchindex-0224f9f5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-61f90fc3.js"></script>
@@ -192,7 +192,9 @@ cache.remove_collection("currencies").await?;
 complete, and then extends the listener - so a listing never observes it half filled, and nothing
 written during the download is missed. <code>remove_collection</code> does the reverse, and also forgets the
 collection’s resume token so its listener target ID cannot be reused against a different query.
-Use <code>remove_collection_at</code> for a sub-collection, whose absolute path a bare name cannot address.</p>
+Use <code>remove_collection_at</code> for a sub-collection, whose absolute path a bare name cannot address.
+A collection whose target Firestore ends, for example on <code>PERMISSION_DENIED</code>, stays configured and
+suspended, so <code>add_collection</code> reports it as already cached until <code>remove_collection</code> is called.</p>
 <p><code>FirestoreDb</code> handles created earlier with <code>read_through_cache</code> or <code>read_cached_only</code> pick both up
 immediately: they share the cache’s backend rather than a copy of it. A cache can also be built
 with no collections at all and populated entirely at runtime.</p>
