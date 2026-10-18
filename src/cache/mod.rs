@@ -917,8 +917,8 @@ where
             return;
         }
 
-        // The listener then discards the target's resume state and reopens the stream. The
-        // collection serves listings again once Firestore reports the target current.
+        // The listener then discards the target's resume state and listens on it again from
+        // scratch. The collection serves listings again once Firestore reports the target current.
         self.listener.resync_target(target);
     }
 }

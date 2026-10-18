@@ -15,12 +15,13 @@ use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
 use rvstruct::ValueStruct;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 use tracing::*;
 
 #[cfg(test)]
@@ -73,17 +74,12 @@ pub enum FirestoreListenerTargetResumeType {
 impl FirestoreListenSupport for FirestoreDb {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        targets: Vec<FirestoreListenerTargetParams>,
+        mut requests: UnboundedReceiver<ListenRequest>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
-        let listen_requests = targets
-            .into_iter()
-            .map(|target_params| self.create_listen_request(target_params))
-            .collect::<FirestoreResult<Vec<ListenRequest>>>()?;
-
         // Closing the response must also end the request producer owned by the HTTP/2 transport.
         let (keep_request_open, response_closed) = tokio::sync::oneshot::channel::<()>();
         let request = gcloud_sdk::tonic::Request::new(
-            futures::stream::iter(listen_requests)
+            futures::stream::poll_fn(move |cx| requests.poll_recv(cx))
                 .chain(futures::stream::pending())
                 .take_until(response_closed),
         );
@@ -100,6 +96,78 @@ impl FirestoreListenSupport for FirestoreDb {
             },
         )
         .boxed())
+    }
+
+    fn add_target_request(
+        &self,
+        target_params: FirestoreListenerTargetParams,
+    ) -> FirestoreResult<ListenRequest> {
+        Ok(ListenRequest {
+            database: self.get_database_path().to_string(),
+            labels: target_params.labels,
+            request_options: self.resolve_request_options(target_params.request_options.as_ref()),
+            target_change: Some(listen_request::TargetChange::AddTarget(Target {
+                target_id: target_params.target.try_into()?,
+                once: target_params.add_target_once.unwrap_or(false),
+                target_type: Some(match target_params.target_type {
+                    FirestoreTargetType::Query(query_params) => {
+                        target::TargetType::Query(target::QueryTarget {
+                            parent: query_params
+                                .parent
+                                .as_ref()
+                                .unwrap_or_else(|| self.get_documents_path())
+                                .clone(),
+                            query_type: Some(target::query_target::QueryType::StructuredQuery(
+                                query_params.try_into()?,
+                            )),
+                        })
+                    }
+                    FirestoreTargetType::Documents(collection_documents) => {
+                        target::TargetType::Documents(target::DocumentsTarget {
+                            documents: collection_documents
+                                .documents
+                                .into_iter()
+                                .map(|doc_id| {
+                                    safe_document_path(
+                                        collection_documents
+                                            .parent
+                                            .as_deref()
+                                            .unwrap_or_else(|| self.get_documents_path()),
+                                        collection_documents.collection.as_str(),
+                                        doc_id,
+                                    )
+                                })
+                                .collect::<FirestoreResult<Vec<String>>>()?,
+                        })
+                    }
+                }),
+                resume_type: target_params
+                    .resume_type
+                    .map(|resume_type| match resume_type {
+                        FirestoreListenerTargetResumeType::Token(token) => {
+                            target::ResumeType::ResumeToken(token.into_value())
+                        }
+                        FirestoreListenerTargetResumeType::ReadTime(dt) => {
+                            target::ResumeType::ReadTime(to_timestamp(dt))
+                        }
+                    }),
+                ..Default::default()
+            })),
+        })
+    }
+
+    fn remove_target_request(
+        &self,
+        target: &FirestoreListenerTarget,
+    ) -> FirestoreResult<ListenRequest> {
+        Ok(ListenRequest {
+            database: self.get_database_path().to_string(),
+            labels: HashMap::new(),
+            request_options: self.resolve_request_options(None),
+            target_change: Some(listen_request::TargetChange::RemoveTarget(
+                target.clone().try_into()?,
+            )),
+        })
     }
 }
 
@@ -223,64 +291,6 @@ impl FirestoreDb {
     {
         FirestoreListener::new(self.clone(), storage, params).await
     }
-
-    fn create_listen_request(
-        &self,
-        target_params: FirestoreListenerTargetParams,
-    ) -> FirestoreResult<ListenRequest> {
-        Ok(ListenRequest {
-            database: self.get_database_path().to_string(),
-            labels: target_params.labels,
-            request_options: self.resolve_request_options(target_params.request_options.as_ref()),
-            target_change: Some(listen_request::TargetChange::AddTarget(Target {
-                target_id: target_params.target.try_into()?,
-                once: target_params.add_target_once.unwrap_or(false),
-                target_type: Some(match target_params.target_type {
-                    FirestoreTargetType::Query(query_params) => {
-                        target::TargetType::Query(target::QueryTarget {
-                            parent: query_params
-                                .parent
-                                .as_ref()
-                                .unwrap_or_else(|| self.get_documents_path())
-                                .clone(),
-                            query_type: Some(target::query_target::QueryType::StructuredQuery(
-                                query_params.try_into()?,
-                            )),
-                        })
-                    }
-                    FirestoreTargetType::Documents(collection_documents) => {
-                        target::TargetType::Documents(target::DocumentsTarget {
-                            documents: collection_documents
-                                .documents
-                                .into_iter()
-                                .map(|doc_id| {
-                                    safe_document_path(
-                                        collection_documents
-                                            .parent
-                                            .as_deref()
-                                            .unwrap_or_else(|| self.get_documents_path()),
-                                        collection_documents.collection.as_str(),
-                                        doc_id,
-                                    )
-                                })
-                                .collect::<FirestoreResult<Vec<String>>>()?,
-                        })
-                    }
-                }),
-                resume_type: target_params
-                    .resume_type
-                    .map(|resume_type| match resume_type {
-                        FirestoreListenerTargetResumeType::Token(token) => {
-                            target::ResumeType::ResumeToken(token.into_value())
-                        }
-                        FirestoreListenerTargetResumeType::ReadTime(dt) => {
-                            target::ResumeType::ReadTime(to_timestamp(dt))
-                        }
-                    }),
-                ..Default::default()
-            })),
-        })
-    }
 }
 
 pub type FirestoreListenEvent = listen_response::ResponseType;
@@ -300,13 +310,15 @@ pub(crate) type FirestoreListenerTargetsState =
 
 /// A message to a running listener loop.
 ///
-/// [`TargetsChanged`](Self::TargetsChanged) deliberately carries no payload: the shared target map
-/// is the single source of truth, so a change applies on the next reconnect even if the message is
-/// lost or arrives late.
+/// [`TargetsAdded`](Self::TargetsAdded) carries no payload: the shared target map is the single
+/// source of truth, and the loop adds whatever registered target its stream lacks. A removal
+/// names its target, because the ID may be registered again before the loop gets to it, and the
+/// stream still has to drop the old target first.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum FirestoreListenerControl {
     Shutdown,
-    TargetsChanged,
+    TargetsAdded,
+    TargetRemoved(FirestoreListenerTarget),
     /// Listen to this target again from scratch, discarding its stored resume state.
     ResyncTarget(FirestoreListenerTarget),
 }
@@ -321,8 +333,8 @@ pub struct FirestoreListenerControlHandle {
 }
 
 impl FirestoreListenerControlHandle {
-    /// Discards the target's stored resume state and reopens the stream, so Firestore sends its
-    /// initial state again.
+    /// Discards the target's stored resume state and adds the target to the stream again after
+    /// the retry delay, so Firestore sends its initial state again.
     ///
     /// Use this when the cached view of a target is known to have diverged from the server and
     /// resuming would only carry the divergence forward. Does nothing if the listener has stopped.
@@ -386,8 +398,7 @@ where
     /// Adds a target to listen on.
     ///
     /// This works before and after [`start`](Self::start): a target added to a running listener
-    /// joins it once the listen stream has been reopened with the new set, which happens straight
-    /// away.
+    /// is added to its open listen stream, and the other targets keep listening as they were.
     ///
     /// Returns an error if the listener has been shut down, or if a target with the same ID is
     /// already registered - reusing an ID for a different query would resume it from a token that
@@ -421,7 +432,7 @@ where
 
         // A send error only means the loop is gone, which the shutdown check above already covers.
         self.control_writer
-            .send(FirestoreListenerControl::TargetsChanged)
+            .send(FirestoreListenerControl::TargetsAdded)
             .ok();
         Ok(())
     }
@@ -449,7 +460,7 @@ where
         }
 
         self.control_writer
-            .send(FirestoreListenerControl::TargetsChanged)
+            .send(FirestoreListenerControl::TargetRemoved(target.clone()))
             .ok();
         Ok(true)
     }
@@ -549,8 +560,8 @@ where
             ));
         };
 
-        // Targets added before `start` already appear in the shared state the loop is about to
-        // connect with, so their queued notifications would only cause a pointless reconnect.
+        // Targets added or removed before `start` are already reflected in the shared state the
+        // loop is about to connect with, so their queued notifications have nothing left to do.
         while let Ok(queued) = control_reader.try_recv() {
             if queued == FirestoreListenerControl::Shutdown {
                 self.shutdown_signal.send_replace(true);
@@ -689,9 +700,11 @@ where
         let mut retried_without_resume_tokens = false;
 
         while !*shutdown_signal.borrow() {
-            let snapshot = Self::resolve_targets(&storage, &targets_state).await;
-
-            if snapshot.is_empty() {
+            let no_targets = targets_state
+                .read()
+                .expect("listener targets lock poisoned")
+                .is_empty();
+            if no_targets {
                 // Nothing to listen on yet. Idle on the control channel rather than opening an
                 // empty stream, so that a listener can be started before its targets exist.
                 debug!("Firestore listener has no targets. Waiting for one to be added...");
@@ -699,24 +712,24 @@ where
                     None | Some(FirestoreListenerControl::Shutdown) => {
                         shutdown_signal.send_replace(true);
                     }
-                    // Nothing is being listened to, so there is nothing to resynchronise either.
-                    Some(FirestoreListenerControl::TargetsChanged)
+                    // Nothing is being listened to, so there is nothing to remove or resynchronise.
+                    Some(FirestoreListenerControl::TargetsAdded)
+                    | Some(FirestoreListenerControl::TargetRemoved(_))
                     | Some(FirestoreListenerControl::ResyncTarget(_)) => {}
                 }
                 continue;
             }
 
+            let (requests, request_reader) = tokio::sync::mpsc::unbounded_channel();
+            let mut on_stream = FirestoreListenerStreamTargets::new(requests);
+            Self::add_due_targets(&db, &storage, &targets_state, &mut on_stream).await?;
             debug!(
-                num_targets = snapshot.len(),
+                num_targets = on_stream.targets.len(),
                 "Start listening on targets..."
             );
-            let on_stream: HashSet<FirestoreListenerTarget> = snapshot
-                .iter()
-                .map(|target_params| target_params.target.clone())
-                .collect();
 
             let Some(connection) =
-                Self::until_shutdown(&shutdown_signal, db.listen_doc_changes(snapshot)).await
+                Self::until_shutdown(&shutdown_signal, db.listen_doc_changes(request_reader)).await
             else {
                 break;
             };
@@ -733,7 +746,11 @@ where
                     .await?;
                 }
                 Ok(mut listen_stream) => loop {
+                    let next_add_back = on_stream.next_add_back();
                     tokio::select! {
+                        // Control messages go first, so that the stream state they record is in
+                        // place before Firestore's answers to them are read.
+                        biased;
                         control = control_receiver.recv() => {
                             match control {
                                 None => {
@@ -746,43 +763,32 @@ where
                                     control_receiver.close();
                                     break;
                                 }
+                                Some(FirestoreListenerControl::TargetsAdded) => {
+                                    Self::add_due_targets(&db, &storage, &targets_state, &mut on_stream).await?;
+                                }
+                                Some(FirestoreListenerControl::TargetRemoved(target)) => {
+                                    on_stream.remove(&db, &target, None)?;
+                                }
                                 Some(FirestoreListenerControl::ResyncTarget(target)) => {
                                     warn!(
                                         ?target,
                                         ?effective_delay,
                                         "Resynchronising a listener target from scratch at the cache's request.",
                                     );
-                                    Self::forget_resume_states(&storage, &targets_state, &[target]).await;
-                                    // Without this a target that keeps diverging would reconnect
-                                    // and re-download in a tight loop.
-                                    Self::until_shutdown(&shutdown_signal, tokio::time::sleep(effective_delay)).await;
-                                    break;
-                                }
-                                Some(FirestoreListenerControl::TargetsChanged) => {
-                                    // Collapse a burst of changes into a single reconnect. A resync
-                                    // drained here still has to take effect, or the target would
-                                    // come back resuming from the position we were asked to drop.
-                                    let mut drained_resyncs = Vec::new();
-                                    while let Ok(queued) = control_receiver.try_recv() {
-                                        match queued {
-                                            FirestoreListenerControl::Shutdown => {
-                                                shutdown_signal.send_replace(true);
-                                                control_receiver.close();
-                                                break;
-                                            }
-                                            FirestoreListenerControl::ResyncTarget(target) => {
-                                                drained_resyncs.push(target);
-                                            }
-                                            FirestoreListenerControl::TargetsChanged => {}
-                                        }
-                                    }
-                                    if !drained_resyncs.is_empty() {
-                                        Self::forget_resume_states(&storage, &targets_state, &drained_resyncs).await;
-                                    }
-                                    debug!("Listener targets changed. Reopening the stream with the new set...");
-                                    break;
+                                    Self::forget_resume_states(&storage, &targets_state, std::slice::from_ref(&target)).await;
+                                    // Without the delay a target that keeps diverging would
+                                    // re-download in a tight loop.
+                                    on_stream.remove(&db, &target, Some(Instant::now() + effective_delay))?;
                                 }
                             }
+                        }
+                        () = async {
+                            match next_add_back {
+                                Some(at) => tokio::time::sleep_until(at).await,
+                                None => std::future::pending().await,
+                            }
+                        } => {
+                            Self::add_due_targets(&db, &storage, &targets_state, &mut on_stream).await?;
                         }
                         tried = listen_stream.try_next() => {
                             if *shutdown_signal.borrow() {
@@ -816,7 +822,7 @@ where
 
                                                 // Anything listening on this - the cache above all -
                                                 // has to see the change, and drop what it holds for a
-                                                // reset target, before the stream is reopened.
+                                                // reset target, before the target is listened to again.
                                                 if let Err(err) = cb(listen_response::ResponseType::TargetChange(target_change)).await {
                                                     error!(%err, "Listener callback function error occurred.");
                                                     break;
@@ -832,18 +838,24 @@ where
                                                 }
 
                                                 match (change_type, affected) {
-                                                    (Some(target_change::TargetChangeType::Remove), Ok(affected)) => {
-                                                        error!(
-                                                            ?affected,
-                                                            ?cause,
-                                                            ?effective_delay,
-                                                            "Firestore removed listener targets. Discarding their resume state and reopening the stream after the retry delay to add them again.",
-                                                        );
-                                                        Self::forget_resume_states(&storage, &targets_state, &affected).await;
-                                                        // Without this a target Firestore keeps
-                                                        // rejecting would reconnect in a tight loop.
-                                                        Self::until_shutdown(&shutdown_signal, tokio::time::sleep(effective_delay)).await;
-                                                        break;
+                                                    (Some(target_change::TargetChangeType::Add), _) => {
+                                                        on_stream.added(&target_ids);
+                                                    }
+                                                    (Some(target_change::TargetChangeType::Remove), _) => {
+                                                        let dropped = on_stream.removed(&target_ids, Instant::now() + effective_delay);
+                                                        if !dropped.is_empty() {
+                                                            // The delay keeps a target Firestore keeps
+                                                            // rejecting from being added back in a
+                                                            // tight loop.
+                                                            error!(
+                                                                ?dropped,
+                                                                ?cause,
+                                                                ?effective_delay,
+                                                                "Firestore removed listener targets. Discarding their resume state and adding them back after the retry delay.",
+                                                            );
+                                                            Self::forget_resume_states(&storage, &targets_state, &dropped).await;
+                                                        }
+                                                        Self::add_due_targets(&db, &storage, &targets_state, &mut on_stream).await?;
                                                     }
                                                     (Some(target_change::TargetChangeType::Reset), Ok(affected)) => {
                                                         // Firestore resends the initial state on this
@@ -902,13 +914,14 @@ where
     /// Resolves the targets a target change applies to.
     ///
     /// Firestore uses an empty set of target IDs to mean every target on the stream, which is how
-    /// global resume tokens and stream-wide resets arrive. A target added since the stream opened
-    /// is not on it until the stream is reopened, so such a change does not apply to it. Target
-    /// IDs this listener does not know about are ignored; an ID that is not a valid target at all
-    /// is a protocol error and returns `Err`.
+    /// global resume tokens and stream-wide resets arrive. Such a change includes a target only
+    /// once Firestore has acknowledged adding it. A change that names a target applies to it only
+    /// while the stream carries it, so a change still in flight for a removed target is not taken
+    /// for a new one under the same ID. Target IDs this listener does not know about are ignored;
+    /// an ID that is not a valid target at all is a protocol error and returns `Err`.
     fn affected_targets(
         targets_state: &FirestoreListenerTargetsState,
-        on_stream: &HashSet<FirestoreListenerTarget>,
+        on_stream: &FirestoreListenerStreamTargets,
         target_ids: &[i32],
     ) -> Result<Vec<FirestoreListenerTarget>, ()> {
         let targets = targets_state
@@ -918,7 +931,7 @@ where
         if target_ids.is_empty() {
             return Ok(targets
                 .keys()
-                .filter(|target| on_stream.contains(target))
+                .filter(|target| on_stream.includes(target))
                 .cloned()
                 .collect());
         }
@@ -927,7 +940,7 @@ where
         for target_id_num in target_ids {
             match FirestoreListenerTarget::try_from(*target_id_num) {
                 Ok(target_id) => {
-                    if targets.contains_key(&target_id) {
+                    if targets.contains_key(&target_id) && on_stream.carries(&target_id) {
                         affected.push(target_id);
                     }
                 }
@@ -940,33 +953,54 @@ where
         Ok(affected)
     }
 
-    /// Snapshots the targets to listen on, filling in any resume state that is not resolved yet.
+    /// Adds to the stream every registered target it lacks, and every waiting one whose time has
+    /// come, each with its resume state resolved first.
+    async fn add_due_targets(
+        db: &D,
+        storage: &S,
+        targets_state: &FirestoreListenerTargetsState,
+        on_stream: &mut FirestoreListenerStreamTargets,
+    ) -> FirestoreResult<()> {
+        let due = on_stream.take_due(
+            &targets_state
+                .read()
+                .expect("listener targets lock poisoned"),
+            Instant::now(),
+        );
+        for target in due {
+            if let Some(target_params) = Self::resolve_target(storage, targets_state, &target).await
+            {
+                on_stream.add(db, target_params)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The target's parameters with its resume state filled in from the storage if it holds none
+    /// yet, or `None` once it is no longer registered.
     ///
     /// Reading the storage here rather than only in `start` is what lets a target added at runtime
     /// pick up a token stored by an earlier run, and what makes a target whose token was discarded
     /// come back cleanly.
-    async fn resolve_targets(
+    async fn resolve_target(
         storage: &S,
         targets_state: &FirestoreListenerTargetsState,
-    ) -> Vec<FirestoreListenerTargetParams> {
-        let unresolved: Vec<FirestoreListenerTarget> = {
-            let targets = targets_state
-                .read()
-                .expect("listener targets lock poisoned");
-            targets
-                .values()
-                .filter(|params| params.resume_type.is_none())
-                .map(|params| params.target.clone())
-                .collect()
-        };
+        target: &FirestoreListenerTarget,
+    ) -> Option<FirestoreListenerTargetParams> {
+        let unresolved = targets_state
+            .read()
+            .expect("listener targets lock poisoned")
+            .get(target)?
+            .resume_type
+            .is_none();
 
-        for target in unresolved {
-            match storage.read_resume_state(&target).await {
+        if unresolved {
+            match storage.read_resume_state(target).await {
                 Ok(Some(resume_type)) => {
                     let mut targets = targets_state
                         .write()
                         .expect("listener targets lock poisoned");
-                    if let Some(params) = targets.get_mut(&target) {
+                    if let Some(params) = targets.get_mut(target) {
                         params.resume_type = Some(resume_type);
                     }
                 }
@@ -980,9 +1014,8 @@ where
         targets_state
             .read()
             .expect("listener targets lock poisoned")
-            .values()
+            .get(target)
             .cloned()
-            .collect()
     }
 
     /// Persists a resume token for every target the change applies to.
@@ -992,7 +1025,7 @@ where
     async fn store_resume_token(
         storage: &S,
         targets_state: &FirestoreListenerTargetsState,
-        on_stream: &HashSet<FirestoreListenerTarget>,
+        on_stream: &FirestoreListenerStreamTargets,
         resume_token: &[u8],
         target_ids: &[i32],
     ) -> bool {
@@ -1102,6 +1135,182 @@ where
             FirestoreError::InvalidParametersError(_) => FirestoreListenerErrorAction::Fatal,
             _ => FirestoreListenerErrorAction::RetryAfterDelay,
         }
+    }
+}
+
+/// Where a target stands on one open listen stream, going by the requests sent on it and the
+/// target changes Firestore answered them with.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum FirestoreListenerStreamTargetState {
+    /// `AddTarget` was sent, and Firestore has not acknowledged it yet.
+    Adding,
+    /// Firestore acknowledged the `AddTarget`, so a change for every target includes this one.
+    Listening,
+    /// `RemoveTarget` was sent, and Firestore has not acknowledged it yet. The ID is not added
+    /// again before it does, so that changes still in flight for the removed target are never
+    /// taken for a new one. With `add_back_at`, the target comes back from scratch at that time.
+    Removing { add_back_at: Option<Instant> },
+    /// Off the stream, and added back from scratch at that time.
+    Waiting(Instant),
+}
+
+/// The targets on one open listen stream, and the request side that changes them.
+struct FirestoreListenerStreamTargets {
+    requests: UnboundedSender<ListenRequest>,
+    targets: HashMap<FirestoreListenerTarget, FirestoreListenerStreamTargetState>,
+}
+
+impl FirestoreListenerStreamTargets {
+    fn new(requests: UnboundedSender<ListenRequest>) -> Self {
+        Self {
+            requests,
+            targets: HashMap::new(),
+        }
+    }
+
+    /// Whether a change that names `target` is about the target registered under that ID.
+    fn carries(&self, target: &FirestoreListenerTarget) -> bool {
+        matches!(
+            self.targets.get(target),
+            Some(
+                FirestoreListenerStreamTargetState::Adding
+                    | FirestoreListenerStreamTargetState::Listening
+            )
+        )
+    }
+
+    /// Whether a change for every target on the stream includes `target`.
+    fn includes(&self, target: &FirestoreListenerTarget) -> bool {
+        self.targets.get(target) == Some(&FirestoreListenerStreamTargetState::Listening)
+    }
+
+    /// When the next waiting target is added back.
+    fn next_add_back(&self) -> Option<Instant> {
+        self.targets
+            .values()
+            .filter_map(|state| match state {
+                FirestoreListenerStreamTargetState::Waiting(at) => Some(*at),
+                _ => None,
+            })
+            .min()
+    }
+
+    /// The registered targets to add now: those the stream lacks and those whose wait is over.
+    /// A waiting target that is no longer registered is dropped.
+    fn take_due(
+        &mut self,
+        registered: &HashMap<FirestoreListenerTarget, FirestoreListenerTargetParams>,
+        now: Instant,
+    ) -> Vec<FirestoreListenerTarget> {
+        self.targets.retain(|target, state| {
+            !matches!(state, FirestoreListenerStreamTargetState::Waiting(_))
+                || registered.contains_key(target)
+        });
+        registered
+            .keys()
+            .filter(|target| match self.targets.get(target) {
+                None => true,
+                Some(FirestoreListenerStreamTargetState::Waiting(at)) => *at <= now,
+                Some(_) => false,
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn add<D: FirestoreListenSupport>(
+        &mut self,
+        db: &D,
+        target_params: FirestoreListenerTargetParams,
+    ) -> FirestoreResult<()> {
+        let target = target_params.target.clone();
+        // A send fails only once the stream is going away, and the reconnect adds every target.
+        self.requests
+            .send(db.add_target_request(target_params)?)
+            .ok();
+        self.targets
+            .insert(target, FirestoreListenerStreamTargetState::Adding);
+        Ok(())
+    }
+
+    /// Takes `target` off the stream, to come back from scratch at `add_back_at` if that is set.
+    /// Does nothing to a target the stream does not carry.
+    fn remove<D: FirestoreListenSupport>(
+        &mut self,
+        db: &D,
+        target: &FirestoreListenerTarget,
+        add_back_at: Option<Instant>,
+    ) -> FirestoreResult<()> {
+        if self.carries(target) {
+            self.requests.send(db.remove_target_request(target)?).ok();
+            self.targets.insert(
+                target.clone(),
+                FirestoreListenerStreamTargetState::Removing { add_back_at },
+            );
+        }
+        Ok(())
+    }
+
+    /// Records that Firestore acknowledged adding the targets.
+    fn added(&mut self, target_ids: &[i32]) {
+        for target in target_ids
+            .iter()
+            .filter_map(|id| FirestoreListenerTarget::try_from(*id).ok())
+        {
+            if let Some(state) = self.targets.get_mut(&target) {
+                if *state == FirestoreListenerStreamTargetState::Adding {
+                    *state = FirestoreListenerStreamTargetState::Listening;
+                }
+            }
+        }
+    }
+
+    /// Records that Firestore removed the targets, every target on the stream for no IDs, and
+    /// returns those it removed on its own rather than to acknowledge a `RemoveTarget`. They are
+    /// added back at `add_back_at`.
+    fn removed(
+        &mut self,
+        target_ids: &[i32],
+        add_back_at: Instant,
+    ) -> Vec<FirestoreListenerTarget> {
+        let named: Vec<FirestoreListenerTarget> = if target_ids.is_empty() {
+            self.targets
+                .keys()
+                .filter(|target| self.includes(target))
+                .cloned()
+                .collect()
+        } else {
+            target_ids
+                .iter()
+                .filter_map(|id| FirestoreListenerTarget::try_from(*id).ok())
+                .collect()
+        };
+
+        let mut dropped = Vec::new();
+        for target in named {
+            match self.targets.get(&target).copied() {
+                Some(FirestoreListenerStreamTargetState::Removing {
+                    add_back_at: Some(at),
+                }) => {
+                    self.targets
+                        .insert(target, FirestoreListenerStreamTargetState::Waiting(at));
+                }
+                Some(FirestoreListenerStreamTargetState::Removing { add_back_at: None }) => {
+                    self.targets.remove(&target);
+                }
+                Some(
+                    FirestoreListenerStreamTargetState::Adding
+                    | FirestoreListenerStreamTargetState::Listening,
+                ) => {
+                    self.targets.insert(
+                        target.clone(),
+                        FirestoreListenerStreamTargetState::Waiting(add_back_at),
+                    );
+                    dropped.push(target);
+                }
+                Some(FirestoreListenerStreamTargetState::Waiting(_)) | None => {}
+            }
+        }
+        dropped
     }
 }
 

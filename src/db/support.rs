@@ -457,10 +457,26 @@ pub trait FirestoreListingSupport {
 
 #[async_trait]
 pub trait FirestoreListenSupport {
+    /// Opens a listen stream that sends each of `requests` as it arrives.
+    ///
+    /// The request side stays open until the response ends or is dropped, even once `requests`
+    /// is closed.
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        targets: Vec<FirestoreListenerTargetParams>,
+        requests: tokio::sync::mpsc::UnboundedReceiver<ListenRequest>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>>;
+
+    /// The request that adds a target to a listen stream.
+    fn add_target_request(
+        &self,
+        target_params: FirestoreListenerTargetParams,
+    ) -> FirestoreResult<ListenRequest>;
+
+    /// The request that removes a target from a listen stream.
+    fn remove_target_request(
+        &self,
+        target: &FirestoreListenerTarget,
+    ) -> FirestoreResult<ListenRequest>;
 }
 
 /// Plans or applies one collection group's declared indexes, field overrides and TTL policy.

@@ -2,7 +2,7 @@ use crate::*;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
-use gcloud_sdk::google::firestore::v1::{Document, ListenResponse};
+use gcloud_sdk::google::firestore::v1::{Document, ListenRequest, ListenResponse};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
@@ -534,8 +534,22 @@ impl FirestoreGetByIdSupport for MockDatabase {
 impl FirestoreListenSupport for MockDatabase {
     async fn listen_doc_changes<'a, 'b>(
         &'a self,
-        targets: Vec<FirestoreListenerTargetParams>,
+        requests: tokio::sync::mpsc::UnboundedReceiver<ListenRequest>,
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<ListenResponse>>> {
+        unreachable!()
+    }
+
+    fn add_target_request(
+        &self,
+        target_params: FirestoreListenerTargetParams,
+    ) -> FirestoreResult<ListenRequest> {
+        unreachable!()
+    }
+
+    fn remove_target_request(
+        &self,
+        target: &FirestoreListenerTarget,
+    ) -> FirestoreResult<ListenRequest> {
         unreachable!()
     }
 }
