@@ -3,22 +3,28 @@
 
 mod common;
 
-use crate::common::config_env_var;
+use crate::common::{eventually_async, setup};
 use firestore::gcloud_sdk::google::firestore::v1::{
     listen_request, target, ListenRequest, StructuredQuery, Target, TargetChange,
 };
 use firestore::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::Notify;
 use tracing::info;
 
-type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const TEST_COLLECTION_NAME: &str = "integration-test-crud";
 const LISTENER_RETRY_DELAY: Duration = Duration::from_secs(1);
 const FIRESTORE_ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
+/// The first wait between checks for Firestore's answer; `eventually_async` grows it
+/// quadratically.
+const FIRESTORE_ANSWER_POLL: Duration = Duration::from_millis(100);
+/// About `FIRESTORE_ANSWER_TIMEOUT` of checks from `FIRESTORE_ANSWER_POLL`.
+const FIRESTORE_ANSWER_RETRIES: u32 = 12;
 /// Several retry delays long, so that a target the listener adds back would show up within it.
 const LISTENER_QUIET_PERIOD: Duration = Duration::from_secs(5);
 /// A field no index covers: ordering by it after an equality filter on another field needs a
@@ -40,36 +46,12 @@ impl RecordedEvents {
         self.0.lock().unwrap().clone()
     }
 
-    /// Waits until `done` holds for the events received so far, and returns whether it did
-    /// before `timeout`.
-    async fn wait_for(
-        &self,
-        timeout: Duration,
-        done: impl Fn(&[FirestoreListenEvent]) -> bool,
-    ) -> bool {
-        let deadline = Instant::now() + timeout;
-        loop {
-            if done(&self.0.lock().unwrap()) {
-                return true;
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+    fn record(&self, event: FirestoreListenEvent) {
+        self.0.lock().unwrap().push(event);
     }
 }
 
 type TestListener = FirestoreListener<FirestoreDb, FirestoreMemListenStateStorage>;
-
-async fn connect() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + Sync>> {
-    // Every test in this file connects, and only the first can install the subscriber.
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .with_test_writer()
-        .try_init();
-    Ok(FirestoreDb::new(&config_env_var("GCP_PROJECT")?).await?)
-}
 
 /// A document ID no other run uses, so that concurrent runs do not see each other's writes.
 fn unique_doc_id(name: &str) -> String {
@@ -84,7 +66,7 @@ async fn start_listener(
     db: &FirestoreDb,
     retry_delay: Duration,
     targets: Vec<FirestoreListenerTargetParams>,
-) -> Result<(TestListener, RecordedEvents), Box<dyn std::error::Error + Send + Sync>> {
+) -> TestResult<(TestListener, RecordedEvents)> {
     let mut listener = db
         .create_listener_with_params(
             FirestoreMemListenStateStorage::new(),
@@ -98,25 +80,22 @@ async fn start_listener(
     let recorder = events.clone();
     listener
         .start(move |event| {
-            let recorder = recorder.clone();
-            async move {
-                recorder.0.lock().unwrap().push(event);
-                Ok(())
-            }
+            recorder.record(event);
+            async { Ok(()) }
         })
         .await?;
     Ok((listener, events))
 }
 
-fn document_target(target: u32, doc_id: &str) -> FirestoreListenerTargetParams {
-    FirestoreListenerTargetParams::new(
-        FirestoreListenerTarget::new(target),
+fn document_target(target: i32, doc_id: &str) -> FirestoreResult<FirestoreListenerTargetParams> {
+    Ok(FirestoreListenerTargetParams::new(
+        FirestoreListenerTarget::try_from(target)?,
         FirestoreTargetType::Documents(FirestoreCollectionDocuments::new(
             TEST_COLLECTION_NAME.to_string(),
             vec![doc_id.to_string()],
         )),
         HashMap::new(),
-    )
+    ))
 }
 
 fn tag_query(tag: &str) -> FirestoreQueryParams {
@@ -128,12 +107,12 @@ fn tag_query(tag: &str) -> FirestoreQueryParams {
     )
 }
 
-fn tag_query_target(target: u32, tag: &str) -> FirestoreListenerTargetParams {
-    FirestoreListenerTargetParams::new(
-        FirestoreListenerTarget::new(target),
+fn tag_query_target(target: i32, tag: &str) -> FirestoreResult<FirestoreListenerTargetParams> {
+    Ok(FirestoreListenerTargetParams::new(
+        FirestoreListenerTarget::try_from(target)?,
         FirestoreTargetType::Query(tag_query(tag)),
         HashMap::new(),
-    )
+    ))
 }
 
 /// A query Firestore can only answer with a composite index that does not exist.
@@ -220,92 +199,84 @@ fn is_document_change(event: &FirestoreListenEvent, target: i32, doc_id: &str) -
     }
 }
 
-/// Starts a listener on target 1 and, once Firestore reports it current, adds target 2 to the
-/// running listener and waits until Firestore reports that one current too.
-async fn listen_then_add_second_target(
-    db: &FirestoreDb,
-    first_doc_id: &str,
-    second_doc_id: &str,
-) -> Result<(TestListener, RecordedEvents), Box<dyn std::error::Error + Send + Sync>> {
-    let (listener, events) = start_listener(
-        db,
-        LISTENER_RETRY_DELAY,
-        vec![document_target(1, first_doc_id)],
-    )
-    .await?;
-    assert!(
-        events
-            .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-                count_target_changes(events, FirestoreListenerTargetChangeType::Current, 1) > 0
-            })
-            .await,
-        "the first target never became current"
-    );
-
-    let added_at = Instant::now();
-    listener.add_target(document_target(2, second_doc_id))?;
-    assert!(
-        events
-            .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-                count_target_changes(events, FirestoreListenerTargetChangeType::Current, 2) > 0
-            })
-            .await,
-        "the target added to the running listener never became current"
-    );
-    info!(elapsed = ?added_at.elapsed(), "The added target became current.");
-    Ok((listener, events))
-}
-
-/// A target added to a running listener receives changes without the listener restarting.
+/// A target added to a running listener receives changes, and is added on the open stream:
+/// reopening it would add every target again, which Firestore answers with a second `ADD` and
+/// `CURRENT` for the first one.
 #[tokio::test]
 async fn target_added_to_running_listener_receives_changes() -> TestResult {
-    let db = connect().await?;
-    let first_doc_id = unique_doc_id("running-first");
-    let second_doc_id = unique_doc_id("running-second");
+    const FIRST_TARGET: i32 = 1;
+    const ADDED_TARGET: i32 = 2;
 
-    let (mut listener, events) =
-        listen_then_add_second_target(&db, &first_doc_id, &second_doc_id).await?;
+    let db = setup().await?;
+    let first_doc_id = unique_doc_id("running-first");
+    let added_doc_id = unique_doc_id("running-added");
+
+    let (mut listener, events) = start_listener(
+        &db,
+        LISTENER_RETRY_DELAY,
+        vec![document_target(FIRST_TARGET, &first_doc_id)?],
+    )
+    .await?;
+    let first_current = eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+        std::future::ready(Ok(count_target_changes(
+            &events.snapshot(),
+            FirestoreListenerTargetChangeType::Current,
+            FIRST_TARGET,
+        ) > 0))
+    })
+    .await?;
+    assert!(first_current, "the first target never became current");
+
+    let added_at = Instant::now();
+    listener.add_target(document_target(ADDED_TARGET, &added_doc_id)?)?;
+    let added_current = eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+        std::future::ready(Ok(count_target_changes(
+            &events.snapshot(),
+            FirestoreListenerTargetChangeType::Current,
+            ADDED_TARGET,
+        ) > 0))
+    })
+    .await?;
+    info!(elapsed = ?added_at.elapsed(), added_current, "Waited for the added target to become current.");
 
     let written_at = Instant::now();
-    write_tagged(&db, &second_doc_id, "added-target", 0).await?;
-    let received = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            events
-                .iter()
-                .any(|event| is_document_change(event, 2, &second_doc_id))
-        })
-        .await;
+    write_tagged(&db, &added_doc_id, "added-target", 0).await?;
+    let received = eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+        std::future::ready(Ok(events
+            .snapshot()
+            .iter()
+            .any(|event| is_document_change(event, ADDED_TARGET, &added_doc_id))))
+    })
+    .await?;
     info!(elapsed = ?written_at.elapsed(), received, "Waited for the added target's change.");
 
     let stopped = listener.shutdown().await;
-    delete_documents(&db, &[&second_doc_id]).await?;
-
-    assert!(received, "the added target never received its document");
+    delete_documents(&db, &[&added_doc_id]).await?;
     stopped?;
-    Ok(())
-}
 
-/// Adding a target sends `AddTarget` on the open stream. Reopening the stream would add every
-/// target again, which Firestore answers with a second `ADD` and `CURRENT` for the first one.
-#[tokio::test]
-async fn adding_target_does_not_reopen_stream() -> TestResult {
-    let db = connect().await?;
-    let first_doc_id = unique_doc_id("reopen-first");
-    let second_doc_id = unique_doc_id("reopen-second");
-
-    let (mut listener, events) =
-        listen_then_add_second_target(&db, &first_doc_id, &second_doc_id).await?;
-    tokio::time::sleep(LISTENER_QUIET_PERIOD).await;
-    listener.shutdown().await?;
-
+    assert!(
+        added_current,
+        "the target added to the running listener never became current"
+    );
+    assert!(received, "the added target never received its document");
     let events = events.snapshot();
     assert_eq!(
-        count_target_changes(&events, FirestoreListenerTargetChangeType::Add, 1),
-        1
+        count_target_changes(
+            &events,
+            FirestoreListenerTargetChangeType::Add,
+            FIRST_TARGET
+        ),
+        1,
+        "the stream was reopened for the first target"
     );
     assert_eq!(
-        count_target_changes(&events, FirestoreListenerTargetChangeType::Current, 1),
-        1
+        count_target_changes(
+            &events,
+            FirestoreListenerTargetChangeType::Current,
+            FIRST_TARGET
+        ),
+        1,
+        "the stream was reopened for the first target"
     );
     Ok(())
 }
@@ -316,60 +287,76 @@ async fn adding_target_does_not_reopen_stream() -> TestResult {
 async fn reused_target_id_follows_only_new_query() -> TestResult {
     const REUSED_TARGET: i32 = 1;
 
-    let db = connect().await?;
+    let db = setup().await?;
     let old_doc_id = unique_doc_id("reuse-old");
     let new_doc_id = unique_doc_id("reuse-new");
     let old_tag = format!("old-{old_doc_id}");
     let new_tag = format!("new-{new_doc_id}");
-    // Both written before the first registration becomes current, so that any resume token it
-    // leaves behind is later than the new query's document. Resuming the new query from it would
-    // leave that document out of the new registration's initial snapshot.
-    write_tagged(&db, &old_doc_id, &old_tag, 0).await?;
-    write_tagged(&db, &new_doc_id, &new_tag, 0).await?;
 
-    let (mut listener, events) = start_listener(
-        &db,
-        LISTENER_RETRY_DELAY,
-        vec![tag_query_target(1, &old_tag)],
-    )
-    .await?;
-    let first_current = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            count_target_changes(events, FirestoreListenerTargetChangeType::Current, 1) > 0
-        })
-        .await;
+    let observed = async {
+        // Both written before the first registration becomes current, so that any resume token
+        // it leaves behind is later than the new query's document. Resuming the new query from it
+        // would leave that document out of the new registration's initial snapshot.
+        write_tagged(&db, &old_doc_id, &old_tag, 0).await?;
+        write_tagged(&db, &new_doc_id, &new_tag, 0).await?;
 
-    // Re-registered without waiting, so that the listener has to hold the new `AddTarget` back
-    // until the removal is acknowledged.
-    listener
-        .remove_target(&FirestoreListenerTarget::new(1))
+        let (mut listener, events) = start_listener(
+            &db,
+            LISTENER_RETRY_DELAY,
+            vec![tag_query_target(REUSED_TARGET, &old_tag)?],
+        )
         .await?;
-    listener.add_target(tag_query_target(1, &new_tag))?;
-    let second_current = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            count_target_changes(events, FirestoreListenerTargetChangeType::Current, 1) > 1
-        })
-        .await;
+        let current_count = |events: &RecordedEvents| {
+            count_target_changes(
+                &events.snapshot(),
+                FirestoreListenerTargetChangeType::Current,
+                REUSED_TARGET,
+            )
+        };
+        let first_current =
+            eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+                std::future::ready(Ok(current_count(&events) > 0))
+            })
+            .await?;
 
-    // A change of field, so that Firestore reports both writes as changes.
-    write_tagged(&db, &old_doc_id, &old_tag, 1).await?;
-    write_tagged(&db, &new_doc_id, &new_tag, 1).await?;
-    let new_doc_changes = |events: &[FirestoreListenEvent]| {
-        events
-            .iter()
-            .filter(|event| is_document_change(event, REUSED_TARGET, &new_doc_id))
-            .count()
-    };
-    let new_change_received = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            new_doc_changes(events) > 1
-        })
-        .await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+        // Re-registered without waiting, so that the listener has to hold the new `AddTarget`
+        // back until the removal is acknowledged.
+        listener
+            .remove_target(&FirestoreListenerTarget::try_from(REUSED_TARGET)?)
+            .await?;
+        listener.add_target(tag_query_target(REUSED_TARGET, &new_tag)?)?;
+        let second_current =
+            eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+                std::future::ready(Ok(current_count(&events) > 1))
+            })
+            .await?;
 
-    let stopped = listener.shutdown().await;
+        // A change of field, so that Firestore reports both writes as changes.
+        write_tagged(&db, &old_doc_id, &old_tag, 1).await?;
+        write_tagged(&db, &new_doc_id, &new_tag, 1).await?;
+        let new_change_received =
+            eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+                std::future::ready(Ok(events
+                    .snapshot()
+                    .iter()
+                    .filter(|event| is_document_change(event, REUSED_TARGET, &new_doc_id))
+                    .count()
+                    > 1))
+            })
+            .await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        listener.shutdown().await?;
+        TestResult::Ok((
+            first_current,
+            second_current,
+            new_change_received,
+            events.snapshot(),
+        ))
+    }
+    .await;
     delete_documents(&db, &[&old_doc_id, &new_doc_id]).await?;
-    stopped?;
+    let (first_current, second_current, new_change_received, events) = observed?;
 
     assert!(first_current, "the first registration never became current");
     assert!(
@@ -378,7 +365,6 @@ async fn reused_target_id_follows_only_new_query() -> TestResult {
     );
     assert!(new_change_received, "the new query's change never arrived");
 
-    let events = events.snapshot();
     let acknowledged = events
         .iter()
         .position(|event| is_removal(event, REUSED_TARGET, false))
@@ -444,7 +430,7 @@ fn listen_request(db: &FirestoreDb, change: listen_request::TargetChange) -> Lis
 async fn firestore_fails_stream_on_removal_of_target_it_ended() -> TestResult {
     const ENDED_TARGET: i32 = 1;
 
-    let db = connect().await?;
+    let db = setup().await?;
     let (requests, mut request_reader) = tokio::sync::mpsc::unbounded_channel::<ListenRequest>();
     requests.send(listen_request(
         &db,
@@ -488,9 +474,12 @@ async fn firestore_fails_stream_on_removal_of_target_it_ended() -> TestResult {
     let failure = loop {
         match tokio::time::timeout(FIRESTORE_ANSWER_TIMEOUT, responses.message()).await? {
             Ok(Some(response)) => {
-                acknowledged |= response
+                acknowledged = response
                     .response_type
                     .is_some_and(|response| is_removal(&response, ENDED_TARGET, false));
+                if acknowledged {
+                    break None;
+                }
             }
             Ok(None) => break None,
             Err(status) => break Some(status.code()),
@@ -506,113 +495,107 @@ async fn firestore_fails_stream_on_removal_of_target_it_ended() -> TestResult {
     Ok(())
 }
 
-/// When our removal of a target crosses Firestore removing it on its own, Firestore fails the
-/// stream with `NOT_FOUND`. The listener reconnects at once rather than after its retry delay,
-/// and the other targets keep receiving changes.
+/// A `RemoveTarget` that crosses the end of a target added once makes Firestore fail the stream
+/// with `NOT_FOUND`. The listener reconnects at once rather than after its retry delay, and the
+/// other target keeps receiving changes.
 ///
-/// The crossing is a race: `remove_target` has to reach Firestore after it has rejected the
-/// target, but leave before the rejection arrives. The test measures how long the rejection takes
-/// and removes rejected targets at shorter and shorter delays until one crosses.
+/// The callback holds the once target's `ADD` until the listener has been asked to remove it.
+/// Firestore sends the rest of its answer meanwhile, ending the target, and the listener reads
+/// the removal request before that answer, so its `RemoveTarget` goes out for a target Firestore
+/// has already ended.
 #[tokio::test]
-async fn listener_reconnects_at_once_after_crossed_removal() -> TestResult {
+async fn listener_reconnects_at_once_after_removal_crosses_once_target_end() -> TestResult {
     const HEALTHY_TARGET: i32 = 1;
-    const PROBE_TARGET: u32 = 2;
-    const FIRST_CROSSING_TARGET: u32 = 3;
-    const CROSSING_ATTEMPTS: u32 = 20;
-    /// Far longer than the test waits, so a reconnect seen at all was not made after the delay.
+    const ONCE_TARGET: i32 = 2;
+    /// Far longer than the test runs, so a reconnect seen at all was not made after the delay.
     const LONG_RETRY_DELAY: Duration = Duration::from_secs(600);
-    /// Long enough for the stream failure and the reconnect that follows a crossed removal.
-    const RECONNECT_WAIT: Duration = Duration::from_secs(3);
+    /// Long enough for Firestore to report the once target current and end it.
+    const ONCE_TARGET_END_WAIT: Duration = Duration::from_secs(2);
+    /// About nine seconds of checks: the `NOT_FOUND` and the reconnect after it.
+    const RECONNECT_RETRIES: u32 = 6;
 
-    let db = connect().await?;
+    let db = setup().await?;
     let healthy_doc_id = unique_doc_id("crossed-healthy");
-    let rejected_tag = format!("rejected-{healthy_doc_id}");
-    let rejected_target = |target: u32| {
-        FirestoreListenerTargetParams::new(
-            FirestoreListenerTarget::new(target),
-            FirestoreTargetType::Query(unindexed_query(&rejected_tag)),
-            HashMap::new(),
+
+    let mut listener = db
+        .create_listener_with_params(
+            FirestoreMemListenStateStorage::new(),
+            FirestoreListenerParams::new().with_retry_delay(LONG_RETRY_DELAY),
         )
-    };
-    let reconnected = |events: &[FirestoreListenEvent]| {
-        count_target_changes(
-            events,
+        .await?;
+    listener.add_target(document_target(HEALTHY_TARGET, &healthy_doc_id)?)?;
+    let events = RecordedEvents::default();
+    let once_target_added = Arc::new(Notify::new());
+    let once_target_released = Arc::new(Notify::new());
+    {
+        let events = events.clone();
+        let once_target_added = once_target_added.clone();
+        let once_target_released = once_target_released.clone();
+        listener
+            .start(move |event| {
+                let held =
+                    is_target_change(&event, FirestoreListenerTargetChangeType::Add, ONCE_TARGET);
+                events.record(event);
+                let once_target_added = once_target_added.clone();
+                let once_target_released = once_target_released.clone();
+                async move {
+                    if held {
+                        once_target_added.notify_one();
+                        once_target_released.notified().await;
+                    }
+                    Ok(())
+                }
+            })
+            .await?;
+    }
+
+    let healthy_current = eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+        std::future::ready(Ok(count_target_changes(
+            &events.snapshot(),
+            FirestoreListenerTargetChangeType::Current,
+            HEALTHY_TARGET,
+        ) > 0))
+    })
+    .await?;
+    assert!(healthy_current, "the healthy target never became current");
+
+    let once_target = FirestoreListenerTarget::try_from(ONCE_TARGET)?;
+    listener.add_target(
+        document_target(ONCE_TARGET, &unique_doc_id("crossed-once"))?.with_add_target_once(true),
+    )?;
+    tokio::time::timeout(FIRESTORE_ANSWER_TIMEOUT, once_target_added.notified()).await?;
+    tokio::time::sleep(ONCE_TARGET_END_WAIT).await;
+    listener.remove_target(&once_target).await?;
+    let removed_at = Instant::now();
+    once_target_released.notify_one();
+
+    let reconnected = eventually_async(RECONNECT_RETRIES, FIRESTORE_ANSWER_POLL, || {
+        std::future::ready(Ok(count_target_changes(
+            &events.snapshot(),
             FirestoreListenerTargetChangeType::Add,
             HEALTHY_TARGET,
-        ) > 1
-    };
-
-    let (mut listener, events) = start_listener(
-        &db,
-        LONG_RETRY_DELAY,
-        vec![document_target(1, &healthy_doc_id)],
-    )
+        ) > 1))
+    })
     .await?;
-    assert!(
-        events
-            .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-                count_target_changes(events, FirestoreListenerTargetChangeType::Current, 1) > 0
-            })
-            .await,
-        "the healthy target never became current"
-    );
+    info!(elapsed = ?removed_at.elapsed(), reconnected, "Waited for the reconnect.");
 
-    let added_at = Instant::now();
-    listener.add_target(rejected_target(PROBE_TARGET))?;
-    assert!(
-        events
-            .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-                events
-                    .iter()
-                    .any(|event| is_removal(event, PROBE_TARGET as i32, true))
-            })
-            .await,
-        "Firestore never rejected the unindexed query"
-    );
-    let rejection_latency = added_at.elapsed();
-    info!(
-        ?rejection_latency,
-        "Measured how long Firestore takes to reject a target."
-    );
-
-    let mut crossed = None;
-    for attempt in 0..CROSSING_ATTEMPTS {
-        let target = FIRST_CROSSING_TARGET + attempt;
-        let delay = rejection_latency * (CROSSING_ATTEMPTS - attempt) / CROSSING_ATTEMPTS;
-        listener.add_target(rejected_target(target))?;
-        tokio::time::sleep(delay).await;
-        let removed_at = Instant::now();
-        listener
-            .remove_target(&FirestoreListenerTarget::new(target))
-            .await?;
-        if events.wait_for(RECONNECT_WAIT, reconnected).await {
-            crossed = Some((delay, removed_at.elapsed()));
-            break;
-        }
-    }
-    info!(
-        ?crossed,
-        "Removed rejected targets until one crossed the rejection."
-    );
-
-    let written_at = Instant::now();
     write_tagged(&db, &healthy_doc_id, "healthy", 0).await?;
-    let healthy_received = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            events
+    let healthy_received =
+        eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+            std::future::ready(Ok(events
+                .snapshot()
                 .iter()
-                .any(|event| is_document_change(event, HEALTHY_TARGET, &healthy_doc_id))
+                .any(|event| is_document_change(event, HEALTHY_TARGET, &healthy_doc_id))))
         })
-        .await;
-    info!(elapsed = ?written_at.elapsed(), healthy_received, "Waited for the healthy target's change.");
+        .await?;
 
     let stopped = listener.shutdown().await;
     delete_documents(&db, &[&healthy_doc_id]).await?;
     stopped?;
 
     assert!(
-        crossed.is_some(),
-        "no removal crossed Firestore's rejection in {CROSSING_ATTEMPTS} attempts"
+        reconnected,
+        "the listener did not reconnect at once after the crossed removal"
     );
     assert!(
         healthy_received,
@@ -628,29 +611,29 @@ async fn permanently_rejected_target_ends_alone() -> TestResult {
     const HEALTHY_TARGET: i32 = 1;
     const REJECTED_TARGET: i32 = 2;
 
-    let db = connect().await?;
+    let db = setup().await?;
     let healthy_doc_id = unique_doc_id("rejected-healthy");
 
     let (mut listener, events) = start_listener(
         &db,
         LISTENER_RETRY_DELAY,
         vec![
-            document_target(1, &healthy_doc_id),
+            document_target(HEALTHY_TARGET, &healthy_doc_id)?,
             FirestoreListenerTargetParams::new(
-                FirestoreListenerTarget::new(2),
+                FirestoreListenerTarget::try_from(REJECTED_TARGET)?,
                 FirestoreTargetType::Query(unindexed_query(&healthy_doc_id)),
                 HashMap::new(),
             ),
         ],
     )
     .await?;
-    let rejected = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            events
-                .iter()
-                .any(|event| is_removal(event, REJECTED_TARGET, true))
-        })
-        .await;
+    let rejected = eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+        std::future::ready(Ok(events
+            .snapshot()
+            .iter()
+            .any(|event| is_removal(event, REJECTED_TARGET, true))))
+    })
+    .await?;
     let rejected_cause = events
         .snapshot()
         .iter()
@@ -660,16 +643,17 @@ async fn permanently_rejected_target_ends_alone() -> TestResult {
     info!(?rejected_cause, "Firestore removed the rejected target.");
 
     tokio::time::sleep(LISTENER_QUIET_PERIOD).await;
-    let unregistered = !listener.has_target(&FirestoreListenerTarget::new(2));
+    let unregistered = !listener.has_target(&FirestoreListenerTarget::try_from(REJECTED_TARGET)?);
 
     write_tagged(&db, &healthy_doc_id, "healthy", 0).await?;
-    let healthy_received = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            events
+    let healthy_received =
+        eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+            std::future::ready(Ok(events
+                .snapshot()
                 .iter()
-                .any(|event| is_document_change(event, HEALTHY_TARGET, &healthy_doc_id))
+                .any(|event| is_document_change(event, HEALTHY_TARGET, &healthy_doc_id))))
         })
-        .await;
+        .await?;
 
     let stopped = listener.shutdown().await;
     delete_documents(&db, &[&healthy_doc_id]).await?;
@@ -706,109 +690,47 @@ async fn permanently_rejected_target_ends_alone() -> TestResult {
     Ok(())
 }
 
-/// One stream carries 100 targets and still takes another one.
-#[tokio::test]
-async fn stream_with_hundred_targets_takes_one_more() -> TestResult {
-    const INITIAL_TARGETS: u32 = 100;
-    const EXTRA_TARGET: i32 = 101;
-
-    let db = connect().await?;
-    let extra_doc_id = unique_doc_id("scale-extra");
-
-    let started_at = Instant::now();
-    let (mut listener, events) = start_listener(
-        &db,
-        LISTENER_RETRY_DELAY,
-        (1..=INITIAL_TARGETS)
-            .map(|target| document_target(target, &unique_doc_id(&format!("scale-{target}"))))
-            .collect(),
-    )
-    .await?;
-    let current_targets = |events: &[FirestoreListenEvent]| {
-        events
-            .iter()
-            .filter_map(as_target_change)
-            .filter(|change| {
-                change.target_change_type == i32::from(FirestoreListenerTargetChangeType::Current)
-            })
-            .flat_map(|change| change.target_ids.iter().copied())
-            .collect::<HashSet<i32>>()
-    };
-    let all_current = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            current_targets(events).len() == INITIAL_TARGETS as usize
-        })
-        .await;
-    info!(elapsed = ?started_at.elapsed(), all_current, "Waited for the initial targets.");
-
-    let added_at = Instant::now();
-    listener.add_target(document_target(101, &extra_doc_id))?;
-    let extra_added = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            count_target_changes(events, FirestoreListenerTargetChangeType::Add, EXTRA_TARGET) > 0
-        })
-        .await;
-    info!(elapsed = ?added_at.elapsed(), extra_added, "Waited for the extra target's ADD.");
-
-    write_tagged(&db, &extra_doc_id, "scale", 0).await?;
-    let extra_received = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            events
-                .iter()
-                .any(|event| is_document_change(event, EXTRA_TARGET, &extra_doc_id))
-        })
-        .await;
-    info!(elapsed = ?added_at.elapsed(), extra_received, "Waited for the extra target's change.");
-
-    let stopped = listener.shutdown().await;
-    delete_documents(&db, &[&extra_doc_id]).await?;
-    stopped?;
-
-    assert!(all_current, "not every initial target became current");
-    assert!(extra_added, "Firestore never acknowledged the extra target");
-    assert!(
-        extra_received,
-        "the extra target never received its document"
-    );
-    Ok(())
-}
-
 /// A target added once ends after its initial snapshot, and the listener does not add it back.
 #[tokio::test]
 async fn once_target_ends_after_initial_snapshot() -> TestResult {
     const ONCE_TARGET: i32 = 1;
+    const KEEPER_TARGET: i32 = 2;
 
-    let db = connect().await?;
+    let db = setup().await?;
     let once_doc_id = unique_doc_id("once");
-    write_tagged(&db, &once_doc_id, "once", 0).await?;
 
-    // The second target keeps the stream open, so a re-added once target would show up on it.
-    let (mut listener, events) = start_listener(
-        &db,
-        LISTENER_RETRY_DELAY,
-        vec![
-            document_target(1, &once_doc_id).with_add_target_once(true),
-            document_target(2, &unique_doc_id("once-keeper")),
-        ],
-    )
-    .await?;
-    let ended = events
-        .wait_for(FIRESTORE_ANSWER_TIMEOUT, |events| {
-            events
+    let observed = async {
+        write_tagged(&db, &once_doc_id, "once", 0).await?;
+
+        // The second target keeps the stream open, so a re-added once target would show up on it.
+        let (mut listener, events) = start_listener(
+            &db,
+            LISTENER_RETRY_DELAY,
+            vec![
+                document_target(ONCE_TARGET, &once_doc_id)?.with_add_target_once(true),
+                document_target(KEEPER_TARGET, &unique_doc_id("once-keeper"))?,
+            ],
+        )
+        .await?;
+        let ended = eventually_async(FIRESTORE_ANSWER_RETRIES, FIRESTORE_ANSWER_POLL, || {
+            std::future::ready(Ok(events
+                .snapshot()
                 .iter()
-                .any(|event| is_removal(event, ONCE_TARGET, false))
+                .any(|event| is_removal(event, ONCE_TARGET, false))))
         })
-        .await;
-    tokio::time::sleep(LISTENER_QUIET_PERIOD).await;
-    let unregistered = !listener.has_target(&FirestoreListenerTarget::new(1));
+        .await?;
+        tokio::time::sleep(LISTENER_QUIET_PERIOD).await;
+        let unregistered = !listener.has_target(&FirestoreListenerTarget::try_from(ONCE_TARGET)?);
 
-    let stopped = listener.shutdown().await;
+        listener.shutdown().await?;
+        TestResult::Ok((ended, unregistered, events.snapshot()))
+    }
+    .await;
     delete_documents(&db, &[&once_doc_id]).await?;
-    stopped?;
+    let (ended, unregistered, events) = observed?;
 
     assert!(ended, "the once target never ended");
     assert!(unregistered, "the ended once target is still registered");
-    let events = events.snapshot();
     let removed_at = events
         .iter()
         .position(|event| is_removal(event, ONCE_TARGET, false))

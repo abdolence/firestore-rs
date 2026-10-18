@@ -18,8 +18,11 @@ pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + S
     let filter =
         tracing_subscriber::EnvFilter::builder().parse("info,firestore=debug,gcloud_sdk=debug")?;
 
-    let subscriber = tracing_subscriber::fmt().with_env_filter(filter).finish();
-    tracing::subscriber::set_global_default(subscriber)?;
+    // Only the first test of a binary installs the subscriber; the others share it.
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .try_init()
+        .ok();
 
     // Create an instance
     let db = FirestoreDb::new(&config_env_var("GCP_PROJECT")?).await?;
