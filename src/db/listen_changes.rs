@@ -15,9 +15,9 @@ use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
 use rvstruct::ValueStruct;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -343,6 +343,8 @@ where
     listener_params: FirestoreListenerParams,
     targets: FirestoreListenerTargetsState,
     shutdown_signal: watch::Sender<bool>,
+    /// The error the loop gave up on, set before it signals shutdown.
+    stop_error: Arc<OnceLock<FirestoreError>>,
     shutdown_handle: Option<JoinHandle<()>>,
     /// Created up front rather than in `start`, so that targets can be added and removed before,
     /// during and after the listener runs.
@@ -374,6 +376,7 @@ where
             listener_params,
             targets: Arc::new(std::sync::RwLock::new(HashMap::new())),
             shutdown_signal: watch::Sender::new(false),
+            stop_error: Arc::new(OnceLock::new()),
             shutdown_handle: None,
             control_writer: Arc::new(control_writer),
             control_reader: Some(control_reader),
@@ -486,7 +489,8 @@ where
     /// current state as the initial snapshot.
     ///
     /// The returned future resolves once the loop is spawned, not once it exits: the loop keeps
-    /// running, reconnecting on a dropped stream, until [`shutdown`](Self::shutdown) is called.
+    /// running, reconnecting on a dropped stream, until [`shutdown`](Self::shutdown) is called or
+    /// it gives up on an error that [`stopped`](Self::stopped) reports.
     /// Always call `shutdown` when the listener is no longer needed, or the spawned task and its
     /// connection are never released.
     ///
@@ -553,7 +557,7 @@ where
             }
         }
 
-        self.shutdown_handle = Some(tokio::spawn(Self::listener_loop(
+        let listener_loop = Self::listener_loop(
             self.db.clone(),
             self.storage.clone(),
             self.shutdown_signal.clone(),
@@ -561,7 +565,16 @@ where
             self.listener_params.clone(),
             control_reader,
             cb,
-        )));
+        );
+        let shutdown_signal = self.shutdown_signal.clone();
+        let stop_error = self.stop_error.clone();
+        self.shutdown_handle = Some(tokio::spawn(async move {
+            if let Err(err) = listener_loop.await {
+                error!(%err, "Listen error. Exiting...");
+                stop_error.set(err).ok();
+                shutdown_signal.send_replace(true);
+            }
+        }));
         Ok(())
     }
 
@@ -587,6 +600,26 @@ where
         timeout: std::time::Duration,
     ) -> FirestoreResult<()> {
         self.shutdown_with(Some(timeout)).await
+    }
+
+    /// Waits until the listener has stopped, and returns the error that stopped it, if any.
+    ///
+    /// Resolves with `None` once [`shutdown`](Self::shutdown) has been called, and with the error
+    /// once the loop has given up on one that a retry cannot fix: a target that cannot be turned
+    /// into a listen request, or Firestore rejecting the listen request as invalid again after
+    /// every resume token was discarded. Stays pending until then, including before
+    /// [`start`](Self::start).
+    ///
+    /// A listener stopped by an error rejects new targets, and still needs `shutdown` to release
+    /// its task.
+    pub async fn stopped(&self) -> Option<&FirestoreError> {
+        // `self` owns the sender, so the channel cannot close while this waits.
+        let _ = self
+            .shutdown_signal
+            .subscribe()
+            .wait_for(|stopped| *stopped)
+            .await;
+        self.stop_error.get()
     }
 
     async fn shutdown_with(&mut self, timeout: Option<std::time::Duration>) -> FirestoreResult<()> {
@@ -641,7 +674,8 @@ where
         listener_params: FirestoreListenerParams,
         mut control_receiver: UnboundedReceiver<FirestoreListenerControl>,
         cb: FN,
-    ) where
+    ) -> FirestoreResult<()>
+    where
         D: FirestoreListenSupport + Clone + Send + Sync,
         FN: Fn(FirestoreListenEvent) -> F + Send + Sync,
         F: Future<Output = AnyBoxedErrResult<()>> + Send,
@@ -676,6 +710,10 @@ where
                 num_targets = snapshot.len(),
                 "Start listening on targets..."
             );
+            let on_stream: HashSet<FirestoreListenerTarget> = snapshot
+                .iter()
+                .map(|target_params| target_params.target.clone())
+                .collect();
 
             let Some(connection) =
                 Self::until_shutdown(&shutdown_signal, db.listen_doc_changes(snapshot)).await
@@ -692,7 +730,7 @@ where
                         &shutdown_signal,
                         &mut retried_without_resume_tokens,
                     )
-                    .await;
+                    .await?;
                 }
                 Ok(mut listen_stream) => loop {
                     tokio::select! {
@@ -764,10 +802,17 @@ where
                                                 let change_type = target_change::TargetChangeType::try_from(
                                                     target_change.target_change_type,
                                                 ).ok();
-                                                let affected = Self::affected_targets(&targets_state, &target_change.target_ids);
+                                                let affected = Self::affected_targets(&targets_state, &on_stream, &target_change.target_ids);
                                                 let cause = target_change.cause.clone();
                                                 let resume_token = target_change.resume_token.clone();
                                                 let target_ids = target_change.target_ids.clone();
+                                                // A token for every target at once is a consistent
+                                                // snapshot of the stream only on a NO_CHANGE with a
+                                                // read time, which is where the Firebase SDKs adopt it.
+                                                let stores_token = !resume_token.is_empty()
+                                                    && (!target_ids.is_empty()
+                                                        || (change_type == Some(target_change::TargetChangeType::NoChange)
+                                                            && target_change.read_time.is_some()));
 
                                                 // Anything listening on this - the cache above all -
                                                 // has to see the change, and drop what it holds for a
@@ -780,8 +825,8 @@ where
                                                 // Stored only once the change has been applied. A
                                                 // token saved before that would, after a failure
                                                 // here, resume past a change nothing acted on.
-                                                if !resume_token.is_empty()
-                                                    && !Self::store_resume_token(&storage, &targets_state, &resume_token, &target_ids).await
+                                                if stores_token
+                                                    && !Self::store_resume_token(&storage, &targets_state, &on_stream, &resume_token, &target_ids).await
                                                 {
                                                     break;
                                                 }
@@ -841,7 +886,7 @@ where
                                             &targets_state,
                                             &shutdown_signal,
                                             &mut retried_without_resume_tokens,
-                                        ).await;
+                                        ).await?;
                                         break;
                                     }
                                 }
@@ -851,15 +896,19 @@ where
                 },
             }
         }
+        Ok(())
     }
 
     /// Resolves the targets a target change applies to.
     ///
-    /// Firestore uses an empty set of target IDs to mean *all* targets, which is how global resume
-    /// tokens and stream-wide resets arrive. Target IDs this listener does not know about are
-    /// ignored; an ID that is not a valid target at all is a protocol error and returns `Err`.
+    /// Firestore uses an empty set of target IDs to mean every target on the stream, which is how
+    /// global resume tokens and stream-wide resets arrive. A target added since the stream opened
+    /// is not on it until the stream is reopened, so such a change does not apply to it. Target
+    /// IDs this listener does not know about are ignored; an ID that is not a valid target at all
+    /// is a protocol error and returns `Err`.
     fn affected_targets(
         targets_state: &FirestoreListenerTargetsState,
+        on_stream: &HashSet<FirestoreListenerTarget>,
         target_ids: &[i32],
     ) -> Result<Vec<FirestoreListenerTarget>, ()> {
         let targets = targets_state
@@ -867,7 +916,11 @@ where
             .expect("listener targets lock poisoned");
 
         if target_ids.is_empty() {
-            return Ok(targets.keys().cloned().collect());
+            return Ok(targets
+                .keys()
+                .filter(|target| on_stream.contains(target))
+                .cloned()
+                .collect());
         }
 
         let mut affected = Vec::with_capacity(target_ids.len());
@@ -939,10 +992,11 @@ where
     async fn store_resume_token(
         storage: &S,
         targets_state: &FirestoreListenerTargetsState,
+        on_stream: &HashSet<FirestoreListenerTarget>,
         resume_token: &[u8],
         target_ids: &[i32],
     ) -> bool {
-        let Ok(affected) = Self::affected_targets(targets_state, target_ids) else {
+        let Ok(affected) = Self::affected_targets(targets_state, on_stream, target_ids) else {
             return false;
         };
 
@@ -995,7 +1049,7 @@ where
         targets_state: &FirestoreListenerTargetsState,
         shutdown_signal: &watch::Sender<bool>,
         retried_without_resume_tokens: &mut bool,
-    ) {
+    ) -> FirestoreResult<()> {
         match Self::classify_listener_error(&err) {
             FirestoreListenerErrorAction::Retry => {
                 debug!(%err, ?delay, "Listen EOF.. Restarting after the specified delay...");
@@ -1021,16 +1075,15 @@ where
                 Self::forget_resume_states(storage, targets_state, &all_targets).await;
                 Self::until_shutdown(shutdown_signal, tokio::time::sleep(delay)).await;
             }
+            // The retry without resume tokens was rejected too, so the request itself is invalid.
             FirestoreListenerErrorAction::RetryWithoutResumeTokens
-            | FirestoreListenerErrorAction::Fatal => {
-                error!(%err, "Listen error. Exiting...");
-                shutdown_signal.send_replace(true);
-            }
+            | FirestoreListenerErrorAction::Fatal => return Err(err),
             FirestoreListenerErrorAction::RetryAfterDelay => {
                 error!(%err, ?delay, "Listen error. Restarting after the specified delay...");
                 Self::until_shutdown(shutdown_signal, tokio::time::sleep(delay)).await;
             }
         }
+        Ok(())
     }
 
     fn classify_listener_error(err: &FirestoreError) -> FirestoreListenerErrorAction {

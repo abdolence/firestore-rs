@@ -78,4 +78,8 @@ Use `shutdown_with_timeout(Duration::from_secs(5))` to allow five seconds for gr
 then abort and join the task. Aborting can interrupt callbacks and token writes, so changes may
 be replayed.
 
+The listener reconnects by itself after network errors and closed streams. It stops only on an
+error a retry cannot fix, such as a target that cannot be turned into a listen request, and
+`stopped()` resolves with that error. After `shutdown()` it resolves with `None`.
+
 See complete example in examples directory.
