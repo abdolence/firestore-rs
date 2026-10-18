@@ -470,10 +470,13 @@ where
     /// Reads through a cache that has been shut down do not fail: they behave as a cache miss, so
     /// `read_through_cache` falls back to Firestore. `read_cached_only` reports the miss as an
     /// error, as it does for anything else it cannot answer.
+    ///
+    /// Returns the error the listener stopped with, if it stopped on its own, once the backend's
+    /// resources are released.
     pub async fn shutdown(&self) -> Result<(), FirestoreError> {
-        self.inner.listener.lock().await.shutdown().await?;
+        let listener_stopped_with = self.inner.listener.lock().await.shutdown().await;
         self.inner.backend.shutdown().await?;
-        Ok(())
+        listener_stopped_with
     }
 
     /// Starts caching a collection on a running cache, without rebuilding it.
@@ -917,8 +920,8 @@ where
             return;
         }
 
-        // The listener then discards the target's resume state and reopens the stream. The
-        // collection serves listings again once Firestore reports the target current.
+        // The listener then discards the target's resume state and listens on it again from
+        // scratch. The collection serves listings again once Firestore reports the target current.
         self.listener.resync_target(target);
     }
 }

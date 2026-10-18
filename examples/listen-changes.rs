@@ -92,7 +92,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     println!("Doc removed from the target: {:?}", removed.document);
                 }
                 // Target lifecycle. `Current` means the target now reflects a consistent
-                // snapshot, and `Remove` means Firestore dropped it - `cause` says why.
+                // snapshot. `Remove` with a `cause` means Firestore removed the target on its
+                // own; with no cause, it acknowledges `remove_target` or ends a target added once.
                 FirestoreListenEvent::TargetChange(ref target_change) => {
                     match FirestoreListenerTargetChangeType::try_from(
                         target_change.target_change_type,
@@ -101,10 +102,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             println!("Targets are up to date: {:?}", target_change.target_ids);
                         }
                         Ok(FirestoreListenerTargetChangeType::Remove) => {
-                            println!(
-                                "Targets {:?} were removed by Firestore: {:?}",
-                                target_change.target_ids, target_change.cause
-                            );
+                            match &target_change.cause {
+                                Some(cause) => println!(
+                                    "Targets {:?} were removed by Firestore: {cause:?}",
+                                    target_change.target_ids
+                                ),
+                                None => println!(
+                                    "Targets {:?} were removed as requested",
+                                    target_change.target_ids
+                                ),
+                            }
                         }
                         Ok(FirestoreListenerTargetChangeType::Reset) => {
                             println!(

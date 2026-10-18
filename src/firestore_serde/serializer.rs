@@ -590,10 +590,9 @@ where
             name: document_path.as_ref().to_string(),
             ..Default::default()
         }),
-        _ => Err(FirestoreError::SystemError(FirestoreSystemError::new(
-            FirestoreErrorPublicGenericDetails::new("SystemError".into()),
-            "Unable to create document from value. No object found".into(),
-        ))),
+        _ => Err(FirestoreError::system_error(
+            "Unable to create document from value. No object found",
+        )),
     }
 }
 

@@ -220,7 +220,8 @@ pub type FirestoreDocument = gcloud_sdk::google::firestore::v1::Document;
 ///     match FirestoreListenerTargetChangeType::try_from(target_change.target_change_type) {
 ///         // The target now reflects a consistent snapshot.
 ///         Ok(FirestoreListenerTargetChangeType::Current) => {}
-///         // Firestore dropped the target; `target_change.cause` says why.
+///         // With a `cause`, Firestore removed the target on its own. With none, it
+///         // acknowledges `remove_target`, or ends a target added once.
 ///         Ok(FirestoreListenerTargetChangeType::Remove) => {}
 ///         _ => {}
 ///     }
