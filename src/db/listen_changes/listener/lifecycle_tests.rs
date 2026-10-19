@@ -544,6 +544,31 @@ async fn a_panicking_callback_stops_the_listener_with_an_error() {
 }
 
 #[tokio::test]
+async fn a_listener_dropped_while_its_callback_holds_a_control_handle_ends_its_loop() {
+    let (mut listener, db) = listener(TestDb::new(Wait::Never), never_retrying()).await;
+    let handle = listener.control_handle();
+    listener
+        .start(move |_| {
+            let _held = &handle;
+            async { Ok(()) }
+        })
+        .await
+        .unwrap();
+    within(db.entered.acquire()).await.unwrap().forget();
+    // Shared by the listener, its loop and every handle, so the last of them goes with the loop.
+    let storage = Arc::downgrade(&listener.control.storage);
+
+    drop(listener);
+
+    within(async {
+        while storage.strong_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn stream_wide_token_is_stored_only_at_a_snapshot_for_targets_on_the_stream() {
     let db = TestDb {
         events: vec![

@@ -70,7 +70,7 @@ mod endpoint;
 use endpoint::{FirestoreDbEndpoint, FirestoreEmulatorCredentials};
 
 #[cfg(test)]
-mod fake_firestore;
+pub(crate) mod fake_firestore;
 
 mod session_params;
 pub use session_params::*;
