@@ -569,6 +569,33 @@ async fn a_listener_dropped_while_its_callback_holds_a_control_handle_ends_its_l
 }
 
 #[tokio::test]
+async fn a_listener_dropped_while_connections_fail_ends_its_loop() {
+    let db = TestDb {
+        connect_error: Some(Code::Unavailable),
+        ..TestDb::new(Wait::Never)
+    };
+    let params = FirestoreListenerParams::new().with_retry_delay(Duration::from_millis(20));
+    let (mut listener, db) = listener(db, params).await;
+    listener.start(|_| async { Ok(()) }).await.unwrap();
+    within(async {
+        while db.connections.load(Ordering::Relaxed) == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+    let storage = Arc::downgrade(&listener.control.storage);
+
+    drop(listener);
+
+    within(async {
+        while storage.strong_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn stream_wide_token_is_stored_only_at_a_snapshot_for_targets_on_the_stream() {
     let db = TestDb {
         events: vec![

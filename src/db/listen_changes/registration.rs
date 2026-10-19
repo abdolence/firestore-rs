@@ -29,7 +29,7 @@ pub(super) type FirestoreListenerRegisteredTargets =
 /// drops the guard before awaiting. Across an await a target can be removed and registered again
 /// under the same ID, so a change for a registration read before the await goes through the
 /// `_if_current` methods.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub(super) struct FirestoreListenerTargetsState {
     targets: Arc<std::sync::RwLock<FirestoreListenerRegisteredTargets>>,
     /// Shared by every clone, so that a registration value is never handed out twice.
@@ -41,6 +41,13 @@ impl FirestoreListenerTargetsState {
         &self,
     ) -> std::sync::RwLockReadGuard<'_, FirestoreListenerRegisteredTargets> {
         self.targets.read().expect("listener targets lock poisoned")
+    }
+
+    /// The targets, or `None` if a writer holds the lock, for callers that must not block.
+    pub(super) fn try_read(
+        &self,
+    ) -> Option<std::sync::RwLockReadGuard<'_, FirestoreListenerRegisteredTargets>> {
+        self.targets.try_read().ok()
     }
 
     pub(super) fn write(

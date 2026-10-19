@@ -108,7 +108,6 @@ pub(super) enum FirestoreListenerControl {
 ///
 /// A handle does not keep the listener's loop running, so the callback can hold one and the loop
 /// still ends once the listener is dropped.
-#[derive(Debug)]
 pub struct FirestoreListenerControlHandle<S> {
     /// Weak, because the loop ends only once every strong sender is gone, and the callback the
     /// loop owns may hold a handle.
@@ -130,7 +129,7 @@ where
     ///
     /// Once the listener has been shut down or dropped, or its loop has stopped on its own, this
     /// still answers from the targets registered with it, though none of them is listened to
-    /// anymore.
+    /// any more.
     pub fn has_target(&self, target: &FirestoreListenerTarget) -> bool {
         self.targets.read().contains_key(target)
     }
@@ -184,7 +183,7 @@ where
     }
 }
 
-// Derived, `Clone` would require `S: Clone`, which sharing the storage does not need.
+// Not derived: the derive would bound `S: Clone`, and a clone only clones the `Arc`.
 impl<S> Clone for FirestoreListenerControlHandle<S> {
     fn clone(&self) -> Self {
         Self {
@@ -192,6 +191,18 @@ impl<S> Clone for FirestoreListenerControlHandle<S> {
             targets: self.targets.clone(),
             storage: self.storage.clone(),
         }
+    }
+}
+
+/// Lists the registered target IDs, or none while the targets are locked, and never the target
+/// parameters or the storage, so that resume tokens stay out of logs.
+impl<S> std::fmt::Debug for FirestoreListenerControlHandle<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug = f.debug_struct("FirestoreListenerControlHandle");
+        if let Some(targets) = self.targets.try_read() {
+            debug.field("targets", &targets.keys().collect::<Vec<_>>());
+        }
+        debug.finish_non_exhaustive()
     }
 }
 
@@ -346,9 +357,7 @@ where
     /// it stops on its own, after which [`add_target`](Self::add_target) fails and `shutdown`
     /// returns why. Call `shutdown` when the listener is no longer needed: it lets the current
     /// callback and resume-state writes finish. Dropping the listener instead ends the loop without
-    /// waiting for it, even while the callback holds a [control handle](Self::control_handle). The
-    /// loop then ends the next time it reads its control channel, which it does between stream
-    /// events and while it has no targets, but not while it connects or waits out the retry delay.
+    /// waiting for it, even while the callback holds a [control handle](Self::control_handle).
     ///
     /// A target that has ended for good, including a finished `once` target, stays unregistered
     /// even if `cb` returns an error for its
@@ -516,6 +525,18 @@ where
         self.shutdown_handle = None;
         debug!("Shutting down Firestore listener has been finished...");
         stopped_with
+    }
+}
+
+/// Signals the loop and does not wait for it: it still finishes the current callback and
+/// resume-state write, but stops connecting and retrying.
+impl<D, S> Drop for FirestoreListener<D, S>
+where
+    D: FirestoreListenSupport,
+    S: FirestoreResumeStateStorage,
+{
+    fn drop(&mut self) {
+        self.shutdown_signal.send_replace(true);
     }
 }
 

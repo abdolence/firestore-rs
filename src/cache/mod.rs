@@ -1307,29 +1307,3 @@ mod target_change_tests {
         assert!(suspended(action).is_empty());
     }
 }
-
-#[cfg(all(test, feature = "caching-memory"))]
-mod lifecycle_tests {
-    use super::*;
-    use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
-    use std::time::Duration;
-
-    #[tokio::test]
-    async fn a_cache_dropped_without_shutdown_ends_its_listener() {
-        let firestore =
-            FakeFirestore::start(|method, _| (method.to_string(), FakeResponse::empty())).await;
-        let cache = FirestoreCache::memory(&firestore.db).build().await.unwrap();
-        // The listener's loop holds the backend too, through the callback.
-        let backend = Arc::downgrade(&cache.backend());
-
-        drop(cache);
-
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while backend.strong_count() > 0 {
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-        })
-        .await
-        .expect("the listener's loop still holds the backend");
-    }
-}
