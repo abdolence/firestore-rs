@@ -282,10 +282,10 @@ where
     /// returns why. Always call `shutdown` when the listener is no longer needed, or the spawned
     /// task and its connection are never released.
     ///
-    /// When `cb` receives a [`Remove`](crate::FirestoreListenerTargetChangeType::Remove) target
-    /// change with a `cause`, [`has_target`](Self::has_target) already tells whether the target
-    /// will be added back: a target Firestore has ended for good is unregistered before `cb` sees
-    /// its removal, and stays unregistered even if `cb` returns an error for it.
+    /// A target that has ended for good, including a finished `once` target, stays unregistered
+    /// even if `cb` returns an error for its
+    /// [`Remove`](crate::FirestoreListenerTargetChangeType::Remove) target change; see
+    /// [`has_target`](Self::has_target).
     ///
     /// Returns an error if this listener has already been started, or if reading a target's
     /// stored resume state fails.

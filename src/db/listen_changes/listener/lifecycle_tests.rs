@@ -895,7 +895,7 @@ async fn the_callback_sees_whether_a_removed_target_will_be_added_back() {
     listener
         .start(move |event| {
             if let FirestoreListenEvent::TargetChange(change) = &event {
-                if change.target_change_type == TargetChangeType::Remove as i32 {
+                if change.target_change_type() == TargetChangeType::Remove {
                     for target_id in &change.target_ids {
                         let target = FirestoreListenerTarget::try_from(*target_id).unwrap();
                         let registered = targets.read().contains_key(&target);

@@ -1,6 +1,6 @@
 use super::listener::FirestoreListenerControl;
 use super::registration::{FirestoreListenerRegistration, FirestoreListenerTargetsState};
-use super::stream_targets::FirestoreListenerStreamTargets;
+use super::stream_targets::{FirestoreListenerRemoval, FirestoreListenerStreamTargets};
 use crate::db::support::FirestoreListenSupport;
 use crate::errors::*;
 use crate::{
@@ -271,12 +271,18 @@ where
                 || (change_type == Some(TargetChangeType::NoChange)
                     && target_change.read_time.is_some()));
 
-        // Unregistered before the callback sees the removal, so that `has_target` already tells
-        // it whether the target will be added back. A callback that fails on the removal does
-        // not bring an ended target back.
-        if change_type == Some(TargetChangeType::Remove) {
-            self.end_targets(&on_stream.ending(&target_ids, cause.as_ref()))
-                .await;
+        // Recorded, and its ended targets unregistered, before the callback sees the removal, so
+        // that `has_target` already tells it whether the target will be added back. A callback
+        // that fails on the removal does not bring an ended target back.
+        let removal = (change_type == Some(TargetChangeType::Remove)).then(|| {
+            on_stream.removed(
+                &target_ids,
+                cause.as_ref(),
+                Instant::now() + self.retry_delay,
+            )
+        });
+        if let Some(removal) = &removal {
+            self.end_targets(&removal.ended).await;
         }
 
         // Anything listening on this - the cache above all - has to see the change, and drop what
@@ -299,14 +305,15 @@ where
             return Ok(ControlFlow::Break(()));
         }
 
+        if let Some(removal) = removal {
+            return self
+                .on_targets_removed(removal, cause.as_ref(), on_stream)
+                .await;
+        }
+
         match (change_type, affected) {
             (Some(TargetChangeType::Add), _) => on_stream.added(&target_ids),
             (Some(TargetChangeType::Current), _) => on_stream.current(&target_ids),
-            (Some(TargetChangeType::Remove), _) => {
-                return self
-                    .on_targets_removed(&target_ids, cause.as_ref(), on_stream)
-                    .await;
-            }
             (Some(TargetChangeType::Reset), Ok(affected)) => {
                 // Firestore resends the initial state on this same stream and only then issues a
                 // new token. Dropping the old one now means a disconnect in between resumes from
@@ -324,11 +331,10 @@ where
 
     async fn on_targets_removed(
         &self,
-        target_ids: &[i32],
+        removal: FirestoreListenerRemoval,
         cause: Option<&gcloud_sdk::google::rpc::Status>,
         on_stream: &mut FirestoreListenerStreamTargets,
     ) -> FirestoreResult<ControlFlow<()>> {
-        let removal = on_stream.removed(target_ids, cause, Instant::now() + self.retry_delay);
         if !removal.retried.is_empty() {
             // The delay keeps a target Firestore keeps rejecting from being added back in a tight
             // loop.

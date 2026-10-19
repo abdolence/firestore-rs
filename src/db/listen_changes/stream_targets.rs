@@ -342,27 +342,6 @@ impl FirestoreListenerStreamTargets {
         }
     }
 
-    /// The registrations that Firestore removing `target_ids` with `cause` ends for good: those
-    /// [`removed`](Self::removed) returns as ended, found without recording the removal.
-    pub(super) fn ending(
-        &self,
-        target_ids: &[i32],
-        cause: Option<&gcloud_sdk::google::rpc::Status>,
-    ) -> Vec<(FirestoreListenerTarget, FirestoreListenerRegistration)> {
-        self.reported(target_ids)
-            .into_iter()
-            .filter_map(|target| {
-                let on_stream = self.targets.get(&target)?;
-                let ends = matches!(
-                    on_stream.state,
-                    FirestoreListenerStreamTargetState::Adding
-                        | FirestoreListenerStreamTargetState::Listening
-                ) && on_stream.ended_by(cause);
-                ends.then_some((target, on_stream.registration))
-            })
-            .collect()
-    }
-
     /// Records that Firestore removed the targets.
     ///
     /// A removal with no `cause` acknowledges a `RemoveTarget`, or ends a `once` target; one with
