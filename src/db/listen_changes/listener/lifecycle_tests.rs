@@ -884,6 +884,51 @@ async fn a_target_firestore_removes_for_good_is_unregistered_and_not_added_back(
 }
 
 #[tokio::test]
+async fn the_callback_sees_whether_a_removed_target_will_be_added_back() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let (mut listener, db) = listener(db, never_retrying()).await;
+    listener.add_target(target_params(2)).unwrap();
+    let targets = listener.targets.clone();
+    let registered_at_removal = Arc::new(Mutex::new(Vec::new()));
+    let callback_registered_at_removal = registered_at_removal.clone();
+    let callback_db = db.clone();
+    listener
+        .start(move |event| {
+            if let FirestoreListenEvent::TargetChange(change) = &event {
+                if change.target_change_type == TargetChangeType::Remove as i32 {
+                    for target_id in &change.target_ids {
+                        let target = FirestoreListenerTarget::try_from(*target_id).unwrap();
+                        let registered = targets.read().contains_key(&target);
+                        callback_registered_at_removal
+                            .lock()
+                            .unwrap()
+                            .push((*target_id, registered));
+                    }
+                }
+            }
+            callback_db.seen.send_modify(|seen| seen.push(event));
+            async { Ok(()) }
+        })
+        .await
+        .unwrap();
+    within(db.entered.acquire()).await.unwrap().forget();
+    let mut requests = db.take_requests();
+    assert_eq!(added_targets(&mut requests, 2).await, vec![1, 2]);
+
+    feed.send(removal_with_cause(vec![1], Code::PermissionDenied))
+        .unwrap();
+    feed.send(removal_with_cause(vec![2], Code::Unavailable))
+        .unwrap();
+    db.settle(&feed).await;
+
+    assert_eq!(
+        *registered_at_removal.lock().unwrap(),
+        vec![(1, false), (2, true)]
+    );
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
 async fn a_once_target_ends_with_its_removal() {
     let (db, feed) = TestDb::fed(Wait::Never);
     let (mut listener, db) = listener(db, retrying_at_once()).await;

@@ -53,9 +53,12 @@ pub(super) struct FirestoreListenerStreamTarget {
 
 impl FirestoreListenerStreamTarget {
     /// Whether Firestore removing this target with `cause` ends it for good, rather than calling
-    /// for it to be added back after the retry delay.
-    fn ended_by(&self, cause: &gcloud_sdk::google::rpc::Status) -> bool {
+    /// for it to be added back after the retry delay. A removal with no cause ends a `once` target.
+    fn ended_by(&self, cause: Option<&gcloud_sdk::google::rpc::Status>) -> bool {
         use gcloud_sdk::tonic::Code;
+        let Some(cause) = cause else {
+            return self.once;
+        };
         match Code::from(cause.code) {
             // Denied by security rules or IAM, a missing database or parent, or a query Firestore
             // does not support: adding the target back asks for the same thing again.
@@ -74,7 +77,7 @@ impl FirestoreListenerStreamTarget {
 pub(super) struct FirestoreListenerRemoval {
     /// Registrations to add back from scratch after the retry delay.
     pub(super) retried: Vec<(FirestoreListenerTarget, FirestoreListenerRegistration)>,
-    /// Registrations that have ended for good, to be unregistered.
+    /// Registrations that have ended for good.
     pub(super) ended: Vec<(FirestoreListenerTarget, FirestoreListenerRegistration)>,
 }
 
@@ -339,6 +342,27 @@ impl FirestoreListenerStreamTargets {
         }
     }
 
+    /// The registrations that Firestore removing `target_ids` with `cause` ends for good: those
+    /// [`removed`](Self::removed) returns as ended, found without recording the removal.
+    pub(super) fn ending(
+        &self,
+        target_ids: &[i32],
+        cause: Option<&gcloud_sdk::google::rpc::Status>,
+    ) -> Vec<(FirestoreListenerTarget, FirestoreListenerRegistration)> {
+        self.reported(target_ids)
+            .into_iter()
+            .filter_map(|target| {
+                let on_stream = self.targets.get(&target)?;
+                let ends = matches!(
+                    on_stream.state,
+                    FirestoreListenerStreamTargetState::Adding
+                        | FirestoreListenerStreamTargetState::Listening
+                ) && on_stream.ended_by(cause);
+                ends.then_some((target, on_stream.registration))
+            })
+            .collect()
+    }
+
     /// Records that Firestore removed the targets.
     ///
     /// A removal with no `cause` acknowledges a `RemoveTarget`, or ends a `once` target; one with
@@ -372,11 +396,7 @@ impl FirestoreListenerStreamTargets {
                 }
                 FirestoreListenerStreamTargetState::Adding
                 | FirestoreListenerStreamTargetState::Listening => {
-                    let ended = match cause {
-                        None => on_stream.once,
-                        Some(cause) => on_stream.ended_by(cause),
-                    };
-                    if ended {
+                    if on_stream.ended_by(cause) {
                         removal.ended.push((target.clone(), on_stream.registration));
                         None
                     } else {

@@ -271,6 +271,14 @@ where
                 || (change_type == Some(TargetChangeType::NoChange)
                     && target_change.read_time.is_some()));
 
+        // Unregistered before the callback sees the removal, so that `has_target` already tells
+        // it whether the target will be added back. A callback that fails on the removal does
+        // not bring an ended target back.
+        if change_type == Some(TargetChangeType::Remove) {
+            self.end_targets(&on_stream.ending(&target_ids, cause.as_ref()))
+                .await;
+        }
+
         // Anything listening on this - the cache above all - has to see the change, and drop what
         // it holds for a reset target, before the target is listened to again.
         if self
@@ -342,7 +350,6 @@ where
             } else {
                 debug!(ended = ?removal.ended, "Listener targets added once have ended.");
             }
-            self.end_targets(&removal.ended).await;
         }
         self.add_due_targets(on_stream).await?;
         Ok(self.close_if_idle(on_stream))
