@@ -257,6 +257,12 @@ where
     }
 
     /// Whether this listener listens on the given target.
+    ///
+    /// A target Firestore removes on its own stays registered while the listener means to add it
+    /// back after the retry delay. One Firestore has ended for good, by a `cause` no retry can fix
+    /// or by finishing a `once` target, is unregistered before the callback receives the
+    /// [`Remove`](crate::FirestoreListenerTargetChangeType::Remove) target change, so from inside
+    /// that callback this already tells whether the target will be added back.
     pub fn has_target(&self, target: &FirestoreListenerTarget) -> bool {
         self.targets.read().contains_key(target)
     }
@@ -275,6 +281,11 @@ where
     /// it stops on its own, after which [`add_target`](Self::add_target) fails and `shutdown`
     /// returns why. Always call `shutdown` when the listener is no longer needed, or the spawned
     /// task and its connection are never released.
+    ///
+    /// A target that has ended for good, including a finished `once` target, stays unregistered
+    /// even if `cb` returns an error for its
+    /// [`Remove`](crate::FirestoreListenerTargetChangeType::Remove) target change; see
+    /// [`has_target`](Self::has_target).
     ///
     /// Returns an error if this listener has already been started, or if reading a target's
     /// stored resume state fails.

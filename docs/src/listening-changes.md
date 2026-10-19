@@ -91,7 +91,8 @@ Target changes with the `Remove` type reach the callback in two forms:
   `NOT_FOUND`, `FAILED_PRECONDITION`, `UNIMPLEMENTED`, and `INVALID_ARGUMENT` on a target added
   without a resume token or read time, the listener stops listening on that target only and
   unregisters it. For any other cause it adds the target back from scratch after the retry
-  delay.
+  delay. An ended target is unregistered before the callback receives the change, so
+  `has_target` called from the callback already tells whether the target comes back.
 
 When Firestore removes a target on its own while a `remove_target` call for it is on its way,
 Firestore does not acknowledge the removal. It closes the whole stream with `NOT_FOUND` instead.
