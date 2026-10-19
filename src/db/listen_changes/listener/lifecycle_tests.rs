@@ -972,6 +972,51 @@ async fn a_target_the_callback_removes_through_the_control_handle_leaves_the_str
 }
 
 #[tokio::test]
+async fn a_target_the_callback_removes_on_its_transient_removal_is_not_added_back() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let (mut listener, db) = listener(db, retrying_at_once()).await;
+    listener.add_target(target_params(2)).unwrap();
+    let handle = listener.control_handle();
+    let removed_by_callback = Arc::new(Mutex::new(Vec::new()));
+    let callback_removed = removed_by_callback.clone();
+    let callback_db = db.clone();
+    listener
+        .start(move |event| {
+            let handle = handle.clone();
+            let callback_removed = callback_removed.clone();
+            let callback_db = callback_db.clone();
+            async move {
+                if event == removal_with_cause(vec![1], Code::Unavailable) {
+                    let removed = handle
+                        .remove_target(&FirestoreListenerTarget::new(1))
+                        .await
+                        .unwrap();
+                    callback_removed.lock().unwrap().push(removed);
+                }
+                callback_db.seen.send_modify(|seen| seen.push(event));
+                Ok(())
+            }
+        })
+        .await
+        .unwrap();
+    within(db.entered.acquire()).await.unwrap().forget();
+    let mut requests = db.take_requests();
+    assert_eq!(added_targets(&mut requests, 2).await, vec![1, 2]);
+
+    feed.send(removal_with_cause(vec![1], Code::Unavailable))
+        .unwrap();
+    db.settle(&feed).await;
+
+    assert_eq!(*removed_by_callback.lock().unwrap(), vec![true]);
+    assert!(requests.try_recv().is_err());
+    assert_eq!(
+        *db.forgotten.lock().unwrap(),
+        vec![FirestoreListenerTarget::new(1)]
+    );
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
 async fn a_once_target_ends_with_its_removal() {
     let (db, feed) = TestDb::fed(Wait::Never);
     let (mut listener, db) = listener(db, retrying_at_once()).await;

@@ -32,7 +32,7 @@ pub trait FirestoreCacheBackendKind: sealed::Sealed + Sized {
     /// Backend-specific tuning options.
     type Options: Default;
     /// The listener state storage used unless overridden.
-    type DefaultStorage: FirestoreResumeStateStorage + Clone + Send + Sync + 'static;
+    type DefaultStorage: FirestoreResumeStateStorage + Send + Sync + 'static;
 
     /// The load mode used by [`FirestoreCacheBuilder::preloaded_collection`].
     fn default_preload_mode() -> FirestoreCacheCollectionLoadMode;
@@ -301,7 +301,7 @@ impl From<FirestoreCacheCollectionConfiguration> for FirestoreCacheCollection {
 pub struct FirestoreCacheBuilder<K, LS = <K as FirestoreCacheBackendKind>::DefaultStorage>
 where
     K: FirestoreCacheBackendKind,
-    LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    LS: FirestoreResumeStateStorage + Send + Sync + 'static,
 {
     db: FirestoreDb,
     name: Option<FirestoreCacheName>,
@@ -335,7 +335,7 @@ where
 impl<K, LS> FirestoreCacheBuilder<K, LS>
 where
     K: FirestoreCacheBackendKind,
-    LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    LS: FirestoreResumeStateStorage + Send + Sync + 'static,
 {
     /// Names the cache. Used in logs and tracing spans. Defaults to `firestore-cache`.
     #[inline]
@@ -445,7 +445,7 @@ where
     #[inline]
     pub fn listen_state_storage<LS2>(self, storage: LS2) -> FirestoreCacheBuilder<K, LS2>
     where
-        LS2: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+        LS2: FirestoreResumeStateStorage + Send + Sync + 'static,
     {
         FirestoreCacheBuilder {
             db: self.db,
@@ -494,7 +494,7 @@ where
 #[cfg(feature = "caching-memory")]
 impl<LS> FirestoreCacheBuilder<FirestoreMemoryCacheKind, LS>
 where
-    LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    LS: FirestoreResumeStateStorage + Send + Sync + 'static,
 {
     /// Sets the maximum number of documents kept per collection. Defaults to 50 000.
     #[inline]
@@ -521,7 +521,7 @@ where
 #[cfg(feature = "caching-persistent")]
 impl<LS> FirestoreCacheBuilder<FirestorePersistentCacheKind, LS>
 where
-    LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    LS: FirestoreResumeStateStorage + Send + Sync + 'static,
 {
     /// Stores the cache database at an explicit file path.
     ///

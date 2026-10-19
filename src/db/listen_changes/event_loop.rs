@@ -14,6 +14,7 @@ use gcloud_sdk::google::firestore::v1::target_change::TargetChangeType;
 use gcloud_sdk::google::firestore::v1::{listen_response, ListenResponse, TargetChange};
 use std::future::Future;
 use std::ops::ControlFlow;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch;
@@ -27,7 +28,7 @@ use tracing::*;
 /// opens a new one once there is a target to listen on, unless the listener has been shut down.
 pub(super) struct FirestoreListenerLoop<D, S, FN> {
     db: D,
-    storage: S,
+    storage: Arc<S>,
     shutdown_signal: watch::Sender<bool>,
     targets_state: FirestoreListenerTargetsState,
     control_receiver: UnboundedReceiver<FirestoreListenerControl>,
@@ -47,7 +48,7 @@ where
 {
     pub(super) fn new(
         db: D,
-        storage: S,
+        storage: Arc<S>,
         shutdown_signal: watch::Sender<bool>,
         targets_state: FirestoreListenerTargetsState,
         listener_params: &FirestoreListenerParams,

@@ -588,7 +588,7 @@ impl FirestoreDb {
     pub fn read_through_cache<B, LS>(&self, cache: &FirestoreCache<B, LS>) -> Self
     where
         B: FirestoreCacheBackend + Send + Sync + 'static,
-        LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+        LS: FirestoreResumeStateStorage + Send + Sync + 'static,
     {
         self.with_cache(crate::FirestoreDbSessionCacheMode::ReadThroughCache(
             cache.backend(),
@@ -613,7 +613,7 @@ impl FirestoreDb {
     pub fn read_cached_only<B, LS>(&self, cache: &FirestoreCache<B, LS>) -> Self
     where
         B: FirestoreCacheBackend + Send + Sync + 'static,
-        LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+        LS: FirestoreResumeStateStorage + Send + Sync + 'static,
     {
         self.with_cache(crate::FirestoreDbSessionCacheMode::ReadCachedOnly(
             cache.backend(),

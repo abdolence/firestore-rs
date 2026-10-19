@@ -55,7 +55,7 @@ impl FirestoreDb {
         storage: S,
     ) -> FirestoreResult<FirestoreListener<FirestoreDb, S>>
     where
-        S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+        S: FirestoreResumeStateStorage + Send + Sync + 'static,
     {
         self.create_listener_with_params(storage, FirestoreListenerParams::new())
             .await
@@ -70,7 +70,7 @@ impl FirestoreDb {
         params: FirestoreListenerParams,
     ) -> FirestoreResult<FirestoreListener<FirestoreDb, S>>
     where
-        S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+        S: FirestoreResumeStateStorage + Send + Sync + 'static,
     {
         FirestoreListener::new(self.clone(), storage, params).await
     }
@@ -103,15 +103,19 @@ pub(super) enum FirestoreListenerControl {
 ///
 /// Separate from [`FirestoreListener`] so that code reacting to listen events - the callback given
 /// to [`start`](FirestoreListener::start), or the cache - can do so without taking any lock the
-/// listener's own shutdown holds.
-#[derive(Clone)]
-pub struct FirestoreListenerControlHandle {
+/// listener's own shutdown holds. The handle shares the listener's resume-state storage `S`
+/// rather than a copy of it.
+#[derive(Debug)]
+pub struct FirestoreListenerControlHandle<S> {
     control_writer: Arc<UnboundedSender<FirestoreListenerControl>>,
     targets: FirestoreListenerTargetsState,
-    storage: Arc<dyn FirestoreResumeStateStorage + Send + Sync>,
+    storage: Arc<S>,
 }
 
-impl FirestoreListenerControlHandle {
+impl<S> FirestoreListenerControlHandle<S>
+where
+    S: FirestoreResumeStateStorage,
+{
     /// Whether the listener listens on the given target, as [`FirestoreListener::has_target`].
     ///
     /// Inside the callback, the answer for a target in a
@@ -162,18 +166,14 @@ impl FirestoreListenerControlHandle {
     }
 }
 
-// The storage is type-erased here, so the compiler cannot carry its unwind safety over as it does
-// for the listener's own `storage` field. The handle only ever asks it to forget a target, and the
-// listener carries on when forgetting fails, so a panic inside the storage leaves nothing the
-// handle relies on half-done.
-impl std::panic::UnwindSafe for FirestoreListenerControlHandle {}
-impl std::panic::RefUnwindSafe for FirestoreListenerControlHandle {}
-
-impl std::fmt::Debug for FirestoreListenerControlHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FirestoreListenerControlHandle")
-            .field("targets", &self.targets)
-            .finish_non_exhaustive()
+// Derived, `Clone` would require `S: Clone`, which sharing the storage does not need.
+impl<S> Clone for FirestoreListenerControlHandle<S> {
+    fn clone(&self) -> Self {
+        Self {
+            control_writer: self.control_writer.clone(),
+            targets: self.targets.clone(),
+            storage: self.storage.clone(),
+        }
     }
 }
 
@@ -183,20 +183,19 @@ where
     S: FirestoreResumeStateStorage,
 {
     db: D,
-    storage: S,
     listener_params: FirestoreListenerParams,
     shutdown_signal: watch::Sender<bool>,
     shutdown_handle: Option<JoinHandle<FirestoreResult<()>>>,
     /// Created up front rather than in `start`, so that targets can be added and removed before,
     /// during and after the listener runs.
-    control: FirestoreListenerControlHandle,
+    control: FirestoreListenerControlHandle<S>,
     control_reader: Option<UnboundedReceiver<FirestoreListenerControl>>,
 }
 
 impl<D, S> FirestoreListener<D, S>
 where
     D: FirestoreListenSupport + Clone + Send + Sync + 'static,
-    S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    S: FirestoreResumeStateStorage + Send + Sync + 'static,
 {
     /// Creates a listener with no targets yet, for any type implementing `FirestoreListenSupport`.
     ///
@@ -215,10 +214,9 @@ where
             control: FirestoreListenerControlHandle {
                 control_writer: Arc::new(control_writer),
                 targets: FirestoreListenerTargetsState::default(),
-                storage: Arc::new(storage.clone()),
+                storage: Arc::new(storage),
             },
             db,
-            storage,
             listener_params,
             shutdown_signal: watch::Sender::new(false),
             shutdown_handle: None,
@@ -298,7 +296,7 @@ where
     /// The handle keeps working after [`start`](Self::start), so the callback can hold one and
     /// remove the targets it no longer needs without reaching the listener, which `start` and
     /// [`shutdown`](Self::shutdown) borrow mutably.
-    pub fn control_handle(&self) -> FirestoreListenerControlHandle {
+    pub fn control_handle(&self) -> FirestoreListenerControlHandle<S> {
         self.control.clone()
     }
 
@@ -377,7 +375,7 @@ where
 
         let listener_loop = FirestoreListenerLoop::new(
             self.db.clone(),
-            self.storage.clone(),
+            self.control.storage.clone(),
             self.shutdown_signal.clone(),
             self.control.targets.clone(),
             &self.listener_params,
@@ -404,6 +402,7 @@ where
                 continue;
             }
             let resume_type = self
+                .control
                 .storage
                 .read_resume_state(&target_params.target)
                 .map_err(|err| FirestoreError::system_error(format!("Listener init error: {err}")))
