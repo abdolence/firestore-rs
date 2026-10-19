@@ -29,7 +29,7 @@ pub(super) type FirestoreListenerRegisteredTargets =
 /// drops the guard before awaiting. Across an await a target can be removed and registered again
 /// under the same ID, so a change for a registration read before the await goes through the
 /// `_if_current` methods.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct FirestoreListenerTargetsState {
     targets: Arc<std::sync::RwLock<FirestoreListenerRegisteredTargets>>,
     /// Shared by every clone, so that a registration value is never handed out twice.
