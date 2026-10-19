@@ -340,7 +340,7 @@ pub enum FirestoreCachedValue<T> {
 impl<B, LS> FirestoreCache<B, LS>
 where
     B: FirestoreCacheBackend + Send + Sync + 'static,
-    LS: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    LS: FirestoreResumeStateStorage + Send + Sync + 'static,
 {
     /// Creates a new `FirestoreCache` with default options for the given name.
     #[deprecated(
@@ -720,9 +720,9 @@ const FIRESTORE_CACHE_MIN_RESYNC_INTERVAL: std::time::Duration = std::time::Dura
 ///
 /// This sits between the listener and the backend so that the divergence policy lives in one place
 /// rather than in each backend, and so that it can reach the listener - which a backend cannot.
-struct FirestoreCacheListenHandler<B> {
+struct FirestoreCacheListenHandler<B, LS> {
     backend: Arc<B>,
-    listener: FirestoreListenerControlHandle,
+    listener: FirestoreListenerControlHandle<LS>,
     state: tokio::sync::Mutex<FirestoreCacheListenState>,
 }
 
@@ -734,11 +734,12 @@ struct FirestoreCacheListenState {
     last_resync: HashMap<FirestoreListenerTarget, std::time::Instant>,
 }
 
-impl<B> FirestoreCacheListenHandler<B>
+impl<B, LS> FirestoreCacheListenHandler<B, LS>
 where
     B: FirestoreCacheBackend + Send + Sync + 'static,
+    LS: FirestoreResumeStateStorage,
 {
-    fn new(backend: Arc<B>, listener: FirestoreListenerControlHandle) -> Self {
+    fn new(backend: Arc<B>, listener: FirestoreListenerControlHandle<LS>) -> Self {
         Self {
             backend,
             listener,

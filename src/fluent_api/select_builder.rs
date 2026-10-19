@@ -1110,7 +1110,7 @@ where
         listener: &mut FirestoreListener<D, S>,
     ) -> FirestoreResult<()>
     where
-        S: FirestoreResumeStateStorage + Send + Sync + Clone + 'static,
+        S: FirestoreResumeStateStorage + Send + Sync + 'static,
     {
         listener.add_target(
             FirestoreListenerTargetParams::new(target, self.target_type, self.labels)

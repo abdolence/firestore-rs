@@ -11,7 +11,7 @@ use gcloud_sdk::google::firestore::v1::*;
 use rsb_derive::*;
 use std::future::Future;
 use std::sync::Arc;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, WeakUnboundedSender};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tracing::*;
@@ -55,7 +55,7 @@ impl FirestoreDb {
         storage: S,
     ) -> FirestoreResult<FirestoreListener<FirestoreDb, S>>
     where
-        S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+        S: FirestoreResumeStateStorage + Send + Sync + 'static,
     {
         self.create_listener_with_params(storage, FirestoreListenerParams::new())
             .await
@@ -70,7 +70,7 @@ impl FirestoreDb {
         params: FirestoreListenerParams,
     ) -> FirestoreResult<FirestoreListener<FirestoreDb, S>>
     where
-        S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+        S: FirestoreResumeStateStorage + Send + Sync + 'static,
     {
         FirestoreListener::new(self.clone(), storage, params).await
     }
@@ -98,25 +98,111 @@ pub(super) enum FirestoreListenerControl {
     ResyncTarget(FirestoreListenerTarget),
 }
 
-/// A cheap, cloneable handle for asking a running listener to resynchronise a target.
+/// A cheap, cloneable handle for asking a listener whether it listens on a target, and for
+/// removing or resynchronising one while it runs.
 ///
-/// Separate from [`FirestoreListener`] so that code reacting to listen events - the cache above
-/// all - can ask for a resync without taking any lock the listener's own shutdown holds.
-#[derive(Clone, Debug)]
-pub struct FirestoreListenerControlHandle {
-    control_writer: Arc<UnboundedSender<FirestoreListenerControl>>,
+/// Separate from [`FirestoreListener`] so that code reacting to listen events - the callback given
+/// to [`start`](FirestoreListener::start), or the cache - can do so without taking any lock the
+/// listener's own shutdown holds. The handle shares the listener's resume-state storage `S`
+/// rather than a copy of it.
+///
+/// A handle does not keep the listener's loop running, so the callback can hold one and the loop
+/// still ends once the listener is dropped.
+pub struct FirestoreListenerControlHandle<S> {
+    /// Weak, because the loop ends only once every strong sender is gone, and the callback the
+    /// loop owns may hold a handle.
+    weak_control_writer: WeakUnboundedSender<FirestoreListenerControl>,
+    targets: FirestoreListenerTargetsState,
+    storage: Arc<S>,
 }
 
-impl FirestoreListenerControlHandle {
+impl<S> FirestoreListenerControlHandle<S>
+where
+    S: FirestoreResumeStateStorage,
+{
+    /// Whether the listener listens on the given target, as [`FirestoreListener::has_target`].
+    ///
+    /// Inside the callback, the answer for a target in a
+    /// [`Remove`](crate::FirestoreListenerTargetChangeType::Remove) target change is final: a target
+    /// Firestore has ended for good is already unregistered, and one it removed for a cause a retry
+    /// can fix is still registered and is added back after the retry delay.
+    ///
+    /// Once the listener has been shut down or dropped, or its loop has stopped on its own, this
+    /// still answers from the targets registered with it, though none of them is listened to
+    /// any more.
+    pub fn has_target(&self, target: &FirestoreListenerTarget) -> bool {
+        self.targets.read().contains_key(target)
+    }
+
+    /// Stops listening on a target and forgets its stored resume state, as
+    /// [`FirestoreListener::remove_target`].
+    ///
+    /// The callback can await this without racing the loop, which waits for the callback and then
+    /// takes the target off the stream before it reads the next event. For a target in a
+    /// [`Remove`](crate::FirestoreListenerTargetChangeType::Remove) target change, this keeps one
+    /// Firestore removed for a cause a retry can fix from being added back, and returns `false` for
+    /// one Firestore has ended for good, which is already unregistered.
+    ///
+    /// Once the listener has been shut down or dropped, or its loop has stopped on its own, there
+    /// is no stream to take the target off, but this still unregisters the target, forgets its
+    /// stored resume state and returns whether it was registered.
+    pub async fn remove_target(&self, target: &FirestoreListenerTarget) -> FirestoreResult<bool> {
+        let Some(removed) = self.targets.write().remove(target) else {
+            return Ok(false);
+        };
+
+        // Sent before the await below, so that a caller cancelled there still takes the target
+        // off the stream before the ID can be registered again.
+        if let Some(control_writer) = self.weak_control_writer.upgrade() {
+            control_writer
+                .send(FirestoreListenerControl::TargetRemoved(
+                    target.clone(),
+                    removed.registration,
+                ))
+                .ok();
+        }
+
+        if let Err(err) = self.storage.forget_resume_state(target).await {
+            warn!(%err, ?target, "Could not forget the resume state of a removed listener target.");
+        }
+        Ok(true)
+    }
+
     /// Discards the target's stored resume state and adds the target to the stream again after
     /// the retry delay, so Firestore sends its initial state again.
     ///
     /// Use this when the cached view of a target is known to have diverged from the server and
-    /// resuming would only carry the divergence forward. Does nothing if the listener has stopped.
+    /// resuming would only carry the divergence forward. Does nothing once the listener has been
+    /// shut down or dropped, or its loop has stopped on its own.
     pub fn resync_target(&self, target: FirestoreListenerTarget) {
-        self.control_writer
-            .send(FirestoreListenerControl::ResyncTarget(target))
-            .ok();
+        if let Some(control_writer) = self.weak_control_writer.upgrade() {
+            control_writer
+                .send(FirestoreListenerControl::ResyncTarget(target))
+                .ok();
+        }
+    }
+}
+
+// Not derived: the derive would bound `S: Clone`, and a clone only clones the `Arc`.
+impl<S> Clone for FirestoreListenerControlHandle<S> {
+    fn clone(&self) -> Self {
+        Self {
+            weak_control_writer: self.weak_control_writer.clone(),
+            targets: self.targets.clone(),
+            storage: self.storage.clone(),
+        }
+    }
+}
+
+/// Lists the registered target IDs, or none while the targets are locked, and never the target
+/// parameters or the storage, so that resume tokens stay out of logs.
+impl<S> std::fmt::Debug for FirestoreListenerControlHandle<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug = f.debug_struct("FirestoreListenerControlHandle");
+        if let Some(targets) = self.targets.try_read() {
+            debug.field("targets", &targets.keys().collect::<Vec<_>>());
+        }
+        debug.finish_non_exhaustive()
     }
 }
 
@@ -126,21 +212,22 @@ where
     S: FirestoreResumeStateStorage,
 {
     db: D,
-    storage: S,
     listener_params: FirestoreListenerParams,
-    targets: FirestoreListenerTargetsState,
     shutdown_signal: watch::Sender<bool>,
     shutdown_handle: Option<JoinHandle<FirestoreResult<()>>>,
+    /// The only strong sender of the control channel, so that the loop ends once the listener is
+    /// dropped, whatever handles are left.
+    control_writer: UnboundedSender<FirestoreListenerControl>,
     /// Created up front rather than in `start`, so that targets can be added and removed before,
     /// during and after the listener runs.
-    control_writer: Arc<UnboundedSender<FirestoreListenerControl>>,
+    control: FirestoreListenerControlHandle<S>,
     control_reader: Option<UnboundedReceiver<FirestoreListenerControl>>,
 }
 
 impl<D, S> FirestoreListener<D, S>
 where
     D: FirestoreListenSupport + Clone + Send + Sync + 'static,
-    S: FirestoreResumeStateStorage + Clone + Send + Sync + 'static,
+    S: FirestoreResumeStateStorage + Send + Sync + 'static,
 {
     /// Creates a listener with no targets yet, for any type implementing `FirestoreListenSupport`.
     ///
@@ -156,13 +243,16 @@ where
         let (control_writer, control_reader) = tokio::sync::mpsc::unbounded_channel();
 
         Ok(FirestoreListener {
+            control: FirestoreListenerControlHandle {
+                weak_control_writer: control_writer.downgrade(),
+                targets: FirestoreListenerTargetsState::default(),
+                storage: Arc::new(storage),
+            },
+            control_writer,
             db,
-            storage,
             listener_params,
-            targets: FirestoreListenerTargetsState::default(),
             shutdown_signal: watch::Sender::new(false),
             shutdown_handle: None,
-            control_writer: Arc::new(control_writer),
             control_reader: Some(control_reader),
         })
     }
@@ -199,7 +289,7 @@ where
             ));
         }
 
-        self.targets.register(target_params)?;
+        self.control.targets.register(target_params)?;
 
         // A send error only means the loop is gone, which the shutdown check above already covers.
         self.control_writer
@@ -225,35 +315,21 @@ where
     /// acknowledgement comes: Firestore closes the stream with `NOT_FOUND` instead, and the
     /// listener reconnects at once and adds the other targets back.
     pub async fn remove_target(&self, target: &FirestoreListenerTarget) -> FirestoreResult<bool> {
-        let Some(removed) = self.targets.write().remove(target) else {
-            return Ok(false);
-        };
-
-        // Sent before the await below, so that a caller cancelled there still takes the target
-        // off the stream before the ID can be registered again.
-        self.control_writer
-            .send(FirestoreListenerControl::TargetRemoved(
-                target.clone(),
-                removed.registration,
-            ))
-            .ok();
-
-        if let Err(err) = self.storage.forget_resume_state(target).await {
-            warn!(%err, ?target, "Could not forget the resume state of a removed listener target.");
-        }
-        Ok(true)
+        self.control.remove_target(target).await
     }
 
     /// The targets this listener currently listens on.
     pub fn targets(&self) -> Vec<FirestoreListenerTarget> {
-        self.targets.read().keys().cloned().collect()
+        self.control.targets.read().keys().cloned().collect()
     }
 
-    /// A handle for asking this listener to resynchronise a target while it runs.
-    pub fn control_handle(&self) -> FirestoreListenerControlHandle {
-        FirestoreListenerControlHandle {
-            control_writer: self.control_writer.clone(),
-        }
+    /// A handle for checking, removing and resynchronising this listener's targets.
+    ///
+    /// The handle keeps working after [`start`](Self::start), so the callback can hold one and
+    /// remove the targets it no longer needs without reaching the listener, which `start` and
+    /// [`shutdown`](Self::shutdown) borrow mutably.
+    pub fn control_handle(&self) -> FirestoreListenerControlHandle<S> {
+        self.control.clone()
     }
 
     /// Whether this listener listens on the given target.
@@ -264,7 +340,7 @@ where
     /// [`Remove`](crate::FirestoreListenerTargetChangeType::Remove) target change, so from inside
     /// that callback this already tells whether the target will be added back.
     pub fn has_target(&self, target: &FirestoreListenerTarget) -> bool {
-        self.targets.read().contains_key(target)
+        self.control.has_target(target)
     }
 
     /// Starts listening and spawns the loop that keeps the stream open, invoking `cb` for every
@@ -279,8 +355,9 @@ where
     /// The returned future resolves once the loop is spawned, not once it exits: the loop keeps
     /// running, reconnecting on a dropped stream, until [`shutdown`](Self::shutdown) is called or
     /// it stops on its own, after which [`add_target`](Self::add_target) fails and `shutdown`
-    /// returns why. Always call `shutdown` when the listener is no longer needed, or the spawned
-    /// task and its connection are never released.
+    /// returns why. Call `shutdown` when the listener is no longer needed: it lets the current
+    /// callback and resume-state writes finish. Dropping the listener instead ends the loop without
+    /// waiting for it, even while the callback holds a [control handle](Self::control_handle).
     ///
     /// A target that has ended for good, including a finished `once` target, stays unregistered
     /// even if `cb` returns an error for its
@@ -302,6 +379,7 @@ where
         }
 
         let initial_targets: Vec<FirestoreListenerTargetParams> = self
+            .control
             .targets
             .read()
             .values()
@@ -330,9 +408,9 @@ where
 
         let listener_loop = FirestoreListenerLoop::new(
             self.db.clone(),
-            self.storage.clone(),
+            self.control.storage.clone(),
             self.shutdown_signal.clone(),
-            self.targets.clone(),
+            self.control.targets.clone(),
             &self.listener_params,
             control_reader,
             cb,
@@ -357,13 +435,14 @@ where
                 continue;
             }
             let resume_type = self
+                .control
                 .storage
                 .read_resume_state(&target_params.target)
                 .map_err(|err| FirestoreError::system_error(format!("Listener init error: {err}")))
                 .await?;
 
             if let Some(resume_type) = resume_type {
-                let mut targets = self.targets.write();
+                let mut targets = self.control.targets.write();
                 if let Some(registered) = targets.get_mut(&target_params.target) {
                     registered.params.resume_type = Some(resume_type);
                 }
@@ -446,6 +525,18 @@ where
         self.shutdown_handle = None;
         debug!("Shutting down Firestore listener has been finished...");
         stopped_with
+    }
+}
+
+/// Signals the loop and does not wait for it: it still finishes the current callback and
+/// resume-state write, but stops connecting and retrying.
+impl<D, S> Drop for FirestoreListener<D, S>
+where
+    D: FirestoreListenSupport,
+    S: FirestoreResumeStateStorage,
+{
+    fn drop(&mut self) {
+        self.shutdown_signal.send_replace(true);
     }
 }
 

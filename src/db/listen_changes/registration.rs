@@ -43,6 +43,13 @@ impl FirestoreListenerTargetsState {
         self.targets.read().expect("listener targets lock poisoned")
     }
 
+    /// The targets, or `None` if a writer holds the lock, for callers that must not block.
+    pub(super) fn try_read(
+        &self,
+    ) -> Option<std::sync::RwLockReadGuard<'_, FirestoreListenerRegisteredTargets>> {
+        self.targets.try_read().ok()
+    }
+
     pub(super) fn write(
         &self,
     ) -> std::sync::RwLockWriteGuard<'_, FirestoreListenerRegisteredTargets> {

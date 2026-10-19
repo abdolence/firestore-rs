@@ -544,6 +544,58 @@ async fn a_panicking_callback_stops_the_listener_with_an_error() {
 }
 
 #[tokio::test]
+async fn a_listener_dropped_while_its_callback_holds_a_control_handle_ends_its_loop() {
+    let (mut listener, db) = listener(TestDb::new(Wait::Never), never_retrying()).await;
+    let handle = listener.control_handle();
+    listener
+        .start(move |_| {
+            let _held = &handle;
+            async { Ok(()) }
+        })
+        .await
+        .unwrap();
+    within(db.entered.acquire()).await.unwrap().forget();
+    // Shared by the listener, its loop and every handle, so the last of them goes with the loop.
+    let storage = Arc::downgrade(&listener.control.storage);
+
+    drop(listener);
+
+    within(async {
+        while storage.strong_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_listener_dropped_while_connections_fail_ends_its_loop() {
+    let db = TestDb {
+        connect_error: Some(Code::Unavailable),
+        ..TestDb::new(Wait::Never)
+    };
+    let params = FirestoreListenerParams::new().with_retry_delay(Duration::from_millis(20));
+    let (mut listener, db) = listener(db, params).await;
+    listener.start(|_| async { Ok(()) }).await.unwrap();
+    within(async {
+        while db.connections.load(Ordering::Relaxed) == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+    let storage = Arc::downgrade(&listener.control.storage);
+
+    drop(listener);
+
+    within(async {
+        while storage.strong_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn stream_wide_token_is_stored_only_at_a_snapshot_for_targets_on_the_stream() {
     let db = TestDb {
         events: vec![
@@ -888,7 +940,7 @@ async fn the_callback_sees_whether_a_removed_target_will_be_added_back() {
     let (db, feed) = TestDb::fed(Wait::Never);
     let (mut listener, db) = listener(db, never_retrying()).await;
     listener.add_target(target_params(2)).unwrap();
-    let targets = listener.targets.clone();
+    let handle = listener.control_handle();
     let registered_at_removal = Arc::new(Mutex::new(Vec::new()));
     let callback_registered_at_removal = registered_at_removal.clone();
     let callback_db = db.clone();
@@ -898,7 +950,7 @@ async fn the_callback_sees_whether_a_removed_target_will_be_added_back() {
                 if change.target_change_type() == TargetChangeType::Remove {
                     for target_id in &change.target_ids {
                         let target = FirestoreListenerTarget::try_from(*target_id).unwrap();
-                        let registered = targets.read().contains_key(&target);
+                        let registered = handle.has_target(&target);
                         callback_registered_at_removal
                             .lock()
                             .unwrap()
@@ -924,6 +976,94 @@ async fn the_callback_sees_whether_a_removed_target_will_be_added_back() {
     assert_eq!(
         *registered_at_removal.lock().unwrap(),
         vec![(1, false), (2, true)]
+    );
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_target_the_callback_removes_through_the_control_handle_leaves_the_stream() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let (mut listener, db) = listener(db, never_retrying()).await;
+    let handle = listener.control_handle();
+    listener
+        .start(move |event| {
+            let handle = handle.clone();
+            async move {
+                if event == target_change(TargetChangeType::Current, vec![1]) {
+                    handle
+                        .remove_target(&FirestoreListenerTarget::new(1))
+                        .await
+                        .unwrap();
+                }
+                Ok(())
+            }
+        })
+        .await
+        .unwrap();
+    within(db.entered.acquire()).await.unwrap().forget();
+    let mut requests = db.take_requests();
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(add_request(1, "document-1"))
+    );
+
+    feed.send(target_change(TargetChangeType::Add, vec![1]))
+        .unwrap();
+    feed.send(target_change(TargetChangeType::Current, vec![1]))
+        .unwrap();
+
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(RequestedChange::RemoveTarget(1))
+    );
+    assert_eq!(
+        *db.forgotten.lock().unwrap(),
+        vec![FirestoreListenerTarget::new(1)]
+    );
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_target_the_callback_removes_on_its_transient_removal_is_not_added_back() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let (mut listener, db) = listener(db, retrying_at_once()).await;
+    listener.add_target(target_params(2)).unwrap();
+    let handle = listener.control_handle();
+    let removed_by_callback = Arc::new(Mutex::new(Vec::new()));
+    let callback_removed = removed_by_callback.clone();
+    let callback_db = db.clone();
+    listener
+        .start(move |event| {
+            let handle = handle.clone();
+            let callback_removed = callback_removed.clone();
+            let callback_db = callback_db.clone();
+            async move {
+                if event == removal_with_cause(vec![1], Code::Unavailable) {
+                    let removed = handle
+                        .remove_target(&FirestoreListenerTarget::new(1))
+                        .await
+                        .unwrap();
+                    callback_removed.lock().unwrap().push(removed);
+                }
+                callback_db.seen.send_modify(|seen| seen.push(event));
+                Ok(())
+            }
+        })
+        .await
+        .unwrap();
+    within(db.entered.acquire()).await.unwrap().forget();
+    let mut requests = db.take_requests();
+    assert_eq!(added_targets(&mut requests, 2).await, vec![1, 2]);
+
+    feed.send(removal_with_cause(vec![1], Code::Unavailable))
+        .unwrap();
+    db.settle(&feed).await;
+
+    assert_eq!(*removed_by_callback.lock().unwrap(), vec![true]);
+    assert!(requests.try_recv().is_err());
+    assert_eq!(
+        *db.forgotten.lock().unwrap(),
+        vec![FirestoreListenerTarget::new(1)]
     );
     within(listener.shutdown()).await.unwrap();
 }
