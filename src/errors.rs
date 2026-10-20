@@ -527,7 +527,9 @@ impl FirestoreErrorInTransaction {
     }
 
     /// Wraps an error as a transient `BackoffError` within a transaction context, retried after
-    /// `retry_after` instead of the backoff delay.
+    /// `retry_after` instead of the backoff delay. The retry still counts against
+    /// `max_retries`, and it does not run if `retry_after` would end past
+    /// `retry_max_elapsed_time`.
     pub fn retry_after<E: std::error::Error + Send + Sync + 'static>(
         transaction: &FirestoreTransaction,
         source: E,

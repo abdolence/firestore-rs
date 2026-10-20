@@ -19,8 +19,10 @@ pub struct FirestoreTransactionOptions {
     #[default = "4"]
     pub max_retries: usize,
     /// An optional cap on how long a transaction keeps retrying, counted from its first
-    /// failure, on top of [`max_retries`](Self::max_retries). `None`, the default, sets no cap.
-    pub max_elapsed_time: Option<Duration>,
+    /// failure, on top of [`max_retries`](Self::max_retries). A retry runs only if its delay,
+    /// the backoff's or a callback's `retry_after`, ends within the cap, so zero means no retry.
+    /// `None`, the default, sets no cap.
+    pub retry_max_elapsed_time: Option<Duration>,
 
     /// Concurrent transaction mode
     pub concurrent_mode:
@@ -36,7 +38,7 @@ impl Default for FirestoreTransactionOptions {
         Self {
             mode: FirestoreTransactionMode::ReadWrite,
             max_retries: 4,
-            max_elapsed_time: None,
+            retry_max_elapsed_time: None,
             concurrent_mode: None,
             request_options: None,
         }

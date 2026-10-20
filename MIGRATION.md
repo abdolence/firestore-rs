@@ -3,21 +3,28 @@
 ## 0.61
 
 v0.61.0 takes retry limits and delays as `std::time::Duration` instead of `FirestoreDuration`
-(`jiff::SignedDuration`), so a negative value no longer compiles.
+(`jiff::SignedDuration`), so a negative value no longer compiles. The transaction's retry time cap is renamed
+to `retry_max_elapsed_time`, the name the simple batch writer already uses.
 
 | Field or argument | 0.60 | 0.61 |
 |---|---|---|
-| `FirestoreTransactionOptions::max_elapsed_time` | `Option<FirestoreDuration>` | `Option<std::time::Duration>` |
-| `FirestoreSimpleBatchWriteOptions::retry_max_elapsed_time` | `Option<FirestoreDuration>` | `Option<std::time::Duration>` |
-| `retry_after` of `FirestoreErrorInTransaction::retry_after` | `FirestoreDuration` | `std::time::Duration` |
+| `FirestoreTransactionOptions` retry cap | `max_elapsed_time: Option<FirestoreDuration>` | `retry_max_elapsed_time: Option<std::time::Duration>` |
+| `FirestoreSimpleBatchWriteOptions` retry cap | `retry_max_elapsed_time: Option<FirestoreDuration>` | `retry_max_elapsed_time: Option<std::time::Duration>` |
+| `FirestoreErrorInTransaction::retry_after` delay argument | `retry_after: FirestoreDuration` | `retry_after: std::time::Duration` |
 
-The builder setters of both fields, such as `with_max_elapsed_time` and `with_retry_max_elapsed_time`, take the new
-type too. Replace `FirestoreDuration::from_secs(30)` with `std::time::Duration::from_secs(30)`, or convert a
-`jiff::SignedDuration` you already have with `std::time::Duration::try_from(value)?`.
+The builder setters follow: `with_max_elapsed_time` on `FirestoreTransactionOptions` becomes
+`with_retry_max_elapsed_time`, and both fields' setters take the new type. Replace
+`FirestoreDuration::from_secs(30)` with `std::time::Duration::from_secs(30)`, or convert a `jiff::SignedDuration`
+limit you already have with `std::time::Duration::try_from(value)?`. For a `retry_after`, use `value.unsigned_abs()`
+instead: it cannot fail, so it works inside the transaction callback, and it keeps the 0.60 delay.
 
 A negative limit used to fail every transaction or `write` with a `DeserializeError`, and a negative `retry_after` was
 used as a positive delay of the same length. `FirestoreDuration` stays for durations Firestore reports, such as
 `FirestoreExecutionStats::execution_duration`.
+
+`retry_max_elapsed_time` now bounds a transaction retry whose callback named a `retry_after` too: the retry runs
+only if the delay ends within the cap. Before, only `max_retries` bounded those retries, so a cap of zero still let
+them run.
 
 ## 0.58
 
