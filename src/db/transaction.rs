@@ -517,11 +517,17 @@ impl FirestoreDb {
                 return Err(err);
             }
             // The backoff's own clock and test bound a callback's `retry_after` too, so that
-            // `retry_max_elapsed_time` caps both kinds of delay alike.
+            // `retry_max_elapsed_time` caps both kinds of delay alike. A delay that overflows the
+            // sum ends past any cap.
             let delay = match retry_after {
                 Some(delay) => retry_options
                     .retry_max_elapsed_time
-                    .is_none_or(|cap| backoff.get_elapsed_time() + delay <= cap)
+                    .is_none_or(|cap| {
+                        backoff
+                            .get_elapsed_time()
+                            .checked_add(delay)
+                            .is_some_and(|end| end <= cap)
+                    })
                     .then_some(delay),
                 None => backoff.next_backoff(),
             };

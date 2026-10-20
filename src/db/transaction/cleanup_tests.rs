@@ -225,6 +225,12 @@ async fn retry_max_elapsed_time_caps_retry_after_delays_too() {
             Some(Duration::from_millis(100)),
             vec!["Begin→1", "Rollback(1)", "Begin→2", "Rollback(2)"],
         ),
+        // A delay too long to add to the elapsed time ends past any cap.
+        (
+            Duration::from_secs(30),
+            Some(Duration::MAX),
+            vec!["Begin→1", "Rollback(1)"],
+        ),
     ];
     for (retry_max_elapsed_time, retry_after, expected_calls) in cases {
         let server = fixture(Code::Ok, Code::Ok).await;
