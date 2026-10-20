@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-562eebb5.js";
+            window.path_to_searchindex_js = "searchindex-95c1b6c3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-61f90fc3.js"></script>
@@ -701,23 +701,24 @@ back <code>ABORTED</code> is not retried on its own; it fails the attempt, which
 dropped connection, is returned to the caller without retrying, since the writes may
 already be applied, and the callback is not run again in that case.</p>
 <p>Retries are capped at <code>max_retries</code> attempts after the first, 4 by default (5 attempts in total),
-the same default as Google’s official clients; <code>max_elapsed_time</code> adds an optional time cap on top,
-off by default. Each retry waits a backoff delay first, or the delay the callback named through
+the same default as Google’s official clients; <code>retry_max_elapsed_time</code> adds an optional time cap
+on top, off by default. Each retry waits a backoff delay first, or the delay the callback named through
 <code>BackoffError::Transient</code>’s <code>retry_after</code>. Return <code>Err(BackoffError::Permanent(err))</code> instead for an
 error that must not be retried; it stops immediately and comes back wrapped in
 <code>FirestoreError::ErrorInTransaction</code>.</p>
-<p>Set <code>max_retries</code> and <code>max_elapsed_time</code> through <code>run_transaction_with_options</code>:</p>
+<p>Set <code>max_retries</code> and <code>retry_max_elapsed_time</code> through <code>run_transaction_with_options</code>:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::{Deserialize, Serialize};
 </span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
 </span><span class="boring">struct MyTestStructure { test_string: String }
 </span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
 </span><span class="boring">const TEST_DOCUMENT_ID: &amp;str = "test_doc_id";
-</span><span class="boring">use std::time::Duration;
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let options = FirestoreTransactionOptions::new()
+</span>use std::time::Duration;
+
+let options = FirestoreTransactionOptions::new()
     .with_max_retries(2)
-    .with_max_elapsed_time(Duration::from_secs(30));
+    .with_retry_max_elapsed_time(Duration::from_secs(30));
 
 db.run_transaction_with_options(
     |db, _transaction| {
