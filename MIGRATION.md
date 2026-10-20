@@ -1,5 +1,20 @@
 # Migration guide
 
+## 0.62
+
+### Simple batch writes stop retrying after 60 seconds
+
+`FirestoreSimpleBatchWriteOptions::retry_max_elapsed_time` is now 60 seconds by default instead of `None`.
+60 seconds is the limit Google's Firestore service config sets for `BatchWrite`. Before, a `write` that kept failing with a retryable error,
+such as `UNAVAILABLE` or `RESOURCE_EXHAUSTED`, retried forever; now it stops retrying 60 seconds after the first
+attempt and returns that error. The limit is checked between attempts and does not end an attempt in flight.
+
+To keep retrying with no limit, set the field to `None`:
+
+```rust,ignore
+let options = FirestoreSimpleBatchWriteOptions::new().opt_retry_max_elapsed_time(None);
+```
+
 ## 0.61
 
 v0.61.0 takes retry limits and delays as `std::time::Duration` instead of `FirestoreDuration`
