@@ -209,10 +209,10 @@ async fn retry_after_delays_the_next_attempt() {
     );
 }
 
-// `max_elapsed_time` bounds a callback's `retry_after` the way it bounds the backoff delay: a
+// `retry_max_elapsed_time` bounds a callback's `retry_after` the way it bounds the backoff delay: a
 // retry runs only while the time since the first failure plus its delay stays within the cap.
 #[tokio::test]
-async fn max_elapsed_time_bounds_retry_after_too() {
+async fn retry_max_elapsed_time_caps_retry_after_delays_too() {
     let cases = [
         (Duration::ZERO, None, vec!["Begin→1", "Rollback(1)"]),
         (
@@ -226,9 +226,10 @@ async fn max_elapsed_time_bounds_retry_after_too() {
             vec!["Begin→1", "Rollback(1)", "Begin→2", "Rollback(2)"],
         ),
     ];
-    for (max_elapsed_time, retry_after, expected_calls) in cases {
+    for (retry_max_elapsed_time, retry_after, expected_calls) in cases {
         let server = fixture(Code::Ok, Code::Ok).await;
-        let options = FirestoreTransactionOptions::new().with_max_elapsed_time(max_elapsed_time);
+        let options =
+            FirestoreTransactionOptions::new().with_retry_max_elapsed_time(retry_max_elapsed_time);
         let result: FirestoreResult<()> = server
             .db
             .run_transaction_with_options(
@@ -246,12 +247,12 @@ async fn max_elapsed_time_bounds_retry_after_too() {
             .await;
         assert!(
             matches!(result, Err(FirestoreError::ErrorInTransaction(_))),
-            "{max_elapsed_time:?}, {retry_after:?}: {result:?}"
+            "{retry_max_elapsed_time:?}, {retry_after:?}: {result:?}"
         );
         assert_eq!(
             server.calls(),
             expected_calls,
-            "{max_elapsed_time:?}, {retry_after:?}"
+            "{retry_max_elapsed_time:?}, {retry_after:?}"
         );
     }
 }

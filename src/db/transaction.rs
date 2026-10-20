@@ -471,10 +471,10 @@ impl FirestoreDb {
     ///
     /// Two options bound the retries described on [`run_transaction`](Self::run_transaction):
     /// `options.max_retries` caps how many retries follow the first attempt (4 by default, 5
-    /// attempts in all), and `options.max_elapsed_time`, when set, also caps how long retrying
-    /// may go on, counted from the first failure: a retry runs only if its delay, the backoff's
-    /// or the callback's `retry_after`, ends within the cap, so a cap of zero means no retry.
-    /// Retrying stops at whichever is reached first.
+    /// attempts in all), and `options.retry_max_elapsed_time`, when set, also caps how long
+    /// retrying may go on, counted from the first failure: a retry runs only if its delay, the
+    /// backoff's or the callback's `retry_after`, ends within the cap, so a cap of zero means no
+    /// retry. Retrying stops at whichever is reached first.
     ///
     /// Returns an error if `BeginTransaction` fails, `func` returns [`BackoffError::Permanent`],
     /// the commit fails without `retry_possible`, or retries are exhausted. Callback errors are
@@ -501,9 +501,9 @@ impl FirestoreDb {
             ..options
         };
         let mut result = self.run_transaction_attempt(transaction, &func).await;
-        // Built only now, so that `max_elapsed_time` counts from the first failure.
+        // Built only now, so that `retry_max_elapsed_time` counts from the first failure.
         let mut backoff = ExponentialBackoffBuilder::new()
-            .with_max_elapsed_time(retry_options.max_elapsed_time)
+            .with_max_elapsed_time(retry_options.retry_max_elapsed_time)
             .build();
         let mut retries = 0;
 
@@ -517,10 +517,10 @@ impl FirestoreDb {
                 return Err(err);
             }
             // The backoff's own clock and test bound a callback's `retry_after` too, so that
-            // `max_elapsed_time` caps both kinds of delay alike.
+            // `retry_max_elapsed_time` caps both kinds of delay alike.
             let delay = match retry_after {
                 Some(delay) => retry_options
-                    .max_elapsed_time
+                    .retry_max_elapsed_time
                     .is_none_or(|cap| backoff.get_elapsed_time() + delay <= cap)
                     .then_some(delay),
                 None => backoff.next_backoff(),

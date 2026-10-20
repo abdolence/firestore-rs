@@ -90,13 +90,13 @@ dropped connection, is returned to the caller without retrying, since the writes
 already be applied, and the callback is not run again in that case.
 
 Retries are capped at `max_retries` attempts after the first, 4 by default (5 attempts in total),
-the same default as Google's official clients; `max_elapsed_time` adds an optional time cap on top,
-off by default. Each retry waits a backoff delay first, or the delay the callback named through
+the same default as Google's official clients; `retry_max_elapsed_time` adds an optional time cap
+on top, off by default. Each retry waits a backoff delay first, or the delay the callback named through
 `BackoffError::Transient`'s `retry_after`. Return `Err(BackoffError::Permanent(err))` instead for an
 error that must not be retried; it stops immediately and comes back wrapped in
 `FirestoreError::ErrorInTransaction`.
 
-Set `max_retries` and `max_elapsed_time` through `run_transaction_with_options`:
+Set `max_retries` and `retry_max_elapsed_time` through `run_transaction_with_options`:
 
 ```rust,no_run
 # use firestore::*;
@@ -110,7 +110,7 @@ use std::time::Duration;
 
 let options = FirestoreTransactionOptions::new()
     .with_max_retries(2)
-    .with_max_elapsed_time(Duration::from_secs(30));
+    .with_retry_max_elapsed_time(Duration::from_secs(30));
 
 db.run_transaction_with_options(
     |db, _transaction| {
