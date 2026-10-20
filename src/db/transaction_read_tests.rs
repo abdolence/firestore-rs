@@ -56,6 +56,7 @@ async fn check_read_retries(read: Read) {
         (Code::Aborted, true, 1),
         (Code::Aborted, false, 2),
         (Code::Unavailable, true, 2),
+        (Code::DeadlineExceeded, false, 2),
     ] {
         let server = FakeFirestore::start_with_max_retries(1, move |_, _| {
             ("attempt".to_string(), FakeResponse::Status(code))

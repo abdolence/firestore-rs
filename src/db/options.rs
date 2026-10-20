@@ -1,5 +1,6 @@
 use gcloud_sdk::GoogleEnvironment;
 use rsb_derive::Builder;
+use std::time::Duration;
 
 /// Configuration options for the [`FirestoreDb`](crate::FirestoreDb) client.
 ///
@@ -42,6 +43,26 @@ pub struct FirestoreDbOptions {
     /// If the `FIRESTORE_EMULATOR_HOST` environment variable is set, it will
     /// typically override this and the default URL.
     pub firebase_api_url: Option<String>,
+
+    /// The longest one request waits for Firestore, per attempt. `None`, the default, sets no
+    /// limit.
+    ///
+    /// - **Unary requests** (gets, writes, `BatchWrite`, `Commit`, list pages and the admin API
+    ///   calls): the whole call. It is also sent to Firestore as the request's deadline.
+    /// - **Streamed reads** (queries, aggregations and batch gets): the wait for the stream to
+    ///   start and for each next response, counted only while the caller is waiting for one.
+    /// - **Not limited:** listeners and the streaming batch writer, whose streams stay quiet for
+    ///   as long as nothing changes.
+    ///
+    /// A request that runs out of it fails with a
+    /// [`DatabaseError`](crate::errors::FirestoreError::DatabaseError) with the code
+    /// `DeadlineExceeded` and `retry_possible` set, and is retried wherever a dropped connection
+    /// is, each retry with the full limit again. A transaction's `Commit` is the exception: its
+    /// writes may already be applied, so it is never retried.
+    ///
+    /// [`FirestoreDb::clone_with_request_timeout`](crate::FirestoreDb::clone_with_request_timeout)
+    /// replaces it for the requests of a clone.
+    pub request_timeout: Option<Duration>,
 }
 
 impl FirestoreDbOptions {

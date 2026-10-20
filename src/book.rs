@@ -60,6 +60,9 @@ mod explain_query {}
 #[doc = include_str!("../docs/src/request-tags.md")]
 mod request_tags {}
 
+#[doc = include_str!("../docs/src/request-timeouts.md")]
+mod request_timeouts {}
+
 #[doc = include_str!("../docs/src/document-collection-ids.md")]
 mod document_collection_ids {}
 

@@ -16,6 +16,7 @@ use backoff::ExponentialBackoffBuilder;
 use futures::future::BoxFuture;
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
 use gcloud_sdk::tonic::Code;
+use gcloud_sdk::RequestTimeouts;
 use tracing::*;
 
 #[cfg(test)]
@@ -127,16 +128,16 @@ impl<'a> FirestoreTransaction<'a> {
             "/firestore/commit_time" = field::Empty
         );
 
-        let request = gcloud_sdk::tonic::Request::new(BeginTransactionRequest {
+        let request = BeginTransactionRequest {
             database: db.get_database_path().clone(),
             options: Some(options.clone().try_into()?),
             request_options: db.resolve_request_options(options.request_options.as_ref()),
-        });
+        };
 
         let response = db
             .client()
             .get()
-            .begin_transaction(request)
+            .begin_transaction(db.request_with_timeout(request, RequestTimeouts::with_total))
             .await?
             .into_inner();
 
@@ -195,20 +196,23 @@ impl<'a> FirestoreTransaction<'a> {
             });
         }
 
-        let request = gcloud_sdk::tonic::Request::new(CommitRequest {
+        let request = CommitRequest {
             database: self.db.get_database_path().clone(),
             writes: std::mem::take(&mut self.data.writes),
             transaction: self.data.transaction_id.clone(),
             request_options: self
                 .db
                 .resolve_request_options(self.request_options.as_ref()),
-        });
+        };
 
         let response = self
             .db
             .client()
             .get()
-            .commit(request)
+            .commit(
+                self.db
+                    .request_with_timeout(request, RequestTimeouts::with_total),
+            )
             .await
             .map_err(|status| {
                 let retry_possible = status.code() == Code::Aborted;
@@ -256,13 +260,16 @@ impl<'a> FirestoreTransaction<'a> {
     /// either way.
     pub async fn rollback(mut self) -> FirestoreResult<()> {
         self.finished = true;
-        let request = gcloud_sdk::tonic::Request::new(RollbackRequest {
+        let request = RollbackRequest {
             database: self.db.get_database_path().clone(),
             transaction: self.data.transaction_id.clone(),
             request_options: self
                 .db
                 .resolve_request_options(self.request_options.as_ref()),
-        });
+        };
+        let request = self
+            .db
+            .request_with_timeout(request, RequestTimeouts::with_total);
 
         self.db.client().get().rollback(request).await?;
 

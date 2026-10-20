@@ -9,9 +9,7 @@ use crate::db::admin::index_diff::{
 use crate::db::admin::index_models::{
     validate_collection_group, write_section, CanonicalFieldPath,
 };
-use crate::db::admin::operation_wait::{
-    retryable_read, OperationAction, OperationDeadline, StartedOperation,
-};
+use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
 use crate::db::support::FirestoreIndexSupport;
 use crate::errors::FirestoreError;
 use crate::{
@@ -32,6 +30,7 @@ use gcloud_sdk::google::firestore::admin::v1::{
 use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
 use gcloud_sdk::prost_types::FieldMask;
 use gcloud_sdk::tonic::{Code, Status};
+use gcloud_sdk::RequestTimeouts;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::*;
@@ -382,16 +381,17 @@ impl FirestoreDb {
         let mut items = Vec::new();
         let mut page_token = String::new();
         loop {
+            let request = ListIndexesRequest {
+                parent: group_path.to_string(),
+                filter: String::new(),
+                // ListIndexes rejects any page_size other than 0 ("Invalid page size. Only
+                // 0 is supported."), measured against the real service; still follow
+                // next_page_token, since 0 does not mean "no paging".
+                page_size: 0,
+                page_token: std::mem::take(&mut page_token),
+            };
             let response = admin
-                .list_indexes(ListIndexesRequest {
-                    parent: group_path.to_string(),
-                    filter: String::new(),
-                    // ListIndexes rejects any page_size other than 0 ("Invalid page size. Only
-                    // 0 is supported."), measured against the real service; still follow
-                    // next_page_token, since 0 does not mean "no paging".
-                    page_size: 0,
-                    page_token: std::mem::take(&mut page_token),
-                })
+                .list_indexes(self.request_with_timeout(request, RequestTimeouts::with_total))
                 .await
                 .map_err(FirestoreError::from)?
                 .into_inner();
@@ -413,13 +413,14 @@ impl FirestoreDb {
         let mut items = Vec::new();
         let mut page_token = String::new();
         loop {
+            let request = ListFieldsRequest {
+                parent: group_path.to_string(),
+                filter: filter.to_string(),
+                page_size: 0,
+                page_token: std::mem::take(&mut page_token),
+            };
             let response = admin
-                .list_fields(ListFieldsRequest {
-                    parent: group_path.to_string(),
-                    filter: filter.to_string(),
-                    page_size: 0,
-                    page_token: std::mem::take(&mut page_token),
-                })
+                .list_fields(self.request_with_timeout(request, RequestTimeouts::with_total))
                 .await
                 .map_err(FirestoreError::from)?
                 .into_inner();
@@ -593,6 +594,7 @@ impl FirestoreDb {
                 parent: group.path.clone(),
                 index: Some(proto),
             };
+            let request = self.request_with_timeout(request, RequestTimeouts::with_total);
             match self.admin_client().create_index(request).await {
                 Ok(response) => {
                     let operation = response.into_inner();
@@ -653,6 +655,7 @@ impl FirestoreDb {
             let request = DeleteIndexRequest {
                 name: listed.name.clone(),
             };
+            let request = self.request_with_timeout(request, RequestTimeouts::with_total);
             match self.admin_client().delete_index(request).await {
                 Ok(_) => {
                     info!(action = action.kind(), index = %listed, "Deleted an undeclared composite index.");
@@ -698,6 +701,7 @@ impl FirestoreDb {
         );
         let began = FirestoreInstant::now();
         let outcome = async {
+            let request = self.request_with_timeout(request, RequestTimeouts::with_total);
             match self.admin_client().update_field(request).await {
                 Ok(response) => {
                     let operation = response.into_inner();
@@ -823,9 +827,12 @@ impl FirestoreDb {
         loop {
             let polled = tokio::time::timeout_at(
                 deadline.poll_cutoff(),
-                self.admin_client().get_field(GetFieldRequest {
-                    name: name.to_string(),
-                }),
+                self.admin_client().get_field(self.request_with_timeout(
+                    GetFieldRequest {
+                        name: name.to_string(),
+                    },
+                    RequestTimeouts::with_total,
+                )),
             )
             .await;
             let read_back = match polled {
@@ -859,11 +866,7 @@ impl FirestoreDb {
                 // has no "too new to be visible yet" case, so NOT_FOUND here means the field or
                 // database is gone, not a race with propagation.
                 Ok(Err(status)) => {
-                    let err = match status.code() {
-                        Code::DeadlineExceeded => retryable_read(status),
-                        _ => FirestoreError::from(status),
-                    };
-                    match err {
+                    match FirestoreError::from_read_status(status) {
                         FirestoreError::DatabaseError(db_err) if db_err.retry_possible => {
                             warn!(
                                 error = %db_err,
@@ -3868,6 +3871,7 @@ mod tests {
                 is_emulator: true,
             }),
             session_params: fake.db.get_session_params().clone().into(),
+            request_timeout: None,
         };
 
         let plan = emulator_db

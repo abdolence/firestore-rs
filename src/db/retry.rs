@@ -2,17 +2,18 @@ use crate::errors::FirestoreDatabaseError;
 use crate::{FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreResult};
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::tonic::{Request, Response, Status};
-use gcloud_sdk::GoogleAuthMiddleware;
+use gcloud_sdk::{GoogleAuthMiddleware, RequestTimeouts};
 use rand::RngExt;
 use std::future::Future;
 use std::time::Duration;
 use tracing::{warn, Span};
 
 impl FirestoreDb {
-    /// Sends a read built from `request` through `send`, and sends it again after a random
-    /// [`retry_delay`] while it fails with a `retry_possible` error, up to
-    /// [`max_retries`](crate::FirestoreDbOptions::max_retries) times. Each retry is logged in
-    /// `span` as "Failed to `action`".
+    /// Sends a read built from `request` through `send`, limited by the request timeout as
+    /// `limit` applies it. While it fails with a `retry_possible` error, or with any
+    /// `DEADLINE_EXCEEDED`, which a read, unlike a write, can safely send again, it is sent again
+    /// after a random [`retry_delay`], up to [`max_retries`](crate::FirestoreDbOptions::max_retries)
+    /// times. Each retry is logged in `span` as "Failed to `action`".
     ///
     /// An `ABORTED` read inside a transaction is never sent again: the transaction ID is no longer
     /// valid, so only running the whole transaction again can succeed.
@@ -21,6 +22,7 @@ impl FirestoreDb {
         span: &Span,
         action: &str,
         request: &R,
+        limit: fn(RequestTimeouts, Duration) -> RequestTimeouts,
         send: F,
     ) -> FirestoreResult<T>
     where
@@ -31,27 +33,29 @@ impl FirestoreDb {
         let max_retries = self.inner.options.max_retries;
         let mut retries = 0;
         loop {
-            match send(self.client().get(), Request::new(request.clone())).await {
+            let request = self.request_with_timeout(request.clone(), limit);
+            let error = match send(self.client().get(), request).await {
                 Ok(response) => return Ok(response.into_inner()),
-                Err(status) => match FirestoreError::from(status) {
-                    FirestoreError::DatabaseError(err)
-                        if retries < max_retries && self.read_retry_possible(&err) =>
-                    {
-                        let delay = retry_delay(retries);
-                        span.in_scope(|| {
-                            warn!(
-                                %err,
-                                current_retry = retries + 1,
-                                max_retries,
-                                delay = delay.as_millis(),
-                                "Failed to {action}. Retrying up to the specified number of times.",
-                            );
-                        });
-                        tokio::time::sleep(delay).await;
-                        retries += 1;
-                    }
-                    err => return Err(err),
-                },
+                Err(status) => FirestoreError::from_read_status(status),
+            };
+            match error {
+                FirestoreError::DatabaseError(err)
+                    if retries < max_retries && self.read_retry_possible(&err) =>
+                {
+                    let delay = retry_delay(retries);
+                    span.in_scope(|| {
+                        warn!(
+                            %err,
+                            current_retry = retries + 1,
+                            max_retries,
+                            delay = delay.as_millis(),
+                            "Failed to {action}. Retrying up to the specified number of times.",
+                        );
+                    });
+                    tokio::time::sleep(delay).await;
+                    retries += 1;
+                }
+                err => return Err(err),
             }
         }
     }

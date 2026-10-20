@@ -7,13 +7,18 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// How long a transaction whose commit hangs waits for each request.
+const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// One queued answer to a `Commit` RPC: a real response, an error code, or a connection dropped
-/// mid-call - the ambiguous case where the writes may already have landed.
+/// or never answered mid-call - the ambiguous cases where the writes may already have landed.
 #[derive(Clone, Copy, Debug)]
 enum CommitOutcome {
     Ok,
     Status(Code),
     Drop,
+    /// No answer before [`REQUEST_TIMEOUT`].
+    Hang,
 }
 
 impl CommitOutcome {
@@ -23,6 +28,7 @@ impl CommitOutcome {
             Self::Ok => panic!("a successful commit has no error code"),
             Self::Status(code) => format!("{code:?}"),
             Self::Drop => "CONNECTION_ERROR".to_string(),
+            Self::Hang => "DeadlineExceeded".to_string(),
         }
     }
 }
@@ -56,6 +62,7 @@ async fn run_transaction(
                 CommitOutcome::Ok => FakeResponse::committed(),
                 CommitOutcome::Status(code) => FakeResponse::Status(code),
                 CommitOutcome::Drop => FakeResponse::Drop,
+                CommitOutcome::Hang => FakeResponse::Hang,
             };
             (format!("Commit({})", request.transaction[0]), response)
         } else {
@@ -71,9 +78,15 @@ async fn run_transaction(
     let callbacks = Arc::new(Mutex::new(0));
     let observed_callbacks = callbacks.clone();
     let allowed_callbacks = commits.len() + usize::from(transient_callback);
+    let hangs = commits
+        .iter()
+        .any(|outcome| matches!(outcome, CommitOutcome::Hang));
+    let db = server
+        .db
+        .clone_with_request_timeout(hangs.then_some(REQUEST_TIMEOUT));
     let result = tokio::time::timeout(
         Duration::from_secs(10),
-        server.db.run_transaction(move |_, transaction| {
+        db.run_transaction(move |_, transaction| {
             let mut callbacks = observed_callbacks.lock().unwrap();
             *callbacks += 1;
             let attempt = *callbacks;
@@ -115,6 +128,7 @@ async fn ambiguous_commit_stops_without_repeating_the_callback() {
         CommitOutcome::Status(Code::DeadlineExceeded),
         CommitOutcome::Status(Code::Unknown),
         CommitOutcome::Drop,
+        CommitOutcome::Hang,
     ] {
         for (commits, want_commits) in [
             (vec![outcome], vec!["Commit(1)"]),

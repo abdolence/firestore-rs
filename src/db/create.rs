@@ -4,6 +4,7 @@ use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
+use gcloud_sdk::RequestTimeouts;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
@@ -65,7 +66,7 @@ impl FirestoreCreateSupport for FirestoreDb {
             "/firestore/document_name" = field::Empty,
         );
 
-        let create_document_request = gcloud_sdk::tonic::Request::new(CreateDocumentRequest {
+        let create_document_request = CreateDocumentRequest {
             parent: parent.into(),
             document_id: document_id
                 .as_ref()
@@ -77,14 +78,16 @@ impl FirestoreCreateSupport for FirestoreDb {
             collection_id: collection_id.into(),
             document: Some(input_doc),
             request_options: self.resolve_request_options(None),
-        });
+        };
 
         let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
         let create_response = self
             .client()
             .get()
-            .create_document(create_document_request)
+            .create_document(
+                self.request_with_timeout(create_document_request, RequestTimeouts::with_total),
+            )
             .await?;
 
         let end_query_utc: FirestoreInstant = FirestoreInstant::now();

@@ -8,6 +8,7 @@ use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
+use gcloud_sdk::RequestTimeouts;
 use rsb_derive::*;
 use serde::Deserialize;
 use tracing::*;
@@ -329,6 +330,7 @@ impl FirestoreDb {
             span,
             "run aggregation query",
             query_request,
+            RequestTimeouts::with_idle,
             |mut client, request| async move { client.run_aggregation_query(request).await },
         )
         .await

@@ -6,6 +6,7 @@ use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
+use gcloud_sdk::RequestTimeouts;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::*;
@@ -53,6 +54,7 @@ impl FirestoreDb {
                 &span,
                 "stream query",
                 &query_request,
+                RequestTimeouts::with_idle,
                 |mut client, request| async move { client.run_query(request).await },
             )
             .await?
@@ -344,30 +346,28 @@ impl FirestoreQuerySupport for FirestoreDb {
                         if let Some((params, maybe_consistency_selector)) = maybe_params {
                             match params.query_params.clone().try_into() {
                                 Ok(query_params) => {
-                                    let request =
-                                        gcloud_sdk::tonic::Request::new(PartitionQueryRequest {
-                                            page_size: params.page_size as i32,
-                                            partition_count: params.partition_count as i64,
-                                            parent: params
-                                                .query_params
-                                                .parent
-                                                .as_ref()
-                                                .unwrap_or_else(|| self.get_documents_path())
-                                                .clone(),
-                                            consistency_selector: maybe_consistency_selector,
-                                            request_options: self.resolve_request_options(
-                                                params.query_params.request_options.as_ref(),
+                                    let request = PartitionQueryRequest {
+                                        page_size: params.page_size as i32,
+                                        partition_count: params.partition_count as i64,
+                                        parent: params
+                                            .query_params
+                                            .parent
+                                            .as_ref()
+                                            .unwrap_or_else(|| self.get_documents_path())
+                                            .clone(),
+                                        consistency_selector: maybe_consistency_selector,
+                                        request_options: self.resolve_request_options(
+                                            params.query_params.request_options.as_ref(),
+                                        ),
+                                        query_type: Some(
+                                            partition_query_request::QueryType::StructuredQuery(
+                                                query_params,
                                             ),
-                                            query_type: Some(
-                                                partition_query_request::QueryType::StructuredQuery(
-                                                    query_params,
-                                                ),
-                                            ),
-                                            page_token: params
-                                                .page_token
-                                                .clone()
-                                                .unwrap_or_default(),
-                                        });
+                                        ),
+                                        page_token: params.page_token.clone().unwrap_or_default(),
+                                    };
+                                    let request = self
+                                        .request_with_timeout(request, RequestTimeouts::with_total);
 
                                     match self.client().get().partition_query(request).await {
                                         Ok(response) => {

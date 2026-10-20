@@ -7,6 +7,7 @@ use futures::stream::BoxStream;
 use futures::TryStreamExt;
 use futures::{future, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
+use gcloud_sdk::RequestTimeouts;
 use serde::Deserialize;
 use tracing::*;
 
@@ -424,6 +425,7 @@ impl FirestoreDb {
                 &span,
                 "get document",
                 &request,
+                RequestTimeouts::with_total,
                 |mut client, request| async move { client.get_document(request).await },
             )
             .await;
@@ -476,7 +478,7 @@ impl FirestoreDb {
             "/firestore/ids_count" = full_doc_ids.len()
         );
 
-        let request = gcloud_sdk::tonic::Request::new(BatchGetDocumentsRequest {
+        let request = BatchGetDocumentsRequest {
             database: self.get_database_path().clone(),
             documents: full_doc_ids,
             consistency_selector: self
@@ -491,8 +493,9 @@ impl FirestoreDb {
                     field_paths: vf.iter().map(|f| f.to_string()).collect(),
                 }
             }),
-        });
+        };
 
+        let request = self.request_with_timeout(request, RequestTimeouts::with_idle);
         match self.client().get().batch_get_documents(request).await {
             Ok(response) => {
                 span.in_scope(|| debug!("Start consuming a batch of documents by IDs."));

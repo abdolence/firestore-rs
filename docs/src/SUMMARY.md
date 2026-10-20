@@ -50,4 +50,5 @@
 - [Firestore emulator](./emulator.md)
 - [Docker images and TLS](./docker.md)
 - [Request tags](./request-tags.md)
+- [Request timeouts](./request-timeouts.md)
 - [Testing your own code](./testing.md)
