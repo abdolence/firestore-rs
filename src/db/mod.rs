@@ -719,6 +719,22 @@ pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
     }
 }
 
+/// Ends `stream` after its first error.
+///
+/// tonic's `Streaming` yields an error from the response body twice before it ends, so a
+/// server-streaming response read without this reports each failure twice.
+pub(crate) fn end_at_first_error<T, E>(
+    stream: impl futures::Stream<Item = Result<T, E>>,
+) -> impl futures::Stream<Item = Result<T, E>> {
+    use futures::StreamExt;
+    stream.scan(false, |failed, item| {
+        futures::future::ready((!*failed).then(|| {
+            *failed = item.is_err();
+            item
+        }))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -879,6 +895,87 @@ mod tests {
             documents.next().await.is_none(),
             "the stream must end at its first error"
         );
+    }
+
+    #[tokio::test]
+    async fn a_batch_get_stream_ends_at_its_first_error() {
+        let server = FakeFirestore::start(|_, _| {
+            let found = |id: usize| {
+                BatchGetDocumentsResponse {
+                    result: Some(batch_get_documents_response::Result::Found(Document {
+                        name: format!(
+                            "projects/fake-firestore/databases/(default)/documents/items/{id}"
+                        ),
+                        ..Document::default()
+                    })),
+                    ..BatchGetDocumentsResponse::default()
+                }
+                .encode_to_vec()
+            };
+            (
+                "BatchGetDocuments".to_string(),
+                FakeResponse::Paced(vec![found(1), found(2)], LIMITED_CALL_BOUND * 2),
+            )
+        })
+        .await;
+        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
+        let documents = db
+            .batch_stream_get_docs_with_errors("items", ["1", "2"], None)
+            .await
+            .unwrap();
+
+        let results: Vec<_> = tokio::time::timeout(LIMITED_CALL_BOUND, documents.collect())
+            .await
+            .expect("the request timeout must end the stalled stream");
+
+        assert!(matches!(results.as_slice(), [Ok(_), Err(_)]), "{results:?}");
+    }
+
+    #[tokio::test]
+    async fn an_aggregation_query_stream_ends_at_its_first_error() {
+        let server = FakeFirestore::start(|_, _| {
+            let aggregated = RunAggregationQueryResponse {
+                result: Some(AggregationResult::default()),
+                ..RunAggregationQueryResponse::default()
+            }
+            .encode_to_vec();
+            (
+                "RunAggregationQuery".to_string(),
+                FakeResponse::Paced(vec![aggregated.clone(), aggregated], LIMITED_CALL_BOUND * 2),
+            )
+        })
+        .await;
+        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
+        let documents = db
+            .stream_aggregated_query_doc_with_errors(FirestoreAggregatedQueryParams::new(
+                FirestoreQueryParams::new("items".into()),
+                vec![FirestoreAggregation::new("count".into())],
+            ))
+            .await
+            .unwrap();
+
+        let results: Vec<_> = tokio::time::timeout(LIMITED_CALL_BOUND, documents.collect())
+            .await
+            .expect("the request timeout must end the stalled stream");
+
+        assert!(matches!(results.as_slice(), [Ok(_), Err(_)]), "{results:?}");
+    }
+
+    #[tokio::test]
+    async fn a_listen_stream_ends_at_its_first_error() {
+        let server = FakeFirestore::start_with_failing_listen(|_, _| {
+            ("Listen closed".to_string(), FakeResponse::empty())
+        })
+        .await;
+        let (requests, request_reader) = tokio::sync::mpsc::unbounded_channel();
+        let responses = server.db.listen_doc_changes(request_reader).await.unwrap();
+        requests.send(ListenRequest::default()).unwrap();
+
+        let results: Vec<_> = tokio::time::timeout(LIMITED_CALL_BOUND, responses.collect())
+            .await
+            .expect("the reset must end the stream");
+
+        assert!(matches!(results.as_slice(), [Err(_)]), "{results:?}");
     }
 
     #[tokio::test]

@@ -6,7 +6,7 @@ use crate::{FirestoreDb, FirestoreQueryParams, FirestoreResult};
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures::TryStreamExt;
-use futures::{future, StreamExt};
+use futures::{future, Stream, StreamExt};
 use gcloud_sdk::google::firestore::v1::*;
 use gcloud_sdk::RequestTimeouts;
 use rsb_derive::*;
@@ -325,15 +325,19 @@ impl FirestoreDb {
         &self,
         query_request: &RunAggregationQueryRequest,
         span: &Span,
-    ) -> FirestoreResult<gcloud_sdk::tonic::Streaming<RunAggregationQueryResponse>> {
-        self.retry_read(
-            span,
-            "run aggregation query",
-            query_request,
-            RequestTimeouts::with_idle,
-            |mut client, request| async move { client.run_aggregation_query(request).await },
-        )
-        .await
+    ) -> FirestoreResult<
+        impl Stream<Item = Result<RunAggregationQueryResponse, gcloud_sdk::tonic::Status>>,
+    > {
+        let responses = self
+            .retry_read(
+                span,
+                "run aggregation query",
+                query_request,
+                RequestTimeouts::with_idle,
+                |mut client, request| async move { client.run_aggregation_query(request).await },
+            )
+            .await?;
+        Ok(crate::db::end_at_first_error(responses))
     }
 
     fn aggregated_response_to_doc(mut agg_res: RunAggregationQueryResponse) -> Option<Document> {

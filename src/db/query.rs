@@ -49,26 +49,19 @@ impl FirestoreDb {
         let query_request = self.create_query_request(params)?;
         let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
-        let query_stream = self
-            .retry_read(
+        let query_stream = crate::db::end_at_first_error(
+            self.retry_read(
                 &span,
                 "stream query",
                 &query_request,
                 RequestTimeouts::with_idle,
                 |mut client, request| async move { client.run_query(request).await },
             )
-            .await?
-            // tonic's `Streaming` yields an error from the response body twice before it ends, so
-            // a caller counting failures would count each one twice; the query ends at the first.
-            .scan(false, |failed, response| {
-                future::ready((!*failed).then(|| {
-                    *failed = response.is_err();
-                    response
-                }))
-            })
-            .map_err(|e| e.into())
-            .map(|r| r.and_then(|r| r.try_into()))
-            .boxed();
+            .await?,
+        )
+        .map_err(|e| e.into())
+        .map(|r| r.and_then(|r| r.try_into()))
+        .boxed();
 
         let end_query_utc: FirestoreInstant = FirestoreInstant::now();
         let query_duration = end_query_utc.duration_since(begin_query_utc);
