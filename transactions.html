@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9333df33.js";
+            window.path_to_searchindex_js = "searchindex-562eebb5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-61f90fc3.js"></script>
@@ -270,10 +270,11 @@ error that must not be retried; it stops immediately and comes back wrapped in
 </span><span class="boring">struct MyTestStructure { test_string: String }
 </span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
 </span><span class="boring">const TEST_DOCUMENT_ID: &amp;str = "test_doc_id";
+</span><span class="boring">use std::time::Duration;
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
 </span>let options = FirestoreTransactionOptions::new()
     .with_max_retries(2)
-    .with_max_elapsed_time(FirestoreDuration::from_secs(30));
+    .with_max_elapsed_time(Duration::from_secs(30));
 
 db.run_transaction_with_options(
     |db, _transaction| {
