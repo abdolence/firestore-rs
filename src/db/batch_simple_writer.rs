@@ -13,7 +13,11 @@ use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
 pub struct FirestoreSimpleBatchWriteOptions {
-    retry_max_elapsed_time: Option<FirestoreDuration>,
+    /// How long one `write` keeps retrying a `BatchWrite` request that failed with a retryable
+    /// error, counted from its first attempt, before it returns that error.
+    ///
+    /// `None` retries with no limit. A negative duration makes every `write` fail.
+    pub retry_max_elapsed_time: Option<FirestoreDuration>,
 
     /// Request options (e.g. request tags) for the batch write requests.
     pub request_options: Option<FirestoreRequestOptions>,
