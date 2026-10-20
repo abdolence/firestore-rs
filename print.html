@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-47f4325a.js";
+            window.path_to_searchindex_js = "searchindex-801040e0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c0735130.js"></script>
@@ -1063,6 +1063,34 @@ after the retry delay. It stops only on an error a retry cannot fix:</p>
 </ul>
 <p>A stopped listener rejects <code>add_target</code> with a <code>SystemError</code>, and <code>shutdown()</code> returns the error
 it stopped with.</p>
+<p>A listen stream can also stay open and stop delivering anything, which HTTP/2 keep-alive does not
+detect while the connection itself still answers. To reset such a stream, set <code>idle_timeout</code> in the
+listener params:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::Duration;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let listener = db
+    .create_listener_with_params(
+        FirestoreMemListenStateStorage::new(),
+        FirestoreListenerParams::new().with_idle_timeout(Duration::from_secs(120)),
+    )
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>It is off by default. When set:</p>
+<ul>
+<li>any <code>ListenResponse</code> counts as activity, <code>NO_CHANGE</code> target changes included;</li>
+<li>the time counts from when the stream is open, so a connect that never gets that far is not
+covered, and only while at least one target on the stream waits for an answer from Firestore, not
+while every target waits to be added back after the retry delay;</li>
+<li>the time starts again once the callback and the token storage have handled each response;</li>
+<li>on expiry the listener waits the retry delay and reconnects, adding every target back with its
+stored resume token. Changes after the last stored token may be delivered again, as after any
+reconnect.</li>
+</ul>
+<p>120 seconds is the recommended value, and the one Google’s Node.js client uses. Firestore documents
+no interval for the updates it sends on a quiet stream, so a much shorter value can reset healthy
+streams.</p>
 <p>See complete example in examples directory.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="working-on-dynamicdocument-level"><a class="header" href="#working-on-dynamicdocument-level">Working on dynamic/document level</a></h1>
@@ -2176,7 +2204,9 @@ lives, and a connection to a server that stopped answering is closed only by HTT
 the whole call. The limit is also sent to Firestore as the request deadline;</li>
 <li>streamed reads (queries, aggregations and batch gets): the wait for the stream to start and for each next document,
 counted only while you are waiting for one, so a slow consumer of a long query is not cut;</li>
-<li>listeners and the streaming batch writer are not limited, since their streams stay quiet for as long as nothing changes.</li>
+<li>listeners and the streaming batch writer are not limited, since their streams stay quiet for as long as nothing changes.
+A listener resets a stream that sent nothing for its own <code>idle_timeout</code>, see
+<a href="#listening-the-document-changes-on-firestore">Listening the document changes</a>.</li>
 </ul>
 <p>The limit applies to each attempt. A request that runs out of it fails with a <code>DatabaseError</code> with the code
 <code>DeadlineExceeded</code> and <code>retry_possible</code> set, and it is retried wherever a dropped connection is:</p>

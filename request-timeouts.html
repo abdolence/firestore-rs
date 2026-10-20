@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-47f4325a.js";
+            window.path_to_searchindex_js = "searchindex-801040e0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c0735130.js"></script>
@@ -200,7 +200,9 @@ lives, and a connection to a server that stopped answering is closed only by HTT
 the whole call. The limit is also sent to Firestore as the request deadline;</li>
 <li>streamed reads (queries, aggregations and batch gets): the wait for the stream to start and for each next document,
 counted only while you are waiting for one, so a slow consumer of a long query is not cut;</li>
-<li>listeners and the streaming batch writer are not limited, since their streams stay quiet for as long as nothing changes.</li>
+<li>listeners and the streaming batch writer are not limited, since their streams stay quiet for as long as nothing changes.
+A listener resets a stream that sent nothing for its own <code>idle_timeout</code>, see
+<a href="listening-changes.html">Listening the document changes</a>.</li>
 </ul>
 <p>The limit applies to each attempt. A request that runs out of it fails with a <code>DatabaseError</code> with the code
 <code>DeadlineExceeded</code> and <code>retry_possible</code> set, and it is retried wherever a dropped connection is:</p>
