@@ -53,8 +53,8 @@ for idx in 0..500 {
 `write()` returns a `FirestoreBatchWriteResponse` with `write_results` and `statuses` for each
 queued write, in order, plus a `commit_time`. One failing write does not stop the rest from being
 reported. The request retries transient failures with exponential backoff;
-`FirestoreSimpleBatchWriteOptions::retry_max_elapsed_time` bounds how long, unbounded by default,
-set through `db.create_simple_batch_writer_with_options(...)`.
+`FirestoreSimpleBatchWriteOptions::retry_max_elapsed_time` bounds how long, 60 seconds by
+default; set it through `db.create_simple_batch_writer_with_options(...)`, or to `None` for no limit.
 
 Full example available [here](https://github.com/abdolence/firestore-rs/blob/master/examples/batch-write-simple.rs).
 

@@ -41,8 +41,9 @@ The reads in the first item also retry a `DEADLINE_EXCEEDED` that Firestore itse
 times, with or without a request timeout set. Writes, batch gets, partition queries and streams that have already
 started return it with `retry_possible` unset.
 
-Be aware not to leave `retry_max_elapsed_time` unset on a simple batch writer when you set a request timeout: against
-a Firestore that stopped answering, it then retries forever, one timeout per attempt.
+Be aware not to set `retry_max_elapsed_time` to `None` on a simple batch writer when you set a request timeout: against
+a Firestore that stopped answering, it then retries forever, one timeout per attempt. The 60 second default is checked
+between attempts, so the last attempt can still run for a whole timeout past it.
 
 To use another limit for a part of your code, or none at all, clone the client with `clone_with_request_timeout`.
 Batch writers and transactions created from the clone keep it:

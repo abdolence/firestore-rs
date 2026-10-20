@@ -17,7 +17,11 @@ pub struct FirestoreSimpleBatchWriteOptions {
     /// How long one `write` keeps retrying a `BatchWrite` request that failed with a retryable
     /// error, counted from its first attempt, before it returns that error.
     ///
-    /// `None`, the default, retries with no limit.
+    /// 60 seconds by default, the limit Google's Firestore service config sets for `BatchWrite`.
+    /// The limit is checked between attempts, so it does not end an attempt in flight; set
+    /// [`FirestoreDbOptions::request_timeout`](crate::FirestoreDbOptions::request_timeout) for
+    /// that. `None` retries with no limit.
+    #[default = "Some(Duration::from_secs(60))"]
     pub retry_max_elapsed_time: Option<Duration>,
 
     /// Request options (e.g. request tags) for the batch write requests.
@@ -148,5 +152,80 @@ impl FirestoreDb {
         options: FirestoreSimpleBatchWriteOptions,
     ) -> FirestoreResult<FirestoreSimpleBatchWriter> {
         FirestoreSimpleBatchWriter::new(self.clone(), options).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
+    use gcloud_sdk::google::firestore::v1::BatchWriteResponse;
+    use gcloud_sdk::prost::Message as _;
+    use gcloud_sdk::tonic::Code;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn default_options_retry_a_transient_failure_until_success() {
+        let attempts = AtomicUsize::new(0);
+        let server = FakeFirestore::start(move |_, _| {
+            let response = if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                FakeResponse::Status(Code::Unavailable)
+            } else {
+                FakeResponse::Message(BatchWriteResponse::default().encode_to_vec())
+            };
+            ("BatchWrite".to_string(), response)
+        })
+        .await;
+        let writer = server.db.create_simple_batch_writer().await.unwrap();
+
+        writer.write(Vec::new()).await.unwrap();
+
+        assert_eq!(server.calls(), ["BatchWrite"; 2]);
+    }
+
+    #[tokio::test]
+    async fn retrying_stops_at_the_elapsed_time_cap() {
+        let server = FakeFirestore::start(|_, _| {
+            (
+                "BatchWrite".to_string(),
+                FakeResponse::Status(Code::Unavailable),
+            )
+        })
+        .await;
+        let options = FirestoreSimpleBatchWriteOptions::new()
+            .with_retry_max_elapsed_time(Duration::from_secs(1));
+        let writer = server
+            .db
+            .create_simple_batch_writer_with_options(options)
+            .await
+            .unwrap();
+
+        let error = writer.write(Vec::new()).await.unwrap_err();
+
+        assert!(
+            matches!(error, FirestoreError::DatabaseError(ref db_error) if db_error.retry_possible),
+            "expected a retryable DatabaseError, got {error:?}"
+        );
+        assert!(server.calls().len() > 1, "{:?}", server.calls());
+    }
+
+    #[tokio::test]
+    async fn a_permanent_failure_is_not_retried() {
+        let server = FakeFirestore::start(|_, _| {
+            (
+                "BatchWrite".to_string(),
+                FakeResponse::Status(Code::InvalidArgument),
+            )
+        })
+        .await;
+        let writer = server.db.create_simple_batch_writer().await.unwrap();
+
+        let error = writer.write(Vec::new()).await.unwrap_err();
+
+        assert!(
+            matches!(error, FirestoreError::DatabaseError(ref db_error) if !db_error.retry_possible),
+            "expected a non-retryable DatabaseError, got {error:?}"
+        );
+        assert_eq!(server.calls(), ["BatchWrite"; 1]);
     }
 }
