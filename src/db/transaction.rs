@@ -16,7 +16,6 @@ use backoff::ExponentialBackoffBuilder;
 use futures::future::BoxFuture;
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
 use gcloud_sdk::tonic::Code;
-use std::time::Duration;
 use tracing::*;
 
 #[cfg(test)]
@@ -492,10 +491,6 @@ impl FirestoreDb {
         ) -> BoxFuture<'b, std::result::Result<T, BackoffError<E>>>,
         E: std::error::Error + Send + Sync + 'static,
     {
-        let max_elapsed_time = options
-            .max_elapsed_time
-            .map(Duration::try_from)
-            .transpose()?;
         // The first BeginTransaction error is returned as it is, and every retry names the first
         // transaction's ID in `ReadWriteRetry`.
         let transaction = self.begin_transaction_with_options(options.clone()).await?;
@@ -506,7 +501,7 @@ impl FirestoreDb {
         let mut result = self.run_transaction_attempt(transaction, &func).await;
         // Built only now, so that `max_elapsed_time` counts from the first failure.
         let mut backoff = ExponentialBackoffBuilder::new()
-            .with_max_elapsed_time(max_elapsed_time)
+            .with_max_elapsed_time(retry_options.max_elapsed_time)
             .build();
         let mut retries = 0;
 

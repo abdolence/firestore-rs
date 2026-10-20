@@ -526,18 +526,19 @@ impl FirestoreErrorInTransaction {
         ))
     }
 
-    /// Wraps an error as a `BackoffError` that should be retried after a specific duration.
+    /// Wraps an error as a transient `BackoffError` within a transaction context, retried after
+    /// `retry_after` instead of the backoff delay.
     pub fn retry_after<E: std::error::Error + Send + Sync + 'static>(
         transaction: &FirestoreTransaction,
         source: E,
-        retry_after: crate::FirestoreDuration,
+        retry_after: std::time::Duration,
     ) -> BackoffError<FirestoreError> {
         BackoffError::retry_after(
             FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction {
                 transaction_id: transaction.transaction_id().clone(),
                 source: Box::new(source),
             }),
-            std::time::Duration::from_millis(retry_after.as_millis().unsigned_abs() as u64),
+            retry_after,
         )
     }
 }

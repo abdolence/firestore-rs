@@ -1,8 +1,8 @@
 use crate::errors::FirestoreError;
-use crate::FirestoreDuration;
 use crate::FirestoreInstant;
 use crate::{FirestoreConsistencySelector, FirestoreRequestOptions, FirestoreWriteResult};
 use rsb_derive::Builder;
+use std::time::Duration;
 
 /// Options for configuring a Firestore transaction.
 ///
@@ -20,7 +20,7 @@ pub struct FirestoreTransactionOptions {
     pub max_retries: usize,
     /// An optional cap on how long a transaction keeps retrying, counted from its first
     /// failure, on top of [`max_retries`](Self::max_retries). `None`, the default, sets no cap.
-    pub max_elapsed_time: Option<FirestoreDuration>,
+    pub max_elapsed_time: Option<Duration>,
 
     /// Concurrent transaction mode
     pub concurrent_mode:

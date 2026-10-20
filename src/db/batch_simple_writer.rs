@@ -1,5 +1,4 @@
 use crate::errors::*;
-use crate::FirestoreDuration;
 use crate::{
     FirestoreBatch, FirestoreBatchWriteResponse, FirestoreBatchWriter, FirestoreDb,
     FirestoreRequestOptions, FirestoreResult, FirestoreWriteResult,
@@ -9,6 +8,7 @@ use futures::TryFutureExt;
 use gcloud_sdk::google::firestore::v1::{BatchWriteRequest, Write};
 use rsb_derive::*;
 use std::collections::HashMap;
+use std::time::Duration;
 use tracing::*;
 
 #[derive(Debug, Eq, PartialEq, Clone, Builder)]
@@ -16,8 +16,8 @@ pub struct FirestoreSimpleBatchWriteOptions {
     /// How long one `write` keeps retrying a `BatchWrite` request that failed with a retryable
     /// error, counted from its first attempt, before it returns that error.
     ///
-    /// `None` retries with no limit. A negative duration makes every `write` fail.
-    pub retry_max_elapsed_time: Option<FirestoreDuration>,
+    /// `None`, the default, retries with no limit.
+    pub retry_max_elapsed_time: Option<Duration>,
 
     /// Request options (e.g. request tags) for the batch write requests.
     pub request_options: Option<FirestoreRequestOptions>,
@@ -69,12 +69,7 @@ impl FirestoreBatchWriter for FirestoreSimpleBatchWriter {
 
     async fn write(&self, writes: Vec<Write>) -> FirestoreResult<FirestoreBatchWriteResponse> {
         let backoff = backoff::ExponentialBackoffBuilder::new()
-            .with_max_elapsed_time(
-                self.options
-                    .retry_max_elapsed_time
-                    .map(std::time::Duration::try_from)
-                    .transpose()?,
-            )
+            .with_max_elapsed_time(self.options.retry_max_elapsed_time)
             .build();
 
         let request = BatchWriteRequest {

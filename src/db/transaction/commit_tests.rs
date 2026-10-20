@@ -5,6 +5,7 @@ use gcloud_sdk::tonic::Code;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// One queued answer to a `Commit` RPC: a real response, an error code, or a connection dropped
 /// mid-call - the ambiguous case where the writes may already have landed.
