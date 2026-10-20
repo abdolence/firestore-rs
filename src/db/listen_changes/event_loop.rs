@@ -34,6 +34,7 @@ pub(super) struct FirestoreListenerLoop<D, S, FN> {
     control_receiver: UnboundedReceiver<FirestoreListenerControl>,
     callback: FN,
     retry_delay: Duration,
+    idle_timeout: Option<Duration>,
     /// Set once we have retried with every resume token discarded, so that a request Firestore
     /// still rejects as invalid is treated as permanent instead of looping forever.
     retried_without_resume_tokens: bool,
@@ -65,6 +66,7 @@ where
             retry_delay: listener_params
                 .retry_delay
                 .unwrap_or_else(|| Duration::from_secs(5)),
+            idle_timeout: listener_params.idle_timeout,
             retried_without_resume_tokens: false,
         }
     }
@@ -124,8 +126,19 @@ where
         mut listen_stream: BoxStream<'_, FirestoreResult<ListenResponse>>,
         on_stream: &mut FirestoreListenerStreamTargets,
     ) -> FirestoreResult<()> {
+        // When the stream last had nothing left to handle while Firestore owed it an answer.
+        let mut silent_since: Option<Instant> = None;
         loop {
             let next_add_back = on_stream.next_add_back();
+            let silence_deadline = match self.idle_timeout {
+                Some(idle_timeout) if on_stream.awaits_firestore() => {
+                    Some(*silent_since.get_or_insert_with(Instant::now) + idle_timeout)
+                }
+                _ => {
+                    silent_since = None;
+                    None
+                }
+            };
             let flow = tokio::select! {
                 // Control messages go first, so that the stream state they record is in place
                 // before Firestore's answers to them are read.
@@ -133,23 +146,39 @@ where
                 control = self.control_receiver.recv() => {
                     self.on_control(control, on_stream).await?
                 }
-                () = async {
-                    match next_add_back {
-                        Some(at) => tokio::time::sleep_until(at).await,
-                        None => std::future::pending().await,
-                    }
-                } => {
+                () = sleep_until_some(next_add_back) => {
                     self.add_due_targets(on_stream).await?;
                     ControlFlow::Continue(())
                 }
                 tried = listen_stream.try_next() => {
+                    silent_since = None;
                     self.on_stream_item(tried, on_stream).await?
+                }
+                // After the stream, so that a response already waiting wins over an expired timer.
+                () = sleep_until_some(silence_deadline) => {
+                    self.on_silence(on_stream).await
                 }
             };
             if flow.is_break() {
                 return Ok(());
             }
         }
+    }
+
+    /// Gives up a stream that stayed open but sent nothing for the idle timeout, which a stalled
+    /// stream on a live connection does: HTTP/2 keep-alive does not notice it.
+    async fn on_silence(&self, on_stream: &FirestoreListenerStreamTargets) -> ControlFlow<()> {
+        warn!(
+            idle_timeout = ?self.idle_timeout,
+            num_targets = on_stream.len(),
+            effective_delay = ?self.retry_delay,
+            "Listen stream received nothing within the idle timeout. Reconnecting after the specified delay..."
+        );
+        // The delay keeps a timeout shorter than Firestore's quiet periods from reconnecting in a
+        // tight loop.
+        self.until_shutdown(tokio::time::sleep(self.retry_delay))
+            .await;
+        ControlFlow::Break(())
     }
 
     async fn on_control(
@@ -568,6 +597,15 @@ where
             }
         }
         Ok(())
+    }
+}
+
+/// Completes at `deadline`, or never when there is none, so that a `select!` arm without a
+/// deadline stays disabled.
+async fn sleep_until_some(deadline: Option<Instant>) {
+    match deadline {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
     }
 }
 

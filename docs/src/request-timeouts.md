@@ -27,6 +27,8 @@ What it limits depends on the request:
 - streamed reads (queries, aggregations and batch gets): the wait for the stream to start and for each next document,
   counted only while you are waiting for one, so a slow consumer of a long query is not cut;
 - listeners and the streaming batch writer are not limited, since their streams stay quiet for as long as nothing changes.
+  A listener resets a stream that sent nothing for its own `idle_timeout`, see
+  [Listening the document changes](listening-changes.md).
 
 The limit applies to each attempt. A request that runs out of it fails with a `DatabaseError` with the code
 `DeadlineExceeded` and `retry_possible` set, and it is retried wherever a dropped connection is:

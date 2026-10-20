@@ -1448,6 +1448,74 @@ async fn a_listener_closes_its_stream_once_its_last_target_is_removed() {
     within(listener.shutdown()).await.unwrap();
 }
 
+const IDLE_TIMEOUT: Duration = Duration::from_millis(200);
+
+fn resetting_when_silent() -> FirestoreListenerParams {
+    retrying_at_once().with_idle_timeout(IDLE_TIMEOUT)
+}
+
+#[tokio::test]
+async fn a_silent_stream_is_reset_and_resumes_from_its_last_stored_token() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let (mut listener, db) = started(db, resetting_when_silent()).await;
+    let mut requests = db.take_requests();
+    assert_eq!(
+        next_request(&mut requests).await,
+        Some(add_request(1, "document-1"))
+    );
+    feed.send(FirestoreListenEvent::TargetChange(TargetChange {
+        target_change_type: TargetChangeType::Current as i32,
+        target_ids: vec![1],
+        resume_token: vec![7],
+        ..Default::default()
+    }))
+    .unwrap();
+
+    within(db.entered.acquire()).await.unwrap().forget();
+    let mut requests = db.take_requests();
+
+    match next_request(&mut requests).await {
+        Some(RequestedChange::AddTarget(target)) => assert_eq!(
+            target.resume_type,
+            Some(target::ResumeType::ResumeToken(vec![7]))
+        ),
+        other => panic!("expected an AddTarget, got {other:?}"),
+    }
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_stream_whose_targets_all_wait_to_be_added_back_is_not_reset() {
+    let (db, feed) = TestDb::fed(Wait::Never);
+    let (mut listener, db) = started(db, never_retrying().with_idle_timeout(IDLE_TIMEOUT)).await;
+    feed.send(removal_with_cause(vec![1], Code::Internal))
+        .unwrap();
+    db.settle(&feed).await;
+
+    tokio::time::sleep(IDLE_TIMEOUT * 4).await;
+
+    // A reset stream is no longer read, so the markers would never reach the callback.
+    db.settle(&feed).await;
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_no_change_handled_slower_than_the_idle_timeout_does_not_reset_the_stream() {
+    let (db, feed) = TestDb::fed(Wait::Callback);
+    let (mut listener, db) = listener(db, resetting_when_silent()).await;
+    feed.send(target_change(TargetChangeType::NoChange, vec![]))
+        .unwrap();
+    start(&mut listener, &db).await;
+
+    tokio::time::sleep(IDLE_TIMEOUT * 3).await;
+    db.release.add_permits(1);
+    tokio::time::sleep(IDLE_TIMEOUT / 2).await;
+
+    assert_eq!(db.connections.load(Ordering::Relaxed), 1);
+    db.release.add_permits(Semaphore::MAX_PERMITS / 2);
+    within(listener.shutdown()).await.unwrap();
+}
+
 /// A fake server that logs `Listen closed` once the client closes a Listen request; see
 /// [`FakeFirestore`] for why the log line is the proof.
 async fn listen_server() -> FakeFirestore {

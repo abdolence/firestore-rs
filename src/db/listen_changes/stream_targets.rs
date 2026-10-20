@@ -187,13 +187,18 @@ impl FirestoreListenerStreamTargets {
     /// Whether nothing is registered and the stream has nothing left to remove, so that it can
     /// close. Removals are waited for, so that their acknowledgements still reach the callback.
     pub(super) fn is_idle(&self, targets_state: &FirestoreListenerTargetsState) -> bool {
-        targets_state.read().is_empty()
-            && self.targets.values().all(|on_stream| {
-                matches!(
-                    on_stream.state,
-                    FirestoreListenerStreamTargetState::Waiting(_)
-                )
-            })
+        targets_state.read().is_empty() && !self.awaits_firestore()
+    }
+
+    /// Whether Firestore owes the stream an answer: some target on it is not waiting to be added
+    /// back.
+    pub(super) fn awaits_firestore(&self) -> bool {
+        self.targets.values().any(|on_stream| {
+            !matches!(
+                on_stream.state,
+                FirestoreListenerStreamTargetState::Waiting(_)
+            )
+        })
     }
 
     /// When the next waiting target is added back.
