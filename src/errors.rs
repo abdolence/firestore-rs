@@ -63,10 +63,20 @@ impl FirestoreError {
         ))
     }
 
+    /// Converts a read's failed `status` like the conversion from `tonic::Status`, except that any
+    /// `DEADLINE_EXCEEDED`, the server's own included, is marked `retry_possible`: a read, unlike
+    /// a write, can safely be sent again.
+    pub(crate) fn from_read_status(status: gcloud_sdk::tonic::Status) -> Self {
+        match status.code() {
+            gcloud_sdk::tonic::Code::DeadlineExceeded => FirestoreError::retryable_read(status),
+            _ => FirestoreError::from(status),
+        }
+    }
+
     /// Builds a [`DatabaseError`](FirestoreError::DatabaseError) for a read's failed `status`,
     /// marked `retry_possible` whatever its code. The conversion from `tonic::Status` also covers
-    /// writes, so it leaves some codes a read may safely retry, such as `DEADLINE_EXCEEDED`,
-    /// unretried; callers choose which codes qualify by matching on `status.code()` first.
+    /// writes, so it leaves some codes a read may safely retry unretried; callers choose which
+    /// codes qualify by matching on `status.code()` first.
     pub(crate) fn retryable_read(status: gcloud_sdk::tonic::Status) -> Self {
         FirestoreError::DatabaseError(FirestoreDatabaseError::new(
             FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
@@ -341,7 +351,7 @@ impl From<gcloud_sdk::tonic::Status> for FirestoreError {
                     | gcloud_sdk::tonic::Code::ResourceExhausted => true,
                     // A request timeout that ran out leaves the outcome as unknown as a dropped
                     // connection does, so it is retried like one. The server's own deadline is
-                    // retried by reads alone, through `retryable_read`.
+                    // retried by reads alone, through `from_read_status`.
                     gcloud_sdk::tonic::Code::DeadlineExceeded => status
                         .source()
                         .is_some_and(|source| source.is::<gcloud_sdk::RequestTimeoutElapsed>()),

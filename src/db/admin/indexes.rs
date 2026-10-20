@@ -866,11 +866,7 @@ impl FirestoreDb {
                 // has no "too new to be visible yet" case, so NOT_FOUND here means the field or
                 // database is gone, not a race with propagation.
                 Ok(Err(status)) => {
-                    let err = match status.code() {
-                        Code::DeadlineExceeded => FirestoreError::retryable_read(status),
-                        _ => FirestoreError::from(status),
-                    };
-                    match err {
+                    match FirestoreError::from_read_status(status) {
                         FirestoreError::DatabaseError(db_err) if db_err.retry_possible => {
                             warn!(
                                 error = %db_err,

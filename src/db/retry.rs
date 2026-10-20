@@ -1,7 +1,7 @@
 use crate::errors::FirestoreDatabaseError;
 use crate::{FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreResult};
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
-use gcloud_sdk::tonic::{Code, Request, Response, Status};
+use gcloud_sdk::tonic::{Request, Response, Status};
 use gcloud_sdk::{GoogleAuthMiddleware, RequestTimeouts};
 use rand::RngExt;
 use std::future::Future;
@@ -34,13 +34,9 @@ impl FirestoreDb {
         let mut retries = 0;
         loop {
             let request = self.request_with_timeout(request.clone(), limit);
-            let status = match send(self.client().get(), request).await {
+            let error = match send(self.client().get(), request).await {
                 Ok(response) => return Ok(response.into_inner()),
-                Err(status) => status,
-            };
-            let error = match status.code() {
-                Code::DeadlineExceeded => FirestoreError::retryable_read(status),
-                _ => FirestoreError::from(status),
+                Err(status) => FirestoreError::from_read_status(status),
             };
             match error {
                 FirestoreError::DatabaseError(err)

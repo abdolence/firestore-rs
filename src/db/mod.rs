@@ -847,7 +847,10 @@ mod tests {
         let server = FakeFirestore::start(|_, _| {
             (
                 "RunQuery".to_string(),
-                FakeResponse::Stall(query_response(1)),
+                FakeResponse::Paced(
+                    vec![query_response(1), query_response(2)],
+                    LIMITED_CALL_BOUND * 2,
+                ),
             )
         })
         .await;
@@ -924,25 +927,39 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn without_a_request_timeout_a_call_waits_for_the_server() {
-        let server =
-            FakeFirestore::start(|_, _| ("GetDocument".to_string(), FakeResponse::Hang)).await;
+    /// A client of `server` whose options set [`REQUEST_TIMEOUT`].
+    async fn limited_by_options(server: &FakeFirestore) -> FirestoreDb {
         let options = FirestoreDbOptions::new("fake-firestore".to_string())
             .with_firebase_api_url(format!("http://{}", server.address()))
             .with_request_timeout(REQUEST_TIMEOUT);
-        let limited = FirestoreDb::with_options_auth(options, FirestoreEmulatorCredentials::new())
+        FirestoreDb::with_options_auth(options, FirestoreEmulatorCredentials::new())
             .await
-            .unwrap();
-        let error = tokio::time::timeout(LIMITED_CALL_BOUND, limited.ping())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn request_timeout_from_the_options_ends_a_call() {
+        let server =
+            FakeFirestore::start(|_, _| ("GetDocument".to_string(), FakeResponse::Hang)).await;
+        let db = limited_by_options(&server).await;
+
+        let error = tokio::time::timeout(LIMITED_CALL_BOUND, db.ping())
             .await
             .expect("the options' request timeout must end the call")
             .unwrap_err();
+
         assert!(
             matches!(error, FirestoreError::DatabaseError(ref error)
                 if error.public.code == "DeadlineExceeded" && error.retry_possible),
             "expected a retryable DeadlineExceeded, got {error:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn without_a_request_timeout_a_call_waits_for_the_server() {
+        let server =
+            FakeFirestore::start(|_, _| ("GetDocument".to_string(), FakeResponse::Hang)).await;
+        let limited = limited_by_options(&server).await;
 
         for db in [server.db.clone(), limited.clone_with_request_timeout(None)] {
             assert!(

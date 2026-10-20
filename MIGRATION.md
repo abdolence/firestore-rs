@@ -30,8 +30,10 @@ them run.
 [Request timeouts](https://firestore-rust.abdolence.dev/request-timeouts.html). Adding the field breaks code that builds
 `FirestoreDbOptions` with a struct literal naming every field; `FirestoreDbOptions::new` and its builder are unaffected.
 
-Reads now retry a `DEADLINE_EXCEEDED` from Firestore up to `max_retries` times, and the error they return after the
-last retry has `retry_possible` set. Writes still return it at once, with `retry_possible` unset.
+Gets, lists, list collection IDs and the start of queries and aggregations now retry a `DEADLINE_EXCEEDED` from
+Firestore up to `max_retries` times, with or without a request timeout set, and the error they return after the last
+retry has `retry_possible` set. Writes, batch gets, partition queries and streams that have already started still
+return it at once, with `retry_possible` unset.
 
 ## 0.58
 

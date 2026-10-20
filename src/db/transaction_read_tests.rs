@@ -4,7 +4,7 @@ use crate::errors::{firestore_err_to_backoff, BackoffError};
 use futures::TryStreamExt;
 use gcloud_sdk::prost::Message;
 use gcloud_sdk::tonic::Code;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicU8;
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug)]
@@ -100,32 +100,6 @@ async fn read_retry_scope() {
     ] {
         check_read_retries(read).await;
     }
-}
-
-#[tokio::test]
-async fn a_read_that_times_out_is_retried() {
-    let attempts = AtomicUsize::new(0);
-    let server = FakeFirestore::start_with_max_retries(1, move |_, _| {
-        if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-            ("Get timed out".to_string(), FakeResponse::Hang)
-        } else {
-            (
-                "Get".to_string(),
-                FakeResponse::Message(Document::default().encode_to_vec()),
-            )
-        }
-    })
-    .await;
-    let db = server
-        .db
-        .clone_with_request_timeout(Some(Duration::from_millis(300)));
-
-    tokio::time::timeout(Duration::from_secs(5), db.get_doc("items", "one", None))
-        .await
-        .expect("the request timeout must end the first attempt")
-        .unwrap();
-
-    assert_eq!(server.calls(), vec!["Get timed out", "Get"]);
 }
 
 #[tokio::test]

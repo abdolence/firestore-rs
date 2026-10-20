@@ -29,9 +29,17 @@ What it limits depends on the request:
 - listeners and the streaming batch writer are not limited, since their streams stay quiet for as long as nothing changes.
 
 The limit applies to each attempt. A request that runs out of it fails with a `DatabaseError` with the code
-`DeadlineExceeded` and `retry_possible` set, and it is retried wherever a dropped connection is: reads up to
-`max_retries` times, simple batch writes until `retry_max_elapsed_time`. A transaction commit is never retried, because
-its writes may already be applied. Reads also retry a `DEADLINE_EXCEEDED` that Firestore itself answers with.
+`DeadlineExceeded` and `retry_possible` set, and it is retried wherever a dropped connection is:
+- gets, lists, list collection IDs and the start of queries and aggregations, up to `max_retries` times;
+- simple batch writes, until `retry_max_elapsed_time`. A retried batch may apply twice, for example an `increment`,
+  as it can after a dropped connection.
+
+Batch gets, partition queries, a query or aggregation stream that has already started and transaction commits return
+the error without a retry. A commit is never retried, because its writes may already be applied.
+
+The reads in the first item also retry a `DEADLINE_EXCEEDED` that Firestore itself answers with, up to `max_retries`
+times, with or without a request timeout set. Writes, batch gets, partition queries and streams that have already
+started return it with `retry_possible` unset.
 
 Be aware not to leave `retry_max_elapsed_time` unset on a simple batch writer when you set a request timeout: against
 a Firestore that stopped answering, it then retries forever, one timeout per attempt.

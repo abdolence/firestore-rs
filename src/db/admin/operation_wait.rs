@@ -253,8 +253,8 @@ impl FirestoreDb {
             .await
             .map(|response| response.into_inner())
             .map_err(|status| match status.code() {
-                Code::DeadlineExceeded | Code::NotFound => FirestoreError::retryable_read(status),
-                _ => FirestoreError::from(status),
+                Code::NotFound => FirestoreError::retryable_read(status),
+                _ => FirestoreError::from_read_status(status),
             })
     }
 

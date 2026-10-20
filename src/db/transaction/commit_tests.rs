@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// How long the transactions of these tests wait for each request.
+/// How long a transaction whose commit hangs waits for each request.
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// One queued answer to a `Commit` RPC: a real response, an error code, or a connection dropped
@@ -78,7 +78,12 @@ async fn run_transaction(
     let callbacks = Arc::new(Mutex::new(0));
     let observed_callbacks = callbacks.clone();
     let allowed_callbacks = commits.len() + usize::from(transient_callback);
-    let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
+    let hangs = commits
+        .iter()
+        .any(|outcome| matches!(outcome, CommitOutcome::Hang));
+    let db = server
+        .db
+        .clone_with_request_timeout(hangs.then_some(REQUEST_TIMEOUT));
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         db.run_transaction(move |_, transaction| {

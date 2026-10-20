@@ -31,9 +31,6 @@ pub(super) enum FakeResponse {
     /// A stream of framed messages, the first at once and each next one the given interval after
     /// the one before, then a `grpc-status: 0` trailer: a stream that is slow but healthy.
     Paced(Vec<Vec<u8>>, Duration),
-    /// The response headers and one framed message, then nothing more while the stream stays
-    /// open: a stream that stalls after its first message.
-    Stall(Vec<u8>),
     /// A Trailers-Only error response with no body - the only way a streaming call's error is
     /// visible at its initial `await` rather than only once polled. Never `Code::Ok`: a unary
     /// call answered that way fails for want of a response message; use [`FakeResponse::empty`].
@@ -379,14 +376,6 @@ async fn answer(
             send_messages(respond, vec![message], Duration::ZERO).await
         }
         FakeResponse::Paced(messages, interval) => send_messages(respond, messages, interval).await,
-        FakeResponse::Stall(message) => {
-            let Ok(mut send) = respond.send_response(ok_headers().body(()).unwrap(), false) else {
-                return;
-            };
-            if send.send_data(grpc_frame(&message), false).is_ok() {
-                std::future::pending::<()>().await;
-            }
-        }
         // A single Trailers-Only frame, with no body ever opened, is what makes even a streaming
         // call's error visible at its initial `await` rather than only once its caller polls the
         // response.
