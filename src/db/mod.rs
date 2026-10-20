@@ -875,6 +875,10 @@ mod tests {
                 if error.public.code == "DeadlineExceeded" && error.retry_possible),
             "expected a retryable DeadlineExceeded, got {error:?}"
         );
+        assert!(
+            documents.next().await.is_none(),
+            "the stream must end at its first error"
+        );
     }
 
     #[tokio::test]

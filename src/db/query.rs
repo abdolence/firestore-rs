@@ -58,6 +58,14 @@ impl FirestoreDb {
                 |mut client, request| async move { client.run_query(request).await },
             )
             .await?
+            // tonic's `Streaming` yields an error from the response body twice before it ends, so
+            // a caller counting failures would count each one twice; the query ends at the first.
+            .scan(false, |failed, response| {
+                future::ready((!*failed).then(|| {
+                    *failed = response.is_err();
+                    response
+                }))
+            })
             .map_err(|e| e.into())
             .map(|r| r.and_then(|r| r.try_into()))
             .boxed();
