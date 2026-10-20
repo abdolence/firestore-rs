@@ -31,7 +31,10 @@ impl FirestoreListenSupport for FirestoreDb {
         let response = self.client().get().listen(request).await?;
 
         Ok(futures::stream::unfold(
-            (response.into_inner(), keep_request_open),
+            (
+                crate::db::end_at_first_error(response.into_inner()),
+                keep_request_open,
+            ),
             |(mut response, keep_request_open)| async move {
                 response
                     .next()
@@ -39,6 +42,7 @@ impl FirestoreListenSupport for FirestoreDb {
                     .map(|item| (item.map_err(Into::into), (response, keep_request_open)))
             },
         )
+        .fuse()
         .boxed())
     }
 

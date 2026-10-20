@@ -499,8 +499,7 @@ impl FirestoreDb {
         match self.client().get().batch_get_documents(request).await {
             Ok(response) => {
                 span.in_scope(|| debug!("Start consuming a batch of documents by IDs."));
-                let stream = response
-                    .into_inner()
+                let stream = crate::db::end_at_first_error(response.into_inner())
                     .filter_map(move |r| async move {
                         match r {
                             Ok(doc_response) => match doc_response.result {
