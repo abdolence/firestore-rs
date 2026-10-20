@@ -13,11 +13,16 @@ v0.61.0 takes retry limits and delays as `std::time::Duration` instead of `Fires
 
 The builder setters of both fields, such as `with_max_elapsed_time` and `with_retry_max_elapsed_time`, take the new
 type too. Replace `FirestoreDuration::from_secs(30)` with `std::time::Duration::from_secs(30)`, or convert a
-`jiff::SignedDuration` you already have with `std::time::Duration::try_from(value)?`.
+`jiff::SignedDuration` limit you already have with `std::time::Duration::try_from(value)?`. For a `retry_after`, use
+`value.unsigned_abs()` instead: it cannot fail, so it works inside the transaction callback, and it keeps the 0.60
+delay.
 
 A negative limit used to fail every transaction or `write` with a `DeserializeError`, and a negative `retry_after` was
 used as a positive delay of the same length. `FirestoreDuration` stays for durations Firestore reports, such as
 `FirestoreExecutionStats::execution_duration`.
+
+`max_elapsed_time` now bounds a retry whose callback named a `retry_after` too: the retry runs only if the delay ends
+within the cap. Before, only `max_retries` bounded those retries, so a cap of zero still let them run.
 
 ## 0.58
 

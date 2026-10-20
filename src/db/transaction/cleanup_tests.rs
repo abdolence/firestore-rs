@@ -154,24 +154,20 @@ async fn exhausted_retries_roll_back_the_last_attempt() {
 #[tokio::test]
 async fn failed_commit_in_the_retry_loop_opens_no_extra_transaction() {
     let server = fixture(Code::Ok, Code::Unavailable).await;
-    let options = FirestoreTransactionOptions::new().with_max_elapsed_time(Duration::ZERO);
     let result: FirestoreResult<()> = server
         .db
-        .run_transaction_with_options(
-            |_, transaction| {
-                Box::pin(async move {
-                    if transaction.transaction_id() == &[1] {
-                        Err(BackoffError::retry_after(
-                            std::io::Error::other("retry"),
-                            Duration::ZERO,
-                        ))
-                    } else {
-                        Ok(())
-                    }
-                })
-            },
-            options,
-        )
+        .run_transaction(|_, transaction| {
+            Box::pin(async move {
+                if transaction.transaction_id() == &[1] {
+                    Err(BackoffError::retry_after(
+                        std::io::Error::other("retry"),
+                        Duration::ZERO,
+                    ))
+                } else {
+                    Ok(())
+                }
+            })
+        })
         .await;
     assert!(
         matches!(result, Err(FirestoreError::DatabaseError(ref error)) if error.public.code == "Unavailable")
@@ -211,4 +207,51 @@ async fn retry_after_delays_the_next_attempt() {
         server.calls(),
         vec!["Begin→1", "Rollback(1)", "Begin→2", "Commit(2)"]
     );
+}
+
+// `max_elapsed_time` bounds a callback's `retry_after` the way it bounds the backoff delay: a
+// retry runs only while the time since the first failure plus its delay stays within the cap.
+#[tokio::test]
+async fn max_elapsed_time_bounds_retry_after_too() {
+    let cases = [
+        (Duration::ZERO, None, vec!["Begin→1", "Rollback(1)"]),
+        (
+            Duration::ZERO,
+            Some(Duration::ZERO),
+            vec!["Begin→1", "Rollback(1)"],
+        ),
+        (
+            Duration::from_millis(150),
+            Some(Duration::from_millis(100)),
+            vec!["Begin→1", "Rollback(1)", "Begin→2", "Rollback(2)"],
+        ),
+    ];
+    for (max_elapsed_time, retry_after, expected_calls) in cases {
+        let server = fixture(Code::Ok, Code::Ok).await;
+        let options = FirestoreTransactionOptions::new().with_max_elapsed_time(max_elapsed_time);
+        let result: FirestoreResult<()> = server
+            .db
+            .run_transaction_with_options(
+                move |_, _| {
+                    Box::pin(async move {
+                        let err = std::io::Error::other("retry");
+                        Err(match retry_after {
+                            Some(delay) => BackoffError::retry_after(err, delay),
+                            None => BackoffError::transient(err),
+                        })
+                    })
+                },
+                options,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(FirestoreError::ErrorInTransaction(_))),
+            "{max_elapsed_time:?}, {retry_after:?}: {result:?}"
+        );
+        assert_eq!(
+            server.calls(),
+            expected_calls,
+            "{max_elapsed_time:?}, {retry_after:?}"
+        );
+    }
 }

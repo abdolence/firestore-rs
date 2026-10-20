@@ -105,8 +105,9 @@ Set `max_retries` and `max_elapsed_time` through `run_transaction_with_options`:
 # struct MyTestStructure { test_string: String }
 # const TEST_COLLECTION_NAME: &str = "test";
 # const TEST_DOCUMENT_ID: &str = "test_doc_id";
-# use std::time::Duration;
 # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+use std::time::Duration;
+
 let options = FirestoreTransactionOptions::new()
     .with_max_retries(2)
     .with_max_elapsed_time(Duration::from_secs(30));
