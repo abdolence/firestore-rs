@@ -199,9 +199,10 @@ type Handler = dyn Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync;
 /// backend. `handler` runs once per RPC, after its request body has ended, and returns one line
 /// for `calls()` plus the response - so a test can assert a whole RPC sequence in one comparison.
 ///
-/// `Listen` is the exception: it is answered at once as its [`ListenAnswer`] says, and its handler
-/// runs only when the client closes the request, so a logged `Listen` call is itself the proof
-/// that the request was closed. The handler's response to it is ignored.
+/// `Listen` is the exception: it is answered at once with an empty stream, or with an open and
+/// quiet one by [`start_with_quiet_listen`](Self::start_with_quiet_listen), and its handler runs
+/// only when the client closes the request, so a logged `Listen` call is itself the proof that
+/// the request was closed. The handler's response to it is ignored.
 pub(super) struct FakeFirestore {
     pub db: FirestoreDb,
     address: SocketAddr,
@@ -213,7 +214,7 @@ impl FakeFirestore {
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
-        Self::serve(3, ListenAnswer::Empty, handler).await
+        Self::serve(3, false, handler).await
     }
 
     /// Like [`start`](Self::start), but with a `max_retries` other than the client default -
@@ -222,7 +223,7 @@ impl FakeFirestore {
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
-        Self::serve(max_retries, ListenAnswer::Empty, handler).await
+        Self::serve(max_retries, false, handler).await
     }
 
     /// Like [`start`](Self::start), but `Listen` is answered with the response headers and then
@@ -232,19 +233,10 @@ impl FakeFirestore {
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
-        Self::serve(3, ListenAnswer::Quiet, handler).await
+        Self::serve(3, true, handler).await
     }
 
-    /// Like [`start`](Self::start), but `Listen` is answered with the response headers and then
-    /// a stream reset: a listen stream whose connection fails before any response arrives.
-    pub async fn start_with_failing_listen<F>(handler: F) -> Self
-    where
-        F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
-    {
-        Self::serve(3, ListenAnswer::Reset, handler).await
-    }
-
-    async fn serve<F>(max_retries: usize, listen: ListenAnswer, handler: F) -> Self
+    async fn serve<F>(max_retries: usize, quiet_listen: bool, handler: F) -> Self
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
@@ -263,7 +255,7 @@ impl FakeFirestore {
                     socket,
                     handler.clone(),
                     served.clone(),
-                    listen,
+                    quiet_listen,
                 ));
             }
         });
@@ -303,17 +295,6 @@ impl FakeFirestore {
     }
 }
 
-/// How the server answers `Listen`.
-#[derive(Clone, Copy)]
-enum ListenAnswer {
-    /// An empty stream with a `grpc-status: 0` trailer.
-    Empty,
-    /// The response headers and then nothing until the client closes the request.
-    Quiet,
-    /// The response headers and then a stream reset.
-    Reset,
-}
-
 /// What the server records of every RPC, shared by all its connections.
 #[derive(Clone)]
 struct RequestLog {
@@ -327,7 +308,7 @@ async fn serve_connection(
     socket: TcpStream,
     handler: Arc<Handler>,
     log: RequestLog,
-    listen: ListenAnswer,
+    quiet_listen: bool,
 ) {
     let Ok(mut connection) = h2::server::handshake(socket).await else {
         return;
@@ -341,7 +322,7 @@ async fn serve_connection(
                 handler.clone(),
                 log.clone(),
                 close.clone(),
-                listen,
+                quiet_listen,
             ));
         }
     };
@@ -357,7 +338,7 @@ async fn answer(
     handler: Arc<Handler>,
     log: RequestLog,
     close: Arc<Notify>,
-    listen: ListenAnswer,
+    quiet_listen: bool,
 ) {
     let method = request.uri().path().to_owned();
     log.authorizations
@@ -365,29 +346,22 @@ async fn answer(
         .unwrap()
         .push(request.headers().get(AUTHORIZATION).cloned());
     let listening = method.ends_with("/Listen");
-    let mut body = request.into_body();
-    let mut bytes = Vec::new();
     // Held until the client closes the request, since dropping it would end a quiet `Listen`.
     let _listen_response = if listening {
-        let (headers, end_of_stream) = match listen {
-            ListenAnswer::Empty => (ok_headers().header("grpc-status", "0"), true),
-            ListenAnswer::Quiet | ListenAnswer::Reset => (ok_headers(), false),
+        let headers = if quiet_listen {
+            ok_headers()
+        } else {
+            ok_headers().header("grpc-status", "0")
         };
-        let Ok(mut send) = respond.send_response(headers.body(()).unwrap(), end_of_stream) else {
+        let Ok(send) = respond.send_response(headers.body(()).unwrap(), !quiet_listen) else {
             return;
         };
-        if matches!(listen, ListenAnswer::Reset) {
-            // The client sends its first request only once it holds the response headers, so
-            // the reset fails the open stream rather than the call that opens it.
-            if let Some(Ok(chunk)) = body.data().await {
-                bytes.extend_from_slice(&chunk);
-            }
-            send.send_reset(h2::Reason::INTERNAL_ERROR);
-        }
         Some(send)
     } else {
         None
     };
+    let mut body = request.into_body();
+    let mut bytes = Vec::new();
     while let Some(Ok(chunk)) = body.data().await {
         body.flow_control().release_capacity(chunk.len()).unwrap();
         bytes.extend_from_slice(&chunk);

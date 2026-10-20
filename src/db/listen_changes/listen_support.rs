@@ -42,6 +42,7 @@ impl FirestoreListenSupport for FirestoreDb {
                     .map(|item| (item.map_err(Into::into), (response, keep_request_open)))
             },
         )
+        .fuse()
         .boxed())
     }
 

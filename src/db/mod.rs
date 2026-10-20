@@ -719,19 +719,24 @@ pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
     }
 }
 
-/// Ends `stream` after its first error.
+/// Ends `stream` at its first error, without polling it again, and returns `None` from then on.
 ///
 /// tonic's `Streaming` yields an error from the response body twice before it ends, so a
 /// server-streaming response read without this reports each failure twice.
 pub(crate) fn end_at_first_error<T, E>(
-    stream: impl futures::Stream<Item = Result<T, E>>,
+    stream: impl futures::Stream<Item = Result<T, E>> + Unpin,
 ) -> impl futures::Stream<Item = Result<T, E>> {
     use futures::StreamExt;
-    stream.scan(false, |failed, item| {
-        futures::future::ready((!*failed).then(|| {
-            *failed = item.is_err();
-            item
-        }))
+    let mut stream = Some(stream);
+    futures::stream::poll_fn(move |cx| {
+        let Some(inner) = stream.as_mut() else {
+            return std::task::Poll::Ready(None);
+        };
+        let item = futures::ready!(inner.poll_next_unpin(cx));
+        if !matches!(item, Some(Ok(_))) {
+            stream = None;
+        }
+        std::task::Poll::Ready(item)
     })
 }
 
@@ -962,20 +967,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_listen_stream_ends_at_its_first_error() {
-        let server = FakeFirestore::start_with_failing_listen(|_, _| {
-            ("Listen closed".to_string(), FakeResponse::empty())
-        })
-        .await;
-        let (requests, request_reader) = tokio::sync::mpsc::unbounded_channel();
-        let responses = server.db.listen_doc_changes(request_reader).await.unwrap();
-        requests.send(ListenRequest::default()).unwrap();
+    async fn a_stream_ends_at_its_first_error_without_waiting_for_more() {
+        let stream = futures::stream::iter([Ok(1), Err("failed")])
+            .chain(futures::stream::pending::<Result<i32, &str>>());
 
-        let results: Vec<_> = tokio::time::timeout(LIMITED_CALL_BOUND, responses.collect())
-            .await
-            .expect("the reset must end the stream");
+        let results: Vec<_> =
+            tokio::time::timeout(LIMITED_CALL_BOUND, end_at_first_error(stream).collect())
+                .await
+                .expect("the stream must end at its error");
 
-        assert!(matches!(results.as_slice(), [Err(_)]), "{results:?}");
+        assert_eq!(results, [Ok(1), Err("failed")]);
+    }
+
+    #[tokio::test]
+    async fn a_listen_stream_keeps_returning_none_after_it_ends() {
+        let server =
+            FakeFirestore::start(|_, _| ("Listen closed".to_string(), FakeResponse::empty())).await;
+        let (_requests, request_reader) = tokio::sync::mpsc::unbounded_channel();
+        let mut responses = server.db.listen_doc_changes(request_reader).await.unwrap();
+
+        assert!(responses.next().await.is_none());
+        assert!(responses.next().await.is_none());
     }
 
     #[tokio::test]
