@@ -23,6 +23,21 @@ see [Listening the document changes](https://firestore-rust.abdolence.dev/listen
 breaks code that builds `FirestoreListenerParams` with a struct literal; `FirestoreListenerParams::new` and its
 builder are unaffected.
 
+### Listen builder `retry_delay` removed
+
+`FirestoreDocChangesListenerInitBuilder::retry_delay` is removed. The setter stored a delay that `add_target`
+never read, so it had no effect. The retry delay belongs to the listener, not to a target: set it with
+`FirestoreListenerParams::with_retry_delay` and create the listener with `create_listener_with_params`.
+
+```rust,ignore
+let listener = db
+    .create_listener_with_params(
+        storage,
+        FirestoreListenerParams::new().with_retry_delay(std::time::Duration::from_secs(5)),
+    )
+    .await?;
+```
+
 ## 0.61
 
 v0.61.0 takes retry limits and delays as `std::time::Duration` instead of `FirestoreDuration`

@@ -13,12 +13,11 @@ use crate::{
     FirestoreAggregatedQueryParams, FirestoreAggregatedQuerySupport, FirestoreAggregation,
     FirestoreCollectionDocuments, FirestoreExplainOptions, FirestoreFindNearestDistanceMeasure,
     FirestoreFindNearestOptions, FirestoreGetByIdSupport, FirestoreListenSupport,
-    FirestoreListener, FirestoreListenerParams, FirestoreListenerTarget,
-    FirestoreListenerTargetParams, FirestorePartition, FirestorePartitionQueryParams,
-    FirestoreQueryCollection, FirestoreQueryCursor, FirestoreQueryFilter, FirestoreQueryOrder,
-    FirestoreQueryParams, FirestoreQuerySupport, FirestoreRequestOptions, FirestoreRequestTag,
-    FirestoreResult, FirestoreResumeStateStorage, FirestoreTargetType, FirestoreVector,
-    FirestoreWithMetadata,
+    FirestoreListener, FirestoreListenerTarget, FirestoreListenerTargetParams, FirestorePartition,
+    FirestorePartitionQueryParams, FirestoreQueryCollection, FirestoreQueryCursor,
+    FirestoreQueryFilter, FirestoreQueryOrder, FirestoreQueryParams, FirestoreQuerySupport,
+    FirestoreRequestOptions, FirestoreRequestTag, FirestoreResult, FirestoreResumeStateStorage,
+    FirestoreTargetType, FirestoreVector, FirestoreWithMetadata,
 };
 use futures::stream::BoxStream;
 use gcloud_sdk::google::firestore::v1::Document;
@@ -1043,7 +1042,6 @@ where
     D: FirestoreListenSupport + Clone,
 {
     _db: &'a D, // Keep a reference to the DB for lifetime, though not directly used in all methods
-    listener_params: FirestoreListenerParams,
     target_type: FirestoreTargetType,
     labels: HashMap<String, String>,
     request_options: Option<FirestoreRequestOptions>,
@@ -1057,7 +1055,6 @@ where
     pub(crate) fn new(db: &'a D, target_type: FirestoreTargetType) -> Self {
         Self {
             _db: db,
-            listener_params: FirestoreListenerParams::new(),
             target_type,
             labels: HashMap::new(),
             request_options: None,
@@ -1087,15 +1084,6 @@ where
     pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
         Self {
             request_options: Some(options),
-            ..self
-        }
-    }
-
-    /// Sets the initial delay for retrying the listener connection on failure.
-    #[inline]
-    pub fn retry_delay(self, delay: std::time::Duration) -> Self {
-        Self {
-            listener_params: self.listener_params.with_retry_delay(delay),
             ..self
         }
     }
