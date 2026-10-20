@@ -1,5 +1,24 @@
 # Migration guide
 
+## 0.61
+
+v0.61.0 takes retry limits and delays as `std::time::Duration` instead of `FirestoreDuration`
+(`jiff::SignedDuration`), so a negative value no longer compiles.
+
+| Field or argument | 0.60 | 0.61 |
+|---|---|---|
+| `FirestoreTransactionOptions::max_elapsed_time` | `Option<FirestoreDuration>` | `Option<std::time::Duration>` |
+| `FirestoreSimpleBatchWriteOptions::retry_max_elapsed_time` | `Option<FirestoreDuration>` | `Option<std::time::Duration>` |
+| `retry_after` of `FirestoreErrorInTransaction::retry_after` | `FirestoreDuration` | `std::time::Duration` |
+
+The builder setters of both fields, such as `with_max_elapsed_time` and `with_retry_max_elapsed_time`, take the new
+type too. Replace `FirestoreDuration::from_secs(30)` with `std::time::Duration::from_secs(30)`, or convert a
+`jiff::SignedDuration` you already have with `std::time::Duration::try_from(value)?`.
+
+A negative limit used to fail every transaction or `write` with a `DeserializeError`, and a negative `retry_after` was
+used as a positive delay of the same length. `FirestoreDuration` stays for durations Firestore reports, such as
+`FirestoreExecutionStats::execution_duration`.
+
 ## 0.58
 
 v0.58.0 moves to gcloud-sdk 0.33, which mints the tokens with `google-cloud-auth`, the authentication crate of

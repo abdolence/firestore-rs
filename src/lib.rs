@@ -177,11 +177,11 @@ pub use jiff;
 /// ```
 pub type FirestoreInstant = jiff::Timestamp;
 
-/// The duration type used by this library.
+/// The type of durations that Firestore reports.
 ///
 /// This is an alias for [`jiff::SignedDuration`], used for values such as
-/// [`FirestoreTransactionOptions::max_elapsed_time`] and the query execution
-/// statistics.
+/// [`FirestoreExecutionStats::execution_duration`]. Settings such as retry
+/// limits take a [`std::time::Duration`].
 pub type FirestoreDuration = jiff::SignedDuration;
 
 /// Provides utility functions for working with Firestore timestamps.

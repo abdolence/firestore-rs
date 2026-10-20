@@ -5,6 +5,7 @@ use gcloud_sdk::google::firestore::v1::{CommitRequest, Document, RollbackRequest
 use gcloud_sdk::prost::Message;
 use gcloud_sdk::tonic::Code;
 use std::sync::atomic::AtomicU8;
+use std::time::Duration;
 
 /// Begins transactions with sequential IDs and answers every read, rolling back with
 /// `rollback_code` and committing with `commit_code`. A rollback's call-log entry carries its
@@ -153,8 +154,7 @@ async fn exhausted_retries_roll_back_the_last_attempt() {
 #[tokio::test]
 async fn failed_commit_in_the_retry_loop_opens_no_extra_transaction() {
     let server = fixture(Code::Ok, Code::Unavailable).await;
-    let options =
-        FirestoreTransactionOptions::new().with_max_elapsed_time(crate::FirestoreDuration::ZERO);
+    let options = FirestoreTransactionOptions::new().with_max_elapsed_time(Duration::ZERO);
     let result: FirestoreResult<()> = server
         .db
         .run_transaction_with_options(
