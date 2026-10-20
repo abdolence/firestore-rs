@@ -15,6 +15,14 @@ To keep retrying with no limit, set the field to `None`:
 let options = FirestoreSimpleBatchWriteOptions::new().opt_retry_max_elapsed_time(None);
 ```
 
+### Listener idle reset
+
+`FirestoreListenerParams` gains `idle_timeout`, off by default. When set, a listener closes and reopens a listen
+stream that received nothing for that long, resuming from the stored tokens; 120 seconds is the recommended value,
+see [Listening the document changes](https://firestore-rust.abdolence.dev/listening-changes.html). Adding the field
+breaks code that builds `FirestoreListenerParams` with a struct literal; `FirestoreListenerParams::new` and its
+builder are unaffected.
+
 ## 0.61
 
 v0.61.0 takes retry limits and delays as `std::time::Duration` instead of `FirestoreDuration`

@@ -109,4 +109,37 @@ after the retry delay. It stops only on an error a retry cannot fix:
 A stopped listener rejects `add_target` with a `SystemError`, and `shutdown()` returns the error
 it stopped with.
 
+A listen stream can also stay open and stop delivering anything, which HTTP/2 keep-alive does not
+detect while the connection itself still answers. To reset such a stream, set `idle_timeout` in the
+listener params:
+
+```rust,no_run
+# use firestore::*;
+# use std::time::Duration;
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+let listener = db
+    .create_listener_with_params(
+        FirestoreMemListenStateStorage::new(),
+        FirestoreListenerParams::new().with_idle_timeout(Duration::from_secs(120)),
+    )
+    .await?;
+# Ok(())
+# }
+```
+
+It is off by default. When set:
+
+- any `ListenResponse` counts as activity, `NO_CHANGE` target changes included;
+- the time counts from when the stream is open, so a connect that never gets that far is not
+  covered, and only while at least one target on the stream waits for an answer from Firestore, not
+  while every target waits to be added back after the retry delay;
+- the time starts again once the callback and the token storage have handled each response;
+- on expiry the listener waits the retry delay and reconnects, adding every target back with its
+  stored resume token. Changes after the last stored token may be delivered again, as after any
+  reconnect.
+
+120 seconds is the recommended value, and the one Google's Node.js client uses. Firestore documents
+no interval for the updates it sends on a quiet stream, so a much shorter value can reset healthy
+streams.
+
 See complete example in examples directory.

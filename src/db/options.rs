@@ -52,7 +52,8 @@ pub struct FirestoreDbOptions {
     /// - **Streamed reads** (queries, aggregations and batch gets): the wait for the stream to
     ///   start and for each next response, counted only while the caller is waiting for one.
     /// - **Not limited:** listeners and the streaming batch writer, whose streams stay quiet for
-    ///   as long as nothing changes.
+    ///   as long as nothing changes. A listener resets a silent stream with its own
+    ///   [`idle_timeout`](crate::FirestoreListenerParams::idle_timeout).
     ///
     /// A request that runs out of it fails with a
     /// [`DatabaseError`](crate::errors::FirestoreError::DatabaseError) with the code

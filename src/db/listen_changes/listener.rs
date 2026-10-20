@@ -81,6 +81,25 @@ pub type FirestoreListenEvent = listen_response::ResponseType;
 #[derive(Debug, Clone, Eq, PartialEq, Builder)]
 pub struct FirestoreListenerParams {
     pub retry_delay: Option<std::time::Duration>,
+
+    /// How long the listen stream may stay silent before the listener closes it and opens a new
+    /// one. `None`, the default, never resets a stream that stays open.
+    ///
+    /// Silent means no `ListenResponse` of any kind arrived, a `NO_CHANGE` target change
+    /// included. The time counts from when the stream is open, so a connect that never gets
+    /// that far is not covered. It counts only while at least one target on the stream waits
+    /// for an answer from Firestore, not while every target waits to be added back after the
+    /// retry delay. It starts again once each response has been handled, so time spent in the
+    /// callback and in the resume-state storage does not count.
+    ///
+    /// On expiry the listener waits the retry delay and reconnects, adding every target back
+    /// with its stored resume token, as after any other reconnect. Changes received after the
+    /// last stored token may be delivered again.
+    ///
+    /// 120 seconds is the recommended value, and the one Google's Node.js client uses. Firestore
+    /// documents no interval for the updates it sends on a quiet stream, so a much shorter value
+    /// can reset healthy streams.
+    pub idle_timeout: Option<std::time::Duration>,
 }
 
 /// A message to a running listener loop.
