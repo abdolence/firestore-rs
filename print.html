@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-95c1b6c3.js";
+            window.path_to_searchindex_js = "searchindex-12f927a7.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-61f90fc3.js"></script>
+        <script src="toc-c0735130.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -2152,6 +2152,55 @@ tagged_db
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>A per operation value replaces the session wide default rather than merging with it.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="request-timeouts"><a class="header" href="#request-timeouts">Request timeouts</a></h1>
+<p>The library sets no timeout on requests by default. A request waits for Firestore for as long as its connection
+lives, and a connection to a server that stopped answering is closed only by HTTP/2 keep-alive, after about two minutes.</p>
+<p>To limit how long one request waits for Firestore, set <code>request_timeout</code> in the options:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::Duration;
+</span><span class="boring">fn config_env_var(name: &amp;str) -&gt; Result&lt;String, String&gt; {
+</span><span class="boring">    std::env::var(name).map_err(|e| format!("{name}: {e}"))
+</span><span class="boring">}
+</span><span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let db = FirestoreDb::with_options(
+    FirestoreDbOptions::new(config_env_var("PROJECT_ID")?)
+        .with_request_timeout(Duration::from_secs(30)),
+)
+.await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>What it limits depends on the request:</p>
+<ul>
+<li>unary requests (get, insert, update, delete, list pages, batch writes, transaction commits and the admin API calls):
+the whole call. The limit is also sent to Firestore as the request deadline;</li>
+<li>streamed reads (queries, aggregations and batch gets): the wait for the stream to start and for each next document,
+counted only while you are waiting for one, so a slow consumer of a long query is not cut;</li>
+<li>listeners and the streaming batch writer are not limited, since their streams stay quiet for as long as nothing changes.</li>
+</ul>
+<p>The limit applies to each attempt. A request that runs out of it fails with a <code>DatabaseError</code> with the code
+<code>DeadlineExceeded</code> and <code>retry_possible</code> set, and it is retried wherever a dropped connection is:</p>
+<ul>
+<li>gets, lists, list collection IDs and the start of queries and aggregations, up to <code>max_retries</code> times;</li>
+<li>simple batch writes, until <code>retry_max_elapsed_time</code>. A retried batch may apply twice, for example an <code>increment</code>,
+as it can after a dropped connection.</li>
+</ul>
+<p>Batch gets, partition queries, a query or aggregation stream that has already started and transaction commits return
+the error without a retry. A commit is never retried, because its writes may already be applied.</p>
+<p>The reads in the first item also retry a <code>DEADLINE_EXCEEDED</code> that Firestore itself answers with, up to <code>max_retries</code>
+times, with or without a request timeout set. Writes, batch gets, partition queries and streams that have already
+started return it with <code>retry_possible</code> unset.</p>
+<p>Be aware not to leave <code>retry_max_elapsed_time</code> unset on a simple batch writer when you set a request timeout: against
+a Firestore that stopped answering, it then retries forever, one timeout per attempt.</p>
+<p>To use another limit for a part of your code, or none at all, clone the client with <code>clone_with_request_timeout</code>.
+Batch writers and transactions created from the clone keep it:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::Duration;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let report_db = db.clone_with_request_timeout(Some(Duration::from_secs(300)));
+let unlimited_db = db.clone_with_request_timeout(None);
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="testing-your-own-code"><a class="header" href="#testing-your-own-code">Testing your own code</a></h1>
 <p>The Fluent API is built on <code>FirestoreDb</code> directly, so there is no built-in way to substitute a
