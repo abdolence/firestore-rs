@@ -15,6 +15,7 @@ use gcloud_sdk::google::firestore::admin::v1::{
 };
 use gcloud_sdk::prost::Message as _;
 use gcloud_sdk::prost_types::Any;
+use gcloud_sdk::RequestTimeouts;
 use std::time::Instant;
 use tracing::*;
 
@@ -148,6 +149,7 @@ impl FirestoreDb {
                 collection_ids,
                 namespace_ids: Vec::new(),
             };
+            let request = self.request_with_timeout(request, RequestTimeouts::with_total);
             match self.admin_client().bulk_delete_documents(request).await {
                 Ok(response) => {
                     let operation = response.into_inner();
@@ -783,6 +785,7 @@ mod tests {
                 is_emulator: true,
             }),
             session_params: fake.db.get_session_params().clone().into(),
+            request_timeout: None,
         };
 
         let err = emulator_db

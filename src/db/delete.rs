@@ -4,6 +4,7 @@ use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
+use gcloud_sdk::RequestTimeouts;
 use tracing::*;
 
 #[async_trait]
@@ -46,14 +47,17 @@ impl FirestoreDeleteSupport for FirestoreDb {
             "/firestore/document_name" = document_path.as_str(),
         );
 
-        let request = gcloud_sdk::tonic::Request::new(DeleteDocumentRequest {
+        let request = DeleteDocumentRequest {
             name: document_path,
             current_document: precondition.map(|cond| cond.try_into()).transpose()?,
             request_options: self.resolve_request_options(None),
-        });
+        };
 
         let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
-        self.client().get().delete_document(request).await?;
+        self.client()
+            .get()
+            .delete_document(self.request_with_timeout(request, RequestTimeouts::with_total))
+            .await?;
         let end_query_utc: FirestoreInstant = FirestoreInstant::now();
         let query_duration = end_query_utc.duration_since(begin_query_utc);
 

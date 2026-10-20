@@ -96,6 +96,7 @@ pub use batch_simple_writer::*;
 use crate::errors::FirestoreError;
 use std::fmt::Formatter;
 use std::sync::Arc;
+use std::time::Duration;
 
 mod transform_models;
 pub use transform_models::*;
@@ -128,6 +129,10 @@ struct FirestoreDbInner {
 pub struct FirestoreDb {
     inner: Arc<FirestoreDbInner>,
     session_params: Arc<FirestoreDbSessionParams>,
+    /// The limit this instance's requests carry: the options' value until
+    /// [`clone_with_request_timeout`](Self::clone_with_request_timeout) replaces it. Kept outside
+    /// the session params so that replacing those never drops it.
+    request_timeout: Option<Duration>,
 }
 
 impl FirestoreDb {
@@ -272,6 +277,7 @@ impl FirestoreDb {
             "Created a new database client.",
         );
 
+        let request_timeout = options.request_timeout;
         let inner = FirestoreDbInner {
             doc_path: format!("{}/documents", endpoint.database_path),
             #[cfg(feature = "admin")]
@@ -284,6 +290,7 @@ impl FirestoreDb {
         Self {
             inner: Arc::new(inner),
             session_params: Arc::new(FirestoreDbSessionParams::new()),
+            request_timeout,
         }
     }
 
@@ -363,7 +370,12 @@ impl FirestoreDb {
             mask: None,
         };
 
-        match self.client().get().get_document(request).await {
+        match self
+            .client()
+            .get()
+            .get_document(self.request_with_timeout(request, RequestTimeouts::with_total))
+            .await
+        {
             Ok(_) => Ok(()),
             // NOT_FOUND on a document that is never written is exactly what a reachable,
             // authenticated database returns; any other error is a real connectivity failure.
@@ -437,6 +449,23 @@ impl FirestoreDb {
             request_options,
             self.session_params.request_options.as_ref(),
         )
+    }
+
+    /// Wraps `message` in a request limited by this instance's request timeout, which `limit`
+    /// applies: [`RequestTimeouts::with_total`] for a unary call, [`RequestTimeouts::with_idle`]
+    /// for a streamed read. Without a request timeout the request carries no limit at all.
+    pub(crate) fn request_with_timeout<M>(
+        &self,
+        message: M,
+        limit: fn(RequestTimeouts, Duration) -> RequestTimeouts,
+    ) -> gcloud_sdk::tonic::Request<M> {
+        let mut request = gcloud_sdk::tonic::Request::new(message);
+        if let Some(request_timeout) = self.request_timeout {
+            request
+                .extensions_mut()
+                .insert(limit(RequestTimeouts::new(), request_timeout));
+        }
+        request
     }
 
     /// Returns a reference to the underlying `gcloud-sdk` gRPC client.
@@ -559,6 +588,36 @@ impl FirestoreDb {
         self.with_request_options(FirestoreRequestOptions::from_tags(request_tags))
     }
 
+    /// Clones the `FirestoreDb` instance with its own request timeout, in place of
+    /// [`FirestoreDbOptions::request_timeout`], which describes what it limits. `None` switches
+    /// the limit off.
+    ///
+    /// Batch writers, transactions and session clones made from the returned instance keep it,
+    /// so it also sets the limit for a single call:
+    ///
+    /// ```rust,no_run
+    /// use firestore::*;
+    /// use std::time::Duration;
+    ///
+    /// # async fn run() -> FirestoreResult<()> {
+    /// let db = FirestoreDb::new("my-gcp-project-id").await?;
+    /// let reports: Vec<FirestoreDocument> = db
+    ///     .clone_with_request_timeout(Some(Duration::from_secs(5)))
+    ///     .fluent()
+    ///     .select()
+    ///     .from("reports")
+    ///     .query()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn clone_with_request_timeout(&self, request_timeout: Option<Duration>) -> Self {
+        Self {
+            request_timeout,
+            ..self.clone()
+        }
+    }
+
     /// Clones the `FirestoreDb` instance with a specific cache mode.
     ///
     /// This method is only available if the `caching` feature is enabled.
@@ -664,7 +723,19 @@ pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
 mod tests {
     use super::*;
     use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
+    use futures::{StreamExt, TryStreamExt};
+    use gcloud_sdk::prost::Message as _;
     use gcloud_sdk::tonic::Code;
+    use std::time::Instant;
+
+    const REQUEST_TIMEOUT: Duration = Duration::from_millis(300);
+
+    /// How long a test waits for a call that the request timeout must end, far short of the
+    /// two minutes HTTP/2 keep-alive takes to end it otherwise.
+    const LIMITED_CALL_BOUND: Duration = Duration::from_secs(5);
+
+    /// How long a call without a limit must keep running, well past [`REQUEST_TIMEOUT`].
+    const UNLIMITED_CALL_RUNS_FOR: Duration = Duration::from_millis(1200);
 
     /// A 2048-bit RSA key in PKCS#8, generated for these tests and used nowhere else.
     const TEST_SERVICE_ACCOUNT_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCiNMJDZM3rHRuj\nIxTKvSHs/IGI1oEh3NYbNaAxYOoRSVNbxcvR/ixaB/Um2KzLuLpFQzg+PrMJ6EVg\n9sMXPBetw42BWtE4Q9vMtjYia01RPo0jbhf9N9EAKtytbBmgBgsh+5EeYHpARr27\n+wg2CZb3pwRemiKOJjPIXzc8zT5QKCa/W0/sYHkt55Q4BUYTzPajvY2zMJgFIEcp\nkS4Vf3I/06fl6l2rAs+qrSE3VYXGIbNihQ4C+aCuPJeA6oXAHRHuGWEI3azqqKn/\nr81JsykNVElHfdzsoYl6qWu9IuhnJ7cIF/XvG6UHVum+1+Fh54r5+44ky/ixmlaz\nfSq5BjnvAgMBAAECggEAGFkeDfq8ND4uz1qtPM+OH6I5mX5FbP1WwEfY74CSMh0V\nH7H9qdxi8PK/2GBu87ebclkoQKOtwV91xpvT5hF1pnYzsAafYDhDbqOtVZZQyVC/\n4+EbRb3SqBlG/ds7r3sowaWe/3XQ9AQKaATDE0V2PV97Nu4hIMBYRowQYRaX83UN\n5PDdRzpVbEglBD4yCcuYLmYiRdA8Wvvitf625VNPS2aCz9ibH/4cWDeC8u3Z35rL\n1LwLLHfJ9SPh59KHfXcg8A4rTJ5VHBGkNB92y57RdAcwJ+Q2xRwkiYLUeHIph19b\nCu9sWo466yz9vOf9j7oqez6BeCuqoi6tLr6eG4eOwQKBgQDkWvtMdDmCbrrpGeKP\nDZp2drRHXPGTDT2NyoXmIffq2KhcNVW6EXeVOHQyiCwncKZawwfxRveIPXvU2zTc\nApYi1SnZRdwWmkHiy2GCO/vVYO404c2JXu2n3tLixh5ir39v7yauWRjZ/qQ5/qvO\nU0kKz/tBhik9fK9BJdCqJ013rwKBgQC117pLUOt4vbPSzja+x33gZUobNJKFvJy+\nWEEIvZ4gbM7iBxHco6xzY4Kcn2Wd2Ai+PdQBR6yFbRMscB4BsqIoCy4HLN0i3bz4\nyLW8eNlti06W2Qnd6/Wzyp4a2t7XhPfA982iQA4gcYiSHQC4nzjqOP2dBpfv14bz\noninztGxwQKBgQCw7RERbmd0eIiWvHh978NCj7wkIo4FKlgLuOM/qAfmzFC9iJFQ\nJeJqGiBlWn4jXLN3VO6dcSeuRjzgcaql39clS9Utw2O/m2r65is5dXIsI/rLvDu8\neHFYBFuOWoQGYAUz264znVKU7Cefy4KfzIWmO/hnDyR6wFUk+8CNZQAvfwKBgFZF\nvGABS0Zkkk1Agt6unPz6cVdI8P88Rg1Up74y4DO4C8tW2VWZ3bZ9DrmqMjbaCQPh\nJ5VX4PUIk+EwbDwX+TEQZM0Irv3cv8w0xWxe1aFQR3/wButgCJk9Vxecob8UmcrW\nhpwk0c74rnfMBMyS1hjh4wk92JX05lTuz1mmGPzBAoGAGdf4NYGrmfzlqTwHjgaA\n7K9n8YCGy9M1v17viLNiuvlOUQFVLSyJIgkXoY4ZSfi0G/JKbTXEIGiGtCCN40EC\nOqUNKtjNbnYHV7IiLhS5q1oHZlGow2tSAvT7JhWhHILm+RF5hxJY0m8sWbSkMyR1\nKaJ9dM6o2MEo9MlgXCigO+4=\n-----END PRIVATE KEY-----\n";
@@ -736,6 +807,151 @@ mod tests {
             "ping must read a document under the database's /documents/ path, got {:?}",
             calls[0]
         );
+    }
+
+    /// A `RunQuery` response carrying document `id` of the `items` collection.
+    fn query_response(id: usize) -> Vec<u8> {
+        RunQueryResponse {
+            document: Some(Document {
+                name: format!("projects/fake-firestore/databases/(default)/documents/items/{id}"),
+                ..Document::default()
+            }),
+            ..RunQueryResponse::default()
+        }
+        .encode_to_vec()
+    }
+
+    #[tokio::test]
+    async fn request_timeout_fails_a_unary_call_the_server_never_answers() {
+        let server =
+            FakeFirestore::start(|_, _| ("GetDocument".to_string(), FakeResponse::Hang)).await;
+        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
+
+        let started = Instant::now();
+        let error = tokio::time::timeout(LIMITED_CALL_BOUND, db.ping())
+            .await
+            .expect("the request timeout must end the call")
+            .unwrap_err();
+
+        let elapsed = started.elapsed();
+        assert!(elapsed >= REQUEST_TIMEOUT, "{elapsed:?}");
+        assert!(
+            matches!(error, FirestoreError::DatabaseError(ref error)
+                if error.public.code == "DeadlineExceeded" && error.retry_possible),
+            "expected a retryable DeadlineExceeded, got {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_timeout_ends_a_query_stream_that_stalls() {
+        let server = FakeFirestore::start(|_, _| {
+            (
+                "RunQuery".to_string(),
+                FakeResponse::Stall(query_response(1)),
+            )
+        })
+        .await;
+        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
+        let mut documents = db
+            .stream_query_doc_with_errors(FirestoreQueryParams::new("items".into()))
+            .await
+            .unwrap();
+        documents.next().await.unwrap().unwrap();
+
+        let started = Instant::now();
+        let error = tokio::time::timeout(LIMITED_CALL_BOUND, documents.next())
+            .await
+            .expect("the request timeout must end the stalled stream")
+            .expect("the stream must fail rather than end")
+            .unwrap_err();
+
+        let elapsed = started.elapsed();
+        assert!(elapsed >= REQUEST_TIMEOUT, "{elapsed:?}");
+        assert!(
+            matches!(error, FirestoreError::DatabaseError(ref error)
+                if error.public.code == "DeadlineExceeded" && error.retry_possible),
+            "expected a retryable DeadlineExceeded, got {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_timeout_does_not_end_a_slow_stream_that_keeps_delivering() {
+        const DOCUMENT_COUNT: usize = 8;
+        let server = FakeFirestore::start(|_, _| {
+            let documents = (1..=DOCUMENT_COUNT).map(query_response).collect();
+            (
+                "RunQuery".to_string(),
+                FakeResponse::Paced(documents, REQUEST_TIMEOUT / 3),
+            )
+        })
+        .await;
+        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
+
+        let names: Vec<String> = tokio::time::timeout(LIMITED_CALL_BOUND, async {
+            let mut documents = db
+                .stream_query_doc_with_errors(FirestoreQueryParams::new("items".into()))
+                .await
+                .unwrap();
+            let first = documents.next().await.unwrap().unwrap();
+            // A caller busy for longer than the timeout is not waiting for Firestore.
+            tokio::time::sleep(REQUEST_TIMEOUT * 2).await;
+            let rest: Vec<Document> = documents.try_collect().await.unwrap();
+            std::iter::once(first)
+                .chain(rest)
+                .map(|document| split_document_path(&document.name).1.to_string())
+                .collect()
+        })
+        .await
+        .expect("the stream must end on its own");
+
+        let expected: Vec<String> = (1..=DOCUMENT_COUNT).map(|id| id.to_string()).collect();
+        assert_eq!(names, expected);
+    }
+
+    #[tokio::test]
+    async fn request_timeout_does_not_limit_a_quiet_listen() {
+        let server = FakeFirestore::start_with_quiet_listen(|_, _| {
+            ("Listen closed".to_string(), FakeResponse::empty())
+        })
+        .await;
+        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
+        let (_requests, request_reader) = tokio::sync::mpsc::unbounded_channel();
+        let mut responses = db.listen_doc_changes(request_reader).await.unwrap();
+
+        if let Ok(response) = tokio::time::timeout(UNLIMITED_CALL_RUNS_FOR, responses.next()).await
+        {
+            panic!("a quiet Listen must stay open, got {response:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn without_a_request_timeout_a_call_waits_for_the_server() {
+        let server =
+            FakeFirestore::start(|_, _| ("GetDocument".to_string(), FakeResponse::Hang)).await;
+        let options = FirestoreDbOptions::new("fake-firestore".to_string())
+            .with_firebase_api_url(format!("http://{}", server.address()))
+            .with_request_timeout(REQUEST_TIMEOUT);
+        let limited = FirestoreDb::with_options_auth(options, FirestoreEmulatorCredentials::new())
+            .await
+            .unwrap();
+        let error = tokio::time::timeout(LIMITED_CALL_BOUND, limited.ping())
+            .await
+            .expect("the options' request timeout must end the call")
+            .unwrap_err();
+        assert!(
+            matches!(error, FirestoreError::DatabaseError(ref error)
+                if error.public.code == "DeadlineExceeded" && error.retry_possible),
+            "expected a retryable DeadlineExceeded, got {error:?}"
+        );
+
+        for db in [server.db.clone(), limited.clone_with_request_timeout(None)] {
+            assert!(
+                tokio::time::timeout(UNLIMITED_CALL_RUNS_FOR, db.ping())
+                    .await
+                    .is_err(),
+                "a call without a request timeout must wait for the server"
+            );
+        }
     }
 
     #[test]

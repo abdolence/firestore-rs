@@ -20,6 +20,7 @@ use hyper::header::{HeaderValue, AUTHORIZATION};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{watch, Notify};
 
@@ -27,6 +28,12 @@ use tokio::sync::{watch, Notify};
 pub(super) enum FakeResponse {
     /// A framed protobuf message, sent with a `grpc-status: 0` trailer.
     Message(Vec<u8>),
+    /// A stream of framed messages, the first at once and each next one the given interval after
+    /// the one before, then a `grpc-status: 0` trailer: a stream that is slow but healthy.
+    Paced(Vec<Vec<u8>>, Duration),
+    /// The response headers and one framed message, then nothing more while the stream stays
+    /// open: a stream that stalls after its first message.
+    Stall(Vec<u8>),
     /// A Trailers-Only error response with no body - the only way a streaming call's error is
     /// visible at its initial `await` rather than only once polled. Never `Code::Ok`: a unary
     /// call answered that way fails for want of a response message; use [`FakeResponse::empty`].
@@ -40,7 +47,6 @@ pub(super) enum FakeResponse {
     Drop,
     /// The server never answers and keeps the stream open, simulating a call stuck in flight
     /// until the client gives up on it.
-    #[cfg(feature = "admin")]
     Hang,
 }
 
@@ -196,7 +202,8 @@ type Handler = dyn Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync;
 /// backend. `handler` runs once per RPC, after its request body has ended, and returns one line
 /// for `calls()` plus the response - so a test can assert a whole RPC sequence in one comparison.
 ///
-/// `Listen` is the exception: it is answered at once with an empty stream, and its handler runs
+/// `Listen` is the exception: it is answered at once with an empty stream, or with an open and
+/// quiet one by [`start_with_quiet_listen`](Self::start_with_quiet_listen), and its handler runs
 /// only when the client closes the request, so a logged `Listen` call is itself the proof that
 /// the request was closed. The handler's response to it is ignored.
 pub(super) struct FakeFirestore {
@@ -210,12 +217,29 @@ impl FakeFirestore {
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
-        Self::start_with_max_retries(3, handler).await
+        Self::serve(3, false, handler).await
     }
 
     /// Like [`start`](Self::start), but with a `max_retries` other than the client default -
     /// enough for a test to bound a persistent failure to a small, fast number of attempts.
     pub async fn start_with_max_retries<F>(max_retries: usize, handler: F) -> Self
+    where
+        F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
+    {
+        Self::serve(max_retries, false, handler).await
+    }
+
+    /// Like [`start`](Self::start), but `Listen` is answered with the response headers and then
+    /// nothing until the client closes the request: a listener on a database where nothing
+    /// changes.
+    pub async fn start_with_quiet_listen<F>(handler: F) -> Self
+    where
+        F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
+    {
+        Self::serve(3, true, handler).await
+    }
+
+    async fn serve<F>(max_retries: usize, quiet_listen: bool, handler: F) -> Self
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
@@ -230,7 +254,12 @@ impl FakeFirestore {
         // Detached: #[tokio::test] drops every spawned task, this one included, at test end.
         tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
-                tokio::spawn(serve_connection(socket, handler.clone(), served.clone()));
+                tokio::spawn(serve_connection(
+                    socket,
+                    handler.clone(),
+                    served.clone(),
+                    quiet_listen,
+                ));
             }
         });
         let mut options = FirestoreDbOptions::new("fake-firestore".into());
@@ -278,7 +307,12 @@ struct RequestLog {
 
 /// Serves one client connection until the client closes it or an RPC answers
 /// [`FakeResponse::Drop`], which drops the connection and its socket.
-async fn serve_connection(socket: TcpStream, handler: Arc<Handler>, log: RequestLog) {
+async fn serve_connection(
+    socket: TcpStream,
+    handler: Arc<Handler>,
+    log: RequestLog,
+    quiet_listen: bool,
+) {
     let Ok(mut connection) = h2::server::handshake(socket).await else {
         return;
     };
@@ -291,6 +325,7 @@ async fn serve_connection(socket: TcpStream, handler: Arc<Handler>, log: Request
                 handler.clone(),
                 log.clone(),
                 close.clone(),
+                quiet_listen,
             ));
         }
     };
@@ -306,6 +341,7 @@ async fn answer(
     handler: Arc<Handler>,
     log: RequestLog,
     close: Arc<Notify>,
+    quiet_listen: bool,
 ) {
     let method = request.uri().path().to_owned();
     log.authorizations
@@ -313,15 +349,20 @@ async fn answer(
         .unwrap()
         .push(request.headers().get(AUTHORIZATION).cloned());
     let listening = method.ends_with("/Listen");
-    if listening {
-        let headers = ok_headers().header("grpc-status", "0");
-        if respond
-            .send_response(headers.body(()).unwrap(), true)
-            .is_err()
-        {
+    // Held until the client closes the request, since dropping it would end a quiet `Listen`.
+    let _listen_response = if listening {
+        let headers = if quiet_listen {
+            ok_headers()
+        } else {
+            ok_headers().header("grpc-status", "0")
+        };
+        let Ok(send) = respond.send_response(headers.body(()).unwrap(), !quiet_listen) else {
             return;
-        }
-    }
+        };
+        Some(send)
+    } else {
+        None
+    };
     let mut body = request.into_body();
     let mut bytes = Vec::new();
     while let Some(Ok(chunk)) = body.data().await {
@@ -335,18 +376,16 @@ async fn answer(
     }
     match response {
         FakeResponse::Message(message) => {
+            send_messages(respond, vec![message], Duration::ZERO).await
+        }
+        FakeResponse::Paced(messages, interval) => send_messages(respond, messages, interval).await,
+        FakeResponse::Stall(message) => {
             let Ok(mut send) = respond.send_response(ok_headers().body(()).unwrap(), false) else {
                 return;
             };
-            let mut frame = vec![0u8; 5];
-            frame[1..5].copy_from_slice(&u32::try_from(message.len()).unwrap().to_be_bytes());
-            frame.extend_from_slice(&message);
-            if send.send_data(frame.into(), false).is_err() {
-                return;
+            if send.send_data(grpc_frame(&message), false).is_ok() {
+                std::future::pending::<()>().await;
             }
-            let mut trailers = hyper::HeaderMap::new();
-            trailers.insert("grpc-status", HeaderValue::from_static("0"));
-            let _ = send.send_trailers(trailers);
         }
         // A single Trailers-Only frame, with no body ever opened, is what makes even a streaming
         // call's error visible at its initial `await` rather than only once its caller polls the
@@ -364,7 +403,6 @@ async fn answer(
                 .header("grpc-message", message);
             let _ = respond.send_response(headers.body(()).unwrap(), true);
         }
-        #[cfg(feature = "admin")]
         FakeResponse::Hang => std::future::pending::<()>().await,
         FakeResponse::Drop => {
             close.notify_one();
@@ -374,6 +412,37 @@ async fn answer(
             std::future::pending::<()>().await;
         }
     }
+}
+
+/// Answers with each of `messages`, `interval` apart and the first at once, then a
+/// `grpc-status: 0` trailer.
+async fn send_messages(
+    mut respond: SendResponse<Bytes>,
+    messages: Vec<Vec<u8>>,
+    interval: Duration,
+) {
+    let Ok(mut send) = respond.send_response(ok_headers().body(()).unwrap(), false) else {
+        return;
+    };
+    for (index, message) in messages.iter().enumerate() {
+        if index > 0 {
+            tokio::time::sleep(interval).await;
+        }
+        if send.send_data(grpc_frame(message), false).is_err() {
+            return;
+        }
+    }
+    let mut trailers = hyper::HeaderMap::new();
+    trailers.insert("grpc-status", HeaderValue::from_static("0"));
+    let _ = send.send_trailers(trailers);
+}
+
+/// `message` with the gRPC length prefix, uncompressed.
+fn grpc_frame(message: &[u8]) -> Bytes {
+    let mut frame = vec![0u8; 5];
+    frame[1..5].copy_from_slice(&u32::try_from(message.len()).unwrap().to_be_bytes());
+    frame.extend_from_slice(message);
+    frame.into()
 }
 
 fn ok_headers() -> hyper::http::response::Builder {

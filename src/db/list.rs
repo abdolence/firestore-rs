@@ -5,6 +5,7 @@ use futures::stream::BoxStream;
 use futures::StreamExt;
 use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::*;
+use gcloud_sdk::RequestTimeouts;
 use rsb_derive::*;
 use serde::Deserialize;
 use std::future;
@@ -253,6 +254,7 @@ impl FirestoreDb {
                 span,
                 "list documents",
                 list_request,
+                RequestTimeouts::with_total,
                 |mut client, request| async move { client.list_documents(request).await },
             )
             .await?;
@@ -378,6 +380,7 @@ impl FirestoreDb {
                 span,
                 "list collection IDs",
                 &list_request,
+                RequestTimeouts::with_total,
                 |mut client, request| async move { client.list_collection_ids(request).await },
             )
             .await?;

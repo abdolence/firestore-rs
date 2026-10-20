@@ -62,6 +62,18 @@ impl FirestoreError {
             message.into(),
         ))
     }
+
+    /// Builds a [`DatabaseError`](FirestoreError::DatabaseError) for a read's failed `status`,
+    /// marked `retry_possible` whatever its code. The conversion from `tonic::Status` also covers
+    /// writes, so it leaves some codes a read may safely retry, such as `DEADLINE_EXCEEDED`,
+    /// unretried; callers choose which codes qualify by matching on `status.code()` first.
+    pub(crate) fn retryable_read(status: gcloud_sdk::tonic::Status) -> Self {
+        FirestoreError::DatabaseError(FirestoreDatabaseError::new(
+            FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
+            status.to_string(),
+            true,
+        ))
+    }
 }
 
 impl Display for FirestoreError {
@@ -320,22 +332,27 @@ impl From<gcloud_sdk::tonic::Status> for FirestoreError {
                     format!("{status}"),
                 ))
             }
-            gcloud_sdk::tonic::Code::Aborted
-            | gcloud_sdk::tonic::Code::Cancelled
-            | gcloud_sdk::tonic::Code::Unavailable
-            | gcloud_sdk::tonic::Code::ResourceExhausted => {
+            gcloud_sdk::tonic::Code::Unknown => check_hyper_errors(status),
+            code => {
+                let retry_possible = match code {
+                    gcloud_sdk::tonic::Code::Aborted
+                    | gcloud_sdk::tonic::Code::Cancelled
+                    | gcloud_sdk::tonic::Code::Unavailable
+                    | gcloud_sdk::tonic::Code::ResourceExhausted => true,
+                    // A request timeout that ran out leaves the outcome as unknown as a dropped
+                    // connection does, so it is retried like one. The server's own deadline is
+                    // retried by reads alone, through `retryable_read`.
+                    gcloud_sdk::tonic::Code::DeadlineExceeded => status
+                        .source()
+                        .is_some_and(|source| source.is::<gcloud_sdk::RequestTimeoutElapsed>()),
+                    _ => false,
+                };
                 FirestoreError::DatabaseError(FirestoreDatabaseError::new(
-                    FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
+                    FirestoreErrorPublicGenericDetails::new(format!("{code:?}")),
                     format!("{status}"),
-                    true,
+                    retry_possible,
                 ))
             }
-            gcloud_sdk::tonic::Code::Unknown => check_hyper_errors(status),
-            _ => FirestoreError::DatabaseError(FirestoreDatabaseError::new(
-                FirestoreErrorPublicGenericDetails::new(format!("{:?}", status.code())),
-                format!("{status}"),
-                false,
-            )),
         }
     }
 }
@@ -612,10 +629,29 @@ impl From<gcloud_sdk::prost::DecodeError> for FirestoreError {
     }
 }
 
-#[cfg(all(test, feature = "admin"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
+    #[test]
+    fn a_client_timeout_is_retryable_and_a_server_deadline_is_not() {
+        let client_timeout = gcloud_sdk::tonic::Status::from(
+            gcloud_sdk::RequestTimeoutElapsed::Idle(Duration::from_secs(5)),
+        );
+        let server_deadline = gcloud_sdk::tonic::Status::deadline_exceeded("Deadline Exceeded");
+        for (status, retry_possible) in [(client_timeout, true), (server_deadline, false)] {
+            match FirestoreError::from(status) {
+                FirestoreError::DatabaseError(err) => {
+                    assert_eq!(err.public.code, "DeadlineExceeded");
+                    assert_eq!(err.retry_possible, retry_possible, "{err:?}");
+                }
+                other => panic!("expected DatabaseError, got {other:?}"),
+            }
+        }
+    }
+
+    #[cfg(feature = "admin")]
     #[test]
     fn rpc_status_maps_like_the_equivalent_tonic_status() {
         let rpc_status = gcloud_sdk::google::rpc::Status {
@@ -642,6 +678,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "admin")]
     #[test]
     fn rpc_status_marks_unavailable_as_retryable() {
         let rpc_status = gcloud_sdk::google::rpc::Status {

@@ -26,6 +26,13 @@ used as a positive delay of the same length. `FirestoreDuration` stays for durat
 only if the delay ends within the cap. Before, only `max_retries` bounded those retries, so a cap of zero still let
 them run.
 
+`FirestoreDbOptions` gains `request_timeout`, off by default, see
+[Request timeouts](https://firestore-rust.abdolence.dev/request-timeouts.html). Adding the field breaks code that builds
+`FirestoreDbOptions` with a struct literal naming every field; `FirestoreDbOptions::new` and its builder are unaffected.
+
+Reads now retry a `DEADLINE_EXCEEDED` from Firestore up to `max_retries` times, and the error they return after the
+last retry has `retry_possible` set. Writes still return it at once, with `retry_possible` unset.
+
 ## 0.58
 
 v0.58.0 moves to gcloud-sdk 0.33, which mints the tokens with `google-cloud-auth`, the authentication crate of

@@ -4,6 +4,7 @@ use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
+use gcloud_sdk::RequestTimeouts;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
@@ -86,7 +87,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
 
-        let update_document_request = gcloud_sdk::tonic::Request::new(UpdateDocumentRequest {
+        let update_document_request = UpdateDocumentRequest {
             update_mask: update_only.map({
                 |vf| DocumentMask {
                     field_paths: vf.iter().map(|f| f.to_string()).collect(),
@@ -98,13 +99,15 @@ impl FirestoreUpdateSupport for FirestoreDb {
             }),
             current_document: precondition.map(|cond| cond.try_into()).transpose()?,
             request_options: self.resolve_request_options(None),
-        });
+        };
 
         let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
         let update_response = self
             .client()
             .get()
-            .update_document(update_document_request)
+            .update_document(
+                self.request_with_timeout(update_document_request, RequestTimeouts::with_total),
+            )
             .await?;
         let end_query_utc: FirestoreInstant = FirestoreInstant::now();
         let query_duration = end_query_utc.duration_since(begin_query_utc);

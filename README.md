@@ -23,6 +23,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
     - Consistency selectors to read at a given time or inside a transaction;
     - Explaining queries;
     - Request tags to attribute Firestore usage;
+    - Opt-in request timeouts;
 - Full async based on Tokio runtime;
 - Macros that help you use your structure fields as Firestore field paths;
 - Implements own Serde serializer to Firestore protobuf values;

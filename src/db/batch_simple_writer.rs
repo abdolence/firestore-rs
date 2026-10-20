@@ -6,6 +6,7 @@ use crate::{
 use async_trait::async_trait;
 use futures::TryFutureExt;
 use gcloud_sdk::google::firestore::v1::{BatchWriteRequest, Write};
+use gcloud_sdk::RequestTimeouts;
 use rsb_derive::*;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -87,7 +88,10 @@ impl FirestoreBatchWriter for FirestoreSimpleBatchWriter {
                     .db
                     .client()
                     .get()
-                    .batch_write(request.clone())
+                    .batch_write(
+                        self.db
+                            .request_with_timeout(request.clone(), RequestTimeouts::with_total),
+                    )
                     .await
                     .map_err(FirestoreError::from)?;
 
