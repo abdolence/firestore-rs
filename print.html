@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-12f927a7.js";
+            window.path_to_searchindex_js = "searchindex-47f4325a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c0735130.js"></script>
@@ -791,8 +791,8 @@ for idx in 0..500 {
 <p><code>write()</code> returns a <code>FirestoreBatchWriteResponse</code> with <code>write_results</code> and <code>statuses</code> for each
 queued write, in order, plus a <code>commit_time</code>. One failing write does not stop the rest from being
 reported. The request retries transient failures with exponential backoff;
-<code>FirestoreSimpleBatchWriteOptions::retry_max_elapsed_time</code> bounds how long, unbounded by default,
-set through <code>db.create_simple_batch_writer_with_options(...)</code>.</p>
+<code>FirestoreSimpleBatchWriteOptions::retry_max_elapsed_time</code> bounds how long, 60 seconds by
+default; set it through <code>db.create_simple_batch_writer_with_options(...)</code>, or to <code>None</code> for no limit.</p>
 <p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/batch-write-simple.rs">here</a>.</p>
 <h2 id="the-streaming-writer"><a class="header" href="#the-streaming-writer">The streaming writer</a></h2>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
@@ -2190,8 +2190,9 @@ the error without a retry. A commit is never retried, because its writes may alr
 <p>The reads in the first item also retry a <code>DEADLINE_EXCEEDED</code> that Firestore itself answers with, up to <code>max_retries</code>
 times, with or without a request timeout set. Writes, batch gets, partition queries and streams that have already
 started return it with <code>retry_possible</code> unset.</p>
-<p>Be aware not to leave <code>retry_max_elapsed_time</code> unset on a simple batch writer when you set a request timeout: against
-a Firestore that stopped answering, it then retries forever, one timeout per attempt.</p>
+<p>Be aware not to set <code>retry_max_elapsed_time</code> to <code>None</code> on a simple batch writer when you set a request timeout: against
+a Firestore that stopped answering, it then retries forever, one timeout per attempt. The 60 second default is checked
+between attempts, so the last attempt can still run for a whole timeout past it.</p>
 <p>To use another limit for a part of your code, or none at all, clone the client with <code>clone_with_request_timeout</code>.
 Batch writers and transactions created from the clone keep it:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
