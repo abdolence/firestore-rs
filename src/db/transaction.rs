@@ -77,10 +77,11 @@ impl FirestoreTransactionData {
         &self.writes
     }
 
-    /// Returns whether the transaction has no queued writes yet.
+    /// Returns whether the transaction holds no writes yet: neither queued ones nor a pipeline
+    /// write that ran in it.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty()
+        self.writes.is_empty() && !self.holds_pipeline_writes
     }
 }
 
@@ -200,7 +201,7 @@ impl<'a> FirestoreTransaction<'a> {
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
 
-        if self.data.writes.is_empty() {
+        if self.data.is_empty() {
             self.data.transaction_span.in_scope(|| {
                 debug!("Transaction has been committed without any writes.");
             });
@@ -307,25 +308,37 @@ impl<'a> FirestoreTransaction<'a> {
         Ok(())
     }
 
-    /// Returns whether the transaction has no queued writes yet.
+    /// Returns whether the transaction holds no writes yet: neither queued ones nor a pipeline
+    /// write that ran in it.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
-    /// Marks the transaction as holding pipeline writes, and returns its ID to run one with.
+    /// The ID to run a pipeline write in this transaction with.
     ///
-    /// Fails when the transaction buffers writes already, since Firestore would reject its
-    /// commit.
-    pub(crate) fn hold_pipeline_writes(&mut self) -> FirestoreResult<FirestoreTransactionId> {
+    /// Fails when the transaction is finished, or buffers writes already, since Firestore would
+    /// reject its commit.
+    pub(crate) fn pipeline_write_transaction_id(&self) -> FirestoreResult<&FirestoreTransactionId> {
+        if self.finished {
+            return Err(FirestoreError::invalid_parameters(
+                "transaction",
+                "a finished transaction cannot run a pipeline write",
+            ));
+        }
         if !self.data.writes.is_empty() {
             return Err(FirestoreError::invalid_parameters(
                 "transaction",
                 "a transaction that buffers writes cannot also run a pipeline write",
             ));
         }
+        Ok(&self.data.transaction_id)
+    }
+
+    /// Marks the transaction as holding pipeline writes. Called once the write is built and about
+    /// to be sent: from then on its outcome is unknown, whether or not it succeeds.
+    pub(crate) fn hold_pipeline_writes(&mut self) {
         self.data.holds_pipeline_writes = true;
-        Ok(self.data.transaction_id.clone())
     }
 
     /// Returns the transaction's underlying data without consuming it.

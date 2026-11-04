@@ -307,13 +307,9 @@ where
         self,
         transaction: &mut FirestoreTransaction<'_>,
     ) -> FirestoreResult<FirestorePipelineWriteResult> {
-        let transaction_id = transaction.hold_pipeline_writes()?;
         let db = self.context.db;
-        db.execute_pipeline_write(
-            FirestorePipelineWriteParams::from(self)
-                .with_transaction(FirestorePipelineWriteTransaction::Existing(transaction_id)),
-        )
-        .await
+        db.execute_pipeline_write_in_transaction(self.into(), transaction)
+            .await
     }
 }
 

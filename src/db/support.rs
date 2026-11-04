@@ -543,6 +543,17 @@ pub trait FirestorePipelineSupport {
         &self,
         params: FirestorePipelineWriteParams,
     ) -> FirestoreResult<FirestorePipelineWriteResult>;
+
+    /// Runs a pipeline that ends in a write in `transaction`, which holds it until commit.
+    /// `params.transaction` is ignored.
+    ///
+    /// The transaction is marked as holding the write only once the request is built, so a write
+    /// rejected before it was sent leaves the transaction as it was.
+    async fn execute_pipeline_write_in_transaction(
+        &self,
+        params: FirestorePipelineWriteParams,
+        transaction: &mut FirestoreTransaction<'_>,
+    ) -> FirestoreResult<FirestorePipelineWriteResult>;
 }
 
 /// Plans or applies one collection group's declared indexes, field overrides and TTL policy.
