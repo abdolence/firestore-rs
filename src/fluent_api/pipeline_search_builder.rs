@@ -23,13 +23,18 @@ pub struct FirestorePipelineSearchQueryBuilder<Q> {
 
 /// Builds the text of a text search from terms, phrases and exclusions.
 ///
+/// It mirrors [`FirestorePipelineFilterBuilder`](crate::pipeline_filter_builder::FirestorePipelineFilterBuilder):
+/// every clause is an `Option`, so a list may mix plain and optional clauses.
+///
 /// The argument of the closure of [`text`](FirestorePipelineSearchBuilder::text).
 #[derive(Debug, Clone, Copy)]
 pub struct FirestoreTextQueryBuilder;
 
 impl FirestorePipelineSearchBuilder {
     /// Searches the indexed text fields for the query `query` builds. The closure may also
-    /// return a string, which is sent as written.
+    /// return a string, which is sent as written. A search whose query is `None`, or has no
+    /// clause that must match, fails when the pipeline is converted, as Firestore would match
+    /// nothing.
     pub fn text<FN, Q>(self, query: FN) -> FirestorePipelineSearchQueryBuilder<FirestoreTextSearch>
     where
         FN: FnOnce(FirestoreTextQueryBuilder) -> Q,
@@ -145,37 +150,43 @@ where
 }
 
 impl FirestoreTextQueryBuilder {
-    /// A word the document must contain. Matching ignores case and accents and finds other forms
-    /// of the word: `waffle` finds "Waffles". A word that the service would read as more than
-    /// one term or as an operator is quoted, which matches it as written, without other forms.
-    pub fn term<S: Into<String>>(&self, word: S) -> FirestoreTextQueryClause {
-        FirestoreTextQueryClause::term(word.into())
+    /// A word the document must contain, always `Some`. Matching ignores case and accents and
+    /// finds other forms of the word: `waffle` finds "Waffles". A word that the service would
+    /// read as more than one term or as an operator is quoted, which matches it as written,
+    /// without other forms.
+    pub fn term<S: Into<String>>(&self, word: S) -> Option<FirestoreTextQueryClause> {
+        Some(FirestoreTextQueryClause::term(word.into()))
     }
 
-    /// Words the document must contain in this order, matched as written, without other forms
-    /// of the words. Punctuation is ignored, and a quote character is replaced by a space.
-    pub fn phrase<S: Into<String>>(&self, words: S) -> FirestoreTextQueryClause {
-        FirestoreTextQueryClause::phrase(words.into())
+    /// Words the document must contain in this order, always `Some`, matched as written,
+    /// without other forms of the words. Punctuation is ignored, and a quote character is
+    /// replaced by a space.
+    pub fn phrase<S: Into<String>>(&self, words: S) -> Option<FirestoreTextQueryClause> {
+        Some(FirestoreTextQueryClause::phrase(words.into()))
     }
 
-    /// Requires the term or phrase of `clause` to be absent from the document.
-    pub fn exclude(&self, clause: FirestoreTextQueryClause) -> FirestoreTextQueryClause {
-        clause.excluded()
+    /// Requires the term or phrase of `clause` to be absent from the document. A `None` stays
+    /// `None`.
+    pub fn exclude(
+        &self,
+        clause: Option<FirestoreTextQueryClause>,
+    ) -> Option<FirestoreTextQueryClause> {
+        clause.map(FirestoreTextQueryClause::excluded)
     }
 
     /// Requires every clause present to hold. The items are all clauses or all `Option`s of
-    /// one, and a `None` drops out. A search with no clause that must match, which includes
-    /// one whose items are all `None`, fails when the pipeline is converted, as Firestore would
-    /// match nothing.
-    pub fn for_all<I>(&self, clauses: I) -> FirestoreTextQuery
+    /// one, and a `None` drops out. None present gives `None`, which `text` rejects when the
+    /// pipeline is converted, as does a query with no clause that must match.
+    pub fn for_all<I>(&self, clauses: I) -> Option<FirestoreTextQuery>
     where
         I: IntoIterator,
         I::Item: FirestoreTextQueryItem,
     {
-        clauses
+        let present: Vec<FirestoreTextQueryClause> = clauses
             .into_iter()
             .filter_map(FirestoreTextQueryItem::build_clause)
-            .collect()
+            .collect();
+        (!present.is_empty()).then(|| present.into_iter().collect())
     }
 }
 

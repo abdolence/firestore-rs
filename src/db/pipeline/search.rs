@@ -305,14 +305,19 @@ mod tests {
             ("phrase", t.phrase("maple syrup").into()),
             ("phrase-belgian", t.phrase("belgian waffles").into()),
             ("phrase-wrong-order", t.phrase("waffles belgian").into()),
-            ("and", t.for_all([t.term("waffles"), t.term("bacon")])),
+            (
+                "and",
+                t.for_all([t.term("waffles"), t.term("bacon")]).into(),
+            ),
             (
                 "exclude",
-                t.for_all([t.term("waffles"), t.exclude(t.term("bacon"))]),
+                t.for_all([t.term("waffles"), t.exclude(t.term("bacon"))])
+                    .into(),
             ),
             (
                 "exclude-phrase",
-                t.for_all([t.term("pizza"), t.exclude(t.phrase("New York"))]),
+                t.for_all([t.term("pizza"), t.exclude(t.phrase("New York"))])
+                    .into(),
             ),
             ("case", t.term("WAFFLES").into()),
             ("diacritic", t.term("cr\u{ea}pes").into()),
@@ -340,16 +345,16 @@ mod tests {
     #[test]
     fn for_all_renders_the_clauses_that_are_present() {
         let t = FirestoreTextQueryBuilder;
+        let excluded_word = Some("bacon");
+        let no_excluded_word: Option<&str> = None;
 
         let mixed = t.for_all([
-            Some(t.term("waffles")),
-            None,
-            Some(t.exclude(t.term("bacon"))),
+            t.term("waffles"),
+            excluded_word.and_then(|word| t.exclude(t.term(word))),
+            no_excluded_word.and_then(|word| t.exclude(t.term(word))),
         ]);
-        let plain = t.for_all([t.term("waffles"), t.exclude(t.term("bacon"))]);
 
-        assert_eq!(mixed.to_string(), "waffles -bacon");
-        assert_eq!(mixed, plain);
+        assert_eq!(mixed.unwrap().to_string(), "waffles -bacon");
     }
 
     #[test]
@@ -388,11 +393,13 @@ mod tests {
                 .into_pipeline(),
             builder()
                 .from(RESTAURANTS)
-                .search(|s| s.text(|t| t.for_all(Vec::<FirestoreTextQueryClause>::new())))
+                .search(|s| s.text(|t| t.for_all(Vec::<Option<FirestoreTextQueryClause>>::new())))
                 .into_pipeline(),
             builder()
                 .from(RESTAURANTS)
-                .search(|s| s.text(|t| t.for_all([None::<FirestoreTextQueryClause>])))
+                .search(|s| {
+                    s.text(|t| t.for_all([None::<FirestoreTextQueryClause>, t.exclude(None)]))
+                })
                 .into_pipeline(),
             builder()
                 .from(RESTAURANTS)

@@ -113,6 +113,20 @@ impl From<FirestoreTextQueryClause> for FirestoreTextQuery {
     }
 }
 
+/// `None` converts to a query without clauses, which a pipeline conversion rejects.
+impl From<Option<FirestoreTextQuery>> for FirestoreTextQuery {
+    fn from(query: Option<FirestoreTextQuery>) -> Self {
+        query.unwrap_or_else(|| std::iter::empty().collect())
+    }
+}
+
+/// `None` converts to a query without clauses, which a pipeline conversion rejects.
+impl From<Option<FirestoreTextQueryClause>> for FirestoreTextQuery {
+    fn from(clause: Option<FirestoreTextQueryClause>) -> Self {
+        clause.into_iter().collect()
+    }
+}
+
 impl FromIterator<FirestoreTextQueryClause> for FirestoreTextQuery {
     fn from_iter<I: IntoIterator<Item = FirestoreTextQueryClause>>(clauses: I) -> Self {
         Self(TextQuery::Clauses(clauses.into_iter().collect()))
