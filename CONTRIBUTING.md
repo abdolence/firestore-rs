@@ -76,6 +76,25 @@ Rustdoc covers what a caller calls: methods, functions, macros, traits. Structs 
 mirror Google's Firestore model are left to Google's documentation. Write what the code cannot
 say - preconditions, failure modes, ordering, cost - and never a restatement of the signature.
 
+### Live tests
+
+The integration tests run against a real Firestore project: `GCP_PROJECT` names it, and
+Application Default Credentials authenticate the calls.
+
+The pipeline tests also need a database of the Enterprise edition, named by
+`GCP_ENTERPRISE_DATABASE_ID`. Create it once per project and keep it:
+
+```sh
+gcloud firestore databases create --database=firestore-rs-enterprise \
+  --location=nam5 --edition=enterprise --enable-realtime-updates
+```
+
+The tests seed that database themselves. The first test of a pipeline test binary upserts the
+documents the tests read, writes the bulk collection when it holds fewer documents than expected,
+and declares the composite, vector, text and geo indexes through the crate's own index
+management. On a database that is already seeded this takes about two seconds, and a drifted
+document is restored. Building a missing index takes minutes.
+
 ### How to contribute - the Process
 
 1.  Make sure the change would be welcome (e.g. a bugfix or a useful feature); best do so by proposing it in a GitHub issue
