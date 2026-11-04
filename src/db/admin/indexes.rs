@@ -4298,6 +4298,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_index_that_holds_text_and_geo_fields_matches_its_declaration() {
+        let declared = FirestoreCompositeIndex::new(vec![
+            index_field("body_probe", FirestoreIndexFieldMode::Text),
+            index_field(
+                "location_probe",
+                FirestoreIndexFieldMode::Geo(FirestoreGeoIndexConfig::new()),
+            ),
+        ]);
+        let existing = FirestoreIndexExistingState {
+            indexes: decode_captured_indexes(include_str!(
+                "testdata/enterprise-list-indexes-text-and-geo.json"
+            )),
+            fields: vec![],
+        };
+        let params =
+            FirestoreIndexParams::new(FirestoreCollectionId::from_static("fixes-index-probe"))
+                .with_composite_indexes(vec![declared.clone()]);
+
+        let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+
+        assert_eq!(plan.pending, vec![declared], "{plan}");
+        assert!(plan.create_indexes.is_empty(), "{plan}");
+        assert!(plan.delete_indexes.is_empty(), "{plan}");
+    }
+
     #[tokio::test]
     async fn only_the_owned_groups_index_is_ever_considered_among_real_database_indexes() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
