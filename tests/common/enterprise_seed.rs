@@ -35,8 +35,9 @@ static SEEDED: OnceCell<Result<(), String>> = OnceCell::const_new();
 /// Seeds the database once per test binary.
 ///
 /// Several binaries may seed concurrently: the upserts commit the same contents, and an index
-/// create that loses the race to another binary is reported by the sync as unchanged, after which
-/// [`ensure_indexes_ready`] waits for the winner's build.
+/// create that loses the race to another binary is reported by the sync as unchanged once the
+/// listing shows the winner's index, or else fails with `ALREADY_EXISTS`. [`ensure_indexes_ready`]
+/// plans again after either, and waits for the winner's build.
 pub async fn ensure_seeded(db: &FirestoreDb) -> SeedResult {
     SEEDED
         .get_or_init(|| async { seed(db).await.map_err(|err| err.to_string()) })
@@ -538,7 +539,14 @@ async fn ensure_indexes_ready(declared: FirestoreIndexesBuilder<'_, FirestoreDb>
         if plan.create_indexes.is_empty() {
             sleep(INDEX_POLL_INTERVAL.min(remaining)).await;
         } else {
-            declared.clone().wait_until_ready(remaining).sync().await?;
+            match declared.clone().wait_until_ready(remaining).sync().await {
+                Ok(_) => {}
+                // The index exists, but the listing does not show it yet.
+                Err(firestore::errors::FirestoreError::DataConflictError(_)) => {
+                    sleep(INDEX_POLL_INTERVAL.min(remaining)).await
+                }
+                Err(err) => return Err(err.into()),
+            }
         }
     }
 }
