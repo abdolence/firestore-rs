@@ -286,7 +286,7 @@ impl FirestorePipelineExprBuilder {
 }
 
 /// The items that the closure `build` returns, converted to `T`.
-fn build_all<FN, I, T>(build: FN) -> Vec<T>
+pub(crate) fn build_all<FN, I, T>(build: FN) -> Vec<T>
 where
     FN: FnOnce(FirestorePipelineExprBuilder) -> I,
     I: IntoIterator,

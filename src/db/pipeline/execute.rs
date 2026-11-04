@@ -1,15 +1,20 @@
 use crate::db::end_at_first_error;
 use crate::{
-    FirestoreDb, FirestoreDocument, FirestoreError, FirestoreInstant, FirestorePipelineParams,
-    FirestorePipelineSupport, FirestoreResult, FirestoreWithPipelineMetadata,
+    FirestoreConsistencySelector, FirestoreDb, FirestoreDocument, FirestoreError, FirestoreInstant,
+    FirestorePipelineParams, FirestorePipelineSupport, FirestorePipelineWriteParams,
+    FirestorePipelineWriteResult, FirestorePipelineWriteTransaction, FirestoreResult,
+    FirestoreTransactionOptions, FirestoreWithPipelineMetadata,
 };
 use async_trait::async_trait;
 use futures::stream::{self, BoxStream};
 use futures::{future, StreamExt, TryStreamExt};
-use gcloud_sdk::google::firestore::v1::execute_pipeline_request::PipelineType;
-use gcloud_sdk::google::firestore::v1::{ExecutePipelineRequest, StructuredPipeline};
+use gcloud_sdk::google::firestore::v1::execute_pipeline_request::{
+    ConsistencySelector, PipelineType,
+};
+use gcloud_sdk::google::firestore::v1::{ExecutePipelineRequest, Pipeline, StructuredPipeline};
 use gcloud_sdk::RequestTimeouts;
 use serde::Deserialize;
+use std::collections::HashMap;
 use tracing::*;
 
 impl FirestoreDb {
@@ -35,6 +40,52 @@ impl FirestoreDb {
                     .into_iter()
                     .collect(),
                 pipeline: Some(params.pipeline.try_into()?),
+            })),
+        })
+    }
+
+    fn create_pipeline_write_request(
+        &self,
+        params: FirestorePipelineWriteParams,
+    ) -> FirestoreResult<ExecutePipelineRequest> {
+        let (consistency_selector, auto_commit_transaction) = match (
+            params.transaction,
+            &self.session_params.consistency_selector,
+        ) {
+            (Some(FirestorePipelineWriteTransaction::Existing(transaction_id)), _) => (
+                Some(ConsistencySelector::Transaction(transaction_id)),
+                false,
+            ),
+            (_, Some(FirestoreConsistencySelector::Transaction(_))) => {
+                return Err(FirestoreError::invalid_parameters(
+                    "consistency_selector",
+                    "a pipeline write in a transaction runs with execute_in_transaction",
+                ))
+            }
+            (_, Some(FirestoreConsistencySelector::ReadTime(_))) => {
+                return Err(FirestoreError::invalid_parameters(
+                    "consistency_selector",
+                    "Firestore runs no pipeline write at a read time",
+                ))
+            }
+            (Some(FirestorePipelineWriteTransaction::Atomic), None) => (
+                Some(ConsistencySelector::NewTransaction(
+                    FirestoreTransactionOptions::new().try_into()?,
+                )),
+                true,
+            ),
+            (None, None) => (None, false),
+        };
+        let mut pipeline = Pipeline::try_from(params.pipeline)?;
+        pipeline.stages.push(params.write.try_into()?);
+        Ok(ExecutePipelineRequest {
+            database: self.get_database_path().clone(),
+            auto_commit_transaction,
+            request_options: self.resolve_request_options(params.request_options.as_ref()),
+            consistency_selector,
+            pipeline_type: Some(PipelineType::StructuredPipeline(StructuredPipeline {
+                options: HashMap::new(),
+                pipeline: Some(pipeline),
             })),
         })
     }
@@ -183,6 +234,42 @@ impl FirestorePipelineSupport for FirestoreDb {
             })
             .boxed())
     }
+
+    async fn execute_pipeline_write(
+        &self,
+        params: FirestorePipelineWriteParams,
+    ) -> FirestoreResult<FirestorePipelineWriteResult> {
+        let span = span!(
+            Level::DEBUG,
+            "Firestore Pipeline Write",
+            "/firestore/response_time" = field::Empty
+        );
+        let request = self.create_pipeline_write_request(params)?;
+        let begin_utc = FirestoreInstant::now();
+
+        let responses = self
+            .client()
+            .get()
+            .execute_pipeline(self.request_with_timeout(request, RequestTimeouts::with_idle))
+            .await?
+            .into_inner();
+        let result = FirestorePipelineWriteResult::try_from(
+            end_at_first_error(responses)
+                .try_collect::<Vec<_>>()
+                .await?,
+        )?;
+
+        let duration = FirestoreInstant::now().duration_since(begin_utc);
+        span.record("/firestore/response_time", duration.as_millis());
+        span.in_scope(|| {
+            debug!(
+                duration_milliseconds = duration.as_millis(),
+                documents_modified = result.documents_modified,
+                "Ran a pipeline write."
+            );
+        });
+        Ok(result)
+    }
 }
 
 /// `stream` with every error logged and left out, for the streams that yield bare values.
@@ -202,20 +289,28 @@ fn without_errors<'b, T: Send + 'b>(stream: BoxStream<'b, FirestoreResult<T>>) -
 
 #[cfg(test)]
 mod tests {
-    use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
+    use crate::db::fake_firestore::{begin_response, FakeFirestore, FakeResponse};
     use crate::db::pipeline::fixtures::{fixture_case, request, responses};
     use crate::timestamp_utils::{from_timestamp, to_timestamp};
-    use crate::{FirestoreConsistencySelector, FirestoreExplainOptions, FirestoreInstant};
+    use crate::{
+        FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreExplainOptions,
+        FirestoreInstant, FirestorePipelineWriteResult, FirestoreReference, FirestoreResult,
+        FirestoreTransactionId, FirestoreTransactionResponse, FirestoreWriteResult,
+    };
     use futures::TryStreamExt;
     use gcloud_sdk::google::firestore::v1::execute_pipeline_request::ConsistencySelector;
-    use gcloud_sdk::google::firestore::v1::{ExecutePipelineRequest, RequestOptions};
+    use gcloud_sdk::google::firestore::v1::{
+        CommitResponse, ExecutePipelineRequest, RequestOptions, WriteResult,
+    };
     use gcloud_sdk::prost::Message;
-    use serde::Deserialize;
+    use gcloud_sdk::tonic::Code;
+    use serde::{Deserialize, Serialize};
+    use std::sync::atomic::AtomicU8;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     /// A server that answers every pipeline with the responses captured in `fixture`, and the
-    /// requests it received.
+    /// requests it received. It also opens, commits and rolls back transactions.
     async fn replaying(
         fixture: &serde_json::Value,
     ) -> (FakeFirestore, Arc<Mutex<Vec<ExecutePipelineRequest>>>) {
@@ -225,7 +320,17 @@ mod tests {
             .collect();
         let requests = Arc::new(Mutex::new(Vec::new()));
         let received = requests.clone();
-        let server = FakeFirestore::start(move |_, body| {
+        let begins = AtomicU8::new(0);
+        let server = FakeFirestore::start(move |method, body| {
+            if method.ends_with("/BeginTransaction") {
+                return begin_response(&begins);
+            }
+            if method.ends_with("/Commit") {
+                return ("Commit".to_string(), FakeResponse::committed());
+            }
+            if method.ends_with("/Rollback") {
+                return ("Rollback".to_string(), FakeResponse::empty());
+            }
             received
                 .lock()
                 .unwrap()
@@ -237,6 +342,275 @@ mod tests {
         })
         .await;
         (server, requests)
+    }
+
+    /// A row of `dml-insert.json#by_name`.
+    #[derive(Serialize)]
+    struct DmlRow {
+        #[serde(rename = "__name__")]
+        name: FirestoreReference,
+        title: &'static str,
+        n: i64,
+    }
+
+    /// How a write runs.
+    #[derive(Clone, Copy, Debug)]
+    enum WriteRun {
+        Execute,
+        Atomic,
+        InTransaction,
+    }
+
+    /// Runs the insert of `dml-insert.json#by_name` on `db` as `run` says, and returns its result
+    /// with the ID of the transaction it ran in.
+    async fn insert_by_name(
+        db: &FirestoreDb,
+        run: WriteRun,
+    ) -> (
+        FirestoreResult<FirestorePipelineWriteResult>,
+        Option<FirestoreTransactionId>,
+    ) {
+        let documents = "projects/latestbit/databases/firestore-rs-enterprise/documents";
+        let insert = db.fluent().pipeline().insert().literals([
+            DmlRow {
+                name: FirestoreReference(format!("{documents}/pipeline-dml/doc-1")),
+                title: "one",
+                n: 1,
+            },
+            DmlRow {
+                name: FirestoreReference(format!("{documents}/pipeline-dml/doc-2")),
+                title: "two",
+                n: 2,
+            },
+        ]);
+        match run {
+            WriteRun::Execute => (insert.execute().await, None),
+            WriteRun::Atomic => (insert.atomic().execute().await, None),
+            WriteRun::InTransaction => {
+                let mut transaction = db.begin_transaction().await.unwrap();
+                let result = insert.execute_in_transaction(&mut transaction).await;
+                let transaction_id = transaction.transaction_id().clone();
+                transaction.rollback().await.unwrap();
+                (result, Some(transaction_id))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_write_request_follows_the_session_selector_and_the_run() {
+        let by_name = fixture_case("dml-insert", Some("by_name"));
+        let auto_commit = request(&fixture_case(
+            "dml-transactions",
+            Some("auto_commit_new_read_write"),
+        ));
+        let (server, requests) = replaying(&by_name).await;
+        let read_time: FirestoreInstant = "2026-11-04T18:30:00Z".parse().unwrap();
+        let in_transaction = server
+            .db
+            .clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(vec![42]));
+        let at_read_time = server
+            .db
+            .clone_with_consistency_selector(FirestoreConsistencySelector::ReadTime(read_time));
+
+        for (session, db, run, accepted) in [
+            ("no selector", &server.db, WriteRun::Execute, true),
+            ("no selector", &server.db, WriteRun::Atomic, true),
+            ("no selector", &server.db, WriteRun::InTransaction, true),
+            ("transaction", &in_transaction, WriteRun::Execute, false),
+            ("transaction", &in_transaction, WriteRun::Atomic, false),
+            (
+                "transaction",
+                &in_transaction,
+                WriteRun::InTransaction,
+                true,
+            ),
+            ("read time", &at_read_time, WriteRun::Execute, false),
+            ("read time", &at_read_time, WriteRun::Atomic, false),
+            ("read time", &at_read_time, WriteRun::InTransaction, true),
+        ] {
+            let (result, transaction_id) = insert_by_name(db, run).await;
+            let sent: Vec<_> = requests.lock().unwrap().drain(..).collect();
+
+            if !accepted {
+                assert!(
+                    matches!(result, Err(FirestoreError::InvalidParametersError(_))),
+                    "{session}, {run:?}: {result:?}"
+                );
+                assert!(sent.is_empty(), "{session}, {run:?}: {sent:?}");
+                continue;
+            }
+            let (consistency_selector, auto_commit_transaction) = match (run, transaction_id) {
+                (_, Some(transaction_id)) => (
+                    Some(ConsistencySelector::Transaction(transaction_id)),
+                    false,
+                ),
+                (WriteRun::Atomic, None) => (
+                    auto_commit.consistency_selector.clone(),
+                    auto_commit.auto_commit_transaction,
+                ),
+                _ => (None, false),
+            };
+            let expected = ExecutePipelineRequest {
+                database: "projects/fake-firestore/databases/(default)".to_string(),
+                consistency_selector,
+                auto_commit_transaction,
+                ..request(&by_name)
+            };
+            assert_eq!(
+                result.unwrap(),
+                FirestorePipelineWriteResult::new(2),
+                "{session}, {run:?}"
+            );
+            assert_eq!(sent, [expected], "{session}, {run:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_commit_after_a_pipeline_write_converts_its_write_result() {
+        let captured = fixture_case("core-rpc/commit-after-pipeline-dml", None);
+        let instant = |time: &serde_json::Value| -> FirestoreInstant {
+            time.as_str().unwrap().parse().unwrap()
+        };
+        let update_time = instant(&captured["response"]["writeResults"][0]["updateTime"]);
+        let commit_time = instant(&captured["response"]["commitTime"]);
+        let inserted: Vec<Vec<u8>> = responses(&fixture_case(
+            "dml-transactions",
+            Some("dml_in_existing_transaction"),
+        ))
+        .iter()
+        .map(Message::encode_to_vec)
+        .collect();
+        let begins = AtomicU8::new(0);
+        let server = FakeFirestore::start(move |method, _| {
+            if method.ends_with("/BeginTransaction") {
+                return begin_response(&begins);
+            }
+            if method.ends_with("/Commit") {
+                let committed = CommitResponse {
+                    write_results: vec![WriteResult {
+                        update_time: Some(to_timestamp(update_time)),
+                        transform_results: Vec::new(),
+                    }],
+                    commit_time: Some(to_timestamp(commit_time)),
+                };
+                return (
+                    "Commit".to_string(),
+                    FakeResponse::Message(committed.encode_to_vec()),
+                );
+            }
+            (
+                "ExecutePipeline".to_string(),
+                FakeResponse::Paced(inserted.clone(), Duration::ZERO),
+            )
+        })
+        .await;
+        let mut transaction = server.db.begin_transaction().await.unwrap();
+        server
+            .db
+            .fluent()
+            .pipeline()
+            .insert()
+            .into("pipeline-dml")
+            .literals([serde_json::json!({ "title": "existing-tx" })])
+            .execute_in_transaction(&mut transaction)
+            .await
+            .unwrap();
+
+        let response = transaction.commit().await.unwrap();
+
+        assert_eq!(
+            response,
+            FirestoreTransactionResponse::new(vec![
+                FirestoreWriteResult::new(Vec::new()).with_update_time(update_time)
+            ])
+            .with_commit_time(commit_time)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_is_not_sent_again() {
+        let server = FakeFirestore::start(|_, _| {
+            (
+                "ExecutePipeline".to_string(),
+                FakeResponse::Status(Code::Unavailable),
+            )
+        })
+        .await;
+
+        let result = server
+            .db
+            .fluent()
+            .pipeline()
+            .delete()
+            .from("pipeline-dml")
+            .execute()
+            .await;
+
+        assert!(
+            matches!(result, Err(FirestoreError::DatabaseError(_))),
+            "{result:?}"
+        );
+        assert_eq!(server.calls(), ["ExecutePipeline"]);
+    }
+
+    #[tokio::test]
+    async fn a_buffered_write_after_a_pipeline_write_is_rejected() {
+        let (server, _) = replaying(&fixture_case("dml-delete", Some("all"))).await;
+        let mut transaction = server.db.begin_transaction().await.unwrap();
+
+        server
+            .db
+            .fluent()
+            .pipeline()
+            .delete()
+            .from("pipeline-dml")
+            .execute_in_transaction(&mut transaction)
+            .await
+            .unwrap();
+        let buffered = server
+            .db
+            .fluent()
+            .delete()
+            .from("pipeline-dml")
+            .document_id("doc-1")
+            .add_to_transaction(&mut transaction)
+            .map(|_| ());
+        transaction.rollback().await.unwrap();
+
+        assert!(
+            matches!(buffered, Err(FirestoreError::InvalidParametersError(_))),
+            "{buffered:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pipeline_write_after_a_buffered_write_is_rejected_unsent() {
+        let (server, requests) = replaying(&fixture_case("dml-delete", Some("all"))).await;
+        let mut transaction = server.db.begin_transaction().await.unwrap();
+
+        server
+            .db
+            .fluent()
+            .delete()
+            .from("pipeline-dml")
+            .document_id("doc-1")
+            .add_to_transaction(&mut transaction)
+            .unwrap();
+        let piped = server
+            .db
+            .fluent()
+            .pipeline()
+            .delete()
+            .from("pipeline-dml")
+            .execute_in_transaction(&mut transaction)
+            .await;
+        transaction.rollback().await.unwrap();
+
+        assert!(
+            matches!(piped, Err(FirestoreError::InvalidParametersError(_))),
+            "{piped:?}"
+        );
+        assert!(requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

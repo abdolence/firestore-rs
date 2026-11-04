@@ -28,6 +28,9 @@ pub struct FirestoreTransactionData {
     document_path: String,
     transaction_span: Span,
     writes: Vec<gcloud_sdk::google::firestore::v1::Write>,
+    /// Firestore holds a pipeline write until commit, and rejects a commit that also carries
+    /// buffered writes, so once one ran, `add` refuses them.
+    holds_pipeline_writes: bool,
 }
 
 impl FirestoreTransactionData {
@@ -46,6 +49,7 @@ impl FirestoreTransactionData {
             document_path,
             transaction_span,
             writes,
+            holds_pipeline_writes: false,
         }
     }
 
@@ -91,6 +95,12 @@ impl FirestoreTransactionOps for FirestoreTransactionData {
     where
         I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
     {
+        if self.holds_pipeline_writes {
+            return Err(FirestoreError::invalid_parameters(
+                "transaction",
+                "a transaction that ran a pipeline write cannot also buffer writes",
+            ));
+        }
         let write = write.try_into()?;
         self.writes.push(write);
         Ok(self)
@@ -150,12 +160,12 @@ impl<'a> FirestoreTransaction<'a> {
             debug!(mode = ?options.mode, "Created a new transaction.");
         });
 
-        let data = FirestoreTransactionData {
-            transaction_id: response.transaction,
-            document_path: db.get_documents_path().clone(),
+        let data = FirestoreTransactionData::new(
+            response.transaction,
+            db.get_documents_path().clone(),
             transaction_span,
-            writes: Vec::new(),
-        };
+            Vec::new(),
+        );
 
         Ok(Self {
             db,
@@ -303,6 +313,21 @@ impl<'a> FirestoreTransaction<'a> {
         self.data.is_empty()
     }
 
+    /// Marks the transaction as holding pipeline writes, and returns its ID to run one with.
+    ///
+    /// Fails when the transaction buffers writes already, since Firestore would reject its
+    /// commit.
+    pub(crate) fn hold_pipeline_writes(&mut self) -> FirestoreResult<FirestoreTransactionId> {
+        if !self.data.writes.is_empty() {
+            return Err(FirestoreError::invalid_parameters(
+                "transaction",
+                "a transaction that buffers writes cannot also run a pipeline write",
+            ));
+        }
+        self.data.holds_pipeline_writes = true;
+        Ok(self.data.transaction_id.clone())
+    }
+
     /// Returns the transaction's underlying data without consuming it.
     #[inline]
     pub fn transaction_data(&self) -> &FirestoreTransactionData {
@@ -334,12 +359,15 @@ impl<'a> FirestoreTransaction<'a> {
     #[inline]
     pub fn into_data(mut self) -> FirestoreTransactionData {
         self.finished = true;
-        FirestoreTransactionData::new(
-            self.data.transaction_id.clone(),
-            self.data.document_path.clone(),
-            self.data.transaction_span.clone(),
-            std::mem::take(&mut self.data.writes),
-        )
+        FirestoreTransactionData {
+            holds_pipeline_writes: self.data.holds_pipeline_writes,
+            ..FirestoreTransactionData::new(
+                self.data.transaction_id.clone(),
+                self.data.document_path.clone(),
+                self.data.transaction_span.clone(),
+                std::mem::take(&mut self.data.writes),
+            )
+        }
     }
 }
 

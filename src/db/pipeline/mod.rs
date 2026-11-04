@@ -25,5 +25,8 @@ mod stages;
 
 mod aggregate;
 
+mod write;
+pub use write::*;
+
 #[cfg(test)]
 mod fixtures;

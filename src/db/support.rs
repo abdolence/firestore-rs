@@ -536,6 +536,13 @@ pub trait FirestorePipelineSupport {
     where
         for<'de> T: Deserialize<'de>,
         T: Send + 'b;
+
+    /// Runs a pipeline that ends in a write. It is sent once and never retried: without a
+    /// transaction, a failed run may have written part of its documents.
+    async fn execute_pipeline_write(
+        &self,
+        params: FirestorePipelineWriteParams,
+    ) -> FirestoreResult<FirestorePipelineWriteResult>;
 }
 
 /// Plans or applies one collection group's declared indexes, field overrides and TTL policy.

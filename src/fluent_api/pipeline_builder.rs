@@ -1,15 +1,20 @@
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::pipeline_filter_builder::FirestorePipelineFilterBuilder;
 use crate::pipeline_search_builder::FirestorePipelineSearchBuilder;
+use crate::pipeline_stage_builder::build_all;
+use crate::pipeline_write_builder::{
+    FirestorePipelineUpdateInitialBuilder, FirestorePipelineWriteContext,
+};
 use crate::{
     FirestoreAddFieldsStage, FirestoreBoolExpr, FirestoreCollectionGroupSource,
     FirestoreCollectionSource, FirestoreDocument, FirestoreDocumentsSource,
-    FirestoreExplainOptions, FirestoreFieldsStage, FirestoreIndexHint, FirestoreLimitStage,
-    FirestoreLiteralsSource, FirestoreOffsetStage, FirestorePipeline, FirestorePipelineOrdering,
-    FirestorePipelineParams, FirestorePipelineSource, FirestorePipelineStage,
-    FirestorePipelineSupport, FirestoreRawStage, FirestoreRemoveFieldsStage,
-    FirestoreRequestOptions, FirestoreRequestTag, FirestoreResult, FirestoreSearch,
-    FirestoreSelection, FirestoreSortStage, FirestoreWhereStage, FirestoreWithPipelineMetadata,
+    FirestoreExplainOptions, FirestoreFieldsStage, FirestoreIndexHint, FirestoreInsertWrite,
+    FirestoreLimitStage, FirestoreLiteralsSource, FirestoreOffsetStage, FirestorePipeline,
+    FirestorePipelineOrdering, FirestorePipelineParams, FirestorePipelineSource,
+    FirestorePipelineStage, FirestorePipelineSupport, FirestorePipelineWrite, FirestoreRawStage,
+    FirestoreRemoveFieldsStage, FirestoreRequestOptions, FirestoreRequestTag, FirestoreResult,
+    FirestoreSearch, FirestoreSelection, FirestoreSortStage, FirestoreUpdateWrite,
+    FirestoreUpsertWrite, FirestoreWhereStage, FirestoreWithPipelineMetadata,
 };
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
@@ -50,6 +55,139 @@ impl<'a, D> FirestorePipelineVerbBuilder<'a, D> {
     pub fn select(self) -> FirestorePipelineInitialBuilder<FirestorePipelineDbContext<'a, D>> {
         FirestorePipelineInitialBuilder::new(FirestorePipelineDbContext::new(self.db))
     }
+
+    /// Starts a pipeline that deletes the documents its source and stages yield. Continue with a
+    /// source such as `.from()`.
+    ///
+    /// ```no_run
+    /// use firestore::*;
+    ///
+    /// # async fn example(db: &FirestoreDb) -> FirestoreResult<()> {
+    /// let deleted = db
+    ///     .fluent()
+    ///     .pipeline()
+    ///     .delete()
+    ///     .from("books")
+    ///     .filter(|q| q.field("stock").eq(0))
+    ///     .execute()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn delete(
+        self,
+    ) -> FirestorePipelineInitialBuilder<FirestorePipelineWriteContext<'a, D, FirestorePipelineWrite>>
+    {
+        FirestorePipelineInitialBuilder::new(FirestorePipelineWriteContext::new(
+            self.db,
+            FirestorePipelineWrite::Delete,
+        ))
+    }
+
+    /// Starts a pipeline that sets the fields `transforms` returns on the documents its source
+    /// and stages yield. Each item needs an alias unless it is a field. Continue with a source
+    /// such as `.in_col()`.
+    ///
+    /// ```no_run
+    /// use firestore::*;
+    ///
+    /// # async fn example(db: &FirestoreDb) -> FirestoreResult<()> {
+    /// let updated = db
+    ///     .fluent()
+    ///     .pipeline()
+    ///     .update(|e| [e.constant("sold_out").alias("status")])
+    ///     .in_col("books")
+    ///     .filter(|q| q.field("stock").eq(0))
+    ///     .execute()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn update<FN, I>(self, transforms: FN) -> FirestorePipelineUpdateInitialBuilder<'a, D>
+    where
+        FN: FnOnce(FirestorePipelineExprBuilder) -> I,
+        I: IntoIterator,
+        I::Item: Into<FirestoreSelection>,
+    {
+        FirestorePipelineUpdateInitialBuilder::new(FirestorePipelineWriteContext::new(
+            self.db,
+            FirestoreUpdateWrite::new().with_transforms(build_all(transforms)),
+        ))
+    }
+
+    /// Starts a pipeline that creates the documents its source and stages yield. Continue with
+    /// `.into()` to write them to a collection, or with a source to write each one to its own
+    /// `__name__`.
+    ///
+    /// Without a transaction, Firestore inserts only from `literals`. An insert from stored
+    /// documents runs [`atomic`](FirestorePipelineBuilder::atomic) or in a transaction:
+    ///
+    /// ```no_run
+    /// use firestore::*;
+    ///
+    /// # async fn example(db: &FirestoreDb) -> FirestoreResult<()> {
+    /// let archived = db
+    ///     .fluent()
+    ///     .pipeline()
+    ///     .insert()
+    ///     .into("archive")
+    ///     .document_id(|e| e.field("key"))
+    ///     .from("books")
+    ///     .filter(|q| q.field("stock").eq(0))
+    ///     .atomic()
+    ///     .execute()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn insert(
+        self,
+    ) -> FirestorePipelineInitialBuilder<FirestorePipelineWriteContext<'a, D, FirestoreInsertWrite>>
+    {
+        FirestorePipelineInitialBuilder::new(FirestorePipelineWriteContext::new(
+            self.db,
+            FirestoreInsertWrite::new(),
+        ))
+    }
+
+    /// Starts a pipeline that creates or replaces the documents its source and stages yield, with
+    /// the fields `transforms` returns set on each. Each item needs an alias unless it is a
+    /// field. A stored document is replaced, not merged into. Continue with `.into()` or a
+    /// source, as for [`insert`](Self::insert).
+    ///
+    /// Firestore runs an upsert only [`atomic`](FirestorePipelineBuilder::atomic) or in a
+    /// transaction:
+    ///
+    /// ```no_run
+    /// use firestore::*;
+    ///
+    /// # async fn example(db: &FirestoreDb) -> FirestoreResult<()> {
+    /// let archived = db
+    ///     .fluent()
+    ///     .pipeline()
+    ///     .upsert(|e| [e.constant("archived").alias("status")])
+    ///     .into("archive")
+    ///     .from("books")
+    ///     .atomic()
+    ///     .execute()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn upsert<FN, I>(
+        self,
+        transforms: FN,
+    ) -> FirestorePipelineInitialBuilder<FirestorePipelineWriteContext<'a, D, FirestoreUpsertWrite>>
+    where
+        FN: FnOnce(FirestorePipelineExprBuilder) -> I,
+        I: IntoIterator,
+        I::Item: Into<FirestoreSelection>,
+    {
+        FirestorePipelineInitialBuilder::new(FirestorePipelineWriteContext::new(
+            self.db,
+            FirestoreUpsertWrite::new().with_transforms(build_all(transforms)),
+        ))
+    }
 }
 
 /// Picks the source of a pipeline, its first stage.
@@ -58,7 +196,7 @@ impl<'a, D> FirestorePipelineVerbBuilder<'a, D> {
 /// closure of a subquery or a `union` branch.
 #[derive(Clone, Debug)]
 pub struct FirestorePipelineInitialBuilder<C> {
-    context: C,
+    pub(crate) context: C,
 }
 
 /// Adds stages to a pipeline and, at the top level, runs it.
@@ -68,8 +206,8 @@ pub struct FirestorePipelineInitialBuilder<C> {
 /// [`parent`](FirestorePipelineBuilder::parent), is gone once a stage follows.
 #[derive(Clone, Debug)]
 pub struct FirestorePipelineBuilder<C, S> {
-    context: C,
-    state: S,
+    pub(crate) context: C,
+    pub(crate) state: S,
 }
 
 /// A pipeline of a single collection source, which can still take a parent, widen to every
@@ -375,12 +513,8 @@ where
         I: IntoIterator,
         I::Item: Into<FirestoreSelection>,
     {
-        let fields = fields(FirestorePipelineExprBuilder)
-            .into_iter()
-            .map(Into::into)
-            .collect();
         self.stage(FirestorePipelineStage::Fields(FirestoreFieldsStage::new(
-            fields,
+            build_all(fields),
         )))
     }
 
@@ -394,12 +528,8 @@ where
         I: IntoIterator,
         I::Item: Into<FirestoreSelection>,
     {
-        let fields = fields(FirestorePipelineExprBuilder)
-            .into_iter()
-            .map(Into::into)
-            .collect();
         self.stage(FirestorePipelineStage::AddFields(
-            FirestoreAddFieldsStage::new(fields),
+            FirestoreAddFieldsStage::new(build_all(fields)),
         ))
     }
 
@@ -426,12 +556,8 @@ where
         I: IntoIterator,
         I::Item: Into<FirestorePipelineOrdering>,
     {
-        let orderings = orderings(FirestorePipelineExprBuilder)
-            .into_iter()
-            .map(Into::into)
-            .collect();
         self.stage(FirestorePipelineStage::Sort(FirestoreSortStage::new(
-            orderings,
+            build_all(orderings),
         )))
     }
 
