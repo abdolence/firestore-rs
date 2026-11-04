@@ -1,0 +1,1232 @@
+{
+  "description": "geo_distance queries, sorting and the combinations the service rejects",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "less_than_or_equal",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "less_than_or_equal",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "doubleValue": 1000.0
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Café Crêpe"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Pancake Palace"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "The \"Best\" Diner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Slice of New York"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Gluten-Free Kitchen"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:00:31.823664Z"
+        }
+      ]
+    },
+    {
+      "name": "less_than_or_equal_integer",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "less_than_or_equal",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "integerValue": "1000"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Café Crêpe"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Pancake Palace"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "The \"Best\" Diner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Slice of New York"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Gluten-Free Kitchen"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:00:30.799882Z"
+        }
+      ]
+    },
+    {
+      "name": "sort_by_distance",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "less_than_or_equal",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "doubleValue": 5000.0
+                        }
+                      ]
+                    }
+                  },
+                  "sort": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "expression": {
+                                "functionValue": {
+                                  "name": "geo_distance",
+                                  "args": [
+                                    {
+                                      "fieldReferenceValue": "location"
+                                    },
+                                    {
+                                      "geoPointValue": {
+                                        "latitude": 38.989177,
+                                        "longitude": -107.065076
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              "direction": {
+                                "stringValue": "ascending"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "The \"Best\" Diner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Gluten-Free Kitchen"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Slice of New York"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Pancake Palace"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Café Crêpe"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Waffle and Bacon Co"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:00:55.447983Z"
+        }
+      ]
+    },
+    {
+      "name": "less_than",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "less_than",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "doubleValue": 1000.0
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports 'document_matches' or distance based searches like lte(geo_distance(field(STRING), GEO_POINT), NUMBER) but got less_than(geo_distance(location, (38.989177, -107.065076)), 1000.0D)",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "greater_than",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "greater_than",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "doubleValue": 1000.0
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports 'document_matches' or distance based searches like lte(geo_distance(field(STRING), GEO_POINT), NUMBER) but got greater_than(geo_distance(location, (38.989177, -107.065076)), 1000.0D)",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "not",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "not",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "less_than_or_equal",
+                            "args": [
+                              {
+                                "functionValue": {
+                                  "name": "geo_distance",
+                                  "args": [
+                                    {
+                                      "fieldReferenceValue": "location"
+                                    },
+                                    {
+                                      "geoPointValue": {
+                                        "latitude": 38.989177,
+                                        "longitude": -107.065076
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "doubleValue": 1000.0
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports 'document_matches' or distance based searches like lte(geo_distance(field(STRING), GEO_POINT), NUMBER) but got not(less_than_or_equal(geo_distance(location, (38.989177, -107.065076)), 1000.0D))",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "text_query_sorted_by_distance",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "sort": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "expression": {
+                                "functionValue": {
+                                  "name": "geo_distance",
+                                  "args": [
+                                    {
+                                      "fieldReferenceValue": "location"
+                                    },
+                                    {
+                                      "geoPointValue": {
+                                        "latitude": 38.989177,
+                                        "longitude": -107.065076
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              "direction": {
+                                "stringValue": "ascending"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) with a geo_distance query can only be sorted by the same geo_distance function used in the query filter.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "geo_query_sorted_by_score",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "less_than_or_equal",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "doubleValue": 5000.0
+                        }
+                      ]
+                    }
+                  },
+                  "sort": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "expression": {
+                                "functionValue": {
+                                  "name": "score"
+                                }
+                              },
+                              "direction": {
+                                "stringValue": "descending"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "add_fields": {
+                    "mapValue": {
+                      "fields": {
+                        "score": {
+                          "functionValue": {
+                            "name": "score"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        },
+                        "score": {
+                          "fieldReferenceValue": "score"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) sorting by score() requires a document_matches query.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "distance_in_add_fields",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "less_than_or_equal",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "doubleValue": 5000.0
+                        }
+                      ]
+                    }
+                  },
+                  "sort": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "expression": {
+                                "functionValue": {
+                                  "name": "geo_distance",
+                                  "args": [
+                                    {
+                                      "fieldReferenceValue": "location"
+                                    },
+                                    {
+                                      "geoPointValue": {
+                                        "latitude": 38.989177,
+                                        "longitude": -107.065076
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              "direction": {
+                                "stringValue": "ascending"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "add_fields": {
+                    "mapValue": {
+                      "fields": {
+                        "distance": {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        },
+                        "distance": {
+                          "fieldReferenceValue": "distance"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports score() in addFields expression.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "distance_outside_search",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "add_fields",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "distance": {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The 'geo_distance' function can only be used in the search(...) stage.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "and_text_and_geo",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "and",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "document_matches",
+                            "args": [
+                              {
+                                "stringValue": "waffles"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "functionValue": {
+                            "name": "less_than_or_equal",
+                            "args": [
+                              {
+                                "functionValue": {
+                                  "name": "geo_distance",
+                                  "args": [
+                                    {
+                                      "fieldReferenceValue": "location"
+                                    },
+                                    {
+                                      "geoPointValue": {
+                                        "latitude": 38.989177,
+                                        "longitude": -107.065076
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "doubleValue": 1000.0
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "AND function in search(...) query is not supported yet.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "or_text_and_geo",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "or",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "document_matches",
+                            "args": [
+                              {
+                                "stringValue": "pizza"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "functionValue": {
+                            "name": "less_than_or_equal",
+                            "args": [
+                              {
+                                "functionValue": {
+                                  "name": "geo_distance",
+                                  "args": [
+                                    {
+                                      "fieldReferenceValue": "location"
+                                    },
+                                    {
+                                      "geoPointValue": {
+                                        "latitude": 38.989177,
+                                        "longitude": -107.065076
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "doubleValue": 400.0
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports 'document_matches' or distance based searches like lte(geo_distance(field(STRING), GEO_POINT), NUMBER) but got or(document_matches(\"pizza\"), less_than_or_equal(geo_distance(location, (38.989177, -107.065076)), 400.0D))",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "and_text_and_equal",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "and",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "document_matches",
+                            "args": [
+                              {
+                                "stringValue": "waffles"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "functionValue": {
+                            "name": "equal",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "cuisine"
+                              },
+                              {
+                                "stringValue": "breakfast"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "AND function in search(...) query is not supported yet.",
+        "status": "INVALID_ARGUMENT"
+      }
+    }
+  ]
+}

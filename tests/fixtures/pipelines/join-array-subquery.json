@@ -1,0 +1,222 @@
+{
+  "description": "array subquery through let and variable over a collection group",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-restaurants"
+              }
+            ]
+          },
+          {
+            "name": "where",
+            "args": [
+              {
+                "functionValue": {
+                  "name": "equal",
+                  "args": [
+                    {
+                      "fieldReferenceValue": "cuisine"
+                    },
+                    {
+                      "stringValue": "breakfast"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "let",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "rname": {
+                      "fieldReferenceValue": "__name__"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "select",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "name": {
+                      "fieldReferenceValue": "name"
+                    },
+                    "reviews": {
+                      "functionValue": {
+                        "name": "array",
+                        "args": [
+                          {
+                            "pipelineValue": {
+                              "stages": [
+                                {
+                                  "name": "collection_group",
+                                  "args": [
+                                    {
+                                      "referenceValue": ""
+                                    },
+                                    {
+                                      "stringValue": "reviews"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "where",
+                                  "args": [
+                                    {
+                                      "functionValue": {
+                                        "name": "equal",
+                                        "args": [
+                                          {
+                                            "fieldReferenceValue": "restaurant"
+                                          },
+                                          {
+                                            "variableReferenceValue": "rname"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "sort",
+                                  "args": [
+                                    {
+                                      "mapValue": {
+                                        "fields": {
+                                          "expression": {
+                                            "fieldReferenceValue": "rating"
+                                          },
+                                          "direction": {
+                                            "stringValue": "descending"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "select",
+                                  "args": [
+                                    {
+                                      "mapValue": {
+                                        "fields": {
+                                          "rating": {
+                                            "fieldReferenceValue": "rating"
+                                          },
+                                          "reviewer": {
+                                            "fieldReferenceValue": "reviewer"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "reviews": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "rating": {
+                          "integerValue": "5"
+                        },
+                        "reviewer": {
+                          "stringValue": "alice"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "rating": {
+                          "integerValue": "4"
+                        },
+                        "reviewer": {
+                          "stringValue": "bob"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "name": {
+              "stringValue": "Sunrise Waffle House"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Waffle and Bacon Co"
+            },
+            "reviews": {
+              "arrayValue": {}
+            }
+          }
+        },
+        {
+          "fields": {
+            "reviews": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "rating": {
+                          "integerValue": "3"
+                        },
+                        "reviewer": {
+                          "stringValue": "carol"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "name": {
+              "stringValue": "Pancake Palace"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T18:03:48.063884Z"
+    }
+  ]
+}

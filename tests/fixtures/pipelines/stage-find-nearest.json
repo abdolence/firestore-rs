@@ -1,0 +1,317 @@
+{
+  "description": "find_nearest with limit and distance_field options",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "find_nearest",
+            "args": [
+              {
+                "fieldReferenceValue": "embedding"
+              },
+              {
+                "mapValue": {
+                  "fields": {
+                    "__type__": {
+                      "stringValue": "__vector__"
+                    },
+                    "value": {
+                      "arrayValue": {
+                        "values": [
+                          {
+                            "doubleValue": 0.9
+                          },
+                          {
+                            "doubleValue": 0.1
+                          },
+                          {
+                            "doubleValue": 0.2
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "stringValue": "euclidean"
+              }
+            ],
+            "options": {
+              "limit": {
+                "integerValue": "3"
+              },
+              "distance_field": {
+                "fieldReferenceValue": "distance"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-01",
+          "fields": {
+            "author": {
+              "stringValue": "Douglas Adams"
+            },
+            "distance": {
+              "doubleValue": 0
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.9
+                        },
+                        {
+                          "doubleValue": 0.1
+                        },
+                        {
+                          "doubleValue": 0.2
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "stock": {
+              "integerValue": "3"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "comedy"
+                  },
+                  {
+                    "stringValue": "space"
+                  },
+                  {
+                    "stringValue": "adventure"
+                  }
+                ]
+              }
+            },
+            "rating": {
+              "doubleValue": 4.2
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "published": {
+              "integerValue": "1979"
+            },
+            "title": {
+              "stringValue": "The Hitchhiker's Guide to the Galaxy"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": true
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "224"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+          "fields": {
+            "published": {
+              "integerValue": "1965"
+            },
+            "stock": {
+              "integerValue": "6"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "hugo": {
+                    "booleanValue": true
+                  },
+                  "nebula": {
+                    "booleanValue": true
+                  }
+                }
+              }
+            },
+            "author": {
+              "stringValue": "Frank Herbert"
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.95
+                        },
+                        {
+                          "doubleValue": 0.15
+                        },
+                        {
+                          "doubleValue": 0.35
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "412"
+            },
+            "title": {
+              "stringValue": "Dune"
+            },
+            "distance": {
+              "doubleValue": 0.16583123951776993
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "politics"
+                  },
+                  {
+                    "stringValue": "desert"
+                  },
+                  {
+                    "stringValue": "ecology"
+                  }
+                ]
+              }
+            },
+            "rating": {
+              "doubleValue": 4.6
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+          "fields": {
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.7
+                        },
+                        {
+                          "doubleValue": 0.4
+                        },
+                        {
+                          "doubleValue": 0.1
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "surveillance"
+                  },
+                  {
+                    "stringValue": "totalitarianism"
+                  },
+                  {
+                    "stringValue": "propaganda"
+                  }
+                ]
+              }
+            },
+            "title": {
+              "stringValue": "1984"
+            },
+            "pages": {
+              "integerValue": "328"
+            },
+            "genre": {
+              "stringValue": "Dystopian"
+            },
+            "distance": {
+              "doubleValue": 0.3741657386773942
+            },
+            "published": {
+              "integerValue": "1949"
+            },
+            "rating": {
+              "doubleValue": 4.2
+            },
+            "stock": {
+              "integerValue": "7"
+            },
+            "author": {
+              "stringValue": "George Orwell"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        }
+      ],
+      "executionTime": "2026-11-04T17:54:13.161037Z"
+    }
+  ]
+}

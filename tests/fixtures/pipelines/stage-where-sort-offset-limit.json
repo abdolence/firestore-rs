@@ -1,0 +1,328 @@
+{
+  "description": "where, sort (descending then ascending), offset and limit",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "where",
+            "args": [
+              {
+                "functionValue": {
+                  "name": "greater_than_or_equal",
+                  "args": [
+                    {
+                      "fieldReferenceValue": "rating"
+                    },
+                    {
+                      "doubleValue": 4.2
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "sort",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "expression": {
+                      "fieldReferenceValue": "rating"
+                    },
+                    "direction": {
+                      "stringValue": "descending"
+                    }
+                  }
+                }
+              },
+              {
+                "mapValue": {
+                  "fields": {
+                    "expression": {
+                      "fieldReferenceValue": "title"
+                    },
+                    "direction": {
+                      "stringValue": "ascending"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "offset",
+            "args": [
+              {
+                "integerValue": "1"
+              }
+            ]
+          },
+          {
+            "name": "limit",
+            "args": [
+              {
+                "integerValue": "3"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+          "fields": {
+            "author": {
+              "stringValue": "Frank Herbert"
+            },
+            "published": {
+              "integerValue": "1965"
+            },
+            "title": {
+              "stringValue": "Dune"
+            },
+            "rating": {
+              "doubleValue": 4.6
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": true
+                  },
+                  "hugo": {
+                    "booleanValue": true
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "412"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.95
+                        },
+                        {
+                          "doubleValue": 0.15
+                        },
+                        {
+                          "doubleValue": 0.35
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "politics"
+                  },
+                  {
+                    "stringValue": "desert"
+                  },
+                  {
+                    "stringValue": "ecology"
+                  }
+                ]
+              }
+            },
+            "stock": {
+              "integerValue": "6"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-02",
+          "fields": {
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.1
+                        },
+                        {
+                          "doubleValue": 0.9
+                        },
+                        {
+                          "doubleValue": 0.1
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "author": {
+              "stringValue": "Jane Austen"
+            },
+            "title": {
+              "stringValue": "Pride and Prejudice"
+            },
+            "rating": {
+              "doubleValue": 4.5
+            },
+            "genre": {
+              "stringValue": "Romance"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "432"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "classic"
+                  },
+                  {
+                    "stringValue": "social commentary"
+                  },
+                  {
+                    "stringValue": "love"
+                  }
+                ]
+              }
+            },
+            "published": {
+              "integerValue": "1813"
+            },
+            "stock": {
+              "integerValue": "0"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-06",
+          "fields": {
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "title": {
+              "stringValue": "Crime and Punishment"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  },
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.2
+                        },
+                        {
+                          "doubleValue": 0.7
+                        },
+                        {
+                          "doubleValue": 0.4
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "genre": {
+              "stringValue": "Psychological Thriller"
+            },
+            "published": {
+              "integerValue": "1866"
+            },
+            "author": {
+              "stringValue": "Fyodor Dostoevsky"
+            },
+            "pages": {
+              "integerValue": "671"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "philosophy"
+                  },
+                  {
+                    "stringValue": "crime"
+                  },
+                  {
+                    "stringValue": "redemption"
+                  }
+                ]
+              }
+            },
+            "rating": {
+              "doubleValue": 4.3
+            },
+            "stock": {
+              "integerValue": "1"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:39.399250Z"
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "description": "select of __name__ restores the document name, still without timestamps",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "select",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "title": {
+                      "fieldReferenceValue": "title"
+                    },
+                    "__name__": {
+                      "fieldReferenceValue": "__name__"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "limit",
+            "args": [
+              {
+                "integerValue": "2"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-11",
+          "fields": {
+            "title": {
+              "stringValue": "Untitled draft"
+            }
+          }
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-01",
+          "fields": {
+            "title": {
+              "stringValue": "The Hitchhiker's Guide to the Galaxy"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:50.708596Z"
+    }
+  ]
+}

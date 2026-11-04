@@ -1,0 +1,105 @@
+{
+  "description": "distinct over one field, null included as a group",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "distinct",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "genre": {
+                      "fieldReferenceValue": "genre"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "genre": {
+              "nullValue": null
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Dystopian"
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Fantasy"
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Magical Realism"
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Modernist"
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Psychological Thriller"
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Romance"
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Science Fiction"
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Southern Gothic"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:55.945716Z"
+    }
+  ]
+}

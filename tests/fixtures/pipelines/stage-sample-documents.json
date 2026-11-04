@@ -1,0 +1,277 @@
+{
+  "description": "sample by document count",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "sample",
+            "args": [
+              {
+                "integerValue": "3"
+              },
+              {
+                "stringValue": "documents"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+          "fields": {
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.95
+                        },
+                        {
+                          "doubleValue": 0.15
+                        },
+                        {
+                          "doubleValue": 0.35
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "politics"
+                  },
+                  {
+                    "stringValue": "desert"
+                  },
+                  {
+                    "stringValue": "ecology"
+                  }
+                ]
+              }
+            },
+            "author": {
+              "stringValue": "Frank Herbert"
+            },
+            "rating": {
+              "doubleValue": 4.6
+            },
+            "title": {
+              "stringValue": "Dune"
+            },
+            "stock": {
+              "integerValue": "6"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "hugo": {
+                    "booleanValue": true
+                  },
+                  "nebula": {
+                    "booleanValue": true
+                  }
+                }
+              }
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "pages": {
+              "integerValue": "412"
+            },
+            "published": {
+              "integerValue": "1965"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-03",
+          "fields": {
+            "genre": {
+              "stringValue": "Magical Realism"
+            },
+            "stock": {
+              "integerValue": "5"
+            },
+            "published": {
+              "integerValue": "1967"
+            },
+            "title": {
+              "stringValue": "One Hundred Years of Solitude"
+            },
+            "rating": {
+              "doubleValue": 4.3
+            },
+            "pages": {
+              "integerValue": "417"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "family"
+                  },
+                  {
+                    "stringValue": "history"
+                  },
+                  {
+                    "stringValue": "fantasy"
+                  }
+                ]
+              }
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  },
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.3
+                        },
+                        {
+                          "doubleValue": 0.6
+                        },
+                        {
+                          "doubleValue": 0.6
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "author": {
+              "stringValue": "Gabriel García Márquez"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-04",
+          "fields": {
+            "author": {
+              "stringValue": "J.R.R. Tolkien"
+            },
+            "published": {
+              "integerValue": "1954"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "1178"
+            },
+            "rating": {
+              "doubleValue": 4.7
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "adventure"
+                  },
+                  {
+                    "stringValue": "magic"
+                  },
+                  {
+                    "stringValue": "epic"
+                  }
+                ]
+              }
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  },
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.4
+                        },
+                        {
+                          "doubleValue": 0.2
+                        },
+                        {
+                          "doubleValue": 0.9
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "stock": {
+              "integerValue": "2"
+            },
+            "title": {
+              "stringValue": "The Lord of the Rings"
+            },
+            "genre": {
+              "stringValue": "Fantasy"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        }
+      ],
+      "executionTime": "2026-11-04T17:54:13.463618Z"
+    }
+  ],
+  "replay": false
+}

@@ -1,0 +1,150 @@
+{
+  "description": "explain on a DML pipeline",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "analyze_runs_the_write",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "title"
+                        },
+                        {
+                          "stringValue": "nothing-matches"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "delete"
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "0"
+                }
+              }
+            }
+          ],
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 0\n query id: dab718566668a4e1\n data bytes read: 387 B\n entity row scanned: 4\n\nBilling:\n read units: 1\n\nTree:\n• Compute\n|  $key_1: $__name___1\n|  is query result: true\n|\n|  Execution:\n|   records returned: 0\n|   latency: 4.49 ms (local 1.01 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 0\n    |   latency: 3.48 ms (local <1 ms)\n    |\n    └── • TableScan\n           source: /pipeline-dml\n           order: UNDEFINED\n           filter: (get_field(row(), \"title\") == \"nothing-matches\")\n           output bindings: {$__key___2=get_field(row(), \"__key__\")}\n           output: [$__key___2]\n\n           Execution:\n            records returned: 0\n            latency: 3.46 ms\n            post-filtered rows: 4\n            records scanned: 4\n            data bytes read: 387 B\n"
+            }
+          }
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "explain_mode",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "title"
+                        },
+                        {
+                          "stringValue": "two"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "update",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "explained": {
+                          "booleanValue": true
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "explain"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "DML Explain operations are not yet supported.",
+        "status": "INVALID_ARGUMENT"
+      },
+      "replay": false
+    }
+  ]
+}

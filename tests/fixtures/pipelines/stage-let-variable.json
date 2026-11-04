@@ -1,0 +1,82 @@
+{
+  "description": "let binds a variable that a later stage reads as variableReferenceValue",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "literals",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "a": {
+                      "integerValue": "1"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "let",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "threshold": {
+                      "integerValue": "10"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "add_fields",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "over": {
+                      "functionValue": {
+                        "name": "greater_than",
+                        "args": [
+                          {
+                            "fieldReferenceValue": "a"
+                          },
+                          {
+                            "variableReferenceValue": "threshold"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "over": {
+              "booleanValue": false
+            },
+            "a": {
+              "integerValue": "1"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T17:54:17.920697Z"
+    }
+  ]
+}

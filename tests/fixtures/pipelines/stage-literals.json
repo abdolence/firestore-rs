@@ -1,0 +1,69 @@
+{
+  "description": "literals as the first stage",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "literals",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "a": {
+                      "integerValue": "1"
+                    },
+                    "b": {
+                      "stringValue": "x"
+                    }
+                  }
+                }
+              },
+              {
+                "mapValue": {
+                  "fields": {
+                    "a": {
+                      "integerValue": "2"
+                    },
+                    "b": {
+                      "stringValue": "y"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "b": {
+              "stringValue": "x"
+            },
+            "a": {
+              "integerValue": "1"
+            }
+          }
+        },
+        {
+          "fields": {
+            "b": {
+              "stringValue": "y"
+            },
+            "a": {
+              "integerValue": "2"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T17:54:17.002618Z"
+    }
+  ]
+}

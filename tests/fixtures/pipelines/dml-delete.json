@@ -1,0 +1,135 @@
+{
+  "description": "delete stage",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "all",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "delete"
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "0"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "where",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "title"
+                        },
+                        {
+                          "stringValue": "five"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "delete"
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "0"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "not_last",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "delete"
+              },
+              {
+                "name": "limit",
+                "args": [
+                  {
+                    "integerValue": "1"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Only transforms are allowed in the middle of a pipeline.",
+        "status": "INVALID_ARGUMENT"
+      },
+      "replay": false
+    }
+  ]
+}

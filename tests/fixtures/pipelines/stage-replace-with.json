@@ -1,0 +1,214 @@
+{
+  "description": "replace_with in its three modes",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "full_replace",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "documents",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books/book-10"
+                  }
+                ]
+              },
+              {
+                "name": "replace_with",
+                "args": [
+                  {
+                    "fieldReferenceValue": "awards"
+                  },
+                  {
+                    "stringValue": "full_replace"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "nebula": {
+                  "booleanValue": true
+                },
+                "hugo": {
+                  "booleanValue": true
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T17:54:16.021197Z"
+        }
+      ]
+    },
+    {
+      "name": "merge_overwrite_existing",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "documents",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books/book-10"
+                  }
+                ]
+              },
+              {
+                "name": "replace_with",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "title": {
+                          "stringValue": "Overwritten"
+                        },
+                        "extra": {
+                          "integerValue": "1"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "stringValue": "merge_overwrite_existing"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "title": {
+                          "fieldReferenceValue": "title"
+                        },
+                        "extra": {
+                          "fieldReferenceValue": "extra"
+                        },
+                        "author": {
+                          "fieldReferenceValue": "author"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "extra": {
+                  "integerValue": "1"
+                },
+                "author": {
+                  "stringValue": "Frank Herbert"
+                },
+                "title": {
+                  "stringValue": "Overwritten"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:16:10.129471Z"
+        }
+      ]
+    },
+    {
+      "name": "merge_keep_existing",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "documents",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books/book-10"
+                  }
+                ]
+              },
+              {
+                "name": "replace_with",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "title": {
+                          "stringValue": "Kept?"
+                        },
+                        "extra": {
+                          "integerValue": "1"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "stringValue": "merge_keep_existing"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "title": {
+                          "fieldReferenceValue": "title"
+                        },
+                        "extra": {
+                          "fieldReferenceValue": "extra"
+                        },
+                        "author": {
+                          "fieldReferenceValue": "author"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "author": {
+                  "stringValue": "Frank Herbert"
+                },
+                "title": {
+                  "stringValue": "Dune"
+                },
+                "extra": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:16:11.038116Z"
+        }
+      ]
+    }
+  ]
+}

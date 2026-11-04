@@ -1,0 +1,852 @@
+{
+  "description": "where search may appear and what its query may be",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "after_where",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "cuisine"
+                        },
+                        {
+                          "stringValue": "breakfast"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) must be the first stage after a collection or collection_group stage.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "two_search_stages",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "bacon"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) must be the first stage after a collection or collection_group stage.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "no_source",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The first stage in a pipeline query must be an input stage.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "where_after_search",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "cuisine"
+                        },
+                        {
+                          "stringValue": "breakfast"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Waffle and Bacon Co"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T17:58:16.494458Z"
+        }
+      ]
+    },
+    {
+      "name": "query_string_value",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "stringValue": "waffles"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Expected query to be FUNCTION_VALUE, but was STRING_VALUE.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "query_field_reference",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "fieldReferenceValue": "name"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Expected query to be FUNCTION_VALUE, but was FIELD_REFERENCE_VALUE.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "query_matches_function",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "matches",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "menu"
+                        },
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports 'document_matches' or distance based searches like lte(geo_distance(field(STRING), GEO_POINT), NUMBER) but got matches(menu, \"waffles\")",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "query_and_function",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "and",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "document_matches",
+                            "args": [
+                              {
+                                "stringValue": "waffles"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "functionValue": {
+                            "name": "document_matches",
+                            "args": [
+                              {
+                                "stringValue": "bacon"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "AND function in search(...) query is not supported yet.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "query_or_function",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "or",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "document_matches",
+                            "args": [
+                              {
+                                "stringValue": "eggs"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "functionValue": {
+                            "name": "document_matches",
+                            "args": [
+                              {
+                                "stringValue": "espresso"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports 'document_matches' or distance based searches like lte(geo_distance(field(STRING), GEO_POINT), NUMBER) but got or(document_matches(\"eggs\"), document_matches(\"espresso\"))",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "query_not_function",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "not",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "document_matches",
+                            "args": [
+                              {
+                                "stringValue": "waffles"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports 'document_matches' or distance based searches like lte(geo_distance(field(STRING), GEO_POINT), NUMBER) but got not(document_matches(\"waffles\"))",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "snippet_function",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "add_fields": {
+                    "mapValue": {
+                      "fields": {
+                        "snip": {
+                          "functionValue": {
+                            "name": "snippet",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "menu"
+                              },
+                              {
+                                "stringValue": "waffles"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        },
+                        "snip": {
+                          "fieldReferenceValue": "snip"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The function 'snippet' does not exist.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "score_outside_search",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "add_fields",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "score": {
+                          "functionValue": {
+                            "name": "score"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The 'score' function can only be used in the search(...) stage.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "document_matches_in_where",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "less_than_or_equal",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "location"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "doubleValue": 1000.0
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The 'document_matches' function can only be used in the search(...) stage.",
+        "status": "INVALID_ARGUMENT"
+      }
+    }
+  ]
+}

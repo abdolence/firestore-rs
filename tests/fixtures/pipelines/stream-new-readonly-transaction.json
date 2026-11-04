@@ -1,0 +1,771 @@
+{
+  "description": "new read-only transaction: the ID comes on the first message",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-bulk"
+              }
+            ]
+          },
+          {
+            "name": "sort",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "expression": {
+                      "fieldReferenceValue": "n"
+                    },
+                    "direction": {
+                      "stringValue": "ascending"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "limit",
+            "args": [
+              {
+                "integerValue": "100"
+              }
+            ]
+          },
+          {
+            "name": "select",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "n": {
+                      "fieldReferenceValue": "n"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "newTransaction": {
+      "readOnly": {}
+    }
+  },
+  "responses": [
+    {
+      "transaction": "ES7QJyNK7VJfIlkAdsw0yC1PvezEnVb3UeknBdwjmM+OTu6QpdplbPu1jNnLBnOspSS5BCMkaS5o7TjxzmPQkyeiE7xEcXdP+lVI2luK9PfOOo+husVOXsNXRKMtk2eqN3Efzg==",
+      "results": [
+        {
+          "fields": {
+            "n": {
+              "integerValue": "0"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "1"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "2"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "3"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "4"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "5"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "6"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "7"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "8"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "9"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "10"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "11"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "12"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "13"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "14"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "15"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "16"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "17"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "18"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "19"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "20"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "21"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "22"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "23"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "24"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "25"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "26"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "27"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "28"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "29"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "30"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "31"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "32"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "33"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "34"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "35"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "36"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "37"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "38"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "39"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "40"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "41"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "42"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "43"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "44"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "45"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "46"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "47"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "48"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "49"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "50"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "51"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "52"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "53"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "54"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "55"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "56"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "57"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "58"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "59"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "60"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "61"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "62"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "63"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "64"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "65"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "66"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "67"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "68"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "69"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "70"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "71"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "72"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "73"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "74"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "75"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "76"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "77"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "78"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "79"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "80"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "81"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "82"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "83"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "84"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "85"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "86"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "87"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "88"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "89"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "90"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "91"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "92"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "93"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "94"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "95"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "96"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "97"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "98"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "99"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T18:17:43.386474Z"
+    }
+  ]
+}

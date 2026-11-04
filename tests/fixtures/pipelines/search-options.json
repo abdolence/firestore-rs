@@ -1,0 +1,1085 @@
+{
+  "description": "search stage options",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "full",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "sort": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "expression": {
+                                "functionValue": {
+                                  "name": "score"
+                                }
+                              },
+                              "direction": {
+                                "stringValue": "descending"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "add_fields": {
+                    "mapValue": {
+                      "fields": {
+                        "score": {
+                          "functionValue": {
+                            "name": "score"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "limit": {
+                    "integerValue": "2"
+                  },
+                  "offset": {
+                    "integerValue": "1"
+                  },
+                  "retrieval_depth": {
+                    "integerValue": "100"
+                  },
+                  "language_code": {
+                    "stringValue": "en"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        },
+                        "score": {
+                          "fieldReferenceValue": "score"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "score": {
+                  "doubleValue": 0.937843918800354
+                },
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "The \"Best\" Diner"
+                },
+                "score": {
+                  "doubleValue": 0.937843918800354
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T17:57:56.517295Z"
+        }
+      ]
+    },
+    {
+      "name": "default_order",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Waffle and Bacon Co"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Coffee Corner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "The \"Best\" Diner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Gluten-Free Kitchen"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T17:58:19.720361Z"
+        }
+      ]
+    },
+    {
+      "name": "add_fields_score_alias",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "add_fields": {
+                    "mapValue": {
+                      "fields": {
+                        "relevance": {
+                          "functionValue": {
+                            "name": "score"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        },
+                        "relevance": {
+                          "fieldReferenceValue": "relevance"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "relevance": {
+                  "doubleValue": 0.937843918800354
+                },
+                "name": {
+                  "stringValue": "Waffle and Bacon Co"
+                }
+              }
+            },
+            {
+              "fields": {
+                "relevance": {
+                  "doubleValue": 0.7429555654525757
+                },
+                "name": {
+                  "stringValue": "Coffee Corner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                },
+                "relevance": {
+                  "doubleValue": 0.937843918800354
+                }
+              }
+            },
+            {
+              "fields": {
+                "relevance": {
+                  "doubleValue": 0.937843918800354
+                },
+                "name": {
+                  "stringValue": "The \"Best\" Diner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "relevance": {
+                  "doubleValue": 0.937843918800354
+                },
+                "name": {
+                  "stringValue": "Gluten-Free Kitchen"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:01:00.504906Z"
+        }
+      ]
+    },
+    {
+      "name": "limit_stage_after_search",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "sort": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "expression": {
+                                "functionValue": {
+                                  "name": "score"
+                                }
+                              },
+                              "direction": {
+                                "stringValue": "descending"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "limit",
+                "args": [
+                  {
+                    "integerValue": "1"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Waffle and Bacon Co"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:01:02.392189Z"
+        }
+      ]
+    },
+    {
+      "name": "select_option",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "select": {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports score() in select expression.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "query_enhancement_disabled",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "query_enhancement": {
+                    "stringValue": "disabled"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Waffle and Bacon Co"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Coffee Corner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "The \"Best\" Diner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Gluten-Free Kitchen"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T17:58:04.490049Z"
+        }
+      ]
+    },
+    {
+      "name": "query_enhancement_required",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "query_enhancement": {
+                    "stringValue": "required"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Waffle and Bacon Co"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Coffee Corner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "The \"Best\" Diner"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Gluten-Free Kitchen"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T17:59:34.417821Z"
+        }
+      ]
+    },
+    {
+      "name": "query_enhancement_bogus",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "query_enhancement": {
+                    "stringValue": "bogus"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Unsupported query_enhancement 'bogus'. Valid options are: [disabled, required, preferred].",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "language_code_unknown",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "language_code": {
+                    "stringValue": "xx"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Unsupported language_code: xx",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "retrieval_depth_zero",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "retrieval_depth": {
+                    "integerValue": "0"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...): 'retrievalDepth' must be at least 1.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "offset_without_limit",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "offset": {
+                    "integerValue": "100"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...): 'offset' cannot be used without 'limit'.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "sort_not_array",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "sort": {
+                    "mapValue": {
+                      "fields": {
+                        "expression": {
+                          "functionValue": {
+                            "name": "score"
+                          }
+                        },
+                        "direction": {
+                          "stringValue": "descending"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Expected sort to be ARRAY_VALUE, but was MAP_VALUE.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "sort_by_field",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  },
+                  "sort": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "expression": {
+                                "fieldReferenceValue": "rating"
+                              },
+                              "direction": {
+                                "stringValue": "descending"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        },
+                        "rating": {
+                          "fieldReferenceValue": "rating"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...) only supports sorting by geo_distance() for geo_distance queries or score() for text search queries.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "no_query",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "limit": {
+                    "integerValue": "2"
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "search(...): 'query' is required.",
+        "status": "INVALID_ARGUMENT"
+      }
+    }
+  ]
+}

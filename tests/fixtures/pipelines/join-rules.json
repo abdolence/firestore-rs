@@ -1,0 +1,758 @@
+{
+  "description": "subquery shapes and rules",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "scalar_two_fields_is_a_map",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "documents",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants/rest-02"
+                  }
+                ]
+              },
+              {
+                "name": "let",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "rname": {
+                          "fieldReferenceValue": "__name__"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        },
+                        "review": {
+                          "functionValue": {
+                            "name": "scalar",
+                            "args": [
+                              {
+                                "pipelineValue": {
+                                  "stages": [
+                                    {
+                                      "name": "collection_group",
+                                      "args": [
+                                        {
+                                          "referenceValue": ""
+                                        },
+                                        {
+                                          "stringValue": "reviews"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "name": "where",
+                                      "args": [
+                                        {
+                                          "functionValue": {
+                                            "name": "equal",
+                                            "args": [
+                                              {
+                                                "fieldReferenceValue": "restaurant"
+                                              },
+                                              {
+                                                "variableReferenceValue": "rname"
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "name": "select",
+                                      "args": [
+                                        {
+                                          "mapValue": {
+                                            "fields": {
+                                              "rating": {
+                                                "fieldReferenceValue": "rating"
+                                              },
+                                              "reviewer": {
+                                                "fieldReferenceValue": "reviewer"
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "review": {
+                  "mapValue": {
+                    "fields": {
+                      "rating": {
+                        "integerValue": "3"
+                      },
+                      "reviewer": {
+                        "stringValue": "carol"
+                      }
+                    }
+                  }
+                },
+                "name": {
+                  "stringValue": "Pancake Palace"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:03:50.379092Z"
+        }
+      ]
+    },
+    {
+      "name": "scalar_in_where",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "let",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "rname": {
+                          "fieldReferenceValue": "__name__"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "greater_than",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "scalar",
+                            "args": [
+                              {
+                                "pipelineValue": {
+                                  "stages": [
+                                    {
+                                      "name": "collection_group",
+                                      "args": [
+                                        {
+                                          "referenceValue": ""
+                                        },
+                                        {
+                                          "stringValue": "reviews"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "name": "where",
+                                      "args": [
+                                        {
+                                          "functionValue": {
+                                            "name": "equal",
+                                            "args": [
+                                              {
+                                                "fieldReferenceValue": "restaurant"
+                                              },
+                                              {
+                                                "variableReferenceValue": "rname"
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "name": "aggregate",
+                                      "args": [
+                                        {
+                                          "mapValue": {
+                                            "fields": {
+                                              "c": {
+                                                "functionValue": {
+                                                  "name": "count"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "mapValue": {
+                                            "fields": {}
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "integerValue": "1"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Slice of New York"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:03:52.096943Z"
+        }
+      ]
+    },
+    {
+      "name": "subquery_in_sort",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "cuisine"
+                        },
+                        {
+                          "stringValue": "breakfast"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "let",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "rname": {
+                          "fieldReferenceValue": "__name__"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "sort",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "expression": {
+                          "functionValue": {
+                            "name": "scalar",
+                            "args": [
+                              {
+                                "pipelineValue": {
+                                  "stages": [
+                                    {
+                                      "name": "collection_group",
+                                      "args": [
+                                        {
+                                          "referenceValue": ""
+                                        },
+                                        {
+                                          "stringValue": "reviews"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "name": "where",
+                                      "args": [
+                                        {
+                                          "functionValue": {
+                                            "name": "equal",
+                                            "args": [
+                                              {
+                                                "fieldReferenceValue": "restaurant"
+                                              },
+                                              {
+                                                "variableReferenceValue": "rname"
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "name": "aggregate",
+                                      "args": [
+                                        {
+                                          "mapValue": {
+                                            "fields": {
+                                              "c": {
+                                                "functionValue": {
+                                                  "name": "count"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "mapValue": {
+                                            "fields": {}
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "direction": {
+                          "stringValue": "descending"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Pancake Palace"
+                }
+              }
+            },
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Waffle and Bacon Co"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:03:53.078058Z"
+        }
+      ]
+    },
+    {
+      "name": "unnest_array_subquery",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "documents",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants/rest-01"
+                  }
+                ]
+              },
+              {
+                "name": "let",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "rname": {
+                          "fieldReferenceValue": "__name__"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "unnest",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "array",
+                      "args": [
+                        {
+                          "pipelineValue": {
+                            "stages": [
+                              {
+                                "name": "collection_group",
+                                "args": [
+                                  {
+                                    "referenceValue": ""
+                                  },
+                                  {
+                                    "stringValue": "reviews"
+                                  }
+                                ]
+                              },
+                              {
+                                "name": "where",
+                                "args": [
+                                  {
+                                    "functionValue": {
+                                      "name": "equal",
+                                      "args": [
+                                        {
+                                          "fieldReferenceValue": "restaurant"
+                                        },
+                                        {
+                                          "variableReferenceValue": "rname"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              },
+                              {
+                                "name": "select",
+                                "args": [
+                                  {
+                                    "mapValue": {
+                                      "fields": {
+                                        "rating": {
+                                          "fieldReferenceValue": "rating"
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "fieldReferenceValue": "review"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        },
+                        "review": {
+                          "fieldReferenceValue": "review"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                },
+                "review": {
+                  "integerValue": "5"
+                }
+              }
+            },
+            {
+              "fields": {
+                "review": {
+                  "integerValue": "4"
+                },
+                "name": {
+                  "stringValue": "Sunrise Waffle House"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:03:54.337363Z"
+        }
+      ]
+    },
+    {
+      "name": "subcollection_outside_subquery",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "subcollection",
+                "args": [
+                  {
+                    "stringValue": "reviews"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The 'subcollection(...)' stage can only be used at the start of a nested pipeline.\n\nCheck that this stage is used at the beginning of an array or scalar sub-pipeline.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "undefined_variable",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "name"
+                        },
+                        {
+                          "variableReferenceValue": "nope"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Parsing the query failed due to attempting to access an unknown variable.\nThe variable 'nope' was either never defined or was attempted to be accessed from a scope where it is not visible. To resolve, ensure that the variable 'nope' is defined before it is attempted to be accessed.",
+        "status": "INVALID_ARGUMENT",
+        "details": [
+          {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "ALGEBRIZATION_UNKNOWN_VARIABLE",
+            "domain": "firestore.googleapis.com",
+            "metadata": {
+              "name": "nope"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "bare_pipeline_value",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "add_fields",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "x": {
+                          "pipelineValue": {
+                            "stages": [
+                              {
+                                "name": "collection_group",
+                                "args": [
+                                  {
+                                    "referenceValue": ""
+                                  },
+                                  {
+                                    "stringValue": "reviews"
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Unexpected pipeline value.",
+        "status": "INVALID_ARGUMENT"
+      }
+    }
+  ]
+}

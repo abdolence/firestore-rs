@@ -1,0 +1,342 @@
+{
+  "description": "array_transform and array_filter take (array, alias, body); map and array build values",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "array_transform",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "a": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "integerValue": "1"
+                              },
+                              {
+                                "integerValue": "2"
+                              },
+                              {
+                                "integerValue": "3"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "add_fields",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "x": {
+                          "functionValue": {
+                            "name": "array_transform",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "a"
+                              },
+                              {
+                                "stringValue": "e"
+                              },
+                              {
+                                "functionValue": {
+                                  "name": "multiply",
+                                  "args": [
+                                    {
+                                      "variableReferenceValue": "e"
+                                    },
+                                    {
+                                      "integerValue": "10"
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "x": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "integerValue": "10"
+                      },
+                      {
+                        "integerValue": "20"
+                      },
+                      {
+                        "integerValue": "30"
+                      }
+                    ]
+                  }
+                },
+                "a": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "integerValue": "1"
+                      },
+                      {
+                        "integerValue": "2"
+                      },
+                      {
+                        "integerValue": "3"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:16:11.964594Z"
+        }
+      ]
+    },
+    {
+      "name": "array_filter",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "a": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "integerValue": "1"
+                              },
+                              {
+                                "integerValue": "2"
+                              },
+                              {
+                                "integerValue": "3"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "add_fields",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "x": {
+                          "functionValue": {
+                            "name": "array_filter",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "a"
+                              },
+                              {
+                                "stringValue": "e"
+                              },
+                              {
+                                "functionValue": {
+                                  "name": "greater_than",
+                                  "args": [
+                                    {
+                                      "variableReferenceValue": "e"
+                                    },
+                                    {
+                                      "integerValue": "1"
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "x": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "integerValue": "2"
+                      },
+                      {
+                        "integerValue": "3"
+                      }
+                    ]
+                  }
+                },
+                "a": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "integerValue": "1"
+                      },
+                      {
+                        "integerValue": "2"
+                      },
+                      {
+                        "integerValue": "3"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:16:12.888575Z"
+        }
+      ]
+    },
+    {
+      "name": "map_and_array",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "a": {
+                          "integerValue": "1"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "add_fields",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "m": {
+                          "functionValue": {
+                            "name": "map",
+                            "args": [
+                              {
+                                "stringValue": "k"
+                              },
+                              {
+                                "fieldReferenceValue": "a"
+                              },
+                              {
+                                "stringValue": "j"
+                              },
+                              {
+                                "stringValue": "v"
+                              }
+                            ]
+                          }
+                        },
+                        "arr_": {
+                          "functionValue": {
+                            "name": "array",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "a"
+                              },
+                              {
+                                "integerValue": "2"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "a": {
+                  "integerValue": "1"
+                },
+                "arr_": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "integerValue": "1"
+                      },
+                      {
+                        "integerValue": "2"
+                      }
+                    ]
+                  }
+                },
+                "m": {
+                  "mapValue": {
+                    "fields": {
+                      "j": {
+                        "stringValue": "v"
+                      },
+                      "k": {
+                        "integerValue": "1"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:16:13.167994Z"
+        }
+      ]
+    }
+  ]
+}

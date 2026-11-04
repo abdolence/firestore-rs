@@ -1,0 +1,73 @@
+{
+  "description": "select: results carry no name and no timestamps",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "select",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "title": {
+                      "fieldReferenceValue": "title"
+                    },
+                    "author_name": {
+                      "fieldReferenceValue": "author"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "limit",
+            "args": [
+              {
+                "integerValue": "2"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "author_name": {
+              "stringValue": "Anonymous"
+            },
+            "title": {
+              "stringValue": "Untitled draft"
+            }
+          }
+        },
+        {
+          "fields": {
+            "author_name": {
+              "stringValue": "Douglas Adams"
+            },
+            "title": {
+              "stringValue": "The Hitchhiker's Guide to the Galaxy"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:49.609163Z"
+    }
+  ]
+}

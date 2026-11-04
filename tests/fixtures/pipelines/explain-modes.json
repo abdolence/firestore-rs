@@ -1,0 +1,2244 @@
+{
+  "description": "explain_options modes and output formats",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "analyze-text",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "sort",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "expression": {
+                          "fieldReferenceValue": "rating"
+                        },
+                        "direction": {
+                          "stringValue": "descending"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+              "fields": {
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      },
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.7
+                            },
+                            {
+                              "doubleValue": 0.4
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "pages": {
+                  "integerValue": "328"
+                },
+                "stock": {
+                  "integerValue": "7"
+                },
+                "author": {
+                  "stringValue": "George Orwell"
+                },
+                "title": {
+                  "stringValue": "1984"
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "surveillance"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "propaganda"
+                      }
+                    ]
+                  }
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "published": {
+                  "integerValue": "1949"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-05",
+              "fields": {
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "feminism"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "resistance"
+                      }
+                    ]
+                  }
+                },
+                "rating": {
+                  "doubleValue": 4.1
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "published": {
+                  "integerValue": "1985"
+                },
+                "title": {
+                  "stringValue": "The Handmaid's Tale"
+                },
+                "stock": {
+                  "integerValue": "0"
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.6
+                            },
+                            {
+                              "doubleValue": 0.5
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "author": {
+                  "stringValue": "Margaret Atwood"
+                },
+                "pages": {
+                  "integerValue": "311"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:54:40.264653Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 2\n query id: b9de660003f9d27e\n request peak memory usage: 6.00 KiB (6,144 B)\n data bytes read: 879 B\n entity row scanned: 2\n index row scanned: 2\n\nBilling:\n read units: 3\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 2\n|   latency: 23.48 ms (local <1 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 2\n    |   latency: 22.83 ms (local <1 ms)\n    |\n    └── • Fetch\n        |  order: PRESERVE_INPUT_ORDER\n        |  source: /pipeline-books\n        |  input record id: $rid_2\n        |  output bindings: {$__key___2=get_field(row(), \"__key__\"), $record_1=row()}\n        |  output: [$__key___2, $record_1]\n        |\n        |  Execution:\n        |   records returned: 2\n        |   latency: 22.81 ms (local 1.28 ms)\n        |   peak memory usage: 6.00 KiB (6,144 B)\n        |   data bytes read: 669 B\n        |\n        └── • SequentialScan\n               properties: Selection {  }\n               fields: [null, null, $rid_2]\n               index: /pipeline-books (genre ASC, rating DESC)@[id = CICAgJim14AK]\n               partition: /\n               key ordering length: 3\n               ranges: /\n                       |----[\"Dystopian\"]\n\n               Execution:\n                records returned: 2\n                latency: 21.53 ms\n                records scanned: 2\n                data bytes read: 210 B\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "explain-text",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "sort",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "expression": {
+                          "fieldReferenceValue": "rating"
+                        },
+                        "direction": {
+                          "stringValue": "descending"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "explain"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "executionTime": "2026-11-04T17:54:41.324819Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 0\n query id: 3d0c9b0281da587a\n entity row scanned: 0\n index row scanned: 0\n\nBilling:\n read units: 0\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 0\n|   latency: <1 ms\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 0\n    |   latency: <1 ms\n    |\n    └── • Fetch\n        |  order: PRESERVE_INPUT_ORDER\n        |  source: /pipeline-books\n        |  input record id: $rid_2\n        |  output bindings: {$__key___2=get_field(row(), \"__key__\"), $record_1=row()}\n        |  output: [$__key___2, $record_1]\n        |\n        |  Execution:\n        |   records returned: 0\n        |   latency: <1 ms\n        |\n        └── • SequentialScan\n               properties: Selection {  }\n               fields: [null, null, $rid_2]\n               index: /pipeline-books (genre ASC, rating DESC)@[id = CICAgJim14AK]\n               partition: /\n               key ordering length: 3\n               ranges: /\n                       |----[\"Dystopian\"]\n\n               Execution:\n                records returned: 0\n                latency: <1 ms\n                records scanned: 0\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "analyze-default-format",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "sort",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "expression": {
+                          "fieldReferenceValue": "rating"
+                        },
+                        "direction": {
+                          "stringValue": "descending"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+              "fields": {
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "hugo": {
+                        "booleanValue": false
+                      },
+                      "nebula": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "title": {
+                  "stringValue": "1984"
+                },
+                "stock": {
+                  "integerValue": "7"
+                },
+                "published": {
+                  "integerValue": "1949"
+                },
+                "pages": {
+                  "integerValue": "328"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.7
+                            },
+                            {
+                              "doubleValue": 0.4
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "author": {
+                  "stringValue": "George Orwell"
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "surveillance"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "propaganda"
+                      }
+                    ]
+                  }
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-05",
+              "fields": {
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "feminism"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "resistance"
+                      }
+                    ]
+                  }
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.6
+                            },
+                            {
+                              "doubleValue": 0.5
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "pages": {
+                  "integerValue": "311"
+                },
+                "published": {
+                  "integerValue": "1985"
+                },
+                "stock": {
+                  "integerValue": "0"
+                },
+                "rating": {
+                  "doubleValue": 4.1
+                },
+                "author": {
+                  "stringValue": "Margaret Atwood"
+                },
+                "title": {
+                  "stringValue": "The Handmaid's Tale"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:54:42.514841Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 2\n query id: d8d1a04007db07a7\n request peak memory usage: 6.00 KiB (6,144 B)\n data bytes read: 879 B\n entity row scanned: 2\n index row scanned: 2\n\nBilling:\n read units: 3\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 2\n|   latency: 19.73 ms (local <1 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 2\n    |   latency: 19.20 ms (local <1 ms)\n    |\n    └── • Fetch\n        |  order: PRESERVE_INPUT_ORDER\n        |  source: /pipeline-books\n        |  input record id: $rid_2\n        |  output bindings: {$__key___2=get_field(row(), \"__key__\"), $record_1=row()}\n        |  output: [$__key___2, $record_1]\n        |\n        |  Execution:\n        |   records returned: 2\n        |   latency: 19.19 ms (local 2.12 ms)\n        |   peak memory usage: 6.00 KiB (6,144 B)\n        |   data bytes read: 669 B\n        |\n        └── • SequentialScan\n               properties: Selection {  }\n               fields: [null, null, $rid_2]\n               index: /pipeline-books (genre ASC, rating DESC)@[id = CICAgJim14AK]\n               partition: /\n               key ordering length: 3\n               ranges: /\n                       |----[\"Dystopian\"]\n\n               Execution:\n                records returned: 2\n                latency: 17.07 ms\n                records scanned: 2\n                data bytes read: 210 B\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "execute-mode",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "execute"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-05",
+              "fields": {
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.6
+                            },
+                            {
+                              "doubleValue": 0.5
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "hugo": {
+                        "booleanValue": false
+                      },
+                      "nebula": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "title": {
+                  "stringValue": "The Handmaid's Tale"
+                },
+                "rating": {
+                  "doubleValue": 4.1
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "pages": {
+                  "integerValue": "311"
+                },
+                "stock": {
+                  "integerValue": "0"
+                },
+                "published": {
+                  "integerValue": "1985"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "feminism"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "resistance"
+                      }
+                    ]
+                  }
+                },
+                "author": {
+                  "stringValue": "Margaret Atwood"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+              "fields": {
+                "author": {
+                  "stringValue": "George Orwell"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.7
+                            },
+                            {
+                              "doubleValue": 0.4
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "title": {
+                  "stringValue": "1984"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "surveillance"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "propaganda"
+                      }
+                    ]
+                  }
+                },
+                "published": {
+                  "integerValue": "1949"
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "pages": {
+                  "integerValue": "328"
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "hugo": {
+                        "booleanValue": false
+                      },
+                      "nebula": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "stock": {
+                  "integerValue": "7"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:54:43.602548Z"
+        }
+      ]
+    },
+    {
+      "name": "stats-mode",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "stats"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "executionTime": "2026-11-04T18:16:08.895732Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 2\n query id: 2f8b361faa012367\n data bytes read: 879 B\n entity row scanned: 2\n index row scanned: 2\n\nBilling:\n read units: 3\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 2\n|   latency: 7.12 ms (local <1 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 2\n    |   latency: 6.32 ms (local <1 ms)\n    |\n    └── • Fetch\n        |  order: UNDEFINED\n        |  source: /pipeline-books\n        |  input record id: $rid_1\n        |  output bindings: {$__key___2=get_field(row(), \"__key__\"), $record_1=row()}\n        |  output: [$__key___2, $record_1]\n        |\n        |  Execution:\n        |   records returned: 2\n        |   latency: 6.31 ms (local 1.80 ms)\n        |   data bytes read: 669 B\n        |\n        └── • SequentialScan\n               properties: Selection {  }\n               fields: [null, null, $rid_1]\n               index: /pipeline-books (genre ASC, rating DESC)@[id = CICAgJim14AK]\n               partition: /\n               key ordering length: 3\n               ranges: /\n                       |----[\"Dystopian\"]\n\n               Execution:\n                records returned: 2\n                latency: 4.50 ms\n                records scanned: 2\n                data bytes read: 210 B\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "analyze-json",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "sort",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "expression": {
+                          "fieldReferenceValue": "rating"
+                        },
+                        "direction": {
+                          "stringValue": "descending"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "json"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Unsupported output_format 'json'. Valid options are: [text, mongo].",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "full-scan",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-11",
+              "fields": {
+                "tags": {
+                  "arrayValue": {}
+                },
+                "published": {
+                  "integerValue": "2024"
+                },
+                "title": {
+                  "stringValue": "Untitled draft"
+                },
+                "genre": {
+                  "nullValue": null
+                },
+                "stock": {
+                  "integerValue": "0"
+                },
+                "author": {
+                  "stringValue": "Anonymous"
+                },
+                "pages": {
+                  "integerValue": "12"
+                }
+              },
+              "createTime": "2026-11-04T17:51:53.592249Z",
+              "updateTime": "2026-11-04T17:51:53.592249Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-01",
+              "fields": {
+                "title": {
+                  "stringValue": "The Hitchhiker's Guide to the Galaxy"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.9
+                            },
+                            {
+                              "doubleValue": 0.1
+                            },
+                            {
+                              "doubleValue": 0.2
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "comedy"
+                      },
+                      {
+                        "stringValue": "space"
+                      },
+                      {
+                        "stringValue": "adventure"
+                      }
+                    ]
+                  }
+                },
+                "published": {
+                  "integerValue": "1979"
+                },
+                "author": {
+                  "stringValue": "Douglas Adams"
+                },
+                "genre": {
+                  "stringValue": "Science Fiction"
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "stock": {
+                  "integerValue": "3"
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": true
+                      }
+                    }
+                  }
+                },
+                "pages": {
+                  "integerValue": "224"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-05",
+              "fields": {
+                "author": {
+                  "stringValue": "Margaret Atwood"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.6
+                            },
+                            {
+                              "doubleValue": 0.5
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "title": {
+                  "stringValue": "The Handmaid's Tale"
+                },
+                "published": {
+                  "integerValue": "1985"
+                },
+                "rating": {
+                  "doubleValue": 4.1
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "feminism"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "resistance"
+                      }
+                    ]
+                  }
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "pages": {
+                  "integerValue": "311"
+                },
+                "stock": {
+                  "integerValue": "0"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-09",
+              "fields": {
+                "stock": {
+                  "integerValue": "0"
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "pages": {
+                  "integerValue": "180"
+                },
+                "rating": {
+                  "doubleValue": 4
+                },
+                "genre": {
+                  "stringValue": "Modernist"
+                },
+                "author": {
+                  "stringValue": "F. Scott Fitzgerald"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "wealth"
+                      },
+                      {
+                        "stringValue": "american dream"
+                      },
+                      {
+                        "stringValue": "love"
+                      }
+                    ]
+                  }
+                },
+                "published": {
+                  "integerValue": "1925"
+                },
+                "title": {
+                  "stringValue": "The Great Gatsby"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.1
+                            },
+                            {
+                              "doubleValue": 0.7
+                            },
+                            {
+                              "doubleValue": 0.3
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-04",
+              "fields": {
+                "published": {
+                  "integerValue": "1954"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "adventure"
+                      },
+                      {
+                        "stringValue": "magic"
+                      },
+                      {
+                        "stringValue": "epic"
+                      }
+                    ]
+                  }
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      },
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.4
+                            },
+                            {
+                              "doubleValue": 0.2
+                            },
+                            {
+                              "doubleValue": 0.9
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "genre": {
+                  "stringValue": "Fantasy"
+                },
+                "stock": {
+                  "integerValue": "2"
+                },
+                "pages": {
+                  "integerValue": "1178"
+                },
+                "rating": {
+                  "doubleValue": 4.7
+                },
+                "title": {
+                  "stringValue": "The Lord of the Rings"
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "hugo": {
+                        "booleanValue": false
+                      },
+                      "nebula": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "author": {
+                  "stringValue": "J.R.R. Tolkien"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+              "fields": {
+                "stock": {
+                  "integerValue": "7"
+                },
+                "pages": {
+                  "integerValue": "328"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.7
+                            },
+                            {
+                              "doubleValue": 0.4
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "published": {
+                  "integerValue": "1949"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "surveillance"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "propaganda"
+                      }
+                    ]
+                  }
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "title": {
+                  "stringValue": "1984"
+                },
+                "author": {
+                  "stringValue": "George Orwell"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+              "fields": {
+                "published": {
+                  "integerValue": "1965"
+                },
+                "author": {
+                  "stringValue": "Frank Herbert"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.95
+                            },
+                            {
+                              "doubleValue": 0.15
+                            },
+                            {
+                              "doubleValue": 0.35
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "hugo": {
+                        "booleanValue": true
+                      },
+                      "nebula": {
+                        "booleanValue": true
+                      }
+                    }
+                  }
+                },
+                "rating": {
+                  "doubleValue": 4.6
+                },
+                "title": {
+                  "stringValue": "Dune"
+                },
+                "pages": {
+                  "integerValue": "412"
+                },
+                "stock": {
+                  "integerValue": "6"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "politics"
+                      },
+                      {
+                        "stringValue": "desert"
+                      },
+                      {
+                        "stringValue": "ecology"
+                      }
+                    ]
+                  }
+                },
+                "genre": {
+                  "stringValue": "Science Fiction"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-02",
+              "fields": {
+                "title": {
+                  "stringValue": "Pride and Prejudice"
+                },
+                "pages": {
+                  "integerValue": "432"
+                },
+                "published": {
+                  "integerValue": "1813"
+                },
+                "stock": {
+                  "integerValue": "0"
+                },
+                "author": {
+                  "stringValue": "Jane Austen"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.1
+                            },
+                            {
+                              "doubleValue": 0.9
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "hugo": {
+                        "booleanValue": false
+                      },
+                      "nebula": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "genre": {
+                  "stringValue": "Romance"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "classic"
+                      },
+                      {
+                        "stringValue": "social commentary"
+                      },
+                      {
+                        "stringValue": "love"
+                      }
+                    ]
+                  }
+                },
+                "rating": {
+                  "doubleValue": 4.5
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-06",
+              "fields": {
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "philosophy"
+                      },
+                      {
+                        "stringValue": "crime"
+                      },
+                      {
+                        "stringValue": "redemption"
+                      }
+                    ]
+                  }
+                },
+                "genre": {
+                  "stringValue": "Psychological Thriller"
+                },
+                "stock": {
+                  "integerValue": "1"
+                },
+                "pages": {
+                  "integerValue": "671"
+                },
+                "rating": {
+                  "doubleValue": 4.3
+                },
+                "title": {
+                  "stringValue": "Crime and Punishment"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.2
+                            },
+                            {
+                              "doubleValue": 0.7
+                            },
+                            {
+                              "doubleValue": 0.4
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "published": {
+                  "integerValue": "1866"
+                },
+                "author": {
+                  "stringValue": "Fyodor Dostoevsky"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-07",
+              "fields": {
+                "genre": {
+                  "stringValue": "Southern Gothic"
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "racism"
+                      },
+                      {
+                        "stringValue": "injustice"
+                      },
+                      {
+                        "stringValue": "coming-of-age"
+                      }
+                    ]
+                  }
+                },
+                "pages": {
+                  "integerValue": "281"
+                },
+                "author": {
+                  "stringValue": "Harper Lee"
+                },
+                "stock": {
+                  "integerValue": "4"
+                },
+                "title": {
+                  "stringValue": "To Kill a Mockingbird"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.2
+                            },
+                            {
+                              "doubleValue": 0.8
+                            },
+                            {
+                              "doubleValue": 0.2
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "published": {
+                  "integerValue": "1960"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-03",
+              "fields": {
+                "title": {
+                  "stringValue": "One Hundred Years of Solitude"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "family"
+                      },
+                      {
+                        "stringValue": "history"
+                      },
+                      {
+                        "stringValue": "fantasy"
+                      }
+                    ]
+                  }
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.3
+                            },
+                            {
+                              "doubleValue": 0.6
+                            },
+                            {
+                              "doubleValue": 0.6
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "author": {
+                  "stringValue": "Gabriel García Márquez"
+                },
+                "published": {
+                  "integerValue": "1967"
+                },
+                "genre": {
+                  "stringValue": "Magical Realism"
+                },
+                "rating": {
+                  "doubleValue": 4.3
+                },
+                "stock": {
+                  "integerValue": "5"
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "pages": {
+                  "integerValue": "417"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:54:44.586885Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 11\n query id: eff844f7839f85c1\n data bytes read: 3.45 KiB (3,533 B)\n entity row scanned: 11\n\nBilling:\n read units: 1\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 11\n|   latency: 3.71 ms (local <1 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 11\n    |   latency: 3.65 ms (local <1 ms)\n    |\n    └── • TableScan\n           source: /pipeline-books\n           order: UNDEFINED\n           output bindings: {$__key___2=get_field(row(), \"__key__\"), $record_1=row()}\n           output: [$__key___2, $record_1]\n\n           Execution:\n            records returned: 11\n            latency: 3.64 ms\n            records scanned: 11\n            data bytes read: 3.45 KiB (3,533 B)\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "unindexed-filter",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "author"
+                        },
+                        {
+                          "stringValue": "Frank Herbert"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+              "fields": {
+                "author": {
+                  "stringValue": "Frank Herbert"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.95
+                            },
+                            {
+                              "doubleValue": 0.15
+                            },
+                            {
+                              "doubleValue": 0.35
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "politics"
+                      },
+                      {
+                        "stringValue": "desert"
+                      },
+                      {
+                        "stringValue": "ecology"
+                      }
+                    ]
+                  }
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "hugo": {
+                        "booleanValue": true
+                      },
+                      "nebula": {
+                        "booleanValue": true
+                      }
+                    }
+                  }
+                },
+                "genre": {
+                  "stringValue": "Science Fiction"
+                },
+                "title": {
+                  "stringValue": "Dune"
+                },
+                "stock": {
+                  "integerValue": "6"
+                },
+                "rating": {
+                  "doubleValue": 4.6
+                },
+                "pages": {
+                  "integerValue": "412"
+                },
+                "published": {
+                  "integerValue": "1965"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:55:20.850338Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 1\n query id: a1c5a75afe3bffa5\n data bytes read: 3.45 KiB (3,533 B)\n entity row scanned: 11\n\nBilling:\n read units: 1\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 1\n|   latency: 4.55 ms (local 1.12 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 1\n    |   latency: 3.43 ms (local <1 ms)\n    |\n    └── • TableScan\n           source: /pipeline-books\n           order: UNDEFINED\n           filter: (get_field(row(), \"author\") == \"Frank Herbert\")\n           output bindings: {$__key___2=get_field(row(), \"__key__\"), $record_1=row()}\n           output: [$__key___2, $record_1]\n\n           Execution:\n            records returned: 1\n            latency: 3.40 ms\n            post-filtered rows: 10\n            records scanned: 11\n            data bytes read: 3.45 KiB (3,533 B)\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "find-nearest",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "find_nearest",
+                "args": [
+                  {
+                    "fieldReferenceValue": "embedding"
+                  },
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__type__": {
+                          "stringValue": "__vector__"
+                        },
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "doubleValue": 0.9
+                              },
+                              {
+                                "doubleValue": 0.1
+                              },
+                              {
+                                "doubleValue": 0.2
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "stringValue": "euclidean"
+                  }
+                ],
+                "options": {
+                  "limit": {
+                    "integerValue": "3"
+                  }
+                }
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-01",
+              "fields": {
+                "stock": {
+                  "integerValue": "3"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.9
+                            },
+                            {
+                              "doubleValue": 0.1
+                            },
+                            {
+                              "doubleValue": 0.2
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "genre": {
+                  "stringValue": "Science Fiction"
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": true
+                      }
+                    }
+                  }
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "comedy"
+                      },
+                      {
+                        "stringValue": "space"
+                      },
+                      {
+                        "stringValue": "adventure"
+                      }
+                    ]
+                  }
+                },
+                "title": {
+                  "stringValue": "The Hitchhiker's Guide to the Galaxy"
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "pages": {
+                  "integerValue": "224"
+                },
+                "author": {
+                  "stringValue": "Douglas Adams"
+                },
+                "published": {
+                  "integerValue": "1979"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+              "fields": {
+                "author": {
+                  "stringValue": "Frank Herbert"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.95
+                            },
+                            {
+                              "doubleValue": 0.15
+                            },
+                            {
+                              "doubleValue": 0.35
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "pages": {
+                  "integerValue": "412"
+                },
+                "rating": {
+                  "doubleValue": 4.6
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "politics"
+                      },
+                      {
+                        "stringValue": "desert"
+                      },
+                      {
+                        "stringValue": "ecology"
+                      }
+                    ]
+                  }
+                },
+                "title": {
+                  "stringValue": "Dune"
+                },
+                "published": {
+                  "integerValue": "1965"
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "hugo": {
+                        "booleanValue": true
+                      },
+                      "nebula": {
+                        "booleanValue": true
+                      }
+                    }
+                  }
+                },
+                "stock": {
+                  "integerValue": "6"
+                },
+                "genre": {
+                  "stringValue": "Science Fiction"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+              "fields": {
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "surveillance"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "propaganda"
+                      }
+                    ]
+                  }
+                },
+                "stock": {
+                  "integerValue": "7"
+                },
+                "title": {
+                  "stringValue": "1984"
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      },
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.7
+                            },
+                            {
+                              "doubleValue": 0.4
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "pages": {
+                  "integerValue": "328"
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "published": {
+                  "integerValue": "1949"
+                },
+                "author": {
+                  "stringValue": "George Orwell"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:55:21.821664Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 3\n query id: 9c92af7b991d991e\n request peak memory usage: 20.25 KiB (20,736 B)\n data bytes read: 3.45 KiB (3,533 B)\n entity row scanned: 11\n\nBilling:\n read units: 1\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 3\n|   latency: 4.86 ms (local <1 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 3\n    |   latency: 4.22 ms (local <1 ms)\n    |\n    └── • MajorSort\n        |  fields: [$v_2 ASC]\n        |  output: [$__key___2, $record_1]\n        |  limit: 3\n        |\n        |  Execution:\n        |   records returned: 3\n        |   latency: 4.22 ms (local <1 ms)\n        |   peak memory usage: 20.25 KiB (20,736 B)\n        |\n        └── • Compute\n            |  $v_2: euclidean_distance($embedding_1, vector(0.9, 0.1, 0.2))\n            |\n            |  Execution:\n            |   records returned: 10\n            |   latency: 4.16 ms (local <1 ms)\n            |\n            └── • TableScan\n                   source: /pipeline-books\n                   order: UNDEFINED\n                   filter: conditional(is_type(get_field(row(), \"embedding\"), \"vector\"), (vector_length(get_field(row(), \"embedding\")) == 3L), false)\n                   output bindings: {$__key___2=get_field(row(), \"__key__\"), $embedding_1=get_field(row(), \"embedding\"), $record_1=row()}\n                   output: [$__key___2, $embedding_1, $record_1]\n\n                   Execution:\n                    records returned: 10\n                    latency: 3.88 ms\n                    post-filtered rows: 1\n                    records scanned: 11\n                    data bytes read: 3.45 KiB (3,533 B)\n"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

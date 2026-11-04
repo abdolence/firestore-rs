@@ -1,0 +1,296 @@
+{
+  "description": "insert stage",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "by_name",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-1"
+                        },
+                        "title": {
+                          "stringValue": "one"
+                        },
+                        "n": {
+                          "integerValue": "1"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-2"
+                        },
+                        "title": {
+                          "stringValue": "two"
+                        },
+                        "n": {
+                          "integerValue": "2"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "2"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "collection_option",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "title": {
+                          "stringValue": "auto"
+                        },
+                        "n": {
+                          "integerValue": "3"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert",
+                "options": {
+                  "collection": {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "collection_and_document_id_options",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "title": {
+                          "stringValue": "by-id"
+                        },
+                        "n": {
+                          "integerValue": "4"
+                        },
+                        "key": {
+                          "stringValue": "doc-4"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert",
+                "options": {
+                  "collection": {
+                    "referenceValue": "/pipeline-dml"
+                  },
+                  "document_id": {
+                    "fieldReferenceValue": "key"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "duplicate",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-1"
+                        },
+                        "title": {
+                          "stringValue": "dup"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 409,
+        "message": "Document already exists: projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-1",
+        "status": "ALREADY_EXISTS"
+      },
+      "replay": false
+    },
+    {
+      "name": "no_name",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "title": {
+                          "stringValue": "nameless"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The DML operation failed because the '__name__' field is missing from a document. The '__name__' field is required to identify documents for modification. Please ensure that no stages before the DML operation are removing the '__name__' field.",
+        "status": "INVALID_ARGUMENT",
+        "details": [
+          {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "DML_MISSING_DOCUMENT_NAME",
+            "domain": "firestore.googleapis.com"
+          }
+        ]
+      },
+      "replay": false
+    },
+    {
+      "name": "relative_name",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "/pipeline-dml/doc-rel"
+                        },
+                        "title": {
+                          "stringValue": "rel"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Document parent \"/pipeline-dml/doc-rel\" not recognized.",
+        "status": "INVALID_ARGUMENT"
+      },
+      "replay": false
+    }
+  ]
+}

@@ -1,0 +1,165 @@
+{
+  "description": "where with nested and/or functions",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "where",
+            "args": [
+              {
+                "functionValue": {
+                  "name": "and",
+                  "args": [
+                    {
+                      "functionValue": {
+                        "name": "equal",
+                        "args": [
+                          {
+                            "fieldReferenceValue": "genre"
+                          },
+                          {
+                            "stringValue": "Dystopian"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "functionValue": {
+                        "name": "or",
+                        "args": [
+                          {
+                            "functionValue": {
+                              "name": "less_than",
+                              "args": [
+                                {
+                                  "fieldReferenceValue": "published"
+                                },
+                                {
+                                  "integerValue": "1950"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "functionValue": {
+                              "name": "greater_than",
+                              "args": [
+                                {
+                                  "fieldReferenceValue": "stock"
+                                },
+                                {
+                                  "integerValue": "5"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+          "fields": {
+            "stock": {
+              "integerValue": "7"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "surveillance"
+                  },
+                  {
+                    "stringValue": "totalitarianism"
+                  },
+                  {
+                    "stringValue": "propaganda"
+                  }
+                ]
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "genre": {
+              "stringValue": "Dystopian"
+            },
+            "published": {
+              "integerValue": "1949"
+            },
+            "author": {
+              "stringValue": "George Orwell"
+            },
+            "pages": {
+              "integerValue": "328"
+            },
+            "title": {
+              "stringValue": "1984"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.7
+                        },
+                        {
+                          "doubleValue": 0.4
+                        },
+                        {
+                          "doubleValue": 0.1
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "rating": {
+              "doubleValue": 4.2
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:40.571403Z"
+    }
+  ]
+}
