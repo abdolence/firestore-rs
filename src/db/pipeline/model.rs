@@ -564,6 +564,7 @@ mod tests {
     use super::*;
     use crate::db::pipeline::fixtures::{fixture_case, pipeline};
     use crate::pipeline_builder::FirestorePipelineInitialBuilder;
+    use gcloud_sdk::google::firestore::v1::MapValue;
 
     const ENTERPRISE_DOCUMENTS: &str =
         "projects/latestbit/databases/firestore-rs-enterprise/documents";
@@ -572,6 +573,34 @@ mod tests {
     struct LiteralRow {
         a: i64,
         b: &'static str,
+    }
+
+    #[derive(serde::Serialize)]
+    struct OptionalRow {
+        present: i64,
+        missing: Option<i64>,
+        json_null: serde_json::Value,
+    }
+
+    #[test]
+    fn a_literals_row_converts_as_a_core_document_does() {
+        let row = OptionalRow {
+            present: 1,
+            missing: None,
+            json_null: serde_json::Value::Null,
+        };
+        let core_fields = crate::firestore_document_from_serializable("rows/one", &row)
+            .unwrap()
+            .fields;
+
+        let stage = Stage::try_from(FirestoreLiteralsSource::new(vec![row.into()])).unwrap();
+
+        assert_eq!(
+            stage.args,
+            vec![wire_value(ValueType::MapValue(MapValue {
+                fields: core_fields
+            }))]
+        );
     }
 
     fn builder() -> FirestorePipelineInitialBuilder<()> {

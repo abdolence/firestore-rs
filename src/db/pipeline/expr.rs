@@ -15,7 +15,8 @@ use std::collections::hash_map::{Entry, HashMap};
 pub enum FirestoreExpr {
     /// A field of the current document, by its path, such as `path!(Book::title)`.
     Field(String),
-    /// A constant value.
+    /// A constant value. A `None` is sent as null, unlike a `None` field of a struct, which is
+    /// left out as it is in a Core document.
     Constant(FirestoreValue),
     /// A call of a pipeline function.
     Function(FirestoreFunction),
@@ -218,6 +219,11 @@ impl TryFrom<FirestoreExpr> for Value {
     fn try_from(expr: FirestoreExpr) -> Result<Self, Self::Error> {
         Ok(match expr {
             FirestoreExpr::Field(path) => wire_value(ValueType::FieldReferenceValue(path)),
+            // A `None` constant serialises to a value with no type, which the service rejects;
+            // as a pipeline argument it can only mean null.
+            FirestoreExpr::Constant(FirestoreValue {
+                value: Value { value_type: None },
+            }) => wire_value(ValueType::NullValue(0)),
             FirestoreExpr::Constant(value) => value.value,
             FirestoreExpr::Function(function) => {
                 wire_value(ValueType::FunctionValue(function.try_into()?))
@@ -302,4 +308,28 @@ pub(super) fn selection_map(
         }
     }
     Ok(wire_value(ValueType::MapValue(MapValue { fields })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_none_constant_is_sent_as_null() {
+        let comparison = FirestoreExpr::field("title").equal(None::<String>);
+
+        let sent = Value::try_from(FirestoreExpr::from(comparison)).unwrap();
+
+        assert_eq!(
+            sent,
+            wire_value(ValueType::FunctionValue(Function {
+                name: "equal".to_string(),
+                args: vec![
+                    wire_value(ValueType::FieldReferenceValue("title".to_string())),
+                    wire_value(ValueType::NullValue(0)),
+                ],
+                options: HashMap::new(),
+            }))
+        );
+    }
 }
