@@ -158,8 +158,8 @@ A search runs only against search indexes:
 - a text search needs a *text index* on the fields it searches, and Firestore searches all of the
   indexed text fields of the collection, never one by name;
 - a geo search needs a *geo index* on the geo point field;
-- one index holds either text fields or geo fields, and mixing search fields with ordinary ones
-  is rejected;
+- one index can hold text fields and geo fields together, and mixing search fields with ordinary
+  ones is rejected;
 - a collection-group search needs indexes scoped to the collection group.
 
 [Index management](./index-management.md#text-and-geo-search-indexes) declares them in Rust,
