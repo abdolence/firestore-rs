@@ -1,5 +1,4 @@
-use crate::{FirestoreBoolExpr, FirestoreExpr, FirestoreValue};
-use gcloud_sdk::google::firestore::v1::{value::ValueType, Value};
+use crate::{FirestoreBoolExpr, FirestoreExpr};
 
 impl FirestoreExpr {
     /// -1, 0 or 1 as this value is less than, equal to or greater than `other`.
@@ -29,14 +28,14 @@ impl FirestoreExpr {
 
     /// True when this value is null. An absent field is not null.
     pub fn is_null(self) -> FirestoreBoolExpr {
-        self.equal(Self::null())
+        self.equal(None::<bool>)
     }
 
     /// True when this field exists and is not null. The service accepts only a field here.
     pub fn is_not_null(self) -> FirestoreBoolExpr {
         self.clone()
             .exists()
-            .and_maybe(Some(self.not_equal(Self::null())))
+            .and_maybe(Some(self.not_equal(None::<bool>)))
     }
 
     /// True when this value is NaN.
@@ -79,13 +78,5 @@ impl FirestoreExpr {
     /// True when this field exists. A null field exists. The service accepts only a field here.
     pub fn exists(self) -> FirestoreBoolExpr {
         FirestoreBoolExpr(Self::raw("exists", [self]))
-    }
-
-    /// The null constant. A `None` passed as a constant becomes an unset value, which the service
-    /// rejects.
-    fn null() -> FirestoreExpr {
-        FirestoreExpr::constant(FirestoreValue::from(Value {
-            value_type: Some(ValueType::NullValue(0)),
-        }))
     }
 }

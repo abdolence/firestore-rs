@@ -1,3 +1,4 @@
+use crate::firestore_serde::serializer::FirestoreValueSerializer;
 use crate::{
     FirestoreError, FirestorePipeline, FirestoreQueryDirection, FirestoreResult, FirestoreValue,
 };
@@ -16,7 +17,8 @@ pub enum FirestoreExpr {
     /// A field of the current document, by its path, such as `path!(Book::title)`.
     Field(String),
     /// A constant value. A `None` is sent as null, unlike a `None` field of a struct, which is
-    /// left out as it is in a Core document.
+    /// left out as it is in a Core document. A value with no type, which is what a constant that
+    /// failed to serialise is left as, fails the conversion of the pipeline.
     Constant(FirestoreValue),
     /// A call of a pipeline function.
     Function(FirestoreFunction),
@@ -129,8 +131,8 @@ impl FirestoreExpr {
     }
 
     /// A constant value.
-    pub fn constant<V: Into<FirestoreValue>>(value: V) -> Self {
-        Self::Constant(value.into())
+    pub fn constant<V: serde::Serialize>(value: V) -> Self {
+        Self::from(value)
     }
 
     /// A call of the function `name`, for a function that has no method of its own.
@@ -196,7 +198,18 @@ where
     T: serde::Serialize,
 {
     fn from(value: T) -> Self {
-        Self::Constant(value.into())
+        let constant = match value.serialize(FirestoreValueSerializer::new()) {
+            // A `None` or a unit has no type of its own, and as a pipeline argument it can only
+            // mean null.
+            Ok(FirestoreValue {
+                value: Value { value_type: None },
+            }) => FirestoreValue::from(wire_value(ValueType::NullValue(0))),
+            Ok(constant) => constant,
+            // `From` has no way to return the error; the value stays untyped, and converting the
+            // pipeline rejects it.
+            Err(_) => FirestoreValue::from(Value { value_type: None }),
+        };
+        Self::Constant(constant)
     }
 }
 
@@ -219,11 +232,14 @@ impl TryFrom<FirestoreExpr> for Value {
     fn try_from(expr: FirestoreExpr) -> Result<Self, Self::Error> {
         Ok(match expr {
             FirestoreExpr::Field(path) => wire_value(ValueType::FieldReferenceValue(path)),
-            // A `None` constant serialises to a value with no type, which the service rejects;
-            // as a pipeline argument it can only mean null.
             FirestoreExpr::Constant(FirestoreValue {
                 value: Value { value_type: None },
-            }) => wire_value(ValueType::NullValue(0)),
+            }) => {
+                return Err(FirestoreError::invalid_parameters(
+                    "constant",
+                    "the value could not be serialised",
+                ))
+            }
             FirestoreExpr::Constant(value) => value.value,
             FirestoreExpr::Function(function) => {
                 wire_value(ValueType::FunctionValue(function.try_into()?))
@@ -313,6 +329,21 @@ pub(super) fn selection_map(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_constant_that_fails_to_serialise_is_rejected() {
+        let unserialisable = HashMap::from([(true, 1)]);
+
+        let comparison = FirestoreExpr::field("flags").equal(unserialisable.clone());
+        let aliased = FirestoreExpr::constant(unserialisable).alias("flags");
+
+        for expr in [FirestoreExpr::from(comparison), aliased.expr] {
+            assert!(matches!(
+                Value::try_from(expr),
+                Err(FirestoreError::InvalidParametersError(_))
+            ),);
+        }
+    }
 
     #[test]
     fn a_none_constant_is_sent_as_null() {

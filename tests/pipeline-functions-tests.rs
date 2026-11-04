@@ -1,5 +1,4 @@
 use crate::common::setup_enterprise;
-use firestore::gcloud_sdk::google::firestore::v1::{value::ValueType, Value};
 use firestore::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use firestore::*;
 use serde::{Deserialize, Serialize};
@@ -47,12 +46,6 @@ where
 
     assert_eq!(rows.len(), 1);
     Ok(rows.remove(0))
-}
-
-fn null() -> FirestoreExpr {
-    FirestoreExpr::constant(FirestoreValue::from(Value {
-        value_type: Some(ValueType::NullValue(0)),
-    }))
 }
 
 #[tokio::test]
@@ -355,7 +348,7 @@ async fn conditional_functions_choose_between_values() -> TestResult {
                 .not_equal_any(vec![1, 2])
                 .alias("not_equal_any"),
             e.field("n").is_not_in(vec![1, 2]).alias("is_not_in"),
-            null().if_null(3).alias("if_null"),
+            e.constant(None::<i64>).if_null(3).alias("if_null"),
             e.field("missing").if_absent(3).alias("if_absent"),
             e.field("n").divide(0).if_error(-1).alias("if_error"),
             e.field("missing").is_absent().alias("is_absent_of_missing"),

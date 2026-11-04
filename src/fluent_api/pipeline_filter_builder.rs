@@ -1,5 +1,5 @@
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
-use crate::{FirestoreBoolExpr, FirestoreExpr, FirestoreValue, FirestoreValueType};
+use crate::{FirestoreBoolExpr, FirestoreExpr, FirestoreValueType};
 
 /// The argument of the `filter` closure of the fluent pipeline API, built like the filter of a
 /// Core query.
@@ -30,7 +30,7 @@ impl FirestorePipelineFilterBuilder {
 
     /// A constant value, to compare a field against. A value passed to a comparison becomes a
     /// constant without this.
-    pub fn constant<V: Into<FirestoreValue>>(&self, value: V) -> FirestoreExpr {
+    pub fn constant<V: serde::Serialize>(&self, value: V) -> FirestoreExpr {
         self.values().constant(value)
     }
 

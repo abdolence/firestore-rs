@@ -1,4 +1,4 @@
-use crate::{FirestoreBoolExpr, FirestoreExpr, FirestoreValue};
+use crate::{FirestoreBoolExpr, FirestoreExpr};
 
 /// The argument of every expression closure of the fluent pipeline API other than `filter`, such
 /// as `.fields(|e| ..)` and `.sort(|e| ..)`. The `filter` closure takes a
@@ -17,7 +17,7 @@ impl FirestorePipelineExprBuilder {
     }
 
     /// A constant value. A value passed to a comparison becomes a constant without this.
-    pub fn constant<V: Into<FirestoreValue>>(&self, value: V) -> FirestoreExpr {
+    pub fn constant<V: serde::Serialize>(&self, value: V) -> FirestoreExpr {
         FirestoreExpr::constant(value)
     }
 
