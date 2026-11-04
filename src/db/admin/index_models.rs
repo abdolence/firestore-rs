@@ -654,9 +654,9 @@ pub struct FirestoreIndexDeletesWithheld {
 /// Why a pruning `.sync()` sent none of its planned index deletes.
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreIndexDeletesWithheldReason {
-    /// `CreateIndex` answered `ALREADY_EXISTS` for these declared indexes, although the listing
-    /// matched none of them. Firestore holds an index it counts as equivalent, which may be one of
-    /// the indexes planned for deletion.
+    /// `CreateIndex` answered `ALREADY_EXISTS` for these declared indexes, which the listing the
+    /// sync planned from did not show. A fresh listing does, so another writer created them since,
+    /// and it may be changing the indexes planned for deletion too.
     AlreadyExists(Vec<FirestoreCompositeIndex>),
     /// These indexes, created by the same sync, had not finished building: an operation failed,
     /// or the sync's deadline passed first. A delete sent then could remove the index queries use

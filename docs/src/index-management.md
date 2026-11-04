@@ -269,10 +269,15 @@ minutes. The wait ends by the sync's deadline: the `.wait_until_ready(timeout)` 
 set one, 30 minutes from the start of the sync otherwise. If a new index fails to build, or is
 still building at the deadline, the sync deletes nothing and returns the error.
 
-The sync also deletes nothing when Firestore answers a `CreateIndex` with `ALREADY_EXISTS`. That
-means Firestore holds an index it counts as the declared one, but the library did not match it to
-any listed index, so it can be one of the indexes planned for deletion. The sync logs a warning
-naming the declared index and carries on with everything else.
+The sync also deletes nothing when Firestore answers a `CreateIndex` with `ALREADY_EXISTS` and a
+fresh listing shows a matching index: another deployment created it after the sync planned its
+changes. The sync reports the index as unchanged, logs a warning naming it and carries on with
+everything else.
+
+When the fresh listing shows no matching index, the sync returns the `ALREADY_EXISTS` error
+instead of reporting the index as unchanged. On an Enterprise edition database Firestore keeps
+answering `ALREADY_EXISTS` for several minutes after an index with the same fields is deleted,
+while the listing no longer shows it. Run the sync again once the answer changes.
 
 In both cases `withheld_deletes` on the report lists the indexes left in place and the reason.
 Reverts and TTL disables do not wait for new indexes.
@@ -389,8 +394,8 @@ The job's service account needs `roles/datastore.indexAdmin`, the role `.sync()`
 Replicas that only call `.plan()` need `roles/datastore.viewer`.
 
 When two syncs do overlap regardless, index creates and deletes converge on their own: a
-`CreateIndex` answered `ALREADY_EXISTS`, and a `DeleteIndex` answered `NOT_FOUND`, both count as
-done. A field revert Firestore refuses because another writer already reverted it counts as done
+`CreateIndex` answered `ALREADY_EXISTS` for an index a fresh listing shows, and a `DeleteIndex`
+answered `NOT_FOUND`, both count as done. A field revert Firestore refuses because another writer already reverted it counts as done
 too. One refused while another writer's revert is still in progress is polled until that revert
 finishes, within this sync's deadline, and then counts as done. A TTL disable does not get that wait: Firestore reports no in-progress state for a TTL
 field, so a disable refused while another writer's disable is still running fails. It converges

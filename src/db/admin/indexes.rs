@@ -4,7 +4,7 @@
 //! ([`GoogleApiClient::get_with`](gcloud_sdk::GoogleApiClient::get_with)).
 
 use crate::db::admin::index_diff::{
-    plan_index_changes, FirestoreIndexExistingState, FirestoreIndexListing,
+    composite_index_matches, plan_index_changes, FirestoreIndexExistingState, FirestoreIndexListing,
 };
 use crate::db::admin::index_models::{
     validate_collection_group, write_section, CanonicalFieldPath,
@@ -157,8 +157,8 @@ impl std::fmt::Display for IndexAction {
 type PendingOperation = StartedOperation<IndexAction>;
 
 /// The result of [`FirestoreDb::apply_create_index`]: whether the create actually started a
-/// build, or Firestore already holds an index it counts as this one, which `.sync()` reports as
-/// unchanged rather than created.
+/// build, or another writer created the index since the plan was made, which `.sync()` reports
+/// as unchanged rather than created.
 enum CreateIndexOutcome {
     Created(PendingOperation),
     AlreadyExists,
@@ -642,16 +642,31 @@ impl FirestoreDb {
                         action,
                     }))
                 }
-                // Either a race with another deployment, or Firestore counts a listed index the
-                // plan did not match as this one. Not an error; `apply_plan` withholds its
-                // deletes, since the index it counts may be one of them.
+                // Another deployment may have created the index since the plan listed it. The
+                // answer alone does not show that: Firestore keeps answering ALREADY_EXISTS for an
+                // index deleted minutes ago, while its listing no longer shows it. `apply_plan`
+                // withholds its deletes in the first case.
                 Err(status) if status.code() == Code::AlreadyExists => {
-                    warn!(
-                        action = action.kind(),
-                        index = %index,
-                        "Firestore answered ALREADY_EXISTS for a declared index the listing did not match; counting it as unchanged and withholding every index delete of this sync.",
-                    );
-                    Ok(CreateIndexOutcome::AlreadyExists)
+                    let listing = self.list_existing_state(group).await?;
+                    if listing
+                        .indexes
+                        .iter()
+                        .any(|listed| composite_index_matches(index, &listed.index))
+                    {
+                        warn!(
+                            action = action.kind(),
+                            index = %index,
+                            "A declared index was created since the plan was made; counting it as unchanged and withholding every index delete of this sync.",
+                        );
+                        Ok(CreateIndexOutcome::AlreadyExists)
+                    } else {
+                        error!(
+                            action = action.kind(),
+                            index = %index,
+                            "Firestore answered ALREADY_EXISTS for a declared index its listing does not show.",
+                        );
+                        Err(FirestoreError::from(status))
+                    }
                 }
                 Err(status) => {
                     error!(error = %status, action = action.kind(), index = %index, "Failed to create a composite index.");
@@ -3195,10 +3210,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn already_exists_on_create_counts_as_unchanged() {
+    async fn already_exists_on_create_of_an_index_the_listing_does_not_show_fails() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            CREATE_INDEX => (
+                "CreateIndex (already exists)".to_string(),
+                FakeResponse::Status(Code::AlreadyExists),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let result = fake
+            .db
+            .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+            .await;
+
+        assert!(
+            matches!(result, Err(FirestoreError::DataConflictError(_))),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn already_exists_on_create_of_an_index_a_fresh_listing_shows_counts_as_unchanged() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let listings = AtomicU32::new(0);
+        let fake = FakeFirestore::start(move |method, _| match method {
+            LIST_INDEXES => {
+                let created_by_another_writer = listings.fetch_add(1, Ordering::SeqCst) > 0;
+                (
+                    "ListIndexes".to_string(),
+                    list_indexes_response(if created_by_another_writer {
+                        vec![listed_declared_index(
+                            &format!("{GROUP_PATH}/indexes/1"),
+                            ProtoState::Creating,
+                        )]
+                    } else {
+                        vec![]
+                    }),
+                )
+            }
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
                 "CreateIndex (already exists)".to_string(),
@@ -3269,21 +3323,29 @@ mod tests {
     async fn an_already_existing_create_withholds_every_index_delete() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         use gcloud_sdk::google::firestore::admin::v1::index::index_field::Order;
-        // `__name__` mid-index makes the listed index a different one under the matching rule,
-        // yet Firestore may still hold it as the declared index's equivalent.
-        let fake = FakeFirestore::start(|method, bytes| match method {
-            LIST_INDEXES => (
-                "ListIndexes".to_string(),
-                list_indexes_response(vec![listed_index(
-                    vec![
-                        order_field("a", Order::Ascending),
-                        order_field("__name__", Order::Ascending),
-                        order_field("b", Order::Ascending),
-                    ],
-                    ProtoQueryScope::Collection,
-                    ProtoState::Ready,
-                )]),
-            ),
+        // Another deployment creates the declared index between the plan's listing and this
+        // sync's create.
+        let listings = AtomicU32::new(0);
+        let fake = FakeFirestore::start(move |method, bytes| match method {
+            LIST_INDEXES => {
+                let created_by_another_writer = listings.fetch_add(1, Ordering::SeqCst) > 0;
+                let mut listed = vec![listed_undeclared_index()];
+                if created_by_another_writer {
+                    listed.push(ProtoIndex {
+                        name: format!("{GROUP_PATH}/indexes/2"),
+                        ..listed_index(
+                            vec![
+                                order_field("a", Order::Ascending),
+                                order_field("b", Order::Ascending),
+                                order_field("__name__", Order::Ascending),
+                            ],
+                            ProtoQueryScope::Collection,
+                            ProtoState::Creating,
+                        )
+                    });
+                }
+                ("ListIndexes".to_string(), list_indexes_response(listed))
+            }
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
                 "CreateIndex (already exists)".to_string(),
