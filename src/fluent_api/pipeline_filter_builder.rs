@@ -34,7 +34,7 @@ impl FirestorePipelineFilterBuilder {
         self.values().constant(value)
     }
 
-    /// The variable `name`, defined by the `define` stage of the enclosing pipeline, to compare a
+    /// The variable `name`, defined by the `define_variables` stage of the enclosing pipeline, to compare a
     /// field of a subquery against.
     pub fn variable<S: Into<String>>(&self, name: S) -> FirestoreExpr {
         self.values().variable(name)

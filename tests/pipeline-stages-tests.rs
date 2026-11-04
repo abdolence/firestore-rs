@@ -489,7 +489,7 @@ async fn define_makes_a_variable_for_the_stages_after_it() -> TestResult {
         .pipeline()
         .select()
         .literals([[("a", 1)], [("a", 20)]].map(std::collections::HashMap::from))
-        .define(|e| [e.constant(10).alias("threshold")])
+        .define_variables(|e| [e.constant(10).alias("threshold")])
         .add_fields(|e| {
             [e.field(path!(Threshold::a))
                 .greater_than(e.variable("threshold"))
@@ -520,7 +520,7 @@ async fn an_array_subquery_joins_the_matching_documents_as_an_array() -> TestRes
         .select()
         .from(RESTAURANTS)
         .filter(|q| q.field("cuisine").eq("breakfast"))
-        .define(|e| [e.field("__name__").alias("restaurant")])
+        .define_variables(|e| [e.field("__name__").alias("restaurant")])
         .fields(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithReviews::name))),
@@ -581,7 +581,7 @@ async fn a_scalar_subquery_joins_one_value_and_null_for_no_match() -> TestResult
         .select()
         .from(RESTAURANTS)
         .filter(|q| q.field("cuisine").eq("breakfast"))
-        .define(|e| [e.field("__name__").alias("restaurant")])
+        .define_variables(|e| [e.field("__name__").alias("restaurant")])
         .fields(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithAverage::name))),
@@ -673,7 +673,7 @@ async fn a_scalar_subquery_of_several_results_fails_the_request() -> TestResult 
         .pipeline()
         .select()
         .documents([format!("{RESTAURANTS}/rest-04")])
-        .define(|e| [e.field("__name__").alias("restaurant")])
+        .define_variables(|e| [e.field("__name__").alias("restaurant")])
         .fields(|e| {
             [
                 FirestoreSelection::from(e.field("name")),

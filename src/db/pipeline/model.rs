@@ -162,7 +162,7 @@ pub enum FirestorePipelineStage {
     Unnest(FirestoreUnnestStage),
     ReplaceWith(FirestoreReplaceWithStage),
     /// The wire stage `let`.
-    Define(FirestoreDefineStage),
+    DefineVariables(FirestoreDefineVariablesStage),
 }
 
 /// Keeps the documents for which `condition` is true.
@@ -305,7 +305,7 @@ pub enum FirestoreReplaceWithMode {
 /// [`variable`](crate::pipeline_expr_builder::FirestorePipelineExprBuilder::variable). Preview.
 /// The wire stage is `let`, which is a Rust keyword.
 #[derive(Debug, Clone, PartialEq, Builder)]
-pub struct FirestoreDefineStage {
+pub struct FirestoreDefineVariablesStage {
     pub variables: Vec<FirestoreSelection>,
 }
 
@@ -449,7 +449,7 @@ impl TryFrom<FirestorePipelineStage> for Stage {
             FirestorePipelineStage::Union(stage) => stage.try_into(),
             FirestorePipelineStage::Unnest(stage) => stage.try_into(),
             FirestorePipelineStage::ReplaceWith(stage) => stage.try_into(),
-            FirestorePipelineStage::Define(stage) => stage.try_into(),
+            FirestorePipelineStage::DefineVariables(stage) => stage.try_into(),
         }
     }
 }

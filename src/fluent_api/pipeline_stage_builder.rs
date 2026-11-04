@@ -3,12 +3,12 @@ use crate::pipeline_builder::{
 };
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::{
-    FirestoreAggregate, FirestoreAggregateSelection, FirestoreAggregateStage, FirestoreDefineStage,
-    FirestoreDistinctStage, FirestoreExpr, FirestoreFindNearestDistanceMeasure,
-    FirestoreFindNearestStage, FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage,
-    FirestoreReplaceWithMode, FirestoreReplaceWithStage, FirestoreSampleSize, FirestoreSampleStage,
-    FirestoreSelection, FirestoreSubcollectionSource, FirestoreUnionStage, FirestoreUnnestStage,
-    FirestoreVector,
+    FirestoreAggregate, FirestoreAggregateSelection, FirestoreAggregateStage,
+    FirestoreDefineVariablesStage, FirestoreDistinctStage, FirestoreExpr,
+    FirestoreFindNearestDistanceMeasure, FirestoreFindNearestStage, FirestorePipeline,
+    FirestorePipelineSource, FirestorePipelineStage, FirestoreReplaceWithMode,
+    FirestoreReplaceWithStage, FirestoreSampleSize, FirestoreSampleStage, FirestoreSelection,
+    FirestoreSubcollectionSource, FirestoreUnionStage, FirestoreUnnestStage, FirestoreVector,
 };
 
 /// The context of a pipeline nested in another: a subquery or a `union` branch.
@@ -233,7 +233,9 @@ where
     /// Defines variables for the stages that follow, which read them with
     /// [`variable`](FirestorePipelineExprBuilder::variable). The wire stage is `let`, which is a
     /// Rust keyword. Preview: Firestore has announced joins without a launch stage.
-    pub fn define<FN, I>(
+    #[doc(alias = "define")]
+    #[doc(alias = "let")]
+    pub fn define_variables<FN, I>(
         self,
         variables: FN,
     ) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>
@@ -242,9 +244,9 @@ where
         I: IntoIterator,
         I::Item: Into<FirestoreSelection>,
     {
-        self.stage(FirestorePipelineStage::Define(FirestoreDefineStage::new(
-            build_all(variables),
-        )))
+        self.stage(FirestorePipelineStage::DefineVariables(
+            FirestoreDefineVariablesStage::new(build_all(variables)),
+        ))
     }
 }
 
@@ -253,7 +255,7 @@ impl FirestorePipelineExprBuilder {
     /// nothing. Each result is a map, or just the value when the pipeline outputs a single field.
     ///
     /// Preview: Firestore has announced joins without a launch stage. Variables defined with
-    /// `define` before this expression are visible inside it. Give the expression an alias to
+    /// `define_variables` before this expression are visible inside it. Give the expression an alias to
     /// select it.
     pub fn array_subquery<FN, R>(&self, subquery: FN) -> FirestoreExpr
     where
@@ -268,7 +270,7 @@ impl FirestorePipelineExprBuilder {
     /// results fails the request as `INVALID_ARGUMENT`.
     ///
     /// Preview: Firestore has announced joins without a launch stage. Variables defined with
-    /// `define` before this expression are visible inside it.
+    /// `define_variables` before this expression are visible inside it.
     pub fn scalar_subquery<FN, R>(&self, subquery: FN) -> FirestoreExpr
     where
         FN: FnOnce(FirestorePipelineInitialBuilder<FirestorePipelineNestedContext>) -> R,

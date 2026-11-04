@@ -1,7 +1,7 @@
 use super::expr::{selection_map, wire_value};
 use super::model::stage;
 use crate::{
-    FirestoreAggregateStage, FirestoreDefineStage, FirestoreDistinctStage, FirestoreError,
+    FirestoreAggregateStage, FirestoreDefineVariablesStage, FirestoreDistinctStage, FirestoreError,
     FirestoreFindNearestDistanceMeasure, FirestoreFindNearestStage, FirestorePipeline,
     FirestoreReplaceWithMode, FirestoreReplaceWithStage, FirestoreSampleSize, FirestoreSampleStage,
     FirestoreSubcollectionSource, FirestoreUnionStage, FirestoreUnnestStage, FirestoreValue,
@@ -176,11 +176,14 @@ impl From<FirestoreReplaceWithMode> for Value {
     }
 }
 
-impl TryFrom<FirestoreDefineStage> for Stage {
+impl TryFrom<FirestoreDefineVariablesStage> for Stage {
     type Error = FirestoreError;
 
-    fn try_from(define: FirestoreDefineStage) -> Result<Self, Self::Error> {
-        Ok(stage("let", vec![selection_map("let", define.variables)?]))
+    fn try_from(define_variables: FirestoreDefineVariablesStage) -> Result<Self, Self::Error> {
+        Ok(stage(
+            "let",
+            vec![selection_map("let", define_variables.variables)?],
+        ))
     }
 }
 
@@ -329,7 +332,7 @@ mod tests {
                 None,
                 builder()
                     .literals([HashMap::from([("a", 1)])])
-                    .define(|e| [e.constant(10).alias("threshold")])
+                    .define_variables(|e| [e.constant(10).alias("threshold")])
                     .add_fields(|e| {
                         [e.field("a")
                             .greater_than(e.variable("threshold"))
@@ -343,7 +346,7 @@ mod tests {
                 builder()
                     .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("breakfast"))
-                    .define(|e| [e.field("__name__").alias("rname")])
+                    .define_variables(|e| [e.field("__name__").alias("rname")])
                     .fields(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
@@ -365,7 +368,7 @@ mod tests {
                 builder()
                     .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("breakfast"))
-                    .define(|e| [e.field("__name__").alias("rname")])
+                    .define_variables(|e| [e.field("__name__").alias("rname")])
                     .fields(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
@@ -407,7 +410,7 @@ mod tests {
                 Some("scalar_in_where"),
                 builder()
                     .from("pipeline-restaurants")
-                    .define(|e| [e.field("__name__").alias("rname")])
+                    .define_variables(|e| [e.field("__name__").alias("rname")])
                     .filter(|q| {
                         q.expr(q.values().scalar_subquery(|p| {
                             p.from("reviews")
@@ -426,7 +429,7 @@ mod tests {
                 builder()
                     .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("breakfast"))
-                    .define(|e| [e.field("__name__").alias("rname")])
+                    .define_variables(|e| [e.field("__name__").alias("rname")])
                     .sort(|e| {
                         [e.scalar_subquery(|p| {
                             p.from("reviews")
@@ -444,7 +447,7 @@ mod tests {
                 Some("unnest_array_subquery"),
                 builder()
                     .documents(["pipeline-restaurants/rest-01"])
-                    .define(|e| [e.field("__name__").alias("rname")])
+                    .define_variables(|e| [e.field("__name__").alias("rname")])
                     .unnest(|e| {
                         e.array_subquery(|p| {
                             p.from("reviews")
