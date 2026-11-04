@@ -147,7 +147,7 @@ async fn filter_sort_offset_and_limit_apply_in_order() -> TestResult {
         .fluent()
         .pipeline()
         .collection(BOOKS)
-        .filter(|e| e.field(path!(Book::rating)).greater_than_or_equal(4.2))
+        .filter(|q| q.field(path!(Book::rating)).greater_than_or_equal(4.2))
         .sort(|e| {
             [
                 e.field(path!(Book::rating)).desc(),
@@ -217,7 +217,7 @@ async fn explain_returns_the_plan_after_the_documents_it_reads() -> TestResult {
             .fluent()
             .pipeline()
             .collection(BOOKS)
-            .filter(|e| e.field(path!(Book::genre)).eq("Dystopian"))
+            .filter(|q| q.field(path!(Book::genre)).eq("Dystopian"))
             .explain_with_options(options.clone())
             .stream_query_with_metadata()
             .await?

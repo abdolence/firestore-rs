@@ -258,7 +258,7 @@ mod tests {
             db.fluent()
                 .pipeline()
                 .collection("pipeline-books")
-                .filter(|e| e.field("genre").eq("Dystopian"))
+                .filter(|q| q.field("genre").eq("Dystopian"))
                 .sort(|e| [e.field("rating").desc()])
                 .explain_with_options(explain_options)
                 .request_tags(["pipelines"])

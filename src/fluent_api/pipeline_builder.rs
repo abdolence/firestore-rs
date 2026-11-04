@@ -1,4 +1,5 @@
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
+use crate::pipeline_filter_builder::FirestorePipelineFilterBuilder;
 use crate::{
     FirestoreAddFieldsStage, FirestoreBoolExpr, FirestoreCollectionGroupSource,
     FirestoreCollectionSource, FirestoreDocument, FirestoreDocumentsSource,
@@ -200,14 +201,16 @@ where
     S: Into<FirestorePipeline>,
 {
     /// Keeps the documents for which the condition is true. A closure that returns `None`, such
-    /// as a [`for_all`](FirestorePipelineExprBuilder::for_all) of no conditions, adds no
-    /// stage.
-    pub fn filter<FN, R>(self, filter: FN) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>
+    /// as a [`for_all`](FirestorePipelineFilterBuilder::for_all) of no conditions, adds no stage.
+    ///
+    /// `q` is the Core-style filter builder: its conditions are `Option`s, so a list may mix plain
+    /// and optional ones. Every other closure of a pipeline takes the value builder `e`, whose
+    /// conditions are plain.
+    pub fn filter<FN>(self, filter: FN) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>
     where
-        FN: FnOnce(FirestorePipelineExprBuilder) -> R,
-        R: Into<Option<FirestoreBoolExpr>>,
+        FN: FnOnce(FirestorePipelineFilterBuilder) -> Option<FirestoreBoolExpr>,
     {
-        match filter(FirestorePipelineExprBuilder).into() {
+        match filter(FirestorePipelineFilterBuilder) {
             Some(condition) => self.stage(FirestorePipelineStage::Where(FirestoreWhereStage::new(
                 condition,
             ))),

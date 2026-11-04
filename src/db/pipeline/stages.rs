@@ -345,14 +345,14 @@ mod tests {
                 None,
                 builder()
                     .collection("pipeline-restaurants")
-                    .filter(|e| e.field("cuisine").eq("breakfast"))
+                    .filter(|q| q.field("cuisine").eq("breakfast"))
                     .define(|e| [e.field("__name__").alias("rname")])
                     .select(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
                             e.array_subquery(|p| {
                                 p.collection_group("reviews")
-                                    .filter(|e| e.field("restaurant").eq(e.variable("rname")))
+                                    .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                     .sort(|e| [e.field("rating").desc()])
                                     .select(|e| [e.field("rating"), e.field("reviewer")])
                             })
@@ -366,14 +366,14 @@ mod tests {
                 None,
                 builder()
                     .collection("pipeline-restaurants")
-                    .filter(|e| e.field("cuisine").eq("breakfast"))
+                    .filter(|q| q.field("cuisine").eq("breakfast"))
                     .define(|e| [e.field("__name__").alias("rname")])
                     .select(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
                             e.scalar_subquery(|p| {
                                 p.collection_group("reviews")
-                                    .filter(|e| e.field("restaurant").eq(e.variable("rname")))
+                                    .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                     .aggregate(|e| [e.field("rating").average().alias("avg")])
                             })
                             .alias("avg_rating"),
@@ -386,7 +386,7 @@ mod tests {
                 None,
                 builder()
                     .collection("pipeline-restaurants")
-                    .filter(|e| e.field("cuisine").eq("pizza"))
+                    .filter(|q| q.field("cuisine").eq("pizza"))
                     .select(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
@@ -409,12 +409,12 @@ mod tests {
                 builder()
                     .collection("pipeline-restaurants")
                     .define(|e| [e.field("__name__").alias("rname")])
-                    .filter(|e| {
-                        e.scalar_subquery(|p| {
+                    .filter(|q| {
+                        q.expr(q.values().scalar_subquery(|p| {
                             p.collection_group("reviews")
-                                .filter(|e| e.field("restaurant").eq(e.variable("rname")))
+                                .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                 .aggregate(|e| [e.count_all().alias("c")])
-                        })
+                        }))
                         .greater_than(1)
                     })
                     .select(|e| [e.field("name")])
@@ -425,12 +425,12 @@ mod tests {
                 Some("subquery_in_sort"),
                 builder()
                     .collection("pipeline-restaurants")
-                    .filter(|e| e.field("cuisine").eq("breakfast"))
+                    .filter(|q| q.field("cuisine").eq("breakfast"))
                     .define(|e| [e.field("__name__").alias("rname")])
                     .sort(|e| {
                         [e.scalar_subquery(|p| {
                             p.collection_group("reviews")
-                                .filter(|e| e.field("restaurant").eq(e.variable("rname")))
+                                .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                 .aggregate(|e| [e.count_all().alias("c")])
                         })
                         .desc()]
@@ -447,7 +447,7 @@ mod tests {
                     .unnest(|e| {
                         e.array_subquery(|p| {
                             p.collection_group("reviews")
-                                .filter(|e| e.field("restaurant").eq(e.variable("rname")))
+                                .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                 .select(|e| [e.field("rating")])
                         })
                         .alias("review")

@@ -62,7 +62,7 @@ async fn an_empty_and_keeps_every_document_and_an_empty_or_none() -> TestResult 
         .fluent()
         .pipeline()
         .collection(BOOKS)
-        .filter(|e| e.and([]))
+        .filter(|q| q.condition(q.values().and([])))
         .obj()
         .query()
         .await?;
@@ -70,7 +70,7 @@ async fn an_empty_and_keeps_every_document_and_an_empty_or_none() -> TestResult 
         .fluent()
         .pipeline()
         .collection(BOOKS)
-        .filter(|e| e.or([]))
+        .filter(|q| q.condition(q.values().or([])))
         .obj()
         .query()
         .await?;

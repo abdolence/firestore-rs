@@ -42,8 +42,13 @@ pub mod pipeline_builder;
 
 /// Starts the expressions of a pipeline: fields, constants, variables and the logical functions.
 ///
-/// Reach for this as the argument of a pipeline closure such as `.filter(|e| ..)`, not directly.
+/// Reach for this as the argument of a pipeline closure such as `.select(|e| ..)`, not directly.
 pub mod pipeline_expr_builder;
+
+/// Builds the conditions of a pipeline's `filter`, the way a Core query builds its filter.
+///
+/// Reach for this as the argument of `.filter(|q| ..)` on a pipeline builder, not directly.
+pub mod pipeline_filter_builder;
 
 mod pipeline_function_builder;
 
@@ -205,10 +210,10 @@ where
     ///     .fluent()
     ///     .pipeline()
     ///     .collection("books")
-    ///     .filter(|e| {
-    ///         e.and([
-    ///             e.field(path!(Book::genre)).eq("Dystopian"),
-    ///             e.field(path!(Book::rating)).greater_than_or_equal(4.0),
+    ///     .filter(|q| {
+    ///         q.for_all([
+    ///             q.field(path!(Book::genre)).eq("Dystopian"),
+    ///             q.field(path!(Book::rating)).greater_than_or_equal(4.0),
     ///         ])
     ///     })
     ///     .sort(|e| [e.field(path!(Book::rating)).desc()])

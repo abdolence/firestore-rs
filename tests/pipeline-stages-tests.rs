@@ -508,14 +508,14 @@ async fn an_array_subquery_joins_the_matching_documents_as_an_array() -> TestRes
         .fluent()
         .pipeline()
         .collection(RESTAURANTS)
-        .filter(|e| e.field("cuisine").eq("breakfast"))
+        .filter(|q| q.field("cuisine").eq("breakfast"))
         .define(|e| [e.field("__name__").alias("restaurant")])
         .select(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithReviews::name))),
                 e.array_subquery(|p| {
                     p.collection_group("reviews")
-                        .filter(|e| e.field("restaurant").eq(e.variable("restaurant")))
+                        .filter(|q| q.field("restaurant").eq(q.variable("restaurant")))
                         .sort(|e| [e.field("rating").desc()])
                         .select(|e| [e.field("rating"), e.field("reviewer")])
                 })
@@ -567,14 +567,14 @@ async fn a_scalar_subquery_joins_one_value_and_null_for_no_match() -> TestResult
         .fluent()
         .pipeline()
         .collection(RESTAURANTS)
-        .filter(|e| e.field("cuisine").eq("breakfast"))
+        .filter(|q| q.field("cuisine").eq("breakfast"))
         .define(|e| [e.field("__name__").alias("restaurant")])
         .select(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithAverage::name))),
                 e.scalar_subquery(|p| {
                     p.collection_group("reviews")
-                        .filter(|e| e.field("restaurant").eq(e.variable("restaurant")))
+                        .filter(|q| q.field("restaurant").eq(q.variable("restaurant")))
                         .aggregate(|e| [e.field("rating").average().alias("avg")])
                 })
                 .alias("avg_rating"),
@@ -613,7 +613,7 @@ async fn a_subcollection_subquery_joins_the_documents_under_each_document() -> T
         .fluent()
         .pipeline()
         .collection(RESTAURANTS)
-        .filter(|e| e.field("cuisine").eq("pizza"))
+        .filter(|q| q.field("cuisine").eq("pizza"))
         .select(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithRatings::name))),
@@ -663,7 +663,7 @@ async fn a_scalar_subquery_of_several_results_fails_the_request() -> TestResult 
                 FirestoreSelection::from(e.field("name")),
                 e.scalar_subquery(|p| {
                     p.collection_group("reviews")
-                        .filter(|e| e.field("restaurant").eq(e.variable("restaurant")))
+                        .filter(|q| q.field("restaurant").eq(q.variable("restaurant")))
                         .select(|e| [e.field("rating")])
                 })
                 .alias("rating"),

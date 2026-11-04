@@ -634,12 +634,12 @@ mod tests {
                 None,
                 builder()
                     .collection("pipeline-books")
-                    .filter(|e| {
-                        e.and([
-                            e.field("genre").eq("Dystopian"),
-                            e.or([
-                                e.field("published").less_than(1950),
-                                e.field("stock").greater_than(5),
+                    .filter(|q| {
+                        q.for_all([
+                            q.field("genre").eq("Dystopian"),
+                            q.for_any([
+                                q.field("published").less_than(1950),
+                                q.field("stock").greater_than(5),
                             ]),
                         ])
                     })
@@ -650,7 +650,7 @@ mod tests {
                 None,
                 builder()
                     .collection("pipeline-books")
-                    .filter(|e| e.field("rating").greater_than_or_equal(4.2))
+                    .filter(|q| q.field("rating").greater_than_or_equal(4.2))
                     .sort(|e| [e.field("rating").desc(), e.field("title").asc()])
                     .offset(1)
                     .limit(3)
@@ -691,7 +691,7 @@ mod tests {
                 builder()
                     .collection("pipeline-books")
                     .force_index(FirestoreIndexHint::TableScan)
-                    .filter(|e| e.field("genre").eq("Dystopian"))
+                    .filter(|q| q.field("genre").eq("Dystopian"))
                     .sort(|e| [e.field("rating").desc()])
                     .into_pipeline(),
             ),
@@ -710,7 +710,7 @@ mod tests {
                 builder()
                     .collection("pipeline-books")
                     .force_index(FirestoreIndexHint::Index(books_index))
-                    .filter(|e| e.field("genre").eq("Dystopian"))
+                    .filter(|q| q.field("genre").eq("Dystopian"))
                     .sort(|e| [e.field("rating").desc()])
                     .into_pipeline(),
             ),
