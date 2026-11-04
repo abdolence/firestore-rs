@@ -212,7 +212,7 @@ mod tests {
                 "stage-aggregate-ungrouped",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .aggregate(|e| {
                         [
                             e.count_all().alias("total"),
@@ -228,7 +228,7 @@ mod tests {
                 "stage-aggregate-grouped",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .aggregate_grouped(
                         |e| [e.field("genre")],
                         |e| {
@@ -245,7 +245,7 @@ mod tests {
                 "stage-distinct",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .distinct(|e| [e.field("genre")])
                     .into_pipeline(),
             ),
@@ -253,7 +253,7 @@ mod tests {
                 "stage-find-nearest",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .find_nearest_with_options(
                         FirestoreFindNearestStage::new(
                             "embedding".to_string(),
@@ -269,7 +269,7 @@ mod tests {
                 "stage-sample-documents",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .sample(FirestoreSampleSize::Documents(3))
                     .into_pipeline(),
             ),
@@ -277,7 +277,7 @@ mod tests {
                 "stage-sample-percent",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .sample(FirestoreSampleSize::Fraction(0.5))
                     .into_pipeline(),
             ),
@@ -285,12 +285,9 @@ mod tests {
                 "stage-union",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .select(|e| [e.field("title").alias("name")])
-                    .union(|p| {
-                        p.collection("pipeline-restaurants")
-                            .select(|e| [e.field("name")])
-                    })
+                    .union(|p| p.from("pipeline-restaurants").select(|e| [e.field("name")]))
                     .into_pipeline(),
             ),
             (
@@ -344,14 +341,15 @@ mod tests {
                 "join-array-subquery",
                 None,
                 builder()
-                    .collection("pipeline-restaurants")
+                    .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("breakfast"))
                     .define(|e| [e.field("__name__").alias("rname")])
                     .select(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
                             e.array_subquery(|p| {
-                                p.collection_group("reviews")
+                                p.from("reviews")
+                                    .all_descendants()
                                     .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                     .sort(|e| [e.field("rating").desc()])
                                     .select(|e| [e.field("rating"), e.field("reviewer")])
@@ -365,14 +363,15 @@ mod tests {
                 "join-scalar-subquery",
                 None,
                 builder()
-                    .collection("pipeline-restaurants")
+                    .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("breakfast"))
                     .define(|e| [e.field("__name__").alias("rname")])
                     .select(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
                             e.scalar_subquery(|p| {
-                                p.collection_group("reviews")
+                                p.from("reviews")
+                                    .all_descendants()
                                     .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                     .aggregate(|e| [e.field("rating").average().alias("avg")])
                             })
@@ -385,7 +384,7 @@ mod tests {
                 "join-subcollection",
                 None,
                 builder()
-                    .collection("pipeline-restaurants")
+                    .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("pizza"))
                     .select(|e| {
                         [
@@ -407,11 +406,12 @@ mod tests {
                 "join-rules",
                 Some("scalar_in_where"),
                 builder()
-                    .collection("pipeline-restaurants")
+                    .from("pipeline-restaurants")
                     .define(|e| [e.field("__name__").alias("rname")])
                     .filter(|q| {
                         q.expr(q.values().scalar_subquery(|p| {
-                            p.collection_group("reviews")
+                            p.from("reviews")
+                                .all_descendants()
                                 .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                 .aggregate(|e| [e.count_all().alias("c")])
                         }))
@@ -424,12 +424,13 @@ mod tests {
                 "join-rules",
                 Some("subquery_in_sort"),
                 builder()
-                    .collection("pipeline-restaurants")
+                    .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("breakfast"))
                     .define(|e| [e.field("__name__").alias("rname")])
                     .sort(|e| {
                         [e.scalar_subquery(|p| {
-                            p.collection_group("reviews")
+                            p.from("reviews")
+                                .all_descendants()
                                 .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                 .aggregate(|e| [e.count_all().alias("c")])
                         })
@@ -446,7 +447,8 @@ mod tests {
                     .define(|e| [e.field("__name__").alias("rname")])
                     .unnest(|e| {
                         e.array_subquery(|p| {
-                            p.collection_group("reviews")
+                            p.from("reviews")
+                                .all_descendants()
                                 .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                 .select(|e| [e.field("rating")])
                         })
@@ -470,7 +472,7 @@ mod tests {
     fn stages_that_cannot_be_sent_are_rejected_before_sending() {
         let rejected = [
             builder()
-                .collection("pipeline-books")
+                .from("pipeline-books")
                 .aggregate(|e| {
                     [
                         e.count_all().alias("books"),
@@ -479,15 +481,15 @@ mod tests {
                 })
                 .into_pipeline(),
             builder()
-                .collection("pipeline-books")
+                .from("pipeline-books")
                 .distinct(|e| [e.raw("to_upper", [e.field("genre")])])
                 .into_pipeline(),
             builder()
-                .collection("pipeline-books")
+                .from("pipeline-books")
                 .unnest(|e| e.raw("split", [e.field("title")]))
                 .into_pipeline(),
             builder()
-                .collection("pipeline-books")
+                .from("pipeline-books")
                 .select(|e| {
                     [e.array_subquery(|p| {
                         p.subcollection("reviews")

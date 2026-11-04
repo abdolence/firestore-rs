@@ -257,7 +257,7 @@ mod tests {
 
             db.fluent()
                 .pipeline()
-                .collection("pipeline-books")
+                .from("pipeline-books")
                 .filter(|q| q.field("genre").eq("Dystopian"))
                 .sort(|e| [e.field("rating").desc()])
                 .explain_with_options(explain_options)
@@ -297,7 +297,7 @@ mod tests {
                 .db
                 .fluent()
                 .pipeline()
-                .collection("pipeline-books")
+                .from("pipeline-books")
                 .stream_query_with_metadata()
                 .await
                 .unwrap()
@@ -349,7 +349,7 @@ mod tests {
             .db
             .fluent()
             .pipeline()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .obj()
             .query()
             .await

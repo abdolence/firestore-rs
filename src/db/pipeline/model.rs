@@ -630,13 +630,14 @@ mod tests {
             (
                 "stage-collection",
                 None,
-                builder().collection("pipeline-books").into_pipeline(),
+                builder().from("pipeline-books").into_pipeline(),
             ),
             (
                 "stage-collection-group",
                 None,
                 builder()
-                    .collection_group("pipeline-books")
+                    .from("pipeline-books")
+                    .all_descendants()
                     .limit(2)
                     .into_pipeline(),
             ),
@@ -644,7 +645,7 @@ mod tests {
                 "stage-collection-paths",
                 Some("nested_collection"),
                 builder()
-                    .collection("reviews")
+                    .from("reviews")
                     .parent(format!(
                         "{ENTERPRISE_DOCUMENTS}/pipeline-restaurants/rest-01"
                     ))
@@ -678,7 +679,7 @@ mod tests {
                 "stage-where-and-or",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .filter(|q| {
                         q.for_all([
                             q.field("genre").eq("Dystopian"),
@@ -694,7 +695,7 @@ mod tests {
                 "stage-where-sort-offset-limit",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .filter(|q| q.field("rating").greater_than_or_equal(4.2))
                     .sort(|e| [e.field("rating").desc(), e.field("title").asc()])
                     .offset(1)
@@ -705,7 +706,7 @@ mod tests {
                 "stage-select",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .select(|e| {
                         [
                             FirestoreSelection::from(e.field("title")),
@@ -719,7 +720,7 @@ mod tests {
                 "stage-add-remove-fields",
                 None,
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .add_fields(|e| {
                         [
                             e.field("published").less_than(1950).alias("is_classic"),
@@ -734,7 +735,7 @@ mod tests {
                 "force-index",
                 Some("primary"),
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .force_index(FirestoreIndexHint::TableScan)
                     .filter(|q| q.field("genre").eq("Dystopian"))
                     .sort(|e| [e.field("rating").desc()])
@@ -744,7 +745,8 @@ mod tests {
                 "force-index",
                 Some("cg-primary"),
                 builder()
-                    .collection_group("pipeline-books")
+                    .from("pipeline-books")
+                    .all_descendants()
                     .force_index(FirestoreIndexHint::TableScan)
                     .limit(1)
                     .into_pipeline(),
@@ -753,7 +755,7 @@ mod tests {
                 "force-index",
                 Some("matching"),
                 builder()
-                    .collection("pipeline-books")
+                    .from("pipeline-books")
                     .force_index(FirestoreIndexHint::Index(books_index))
                     .filter(|q| q.field("genre").eq("Dystopian"))
                     .sort(|e| [e.field("rating").desc()])
@@ -775,11 +777,11 @@ mod tests {
         let rejected = [
             builder().literals([1]).into_pipeline(),
             builder()
-                .collection("pipeline-books")
+                .from("pipeline-books")
                 .select(|e| [e.raw("to_upper", [e.field("title")])])
                 .into_pipeline(),
             builder()
-                .collection("pipeline-books")
+                .from("pipeline-books")
                 .select(|e| {
                     [
                         FirestoreSelection::from(e.field("title")),
@@ -788,11 +790,11 @@ mod tests {
                 })
                 .into_pipeline(),
             builder()
-                .collection("reviews")
+                .from("reviews")
                 .parent("pipeline-restaurants/rest-01")
                 .into_pipeline(),
             builder()
-                .collection("pipeline-restaurants/rest-01/reviews")
+                .from("pipeline-restaurants/rest-01/reviews")
                 .into_pipeline(),
         ];
 

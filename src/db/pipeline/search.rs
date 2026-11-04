@@ -205,7 +205,7 @@ mod tests {
 
     fn searched_for_text(query: &str) -> FirestorePipeline {
         builder()
-            .collection(RESTAURANTS)
+            .from(RESTAURANTS)
             .search(|s| s.text(|_| query))
             .select(|e| [e.field("name")])
             .into_pipeline()
@@ -218,7 +218,7 @@ mod tests {
                 "search-options",
                 "full",
                 builder()
-                    .collection(RESTAURANTS)
+                    .from(RESTAURANTS)
                     .search(|s| {
                         s.text(|t| t.term("waffles"))
                             .sort_by_score()
@@ -240,7 +240,7 @@ mod tests {
                 "search-options",
                 "add_fields_score_alias",
                 builder()
-                    .collection(RESTAURANTS)
+                    .from(RESTAURANTS)
                     .search(|s| s.text(|t| t.term("waffles")).score_field("relevance"))
                     .select(|e| [e.field("name"), e.field("relevance")])
                     .into_pipeline(),
@@ -249,7 +249,7 @@ mod tests {
                 "search-options",
                 "limit_stage_after_search",
                 builder()
-                    .collection(RESTAURANTS)
+                    .from(RESTAURANTS)
                     .search(|s| s.text(|t| t.term("waffles")).sort_by_score())
                     .limit(1)
                     .select(|e| [e.field("name")])
@@ -259,7 +259,7 @@ mod tests {
                 "search-geo",
                 "sort_by_distance",
                 builder()
-                    .collection(RESTAURANTS)
+                    .from(RESTAURANTS)
                     .search(|s| {
                         s.geo_within("location", center(), 5000.0)
                             .sort_by_distance()
@@ -271,7 +271,7 @@ mod tests {
                 "search-geo",
                 "less_than_or_equal",
                 builder()
-                    .collection(RESTAURANTS)
+                    .from(RESTAURANTS)
                     .search(|s| s.geo_within("location", center(), 1000.0))
                     .select(|e| [e.field("name")])
                     .into_pipeline(),
@@ -280,7 +280,8 @@ mod tests {
                 "search-missing-index",
                 "collection_group_with_collection_scoped_index",
                 builder()
-                    .collection_group(RESTAURANTS)
+                    .from(RESTAURANTS)
+                    .all_descendants()
                     .search(|s| s.text(|t| t.term("waffles")))
                     .select(|e| [e.field("name")])
                     .into_pipeline(),
@@ -324,7 +325,7 @@ mod tests {
 
         for (case, query) in captured {
             let model = builder()
-                .collection(RESTAURANTS)
+                .from(RESTAURANTS)
                 .search(|s| s.text(|_| query))
                 .select(|e| [e.field("name")])
                 .into_pipeline();
@@ -374,27 +375,28 @@ mod tests {
     fn searches_the_service_would_reject_are_rejected_before_sending() {
         let rejected = [
             builder()
-                .collection(RESTAURANTS)
+                .from(RESTAURANTS)
                 .search(|s| s.text(|t| t.term("waffles")).offset(1))
                 .into_pipeline(),
             builder()
-                .collection(RESTAURANTS)
+                .from(RESTAURANTS)
                 .search(|s| s.text(|t| t.term("waffles")).retrieval_depth(0))
                 .into_pipeline(),
             builder()
-                .collection(RESTAURANTS)
+                .from(RESTAURANTS)
                 .search(|s| s.text(|t| t.exclude(t.term("bacon"))))
                 .into_pipeline(),
             builder()
-                .collection(RESTAURANTS)
+                .from(RESTAURANTS)
                 .search(|s| s.text(|t| t.for_all(Vec::<FirestoreTextQueryClause>::new())))
                 .into_pipeline(),
             builder()
-                .collection(RESTAURANTS)
+                .from(RESTAURANTS)
                 .search(|s| s.text(|t| t.for_all([None::<FirestoreTextQueryClause>])))
                 .into_pipeline(),
             builder()
-                .collection_group(RESTAURANTS)
+                .from(RESTAURANTS)
+                .all_descendants()
                 .search(|s| s.text(|t| t.phrase("")))
                 .into_pipeline(),
         ];

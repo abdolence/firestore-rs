@@ -34,7 +34,7 @@ async fn matching(
     let names: Vec<Name> = db
         .fluent()
         .pipeline()
-        .collection(RESTAURANTS)
+        .from(RESTAURANTS)
         .search(|s| s.text(|_| query))
         .select(|e| [e.field("name")])
         .obj()
@@ -96,7 +96,7 @@ async fn a_text_search_sorted_by_score_outputs_the_score() -> TestResult {
     let scored: Vec<Scored> = db
         .fluent()
         .pipeline()
-        .collection(RESTAURANTS)
+        .from(RESTAURANTS)
         .search(|s| {
             s.text(|t| t.term("waffles"))
                 .sort_by_score()
@@ -123,7 +123,7 @@ async fn limit_and_offset_page_a_search() -> TestResult {
     let page: Vec<Name> = db
         .fluent()
         .pipeline()
-        .collection(RESTAURANTS)
+        .from(RESTAURANTS)
         .search(|s| {
             s.text(|t| t.term("waffles"))
                 .sort_by_score()
@@ -150,7 +150,7 @@ async fn a_geo_search_keeps_the_documents_within_the_distance_nearest_first() ->
     let names: Vec<Name> = db
         .fluent()
         .pipeline()
-        .collection(RESTAURANTS)
+        .from(RESTAURANTS)
         .search(|s| s.geo_within("location", center, 5000.0).sort_by_distance())
         .select(|e| [e.field("name")])
         .obj()
@@ -179,7 +179,7 @@ async fn a_filter_after_a_search_narrows_the_matches() -> TestResult {
     let names: Vec<Name> = db
         .fluent()
         .pipeline()
-        .collection(RESTAURANTS)
+        .from(RESTAURANTS)
         .search(|s| s.text(|t| t.term("waffles")))
         .filter(|q| q.field("cuisine").eq("breakfast"))
         .select(|e| [e.field("name")])
@@ -202,7 +202,8 @@ async fn a_collection_group_search_without_a_collection_group_index_fails_withou
     let result = db
         .fluent()
         .pipeline()
-        .collection_group(RESTAURANTS)
+        .from(RESTAURANTS)
+        .all_descendants()
         .search(|s| s.text(|t| t.term("waffles")))
         .query()
         .await;

@@ -192,7 +192,7 @@ where
     D: FirestorePipelineSupport + Clone + Send + Sync + 'static,
 {
     /// Starts a pipeline, which needs an Enterprise edition database. Continue with a source such
-    /// as `.collection()`.
+    /// as `.from()`.
     ///
     /// ```rust,no_run
     /// use firestore::{path, FirestoreDb, FirestoreResult};
@@ -209,7 +209,7 @@ where
     /// let books: Vec<Book> = db
     ///     .fluent()
     ///     .pipeline()
-    ///     .collection("books")
+    ///     .from("books")
     ///     .filter(|q| {
     ///         q.for_all([
     ///             q.field(path!(Book::genre)).eq("Dystopian"),

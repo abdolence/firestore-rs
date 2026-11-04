@@ -52,11 +52,17 @@ pub struct FirestorePipelineBuilder<C, S> {
     state: S,
 }
 
-/// A pipeline of a single collection source, which can still take a parent and an index hint.
+/// A pipeline of a single collection source, which can still take a parent, widen to every
+/// collection with the ID, or take an index hint.
 #[derive(Clone, Debug)]
 pub struct FirestorePipelineCollectionSource(FirestoreCollectionSource);
 
-/// A pipeline of a single collection-group source, which can still take an index hint.
+/// A pipeline of a single collection source under a parent document, which can still take an
+/// index hint.
+#[derive(Clone, Debug)]
+pub struct FirestorePipelineChildCollectionSource(FirestoreCollectionSource);
+
+/// A pipeline of every collection with an ID, which can still take an index hint.
 #[derive(Clone, Debug)]
 pub struct FirestorePipelineCollectionGroupSource(FirestoreCollectionGroupSource);
 
@@ -66,6 +72,12 @@ pub struct FirestorePipelineStaged(FirestorePipeline);
 
 impl From<FirestorePipelineCollectionSource> for FirestorePipeline {
     fn from(state: FirestorePipelineCollectionSource) -> Self {
+        FirestorePipeline::new(FirestorePipelineSource::Collection(state.0))
+    }
+}
+
+impl From<FirestorePipelineChildCollectionSource> for FirestorePipeline {
+    fn from(state: FirestorePipelineChildCollectionSource) -> Self {
         FirestorePipeline::new(FirestorePipelineSource::Collection(state.0))
     }
 }
@@ -88,23 +100,14 @@ impl<C> FirestorePipelineInitialBuilder<C> {
     }
 
     /// Reads the collection `collection_id`, a root collection unless
-    /// [`parent`](FirestorePipelineBuilder::parent) follows.
-    pub fn collection<S: AsRef<str>>(
+    /// [`parent`](FirestorePipelineBuilder::parent) follows, or every collection with that ID when
+    /// [`all_descendants`](FirestorePipelineBuilder::all_descendants) follows.
+    pub fn from<S: AsRef<str>>(
         self,
         collection_id: S,
     ) -> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
         self.source(FirestorePipelineCollectionSource(
             FirestoreCollectionSource::new(collection_id.as_ref().to_string()),
-        ))
-    }
-
-    /// Reads every collection with the ID `collection_id`, anywhere in the database.
-    pub fn collection_group<S: AsRef<str>>(
-        self,
-        collection_id: S,
-    ) -> FirestorePipelineBuilder<C, FirestorePipelineCollectionGroupSource> {
-        self.source(FirestorePipelineCollectionGroupSource(
-            FirestoreCollectionGroupSource::new(collection_id.as_ref().to_string()),
         ))
     }
 
@@ -169,12 +172,58 @@ impl<'a, D> FirestorePipelineInitialBuilder<FirestorePipelineDbContext<'a, D>> {
 impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
     /// Reads the collection under the document `parent`, a full document path as
     /// [`FirestoreDb::parent_path`](crate::FirestoreDb::parent_path) builds it.
-    pub fn parent<P: AsRef<str>>(self, parent: P) -> Self {
-        Self {
-            state: FirestorePipelineCollectionSource(
+    ///
+    /// Firestore ignores a parent on a collection group, so a pipeline takes either this or
+    /// [`all_descendants`](Self::all_descendants):
+    ///
+    /// ```compile_fail,E0599
+    /// use firestore::FirestoreDb;
+    ///
+    /// fn both(db: &FirestoreDb) {
+    ///     db.fluent()
+    ///         .pipeline()
+    ///         .from("reviews")
+    ///         .parent("projects/p/databases/d/documents/restaurants/r1")
+    ///         .all_descendants();
+    /// }
+    /// ```
+    pub fn parent<P: AsRef<str>>(
+        self,
+        parent: P,
+    ) -> FirestorePipelineBuilder<C, FirestorePipelineChildCollectionSource> {
+        FirestorePipelineBuilder {
+            context: self.context,
+            state: FirestorePipelineChildCollectionSource(
                 self.state.0.with_parent(parent.as_ref().to_string()),
             ),
-            ..self
+        }
+    }
+
+    /// Reads every collection with this ID, anywhere in the database, as a Core collection-group
+    /// query does.
+    ///
+    /// It cannot take a [`parent`](Self::parent), which Firestore ignores on a collection group:
+    ///
+    /// ```compile_fail,E0599
+    /// use firestore::FirestoreDb;
+    ///
+    /// fn both(db: &FirestoreDb) {
+    ///     db.fluent()
+    ///         .pipeline()
+    ///         .from("reviews")
+    ///         .all_descendants()
+    ///         .parent("projects/p/databases/d/documents/restaurants/r1");
+    /// }
+    /// ```
+    pub fn all_descendants(
+        self,
+    ) -> FirestorePipelineBuilder<C, FirestorePipelineCollectionGroupSource> {
+        FirestorePipelineBuilder {
+            context: self.context,
+            state: FirestorePipelineCollectionGroupSource(
+                FirestoreCollectionGroupSource::new(self.state.0.collection_id)
+                    .opt_force_index(self.state.0.force_index),
+            ),
         }
     }
 
@@ -185,19 +234,7 @@ impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
             ..self
         }
     }
-}
 
-impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionGroupSource> {
-    /// Reads through the index `hint` names.
-    pub fn force_index(self, hint: FirestoreIndexHint) -> Self {
-        Self {
-            state: FirestorePipelineCollectionGroupSource(self.state.0.with_force_index(hint)),
-            ..self
-        }
-    }
-}
-
-impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
     /// Searches the collection, which needs a search index that covers the query. The search
     /// must come straight after the source, so no option of the source follows it.
     ///
@@ -208,7 +245,7 @@ impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
     /// let hits = db
     ///     .fluent()
     ///     .pipeline()
-    ///     .collection("restaurants")
+    ///     .from("restaurants")
     ///     .search(|s| {
     ///         s.text(|t| t.for_all([t.term("waffles"), t.exclude(t.term("bacon"))]))
     ///             .sort_by_score()
@@ -234,7 +271,40 @@ impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
     }
 }
 
+impl<C> FirestorePipelineBuilder<C, FirestorePipelineChildCollectionSource> {
+    /// Reads through the index `hint` names.
+    pub fn force_index(self, hint: FirestoreIndexHint) -> Self {
+        Self {
+            state: FirestorePipelineChildCollectionSource(self.state.0.with_force_index(hint)),
+            ..self
+        }
+    }
+
+    /// Searches the collection, which needs a search index that covers the query. The search
+    /// must come straight after the source, so no option of the source follows it.
+    pub fn search<FN, R>(self, search: FN) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>
+    where
+        FN: FnOnce(FirestorePipelineSearchBuilder) -> R,
+        R: Into<FirestoreSearch>,
+    {
+        let search = search(FirestorePipelineSearchBuilder).into();
+        Self {
+            state: FirestorePipelineChildCollectionSource(self.state.0.with_search(search)),
+            ..self
+        }
+        .staged()
+    }
+}
+
 impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionGroupSource> {
+    /// Reads through the index `hint` names.
+    pub fn force_index(self, hint: FirestoreIndexHint) -> Self {
+        Self {
+            state: FirestorePipelineCollectionGroupSource(self.state.0.with_force_index(hint)),
+            ..self
+        }
+    }
+
     /// Searches the collection group, which needs a search index scoped to the collection group.
     /// The search must come straight after the source, so no option of the source follows it.
     pub fn search<FN, R>(self, search: FN) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>

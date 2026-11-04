@@ -42,17 +42,11 @@ fn titles(books: &[Book]) -> Vec<&str> {
 async fn a_collection_source_reads_the_whole_collection() -> TestResult {
     let db = setup_enterprise().await?;
 
-    let books: Vec<Book> = db
-        .fluent()
-        .pipeline()
-        .collection(BOOKS)
-        .obj()
-        .query()
-        .await?;
+    let books: Vec<Book> = db.fluent().pipeline().from(BOOKS).obj().query().await?;
     let mut reviews: Vec<String> = db
         .fluent()
         .pipeline()
-        .collection("reviews")
+        .from("reviews")
         .parent(db.parent_path(RESTAURANTS, "rest-01")?)
         .query()
         .await?
@@ -80,7 +74,8 @@ async fn a_collection_group_source_reads_every_collection_with_the_id() -> TestR
     let reviews = db
         .fluent()
         .pipeline()
-        .collection_group("reviews")
+        .from("reviews")
+        .all_descendants()
         .query()
         .await?;
 
@@ -146,7 +141,7 @@ async fn filter_sort_offset_and_limit_apply_in_order() -> TestResult {
     let books: Vec<Book> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .filter(|q| q.field(path!(Book::rating)).greater_than_or_equal(4.2))
         .sort(|e| {
             [
@@ -174,7 +169,7 @@ async fn select_returns_the_selected_fields_without_a_document_id() -> TestResul
     let books: Vec<SelectedBook> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .sort(|e| [e.field(path!(Book::title)).asc()])
         .limit(2)
         .select(|e| {
@@ -216,7 +211,7 @@ async fn explain_returns_the_plan_after_the_documents_it_reads() -> TestResult {
         let mut items: Vec<_> = db
             .fluent()
             .pipeline()
-            .collection(BOOKS)
+            .from(BOOKS)
             .filter(|q| q.field(path!(Book::genre)).eq("Dystopian"))
             .explain_with_options(options.clone())
             .stream_query_with_metadata()
@@ -251,7 +246,7 @@ async fn a_standard_edition_database_fails_the_pipeline_without_a_retry() -> Tes
     let result = db
         .fluent()
         .pipeline()
-        .collection("pipeline-standard-probe")
+        .from("pipeline-standard-probe")
         .query()
         .await;
 

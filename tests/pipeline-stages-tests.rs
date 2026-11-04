@@ -120,7 +120,7 @@ async fn aggregate_outputs_one_document_of_accumulators() -> TestResult {
     let totals: Vec<Totals> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .aggregate(|e| {
             [
                 e.count_all().alias("total"),
@@ -151,7 +151,7 @@ async fn every_accumulator_is_accepted_under_its_wire_name() -> TestResult {
     let accumulated: Vec<Accumulated> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .sort(|e| [e.field("title").asc()])
         .aggregate(|e| {
             [
@@ -200,7 +200,7 @@ async fn aggregate_grouped_outputs_one_document_per_group() -> TestResult {
     let stats: Vec<GenreStats> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .aggregate_grouped(
             |e| [e.field(path!(GenreStats::genre))],
             |e| {
@@ -242,7 +242,7 @@ async fn distinct_outputs_each_value_once_with_null_as_a_group() -> TestResult {
     let mut genres: Vec<Genre> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .distinct(|e| [e.field(path!(Genre::genre))])
         .obj()
         .query()
@@ -274,7 +274,7 @@ async fn find_nearest_keeps_the_closest_documents_and_outputs_the_distance() -> 
     let nearest: Vec<Nearest> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .find_nearest_with_options(
             FirestoreFindNearestStage::new(
                 "embedding".to_string(),
@@ -296,7 +296,7 @@ async fn find_nearest_keeps_the_closest_documents_and_outputs_the_distance() -> 
     let plain: Vec<FirestoreDocument> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .find_nearest(
             "embedding",
             FirestoreVector::new(vec![0.9, 0.1, 0.2]),
@@ -334,7 +334,7 @@ async fn sample_keeps_a_count_or_a_fraction_of_the_documents() -> TestResult {
         let sampled = db
             .fluent()
             .pipeline()
-            .collection(BOOKS)
+            .from(BOOKS)
             .sample(size)
             .query()
             .await?;
@@ -352,12 +352,9 @@ async fn union_appends_the_documents_of_another_pipeline() -> TestResult {
     let names: Vec<Name> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .select(|e| [e.field("title").alias("name")])
-        .union(|p| {
-            p.collection(RESTAURANTS)
-                .select(|e| [e.field(path!(Name::name))])
-        })
+        .union(|p| p.from(RESTAURANTS).select(|e| [e.field(path!(Name::name))]))
         .sort(|e| [e.field(path!(Name::name)).asc()])
         .obj()
         .query()
@@ -507,14 +504,15 @@ async fn an_array_subquery_joins_the_matching_documents_as_an_array() -> TestRes
     let restaurants: Vec<WithReviews> = db
         .fluent()
         .pipeline()
-        .collection(RESTAURANTS)
+        .from(RESTAURANTS)
         .filter(|q| q.field("cuisine").eq("breakfast"))
         .define(|e| [e.field("__name__").alias("restaurant")])
         .select(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithReviews::name))),
                 e.array_subquery(|p| {
-                    p.collection_group("reviews")
+                    p.from("reviews")
+                        .all_descendants()
                         .filter(|q| q.field("restaurant").eq(q.variable("restaurant")))
                         .sort(|e| [e.field("rating").desc()])
                         .select(|e| [e.field("rating"), e.field("reviewer")])
@@ -566,14 +564,15 @@ async fn a_scalar_subquery_joins_one_value_and_null_for_no_match() -> TestResult
     let restaurants: Vec<WithAverage> = db
         .fluent()
         .pipeline()
-        .collection(RESTAURANTS)
+        .from(RESTAURANTS)
         .filter(|q| q.field("cuisine").eq("breakfast"))
         .define(|e| [e.field("__name__").alias("restaurant")])
         .select(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithAverage::name))),
                 e.scalar_subquery(|p| {
-                    p.collection_group("reviews")
+                    p.from("reviews")
+                        .all_descendants()
                         .filter(|q| q.field("restaurant").eq(q.variable("restaurant")))
                         .aggregate(|e| [e.field("rating").average().alias("avg")])
                 })
@@ -612,7 +611,7 @@ async fn a_subcollection_subquery_joins_the_documents_under_each_document() -> T
     let restaurants: Vec<WithRatings> = db
         .fluent()
         .pipeline()
-        .collection(RESTAURANTS)
+        .from(RESTAURANTS)
         .filter(|q| q.field("cuisine").eq("pizza"))
         .select(|e| {
             [
@@ -662,7 +661,8 @@ async fn a_scalar_subquery_of_several_results_fails_the_request() -> TestResult 
             [
                 FirestoreSelection::from(e.field("name")),
                 e.scalar_subquery(|p| {
-                    p.collection_group("reviews")
+                    p.from("reviews")
+                        .all_descendants()
                         .filter(|q| q.field("restaurant").eq(q.variable("restaurant")))
                         .select(|e| [e.field("rating")])
                 })

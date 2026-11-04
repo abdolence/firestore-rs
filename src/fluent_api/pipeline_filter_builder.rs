@@ -293,7 +293,7 @@ mod tests {
         let min_rating = Some(4.0);
 
         let list = builder()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .filter(|q| {
                 q.for_all([
                     q.field("stock").greater_than(0),
@@ -304,7 +304,7 @@ mod tests {
             })
             .into_pipeline();
         let flat = builder()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .filter(|q| {
                 q.condition(q.values().and([
                     q.values().field("stock").greater_than(0),
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn expr_and_condition_lift_a_value_and_a_plain_condition() {
         let lifted = builder()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .filter(|q| {
                 q.for_all([
                     q.expr(FirestoreExpr::field("title").to_lower())
@@ -335,7 +335,7 @@ mod tests {
             })
             .into_pipeline();
         let by_hand = builder()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .filter(|q| {
                 let e = q.values();
                 q.condition(e.and([
@@ -351,11 +351,11 @@ mod tests {
     #[test]
     fn a_single_present_condition_stands_alone() {
         let joined = builder()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .filter(|q| q.for_all([None, q.field("stock").greater_than(0), None]))
             .into_pipeline();
         let alone = builder()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .filter(|q| q.field("stock").greater_than(0))
             .into_pipeline();
 
@@ -366,7 +366,7 @@ mod tests {
     fn absent_conditions_add_no_where_stage() {
         let genre: Option<&str> = None;
         let pipeline = builder()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .filter(|q| q.for_any([genre.and_then(|genre| q.field("genre").eq(genre))]))
             .limit(1)
             .into_pipeline();
@@ -381,7 +381,7 @@ mod tests {
     fn for_any_drops_the_absent_conditions() {
         let genre: Option<&str> = None;
         let any = builder()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .filter(|q| {
                 q.for_any([
                     q.field("stock").greater_than(0),
@@ -391,7 +391,7 @@ mod tests {
             })
             .into_pipeline();
         let or = builder()
-            .collection("pipeline-books")
+            .from("pipeline-books")
             .filter(|q| {
                 q.condition(q.values().or([
                     q.values().field("stock").greater_than(0),

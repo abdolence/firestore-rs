@@ -61,7 +61,7 @@ async fn an_empty_and_keeps_every_document_and_an_empty_or_none() -> TestResult 
     let every_book: Vec<Book> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .filter(|q| q.condition(q.values().and([])))
         .obj()
         .query()
@@ -69,7 +69,7 @@ async fn an_empty_and_keeps_every_document_and_an_empty_or_none() -> TestResult 
     let no_book: Vec<Book> = db
         .fluent()
         .pipeline()
-        .collection(BOOKS)
+        .from(BOOKS)
         .filter(|q| q.condition(q.values().or([])))
         .obj()
         .query()
