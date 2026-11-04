@@ -10,10 +10,6 @@ use std::collections::HashMap;
 
 /// A full-text or geo search of a collection or collection group, run by the `search` stage
 /// right after the source. It needs a search index that covers the query.
-///
-/// Converting a pipeline fails with
-/// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) for an
-/// `offset` without a `limit` and for a `retrieval_depth` of 0.
 #[derive(Debug, Clone, PartialEq, Builder)]
 pub struct FirestoreSearch {
     pub query: FirestoreSearchQuery,
@@ -73,18 +69,6 @@ impl TryFrom<FirestoreSearch> for Stage {
     type Error = FirestoreError;
 
     fn try_from(search: FirestoreSearch) -> Result<Self, Self::Error> {
-        if search.offset.is_some() && search.limit.is_none() {
-            return Err(FirestoreError::invalid_parameters(
-                "offset",
-                "an offset needs a limit",
-            ));
-        }
-        if search.retrieval_depth == Some(0) {
-            return Err(FirestoreError::invalid_parameters(
-                "retrieval_depth",
-                "the retrieval depth must be at least 1",
-            ));
-        }
         let mut options = HashMap::<String, Value>::try_from(search.query)?;
         let integers = [
             ("limit", search.limit),
@@ -379,14 +363,6 @@ mod tests {
     #[test]
     fn searches_the_service_would_reject_are_rejected_before_sending() {
         let rejected = [
-            builder()
-                .from(RESTAURANTS)
-                .search(|s| s.text(|t| t.term("waffles")).offset(1))
-                .into_pipeline(),
-            builder()
-                .from(RESTAURANTS)
-                .search(|s| s.text(|t| t.term("waffles")).retrieval_depth(0))
-                .into_pipeline(),
             builder()
                 .from(RESTAURANTS)
                 .search(|s| s.text(|t| t.exclude(t.term("bacon"))))
