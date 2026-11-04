@@ -475,10 +475,11 @@ Field paths compare in one spelling, so `` `expires_at` `` and `expires_at`, or 
 ## Unrecognised items
 
 Firestore can list index or field shapes this crate's domain model has no representation for: a
-search index, a MongoDB-compat or Datastore-mode API scope, a `COLLECTION_RECURSIVE` query scope,
-or an unspecified field order. These are reported in `unrecognised`, with the reason, and never
-proposed for deletion or reversion, even with `.prune_undeclared()` set, since the plan cannot
-know that removing them is what the declaration intends.
+search field configured other than as one text or geo spec, a MongoDB-compat or Datastore-mode
+API scope, a `COLLECTION_RECURSIVE` query scope, or an unspecified field order. These are
+reported in `unrecognised`, with the reason, and never proposed for deletion or reversion, even
+with `.prune_undeclared()` set, since the plan cannot know that removing them is what the
+declaration intends.
 
 ## Logs and spans
 

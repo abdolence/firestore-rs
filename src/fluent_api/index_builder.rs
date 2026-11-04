@@ -6,10 +6,11 @@
 
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
-    FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreIndexField,
-    FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSupport,
-    FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreOperationWaitOptions,
-    FirestoreQueryDirection, FirestoreResult, FirestoreVectorIndexConfig,
+    FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreGeoIndexConfig,
+    FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan,
+    FirestoreIndexSupport, FirestoreIndexSyncOptions, FirestoreIndexSyncReport,
+    FirestoreOperationWaitOptions, FirestoreQueryDirection, FirestoreResult,
+    FirestoreVectorIndexConfig,
 };
 use std::time::Duration;
 
@@ -103,6 +104,11 @@ where
     /// The closure receives a [`FirestoreFieldOverrideBuilder`] and returns the list built with
     /// [`fields`](FirestoreFieldOverrideBuilder::fields). Each call replaces any overrides set by
     /// a previous call. See [`FirestoreFieldOverride`] for what an override replaces.
+    ///
+    /// An Enterprise edition database has no single-field index overrides: when an override
+    /// would have to be written there, `.plan()` and `.sync()` fail with
+    /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) before
+    /// anything is written.
     #[inline]
     pub fn field_overrides<FN>(self, overrides: FN) -> Self
     where
@@ -384,6 +390,32 @@ impl FirestoreIndexFieldExprBuilder {
         Some(FirestoreIndexField::new(
             self.field_path,
             FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(dimension)),
+        ))
+    }
+
+    /// Includes this field in a text search index. A search index holds only text and geo
+    /// fields; validated at `.plan()`/`.sync()`, not here.
+    #[inline]
+    pub fn text(self) -> Option<FirestoreIndexField> {
+        Some(FirestoreIndexField::new(
+            self.field_path,
+            FirestoreIndexFieldMode::Text,
+        ))
+    }
+
+    /// Includes this field in a geospatial search index, GeoJSON points included. A search
+    /// index holds only text and geo fields; validated at `.plan()`/`.sync()`, not here.
+    #[inline]
+    pub fn geo(self) -> Option<FirestoreIndexField> {
+        self.geo_with(FirestoreGeoIndexConfig::new())
+    }
+
+    /// Like [`geo`](Self::geo), with the geo index configuration set.
+    #[inline]
+    pub fn geo_with(self, config: FirestoreGeoIndexConfig) -> Option<FirestoreIndexField> {
+        Some(FirestoreIndexField::new(
+            self.field_path,
+            FirestoreIndexFieldMode::Geo(config),
         ))
     }
 }

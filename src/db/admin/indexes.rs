@@ -21,11 +21,13 @@ use crate::{
     FirestoreListedField, FirestoreOperationWaitOptions, FirestoreResult,
 };
 use async_trait::async_trait;
+use gcloud_sdk::google::firestore::admin::v1::database::DatabaseEdition;
 use gcloud_sdk::google::firestore::admin::v1::field as proto_field;
 use gcloud_sdk::google::firestore::admin::v1::firestore_admin_client::FirestoreAdminClient;
 use gcloud_sdk::google::firestore::admin::v1::{
-    CreateIndexRequest, DeleteIndexRequest, Field as ProtoField, GetFieldRequest,
-    Index as ProtoIndex, ListFieldsRequest, ListIndexesRequest, UpdateFieldRequest,
+    CreateIndexRequest, DeleteIndexRequest, Field as ProtoField, GetDatabaseRequest,
+    GetFieldRequest, Index as ProtoIndex, ListFieldsRequest, ListIndexesRequest,
+    UpdateFieldRequest,
 };
 use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
 use gcloud_sdk::prost_types::FieldMask;
@@ -570,7 +572,37 @@ impl FirestoreDb {
         diff_span.record("/firestore/response_time", elapsed.as_millis());
 
         log_plan(&params.collection_group, &plan);
+        if !plan.update_fields.is_empty() {
+            self.ensure_field_overrides_writable().await?;
+        }
         Ok((plan, list_elapsed))
+    }
+
+    /// Refuses field override writes to an Enterprise edition database before anything is sent.
+    /// Enterprise answers every override `UpdateField` with `INVALID_ARGUMENT`, and a sync sends
+    /// its index creates before its field writes, so the server's refusal would come only after
+    /// part of the sync was applied.
+    async fn ensure_field_overrides_writable(&self) -> FirestoreResult<()> {
+        let request = GetDatabaseRequest {
+            name: self.inner.database_path.clone(),
+        };
+        let database = self
+            .admin_client()
+            .get_database(self.request_with_timeout(request, RequestTimeouts::with_total))
+            .await
+            .map_err(FirestoreError::from)?
+            .into_inner();
+        if database.database_edition() == DatabaseEdition::Enterprise {
+            return Err(FirestoreError::invalid_parameters(
+                "field_overrides",
+                format!(
+                    "{} is an Enterprise edition database, which has no single-field index \
+                     overrides",
+                    self.inner.database_path
+                ),
+            ));
+        }
+        Ok(())
     }
 
     async fn apply_create_index(
@@ -1335,12 +1367,15 @@ mod tests {
     use crate::db::FirestoreDbInner;
     use crate::{
         FirestoreCollectionId, FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget,
-        FirestoreIndexField, FirestoreIndexFieldMode, FirestoreQueryDirection,
-        FirestoreVectorIndexConfig,
+        FirestoreGeoIndexConfig, FirestoreIndexField, FirestoreIndexFieldMode,
+        FirestoreQueryDirection, FirestoreSearchIndexOptions, FirestoreVectorIndexConfig,
     };
+    use gcloud_sdk::google::firestore::admin::v1::index::index_field::SearchConfig;
     use gcloud_sdk::google::firestore::admin::v1::index::{
-        ApiScope, IndexField as ProtoIndexField, QueryScope as ProtoQueryScope, State as ProtoState,
+        ApiScope, IndexField as ProtoIndexField, QueryScope as ProtoQueryScope, SearchIndexOptions,
+        State as ProtoState,
     };
+    use gcloud_sdk::google::firestore::admin::v1::Database;
     use gcloud_sdk::prost::Message as _;
     use gcloud_sdk::tonic::Code;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -1353,6 +1388,7 @@ mod tests {
     const UPDATE_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/UpdateField";
     const GET_OPERATION: &str = "/google.longrunning.Operations/GetOperation";
     const GET_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/GetField";
+    const GET_DATABASE: &str = "/google.firestore.admin.v1.FirestoreAdmin/GetDatabase";
 
     const GROUP_PATH: &str = USERS_GROUP_PATH;
 
@@ -1403,6 +1439,17 @@ mod tests {
 
     fn no_writes_allowed(method: &str) -> ! {
         panic!("unexpected write RPC in a read-only scenario: {method}")
+    }
+
+    fn database_response(edition: DatabaseEdition) -> (String, FakeResponse) {
+        let database = Database {
+            database_edition: edition.into(),
+            ..Default::default()
+        };
+        (
+            "GetDatabase".to_string(),
+            FakeResponse::Message(database.encode_to_vec()),
+        )
     }
 
     /// Serializes every test in this module against every other. `tracing`'s per-callsite
@@ -1467,6 +1514,38 @@ mod tests {
 
         assert_eq!(report.unchanged, vec![declared_index()]);
         assert!(report.created_indexes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn field_overrides_on_an_enterprise_database_are_refused_before_any_write() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = FakeFirestore::start(|method, bytes| match method {
+            GET_DATABASE => database_response(DatabaseEdition::Enterprise),
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => recording_writes(other, bytes),
+        })
+        .await;
+        let params = params_with_index().with_field_overrides(vec![FirestoreFieldOverride {
+            target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
+            indexes: vec![],
+        }]);
+
+        let err = fake
+            .db
+            .sync_indexes(params, FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                FirestoreError::InvalidParametersError(invalid)
+                    if invalid.public.field == "field_overrides"
+            ),
+            "{err:?}"
+        );
+        assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
     }
 
     #[tokio::test]
@@ -1737,15 +1816,17 @@ mod tests {
                 let id = request.name.rsplit('/').next().unwrap().to_string();
                 (format!("DeleteIndex({id})"), FakeResponse::empty())
             }
+            GET_DATABASE => database_response(DatabaseEdition::Standard),
             other => panic!("unexpected RPC: {other}"),
         }
     }
 
-    /// Every call after the listing, whose three RPCs run concurrently in no fixed order.
+    /// Every call after the reads that plan the sync: the listing, whose three RPCs run
+    /// concurrently in no fixed order, and the database lookup.
     fn writes_and_polls(fake: &FakeFirestore) -> Vec<String> {
         fake.calls()
             .into_iter()
-            .filter(|call| !call.starts_with("List"))
+            .filter(|call| !call.starts_with("List") && call != "GetDatabase")
             .collect()
     }
 
@@ -3935,6 +4016,36 @@ mod tests {
         }
     }
 
+    fn decode_captured_search_config(search: &serde_json::Value) -> SearchConfig {
+        use gcloud_sdk::google::firestore::admin::v1::index::index_field::search_config::{
+            SearchGeoSpec, SearchTextIndexSpec, SearchTextSpec, TextIndexType, TextMatchType,
+        };
+        SearchConfig {
+            text_spec: search.get("textSpec").map(|text| SearchTextSpec {
+                index_specs: text
+                    .get("indexSpecs")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .map(|spec| SearchTextIndexSpec {
+                        index_type: TextIndexType::from_str_name(json_str(spec, "indexType"))
+                            .unwrap_or(TextIndexType::Unspecified)
+                            .into(),
+                        match_type: TextMatchType::from_str_name(json_str(spec, "matchType"))
+                            .unwrap_or(TextMatchType::Unspecified)
+                            .into(),
+                    })
+                    .collect(),
+            }),
+            geo_spec: search.get("geoSpec").map(|geo| SearchGeoSpec {
+                geo_json_indexing_disabled: geo
+                    .get("geoJsonIndexingDisabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            }),
+        }
+    }
+
     fn decode_captured_index_field(value: &serde_json::Value) -> ProtoIndexField {
         use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
             vector_config, ArrayConfig, Order, ValueMode, VectorConfig,
@@ -3950,6 +4061,10 @@ mod tests {
                 "CONTAINS" => ArrayConfig::Contains as i32,
                 _ => ArrayConfig::Unspecified as i32,
             }))
+        } else if let Some(search) = value.get("searchConfig") {
+            Some(ValueMode::SearchConfig(decode_captured_search_config(
+                search,
+            )))
         } else {
             value.get("vectorConfig").map(|vector| {
                 ValueMode::VectorConfig(VectorConfig {
@@ -3995,9 +4110,130 @@ mod tests {
                 multikey: false,
                 shard_count: 0,
                 unique: false,
-                search_index_options: None,
+                search_index_options: index.get("searchIndexOptions").map(|options| {
+                    SearchIndexOptions {
+                        text_language: json_str(options, "textLanguage").to_string(),
+                        text_language_override_field_path: json_str(
+                            options,
+                            "textLanguageOverrideFieldPath",
+                        )
+                        .to_string(),
+                    }
+                }),
             })
             .collect()
+    }
+
+    fn enterprise_indexes() -> Vec<ProtoIndex> {
+        decode_captured_indexes(include_str!("testdata/enterprise-list-indexes.json"))
+    }
+
+    fn index_field(path: &str, mode: FirestoreIndexFieldMode) -> FirestoreIndexField {
+        FirestoreIndexField::new(path.to_string(), mode)
+    }
+
+    fn english_search_options() -> FirestoreSearchIndexOptions {
+        FirestoreSearchIndexOptions::new().with_text_language("en".to_string())
+    }
+
+    #[test]
+    fn every_index_listed_on_an_enterprise_database_is_a_comparable_domain_value() {
+        let captured = enterprise_indexes();
+        let listing = FirestoreIndexListing::from(FirestoreIndexExistingState {
+            indexes: captured.clone(),
+            fields: vec![],
+        });
+        assert!(
+            listing.unrecognised.is_empty(),
+            "{:?}",
+            listing.unrecognised
+        );
+
+        let listed: Vec<FirestoreCompositeIndex> = listing
+            .indexes
+            .iter()
+            .map(|listed| listed.index.clone())
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                FirestoreCompositeIndex::new(vec![asc("genre"), desc("rating")]),
+                FirestoreCompositeIndex::new(vec![
+                    index_field("menu", FirestoreIndexFieldMode::Text),
+                    index_field("description", FirestoreIndexFieldMode::Text),
+                ])
+                .search_options(
+                    english_search_options().with_text_language_override_field_path(
+                        FirestoreSearchIndexOptions::DEFAULT_TEXT_LANGUAGE_OVERRIDE_FIELD_PATH
+                            .to_string()
+                    )
+                ),
+                FirestoreCompositeIndex::new(vec![index_field(
+                    "embedding",
+                    FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(3)),
+                )]),
+                FirestoreCompositeIndex::new(vec![index_field(
+                    "location",
+                    FirestoreIndexFieldMode::Geo(FirestoreGeoIndexConfig::new()),
+                )]),
+            ]
+        );
+
+        // What `CreateIndex` sends for each is the shape the service lists back.
+        for (listed, captured) in listing.indexes.into_iter().zip(captured) {
+            let sent = ProtoIndex::try_from(listed.index).unwrap();
+            assert_eq!(sent.fields, captured.fields);
+            assert_eq!(sent.search_index_options, captured.search_index_options);
+        }
+    }
+
+    #[test]
+    fn search_indexes_declared_without_options_match_their_listing() {
+        let location = FirestoreCompositeIndex::new(vec![index_field(
+            "location",
+            FirestoreIndexFieldMode::Geo(FirestoreGeoIndexConfig::new()),
+        )]);
+        let declared_without_override_field = vec![
+            FirestoreCompositeIndex::new(vec![
+                index_field("menu", FirestoreIndexFieldMode::Text),
+                index_field("description", FirestoreIndexFieldMode::Text),
+            ])
+            .search_options(english_search_options()),
+            location.clone(),
+        ];
+        let declared_without_options = vec![
+            FirestoreCompositeIndex::new(vec![index_field("body", FirestoreIndexFieldMode::Text)]),
+            location,
+        ];
+        for (group, listed, declared) in [
+            (
+                "pipeline-restaurants",
+                enterprise_indexes(),
+                declared_without_override_field,
+            ),
+            (
+                "admin-search-index-test",
+                decode_captured_indexes(include_str!(
+                    "testdata/enterprise-list-indexes-search-defaults.json"
+                )),
+                declared_without_options,
+            ),
+        ] {
+            let group_marker = format!("/collectionGroups/{group}/");
+            let existing = FirestoreIndexExistingState {
+                indexes: listed
+                    .into_iter()
+                    .filter(|index| index.name.contains(&group_marker))
+                    .collect(),
+                fields: vec![],
+            };
+            let params = FirestoreIndexParams::new(FirestoreCollectionId::from_static(group))
+                .with_composite_indexes(declared.clone());
+            let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+            assert_eq!(plan.unchanged, declared, "{plan}");
+            assert!(plan.create_indexes.is_empty(), "{plan}");
+            assert!(plan.delete_indexes.is_empty(), "{plan}");
+        }
     }
 
     #[tokio::test]
@@ -4288,6 +4524,7 @@ mod tests {
                     done_operation_response(&format!("{GROUP_PATH}/operations/op-field")),
                 )
             }
+            GET_DATABASE => database_response(DatabaseEdition::Standard),
             other => panic!("unexpected RPC: {other}"),
         })
         .await;
