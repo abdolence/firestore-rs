@@ -35,14 +35,14 @@ pub mod insert_builder;
 pub mod listing_builder;
 
 /// Builds and runs pipelines, the queries of Firestore Enterprise edition: a source followed by
-/// stages such as `filter`, `select` and `sort`.
+/// stages such as `filter`, `fields` and `sort`.
 ///
 /// Reach for this from [`FirestoreExprBuilder::pipeline()`](FirestoreExprBuilder::pipeline).
 pub mod pipeline_builder;
 
 /// Starts the expressions of a pipeline: fields, constants, variables and the logical functions.
 ///
-/// Reach for this as the argument of a pipeline closure such as `.select(|e| ..)`, not directly.
+/// Reach for this as the argument of a pipeline closure such as `.fields(|e| ..)`, not directly.
 pub mod pipeline_expr_builder;
 
 /// Builds the conditions of a pipeline's `filter`, the way a Core query builds its filter.
@@ -99,7 +99,7 @@ use crate::delete_builder::FirestoreDeleteInitialBuilder;
 use crate::fluent_api::select_builder::FirestoreSelectInitialBuilder;
 use crate::insert_builder::FirestoreInsertInitialBuilder;
 use crate::listing_builder::FirestoreListingInitialBuilder;
-use crate::pipeline_builder::{FirestorePipelineDbContext, FirestorePipelineInitialBuilder};
+use crate::pipeline_builder::FirestorePipelineVerbBuilder;
 use crate::update_builder::FirestoreUpdateInitialBuilder;
 use crate::{
     FirestoreAggregatedQuerySupport, FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport,
@@ -191,8 +191,8 @@ impl<'a, D> FirestoreExprBuilder<'a, D>
 where
     D: FirestorePipelineSupport + Clone + Send + Sync + 'static,
 {
-    /// Starts a pipeline, which needs an Enterprise edition database. Continue with a source such
-    /// as `.from()`.
+    /// Starts a pipeline, which needs an Enterprise edition database. Continue with `.select()` to
+    /// read documents, then a source such as `.from()`.
     ///
     /// ```rust,no_run
     /// use firestore::{path, FirestoreDb, FirestoreResult};
@@ -209,6 +209,7 @@ where
     /// let books: Vec<Book> = db
     ///     .fluent()
     ///     .pipeline()
+    ///     .select()
     ///     .from("books")
     ///     .filter(|q| {
     ///         q.for_all([
@@ -225,8 +226,8 @@ where
     /// # }
     /// ```
     #[inline]
-    pub fn pipeline(self) -> FirestorePipelineInitialBuilder<FirestorePipelineDbContext<'a, D>> {
-        FirestorePipelineInitialBuilder::new(FirestorePipelineDbContext::new(self.db))
+    pub fn pipeline(self) -> FirestorePipelineVerbBuilder<'a, D> {
+        FirestorePipelineVerbBuilder::new(self.db)
     }
 }
 

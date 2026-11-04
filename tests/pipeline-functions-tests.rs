@@ -38,8 +38,9 @@ where
     let mut rows: Vec<Json> = db
         .fluent()
         .pipeline()
+        .select()
         .literals([row])
-        .select(outputs)
+        .fields(outputs)
         .obj()
         .query()
         .await?;
@@ -61,6 +62,7 @@ async fn an_empty_and_keeps_every_document_and_an_empty_or_none() -> TestResult 
     let every_book: Vec<Book> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .filter(|q| q.condition(q.values().and([])))
         .obj()
@@ -69,6 +71,7 @@ async fn an_empty_and_keeps_every_document_and_an_empty_or_none() -> TestResult 
     let no_book: Vec<Book> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .filter(|q| q.condition(q.values().or([])))
         .obj()

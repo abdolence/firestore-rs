@@ -29,7 +29,7 @@ impl FirestorePipelineInitialBuilder<FirestorePipelineNestedContext> {
     /// use firestore::FirestoreDb;
     ///
     /// fn top_level(db: &FirestoreDb) {
-    ///     db.fluent().pipeline().subcollection("reviews");
+    ///     db.fluent().pipeline().select().subcollection("reviews");
     /// }
     /// ```
     ///
@@ -41,8 +41,9 @@ impl FirestorePipelineInitialBuilder<FirestorePipelineNestedContext> {
     /// # async fn example(db: &FirestoreDb) -> firestore::FirestoreResult<()> {
     /// db.fluent()
     ///     .pipeline()
+    ///     .select()
     ///     .from("restaurants")
-    ///     .select(|e| {
+    ///     .fields(|e| {
     ///         [e.array_subquery(|p| p.subcollection("reviews")).alias("reviews")]
     ///     })
     ///     .query()

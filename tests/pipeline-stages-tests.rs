@@ -120,6 +120,7 @@ async fn aggregate_outputs_one_document_of_accumulators() -> TestResult {
     let totals: Vec<Totals> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .aggregate(|e| {
             [
@@ -151,6 +152,7 @@ async fn every_accumulator_is_accepted_under_its_wire_name() -> TestResult {
     let accumulated: Vec<Accumulated> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .sort(|e| [e.field("title").asc()])
         .aggregate(|e| {
@@ -200,6 +202,7 @@ async fn aggregate_grouped_outputs_one_document_per_group() -> TestResult {
     let stats: Vec<GenreStats> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .aggregate_grouped(
             |e| [e.field(path!(GenreStats::genre))],
@@ -242,6 +245,7 @@ async fn distinct_outputs_each_value_once_with_null_as_a_group() -> TestResult {
     let mut genres: Vec<Genre> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .distinct(|e| [e.field(path!(Genre::genre))])
         .obj()
@@ -274,6 +278,7 @@ async fn find_nearest_keeps_the_closest_documents_and_outputs_the_distance() -> 
     let nearest: Vec<Nearest> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .find_nearest_with_options(
             FirestoreFindNearestStage::new(
@@ -284,7 +289,7 @@ async fn find_nearest_keeps_the_closest_documents_and_outputs_the_distance() -> 
             )
             .with_distance_result_field("distance".to_string()),
         )
-        .select(|e| {
+        .fields(|e| {
             [
                 FirestoreSelection::from(e.field("title")),
                 e.field("distance").into(),
@@ -296,6 +301,7 @@ async fn find_nearest_keeps_the_closest_documents_and_outputs_the_distance() -> 
     let plain: Vec<FirestoreDocument> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .find_nearest(
             "embedding",
@@ -334,6 +340,7 @@ async fn sample_keeps_a_count_or_a_fraction_of_the_documents() -> TestResult {
         let sampled = db
             .fluent()
             .pipeline()
+            .select()
             .from(BOOKS)
             .sample(size)
             .query()
@@ -352,9 +359,10 @@ async fn union_appends_the_documents_of_another_pipeline() -> TestResult {
     let names: Vec<Name> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
-        .select(|e| [e.field("title").alias("name")])
-        .union(|p| p.from(RESTAURANTS).select(|e| [e.field(path!(Name::name))]))
+        .fields(|e| [e.field("title").alias("name")])
+        .union(|p| p.from(RESTAURANTS).fields(|e| [e.field(path!(Name::name))]))
         .sort(|e| [e.field(path!(Name::name)).asc()])
         .obj()
         .query()
@@ -373,9 +381,10 @@ async fn unnest_outputs_each_array_element_with_its_index() -> TestResult {
     let tags: Vec<Tag> = db
         .fluent()
         .pipeline()
+        .select()
         .documents([format!("{BOOKS}/book-01")])
         .unnest_with_index_field(|e| e.field("tags").alias("tag"), "tag_index")
-        .select(|e| [e.field(path!(Tag::tag)), e.field(path!(Tag::tag_index))])
+        .fields(|e| [e.field(path!(Tag::tag)), e.field(path!(Tag::tag_index))])
         .sort(|e| [e.field(path!(Tag::tag_index)).asc()])
         .obj()
         .query()
@@ -384,9 +393,10 @@ async fn unnest_outputs_each_array_element_with_its_index() -> TestResult {
     let in_place: Vec<InPlaceTag> = db
         .fluent()
         .pipeline()
+        .select()
         .documents([format!("{BOOKS}/book-01")])
         .unnest(|e| e.field(path!(InPlaceTag::tags)))
-        .select(|e| [e.field(path!(InPlaceTag::tags))])
+        .fields(|e| [e.field(path!(InPlaceTag::tags))])
         .obj()
         .query()
         .await?;
@@ -407,6 +417,7 @@ async fn replace_with_replaces_or_merges_the_document() -> TestResult {
     let replaced: Vec<Awards> = db
         .fluent()
         .pipeline()
+        .select()
         .documents([&book])
         .replace_with(|e| e.field("awards"), FirestoreReplaceWithMode::FullReplace)
         .obj()
@@ -420,6 +431,7 @@ async fn replace_with_replaces_or_merges_the_document() -> TestResult {
         let documents: Vec<Merged> = db
             .fluent()
             .pipeline()
+            .select()
             .documents([&book])
             .replace_with(
                 |e| {
@@ -430,7 +442,7 @@ async fn replace_with_replaces_or_merges_the_document() -> TestResult {
                 },
                 mode,
             )
-            .select(|e| {
+            .fields(|e| {
                 [
                     e.field(path!(Merged::title)),
                     e.field(path!(Merged::extra)),
@@ -475,6 +487,7 @@ async fn define_makes_a_variable_for_the_stages_after_it() -> TestResult {
     let rows: Vec<Threshold> = db
         .fluent()
         .pipeline()
+        .select()
         .literals([[("a", 1)], [("a", 20)]].map(std::collections::HashMap::from))
         .define(|e| [e.constant(10).alias("threshold")])
         .add_fields(|e| {
@@ -504,10 +517,11 @@ async fn an_array_subquery_joins_the_matching_documents_as_an_array() -> TestRes
     let restaurants: Vec<WithReviews> = db
         .fluent()
         .pipeline()
+        .select()
         .from(RESTAURANTS)
         .filter(|q| q.field("cuisine").eq("breakfast"))
         .define(|e| [e.field("__name__").alias("restaurant")])
-        .select(|e| {
+        .fields(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithReviews::name))),
                 e.array_subquery(|p| {
@@ -515,7 +529,7 @@ async fn an_array_subquery_joins_the_matching_documents_as_an_array() -> TestRes
                         .all_descendants()
                         .filter(|q| q.field("restaurant").eq(q.variable("restaurant")))
                         .sort(|e| [e.field("rating").desc()])
-                        .select(|e| [e.field("rating"), e.field("reviewer")])
+                        .fields(|e| [e.field("rating"), e.field("reviewer")])
                 })
                 .alias("reviews"),
             ]
@@ -564,10 +578,11 @@ async fn a_scalar_subquery_joins_one_value_and_null_for_no_match() -> TestResult
     let restaurants: Vec<WithAverage> = db
         .fluent()
         .pipeline()
+        .select()
         .from(RESTAURANTS)
         .filter(|q| q.field("cuisine").eq("breakfast"))
         .define(|e| [e.field("__name__").alias("restaurant")])
-        .select(|e| {
+        .fields(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithAverage::name))),
                 e.scalar_subquery(|p| {
@@ -611,12 +626,13 @@ async fn a_subcollection_subquery_joins_the_documents_under_each_document() -> T
     let restaurants: Vec<WithRatings> = db
         .fluent()
         .pipeline()
+        .select()
         .from(RESTAURANTS)
         .filter(|q| q.field("cuisine").eq("pizza"))
-        .select(|e| {
+        .fields(|e| {
             [
                 FirestoreSelection::from(e.field(path!(WithRatings::name))),
-                e.array_subquery(|p| p.subcollection("reviews").select(|e| [e.field("rating")]))
+                e.array_subquery(|p| p.subcollection("reviews").fields(|e| [e.field("rating")]))
                     .alias("reviews"),
                 e.raw(
                     "array_length",
@@ -655,16 +671,17 @@ async fn a_scalar_subquery_of_several_results_fails_the_request() -> TestResult 
     let result = db
         .fluent()
         .pipeline()
+        .select()
         .documents([format!("{RESTAURANTS}/rest-04")])
         .define(|e| [e.field("__name__").alias("restaurant")])
-        .select(|e| {
+        .fields(|e| {
             [
                 FirestoreSelection::from(e.field("name")),
                 e.scalar_subquery(|p| {
                     p.from("reviews")
                         .all_descendants()
                         .filter(|q| q.field("restaurant").eq(q.variable("restaurant")))
-                        .select(|e| [e.field("rating")])
+                        .fields(|e| [e.field("rating")])
                 })
                 .alias("rating"),
             ]

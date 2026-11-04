@@ -48,7 +48,7 @@ pub struct FirestoreFunction {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FirestoreBoolExpr(pub(crate) FirestoreExpr);
 
-/// An expression with the field name it is output under, as `select` and `add_fields` take it.
+/// An expression with the field name it is output under, as `fields` and `add_fields` take it.
 ///
 /// Without an alias the expression must be a field, which keeps its own path as its name.
 /// Converting a pipeline that has an unaliased computed expression, or the same name twice in

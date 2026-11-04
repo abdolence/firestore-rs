@@ -42,10 +42,18 @@ fn titles(books: &[Book]) -> Vec<&str> {
 async fn a_collection_source_reads_the_whole_collection() -> TestResult {
     let db = setup_enterprise().await?;
 
-    let books: Vec<Book> = db.fluent().pipeline().from(BOOKS).obj().query().await?;
+    let books: Vec<Book> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(BOOKS)
+        .obj()
+        .query()
+        .await?;
     let mut reviews: Vec<String> = db
         .fluent()
         .pipeline()
+        .select()
         .from("reviews")
         .parent(db.parent_path(RESTAURANTS, "rest-01")?)
         .query()
@@ -74,6 +82,7 @@ async fn a_collection_group_source_reads_every_collection_with_the_id() -> TestR
     let reviews = db
         .fluent()
         .pipeline()
+        .select()
         .from("reviews")
         .all_descendants()
         .query()
@@ -90,6 +99,7 @@ async fn a_documents_source_leaves_out_a_missing_document() -> TestResult {
     let books: Vec<Book> = db
         .fluent()
         .pipeline()
+        .select()
         .documents([
             format!("{BOOKS}/book-01"),
             format!("{BOOKS}/book-10"),
@@ -124,6 +134,7 @@ async fn a_literals_source_returns_its_rows() -> TestResult {
     let returned: Vec<LiteralRow> = db
         .fluent()
         .pipeline()
+        .select()
         .literals(&rows)
         .sort(|e| [e.field(path!(LiteralRow::number)).asc()])
         .obj()
@@ -141,6 +152,7 @@ async fn filter_sort_offset_and_limit_apply_in_order() -> TestResult {
     let books: Vec<Book> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .filter(|q| q.field(path!(Book::rating)).greater_than_or_equal(4.2))
         .sort(|e| {
@@ -163,16 +175,17 @@ async fn filter_sort_offset_and_limit_apply_in_order() -> TestResult {
 }
 
 #[tokio::test]
-async fn select_returns_the_selected_fields_without_a_document_id() -> TestResult {
+async fn fields_returns_the_selected_fields_without_a_document_id() -> TestResult {
     let db = setup_enterprise().await?;
 
     let books: Vec<SelectedBook> = db
         .fluent()
         .pipeline()
+        .select()
         .from(BOOKS)
         .sort(|e| [e.field(path!(Book::title)).asc()])
         .limit(2)
-        .select(|e| {
+        .fields(|e| {
             [
                 FirestoreSelection::from(e.field(path!(Book::title))),
                 e.field(path!(Book::author)).alias("author_name"),
@@ -211,6 +224,7 @@ async fn explain_returns_the_plan_after_the_documents_it_reads() -> TestResult {
         let mut items: Vec<_> = db
             .fluent()
             .pipeline()
+            .select()
             .from(BOOKS)
             .filter(|q| q.field(path!(Book::genre)).eq("Dystopian"))
             .explain_with_options(options.clone())
@@ -246,6 +260,7 @@ async fn a_standard_edition_database_fails_the_pipeline_without_a_retry() -> Tes
     let result = db
         .fluent()
         .pipeline()
+        .select()
         .from("pipeline-standard-probe")
         .query()
         .await;

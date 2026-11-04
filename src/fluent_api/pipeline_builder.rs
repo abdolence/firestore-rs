@@ -4,12 +4,12 @@ use crate::pipeline_search_builder::FirestorePipelineSearchBuilder;
 use crate::{
     FirestoreAddFieldsStage, FirestoreBoolExpr, FirestoreCollectionGroupSource,
     FirestoreCollectionSource, FirestoreDocument, FirestoreDocumentsSource,
-    FirestoreExplainOptions, FirestoreIndexHint, FirestoreLimitStage, FirestoreLiteralsSource,
-    FirestoreOffsetStage, FirestorePipeline, FirestorePipelineOrdering, FirestorePipelineParams,
-    FirestorePipelineSource, FirestorePipelineStage, FirestorePipelineSupport, FirestoreRawStage,
-    FirestoreRemoveFieldsStage, FirestoreRequestOptions, FirestoreRequestTag, FirestoreResult,
-    FirestoreSearch, FirestoreSelectStage, FirestoreSelection, FirestoreSortStage,
-    FirestoreWhereStage, FirestoreWithPipelineMetadata,
+    FirestoreExplainOptions, FirestoreFieldsStage, FirestoreIndexHint, FirestoreLimitStage,
+    FirestoreLiteralsSource, FirestoreOffsetStage, FirestorePipeline, FirestorePipelineOrdering,
+    FirestorePipelineParams, FirestorePipelineSource, FirestorePipelineStage,
+    FirestorePipelineSupport, FirestoreRawStage, FirestoreRemoveFieldsStage,
+    FirestoreRequestOptions, FirestoreRequestTag, FirestoreResult, FirestoreSearch,
+    FirestoreSelection, FirestoreSortStage, FirestoreWhereStage, FirestoreWithPipelineMetadata,
 };
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
@@ -33,9 +33,29 @@ impl<'a, D> FirestorePipelineDbContext<'a, D> {
     }
 }
 
-/// Picks the source of a pipeline, its first stage.
+/// Picks what a top-level pipeline does, as Core's `FirestoreExprBuilder` does for a query.
 ///
 /// Created by [`FirestoreExprBuilder::pipeline()`](crate::FirestoreExprBuilder::pipeline).
+#[derive(Clone, Debug)]
+pub struct FirestorePipelineVerbBuilder<'a, D> {
+    db: &'a D,
+}
+
+impl<'a, D> FirestorePipelineVerbBuilder<'a, D> {
+    pub(crate) fn new(db: &'a D) -> Self {
+        Self { db }
+    }
+
+    /// Starts a pipeline that reads documents. Continue with a source such as `.from()`.
+    pub fn select(self) -> FirestorePipelineInitialBuilder<FirestorePipelineDbContext<'a, D>> {
+        FirestorePipelineInitialBuilder::new(FirestorePipelineDbContext::new(self.db))
+    }
+}
+
+/// Picks the source of a pipeline, its first stage.
+///
+/// Created by [`select`](FirestorePipelineVerbBuilder::select) at the top level, and handed to the
+/// closure of a subquery or a `union` branch.
 #[derive(Clone, Debug)]
 pub struct FirestorePipelineInitialBuilder<C> {
     context: C,
@@ -182,6 +202,7 @@ impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
     /// fn both(db: &FirestoreDb) {
     ///     db.fluent()
     ///         .pipeline()
+    ///         .select()
     ///         .from("reviews")
     ///         .parent("projects/p/databases/d/documents/restaurants/r1")
     ///         .all_descendants();
@@ -210,6 +231,7 @@ impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
     /// fn both(db: &FirestoreDb) {
     ///     db.fluent()
     ///         .pipeline()
+    ///         .select()
     ///         .from("reviews")
     ///         .all_descendants()
     ///         .parent("projects/p/databases/d/documents/restaurants/r1");
@@ -245,6 +267,7 @@ impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
     /// let hits = db
     ///     .fluent()
     ///     .pipeline()
+    ///     .select()
     ///     .from("restaurants")
     ///     .search(|s| {
     ///         s.text(|t| t.for_all([t.term("waffles"), t.exclude(t.term("bacon"))]))
@@ -343,9 +366,10 @@ where
         }
     }
 
-    /// Replaces each document with the selected fields. An item that is not a field needs an
-    /// [`alias`](crate::FirestoreExpr::alias).
-    pub fn select<FN, I>(self, fields: FN) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>
+    /// Replaces each document with the chosen fields. An item that is not a field needs an
+    /// [`alias`](crate::FirestoreExpr::alias). The wire stage is `select`.
+    #[doc(alias = "select")]
+    pub fn fields<FN, I>(self, fields: FN) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>
     where
         FN: FnOnce(FirestorePipelineExprBuilder) -> I,
         I: IntoIterator,
@@ -355,7 +379,7 @@ where
             .into_iter()
             .map(Into::into)
             .collect();
-        self.stage(FirestorePipelineStage::Select(FirestoreSelectStage::new(
+        self.stage(FirestorePipelineStage::Fields(FirestoreFieldsStage::new(
             fields,
         )))
     }
@@ -502,7 +526,7 @@ where
         self.request_options(FirestoreRequestOptions::from_tags(tags))
     }
 
-    /// Deserialises the results into `T`. A result of `select` has no document name, so an
+    /// Deserialises the results into `T`. A result of `fields` has no document name, so an
     /// `_firestore_id` field of `T` must be optional.
     pub fn obj<T>(self) -> FirestorePipelineObjBuilder<'a, D, T>
     where

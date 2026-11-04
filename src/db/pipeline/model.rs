@@ -15,7 +15,7 @@ use std::str::FromStr;
 ///
 /// The fluent API builds one from
 /// [`FirestoreExprBuilder::pipeline()`](crate::FirestoreExprBuilder::pipeline), and runs one
-/// built by hand through `db.fluent().pipeline().from_pipeline(pipeline)`.
+/// built by hand through `db.fluent().pipeline().select().from_pipeline(pipeline)`.
 #[derive(Debug, Clone, PartialEq, Builder)]
 pub struct FirestorePipeline {
     pub source: FirestorePipelineSource,
@@ -147,7 +147,7 @@ impl Display for FirestoreIndexId {
 #[derive(Debug, Clone, PartialEq)]
 pub enum FirestorePipelineStage {
     Where(FirestoreWhereStage),
-    Select(FirestoreSelectStage),
+    Fields(FirestoreFieldsStage),
     AddFields(FirestoreAddFieldsStage),
     RemoveFields(FirestoreRemoveFieldsStage),
     Sort(FirestoreSortStage),
@@ -171,10 +171,10 @@ pub struct FirestoreWhereStage {
     pub condition: FirestoreBoolExpr,
 }
 
-/// Replaces each document with the selected fields. Its results carry no document name unless
-/// `__name__` is selected.
+/// Replaces each document with the chosen fields. Its results carry no document name unless
+/// `__name__` is chosen. The wire stage is `select`.
 #[derive(Debug, Clone, PartialEq, Builder)]
-pub struct FirestoreSelectStage {
+pub struct FirestoreFieldsStage {
     pub fields: Vec<FirestoreSelection>,
 }
 
@@ -435,7 +435,7 @@ impl TryFrom<FirestorePipelineStage> for Stage {
     fn try_from(stage: FirestorePipelineStage) -> Result<Self, Self::Error> {
         match stage {
             FirestorePipelineStage::Where(stage) => stage.try_into(),
-            FirestorePipelineStage::Select(stage) => stage.try_into(),
+            FirestorePipelineStage::Fields(stage) => stage.try_into(),
             FirestorePipelineStage::AddFields(stage) => stage.try_into(),
             FirestorePipelineStage::RemoveFields(stage) => Ok(stage.into()),
             FirestorePipelineStage::Sort(stage) => stage.try_into(),
@@ -465,10 +465,10 @@ impl TryFrom<FirestoreWhereStage> for Stage {
     }
 }
 
-impl TryFrom<FirestoreSelectStage> for Stage {
+impl TryFrom<FirestoreFieldsStage> for Stage {
     type Error = FirestoreError;
 
-    fn try_from(select: FirestoreSelectStage) -> Result<Self, Self::Error> {
+    fn try_from(select: FirestoreFieldsStage) -> Result<Self, Self::Error> {
         Ok(stage(
             "select",
             vec![selection_map("select", select.fields)?],
@@ -649,7 +649,7 @@ mod tests {
                     .parent(format!(
                         "{ENTERPRISE_DOCUMENTS}/pipeline-restaurants/rest-01"
                     ))
-                    .select(|e| [e.field("__name__")])
+                    .fields(|e| [e.field("__name__")])
                     .into_pipeline(),
             ),
             (
@@ -707,7 +707,7 @@ mod tests {
                 None,
                 builder()
                     .from("pipeline-books")
-                    .select(|e| {
+                    .fields(|e| {
                         [
                             FirestoreSelection::from(e.field("title")),
                             e.field("author").alias("author_name"),
@@ -778,11 +778,11 @@ mod tests {
             builder().literals([1]).into_pipeline(),
             builder()
                 .from("pipeline-books")
-                .select(|e| [e.raw("to_upper", [e.field("title")])])
+                .fields(|e| [e.raw("to_upper", [e.field("title")])])
                 .into_pipeline(),
             builder()
                 .from("pipeline-books")
-                .select(|e| {
+                .fields(|e| {
                     [
                         FirestoreSelection::from(e.field("title")),
                         e.field("author").alias("title"),

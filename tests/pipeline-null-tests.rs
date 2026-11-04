@@ -27,6 +27,7 @@ async fn a_none_constant_compares_with_null() -> TestResult {
     let rows: Vec<Json> = db
         .fluent()
         .pipeline()
+        .select()
         .literals([
             Row {
                 id: 1,
@@ -35,7 +36,7 @@ async fn a_none_constant_compares_with_null() -> TestResult {
             Row { id: 2, tag: None },
         ])
         .filter(|e| e.field("tag").eq(None::<String>))
-        .select(|e| [e.field("id")])
+        .fields(|e| [e.field("id")])
         .obj()
         .query()
         .await?;
@@ -51,12 +52,13 @@ async fn a_literals_row_leaves_out_none_and_json_null_fields() -> TestResult {
     let rows: Vec<Json> = db
         .fluent()
         .pipeline()
+        .select()
         .literals([OptionalRow {
             id: 1,
             tag: None,
             json_null: Json::Null,
         }])
-        .select(|e| {
+        .fields(|e| {
             [
                 e.field("id").alias("id"),
                 e.field("tag").is_absent().alias("tag_is_absent"),

@@ -1,7 +1,7 @@
 use crate::{FirestoreBoolExpr, FirestoreExpr, FirestoreValue};
 
 /// The argument of every expression closure of the fluent pipeline API other than `filter`, such
-/// as `.select(|e| ..)` and `.sort(|e| ..)`. The `filter` closure takes a
+/// as `.fields(|e| ..)` and `.sort(|e| ..)`. The `filter` closure takes a
 /// [`FirestorePipelineFilterBuilder`](crate::pipeline_filter_builder::FirestorePipelineFilterBuilder).
 ///
 /// It starts expressions and combines conditions, which are plain here: only the filter builder

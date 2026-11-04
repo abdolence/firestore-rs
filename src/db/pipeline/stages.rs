@@ -286,8 +286,8 @@ mod tests {
                 None,
                 builder()
                     .from("pipeline-books")
-                    .select(|e| [e.field("title").alias("name")])
-                    .union(|p| p.from("pipeline-restaurants").select(|e| [e.field("name")]))
+                    .fields(|e| [e.field("title").alias("name")])
+                    .union(|p| p.from("pipeline-restaurants").fields(|e| [e.field("name")]))
                     .into_pipeline(),
             ),
             (
@@ -296,7 +296,7 @@ mod tests {
                 builder()
                     .documents(["pipeline-books/book-01"])
                     .unnest_with_index_field(|e| e.field("tags").alias("tag"), "tag_index")
-                    .select(|e| [e.field("tag"), e.field("tag_index")])
+                    .fields(|e| [e.field("tag"), e.field("tag_index")])
                     .into_pipeline(),
             ),
             (
@@ -321,7 +321,7 @@ mod tests {
                         },
                         FirestoreReplaceWithMode::MergeOverwriteExisting,
                     )
-                    .select(|e| [e.field("title"), e.field("extra"), e.field("author")])
+                    .fields(|e| [e.field("title"), e.field("extra"), e.field("author")])
                     .into_pipeline(),
             ),
             (
@@ -344,7 +344,7 @@ mod tests {
                     .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("breakfast"))
                     .define(|e| [e.field("__name__").alias("rname")])
-                    .select(|e| {
+                    .fields(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
                             e.array_subquery(|p| {
@@ -352,7 +352,7 @@ mod tests {
                                     .all_descendants()
                                     .filter(|q| q.field("restaurant").eq(q.variable("rname")))
                                     .sort(|e| [e.field("rating").desc()])
-                                    .select(|e| [e.field("rating"), e.field("reviewer")])
+                                    .fields(|e| [e.field("rating"), e.field("reviewer")])
                             })
                             .alias("reviews"),
                         ]
@@ -366,7 +366,7 @@ mod tests {
                     .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("breakfast"))
                     .define(|e| [e.field("__name__").alias("rname")])
-                    .select(|e| {
+                    .fields(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
                             e.scalar_subquery(|p| {
@@ -386,11 +386,11 @@ mod tests {
                 builder()
                     .from("pipeline-restaurants")
                     .filter(|q| q.field("cuisine").eq("pizza"))
-                    .select(|e| {
+                    .fields(|e| {
                         [
                             FirestoreSelection::from(e.field("name")),
                             e.array_subquery(|p| {
-                                p.subcollection("reviews").select(|e| [e.field("rating")])
+                                p.subcollection("reviews").fields(|e| [e.field("rating")])
                             })
                             .alias("reviews"),
                             e.raw(
@@ -417,7 +417,7 @@ mod tests {
                         }))
                         .greater_than(1)
                     })
-                    .select(|e| [e.field("name")])
+                    .fields(|e| [e.field("name")])
                     .into_pipeline(),
             ),
             (
@@ -436,7 +436,7 @@ mod tests {
                         })
                         .desc()]
                     })
-                    .select(|e| [e.field("name")])
+                    .fields(|e| [e.field("name")])
                     .into_pipeline(),
             ),
             (
@@ -450,11 +450,11 @@ mod tests {
                             p.from("reviews")
                                 .all_descendants()
                                 .filter(|q| q.field("restaurant").eq(q.variable("rname")))
-                                .select(|e| [e.field("rating")])
+                                .fields(|e| [e.field("rating")])
                         })
                         .alias("review")
                     })
-                    .select(|e| [e.field("name"), e.field("review")])
+                    .fields(|e| [e.field("name"), e.field("review")])
                     .into_pipeline(),
             ),
         ];
@@ -490,10 +490,10 @@ mod tests {
                 .into_pipeline(),
             builder()
                 .from("pipeline-books")
-                .select(|e| {
+                .fields(|e| {
                     [e.array_subquery(|p| {
                         p.subcollection("reviews")
-                            .select(|e| [e.raw("to_upper", [e.field("name")])])
+                            .fields(|e| [e.raw("to_upper", [e.field("name")])])
                     })
                     .alias("reviews")]
                 })

@@ -207,7 +207,7 @@ mod tests {
         builder()
             .from(RESTAURANTS)
             .search(|s| s.text(|_| query))
-            .select(|e| [e.field("name")])
+            .fields(|e| [e.field("name")])
             .into_pipeline()
     }
 
@@ -228,7 +228,7 @@ mod tests {
                             .retrieval_depth(100)
                             .language_code("en")
                     })
-                    .select(|e| [e.field("name"), e.field("score")])
+                    .fields(|e| [e.field("name"), e.field("score")])
                     .into_pipeline(),
             ),
             (
@@ -242,7 +242,7 @@ mod tests {
                 builder()
                     .from(RESTAURANTS)
                     .search(|s| s.text(|t| t.term("waffles")).score_field("relevance"))
-                    .select(|e| [e.field("name"), e.field("relevance")])
+                    .fields(|e| [e.field("name"), e.field("relevance")])
                     .into_pipeline(),
             ),
             (
@@ -252,7 +252,7 @@ mod tests {
                     .from(RESTAURANTS)
                     .search(|s| s.text(|t| t.term("waffles")).sort_by_score())
                     .limit(1)
-                    .select(|e| [e.field("name")])
+                    .fields(|e| [e.field("name")])
                     .into_pipeline(),
             ),
             (
@@ -264,7 +264,7 @@ mod tests {
                         s.geo_within("location", center(), 5000.0)
                             .sort_by_distance()
                     })
-                    .select(|e| [e.field("name")])
+                    .fields(|e| [e.field("name")])
                     .into_pipeline(),
             ),
             (
@@ -273,7 +273,7 @@ mod tests {
                 builder()
                     .from(RESTAURANTS)
                     .search(|s| s.geo_within("location", center(), 1000.0))
-                    .select(|e| [e.field("name")])
+                    .fields(|e| [e.field("name")])
                     .into_pipeline(),
             ),
             (
@@ -283,7 +283,7 @@ mod tests {
                     .from(RESTAURANTS)
                     .all_descendants()
                     .search(|s| s.text(|t| t.term("waffles")))
-                    .select(|e| [e.field("name")])
+                    .fields(|e| [e.field("name")])
                     .into_pipeline(),
             ),
         ];
@@ -327,7 +327,7 @@ mod tests {
             let model = builder()
                 .from(RESTAURANTS)
                 .search(|s| s.text(|_| query))
-                .select(|e| [e.field("name")])
+                .fields(|e| [e.field("name")])
                 .into_pipeline();
             assert_eq!(
                 Pipeline::try_from(model).unwrap(),
