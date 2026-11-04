@@ -71,6 +71,17 @@ impl FirestoreTextQueryClause {
 }
 
 impl FirestoreTextQuery {
+    pub(crate) fn from_clauses<I: IntoIterator<Item = FirestoreTextQueryClause>>(
+        clauses: I,
+    ) -> Self {
+        Self(TextQuery::Clauses(clauses.into_iter().collect()))
+    }
+
+    /// A query without a clause, which a pipeline conversion rejects: what a `None` stands for.
+    pub(crate) fn without_clauses() -> Self {
+        Self::from_clauses([])
+    }
+
     /// Fails with
     /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) for a
     /// query of clauses that the service would accept and match nothing with: one without a
@@ -110,26 +121,6 @@ impl From<String> for FirestoreTextQuery {
 impl From<FirestoreTextQueryClause> for FirestoreTextQuery {
     fn from(clause: FirestoreTextQueryClause) -> Self {
         Self(TextQuery::Clauses(vec![clause]))
-    }
-}
-
-/// `None` converts to a query without clauses, which a pipeline conversion rejects.
-impl From<Option<FirestoreTextQuery>> for FirestoreTextQuery {
-    fn from(query: Option<FirestoreTextQuery>) -> Self {
-        query.unwrap_or_else(|| std::iter::empty().collect())
-    }
-}
-
-/// `None` converts to a query without clauses, which a pipeline conversion rejects.
-impl From<Option<FirestoreTextQueryClause>> for FirestoreTextQuery {
-    fn from(clause: Option<FirestoreTextQueryClause>) -> Self {
-        clause.into_iter().collect()
-    }
-}
-
-impl FromIterator<FirestoreTextQueryClause> for FirestoreTextQuery {
-    fn from_iter<I: IntoIterator<Item = FirestoreTextQueryClause>>(clauses: I) -> Self {
-        Self(TextQuery::Clauses(clauses.into_iter().collect()))
     }
 }
 
@@ -245,13 +236,11 @@ mod tests {
 
     #[test]
     fn clauses_are_joined_by_one_space() {
-        let query: FirestoreTextQuery = [
+        let query = FirestoreTextQuery::from_clauses([
             term("waffles"),
             phrase("maple syrup"),
             term("bacon").excluded(),
-        ]
-        .into_iter()
-        .collect();
+        ]);
         assert_eq!(query.to_string(), "waffles \"maple syrup\" -bacon");
     }
 
@@ -265,12 +254,10 @@ mod tests {
     #[test]
     fn a_query_that_can_match_nothing_is_rejected() {
         let rejected: [FirestoreTextQuery; 5] = [
-            std::iter::empty().collect(),
+            FirestoreTextQuery::without_clauses(),
             term("bacon").excluded().into(),
-            [term("bacon").excluded(), phrase("eggs").excluded()]
-                .into_iter()
-                .collect(),
-            [term("waffles"), term(" ")].into_iter().collect(),
+            FirestoreTextQuery::from_clauses([term("bacon").excluded(), phrase("eggs").excluded()]),
+            FirestoreTextQuery::from_clauses([term("waffles"), term(" ")]),
             phrase("\"\u{201d}").into(),
         ];
         for query in rejected {
@@ -350,7 +337,7 @@ mod tests {
 
         for window in clauses.windows(3) {
             let rendered = window.iter().map(ToString::to_string).collect::<Vec<_>>();
-            let query: FirestoreTextQuery = window.iter().cloned().collect();
+            let query = FirestoreTextQuery::from_clauses(window.iter().cloned());
             assert_eq!(split_clauses(&query.to_string()), rendered, "{window:?}");
             assert!(
                 !query.to_string().contains(['\u{201c}', '\u{201d}']),

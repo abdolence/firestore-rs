@@ -1,6 +1,6 @@
 use crate::common::setup_enterprise;
 use firestore::errors::FirestoreError;
-use firestore::pipeline_search_builder::FirestoreTextQueryBuilder;
+use firestore::pipeline_search_builder::{FirestoreTextQueryBuilder, FirestoreTextQueryInput};
 use firestore::*;
 use serde::Deserialize;
 
@@ -28,9 +28,9 @@ fn sorted(mut names: Vec<Name>) -> Vec<String> {
 
 async fn matching(
     db: &FirestoreDb,
-    query: impl Into<FirestoreTextQuery>,
+    query: impl FirestoreTextQueryInput,
 ) -> FirestoreResult<Vec<String>> {
-    let query = query.into();
+    let query = query.build_query();
     let names: Vec<Name> = db
         .fluent()
         .pipeline()
