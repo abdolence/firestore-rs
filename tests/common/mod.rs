@@ -7,6 +7,9 @@ use std::ops::Mul;
 use tokio::time::sleep;
 use tracing::*;
 
+#[cfg(feature = "admin")]
+mod enterprise_seed;
+
 #[allow(dead_code)]
 pub fn config_env_var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|e| format!("{name}: {e}"))
@@ -33,13 +36,17 @@ pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + S
 }
 
 /// A client of the Enterprise edition database `GCP_ENTERPRISE_DATABASE_ID`, which pipelines
-/// need.
+/// need. The first call of a test binary also seeds the documents and indexes the live pipeline
+/// tests read: see [`enterprise_seed`]. Seeding declares indexes, so this needs the `admin`
+/// feature.
+#[cfg(feature = "admin")]
 #[allow(dead_code)]
 pub async fn setup_enterprise() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + Sync>> {
     init_logging()?;
     let options = FirestoreDbOptions::new(config_env_var("GCP_PROJECT")?)
         .with_database_id(config_env_var("GCP_ENTERPRISE_DATABASE_ID")?);
     let db = FirestoreDb::with_options(options).await?;
+    enterprise_seed::ensure_seeded(&db).await?;
 
     Ok(db)
 }
