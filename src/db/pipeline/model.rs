@@ -321,32 +321,23 @@ impl TryFrom<FirestorePipeline> for Pipeline {
     }
 }
 
-/// The source stage, followed by its `search` stage when it has one.
 impl TryFrom<FirestorePipelineSource> for Vec<Stage> {
     type Error = FirestoreError;
 
     fn try_from(source: FirestorePipelineSource) -> Result<Self, Self::Error> {
-        let (source, search) = match source {
-            FirestorePipelineSource::Collection(mut source) => {
-                let search = source.search.take();
-                (Stage::try_from(source)?, search)
-            }
-            FirestorePipelineSource::CollectionGroup(mut source) => {
-                let search = source.search.take();
-                (source.into(), search)
-            }
-            FirestorePipelineSource::Database => (stage("database", Vec::new()), None),
-            FirestorePipelineSource::Documents(source) => (source.into(), None),
-            FirestorePipelineSource::Literals(source) => (source.try_into()?, None),
-            FirestorePipelineSource::Subcollection(source) => (source.into(), None),
-        };
-        let mut stages = vec![source];
-        stages.extend(search.map(Stage::try_from).transpose()?);
-        Ok(stages)
+        match source {
+            FirestorePipelineSource::Collection(source) => source.try_into(),
+            FirestorePipelineSource::CollectionGroup(source) => source.try_into(),
+            FirestorePipelineSource::Database => Ok(vec![stage("database", Vec::new())]),
+            FirestorePipelineSource::Documents(source) => Ok(vec![source.into()]),
+            FirestorePipelineSource::Literals(source) => Ok(vec![source.try_into()?]),
+            FirestorePipelineSource::Subcollection(source) => Ok(vec![source.into()]),
+        }
     }
 }
 
-impl TryFrom<FirestoreCollectionSource> for Stage {
+/// The `collection` stage, followed by the `search` stage when the source carries one.
+impl TryFrom<FirestoreCollectionSource> for Vec<Stage> {
     type Error = FirestoreError;
 
     fn try_from(source: FirestoreCollectionSource) -> Result<Self, Self::Error> {
@@ -365,17 +356,22 @@ impl TryFrom<FirestoreCollectionSource> for Stage {
             }
             None => format!("/{}", source.collection_id),
         };
-        Ok(collection_stage(
+        let mut stages = vec![collection_stage(
             "collection",
             vec![wire_value(ValueType::ReferenceValue(path))],
             source.force_index,
-        ))
+        )];
+        stages.extend(source.search.map(Stage::try_from).transpose()?);
+        Ok(stages)
     }
 }
 
-impl From<FirestoreCollectionGroupSource> for Stage {
-    fn from(source: FirestoreCollectionGroupSource) -> Self {
-        collection_stage(
+/// The `collection_group` stage, followed by the `search` stage when the source carries one.
+impl TryFrom<FirestoreCollectionGroupSource> for Vec<Stage> {
+    type Error = FirestoreError;
+
+    fn try_from(source: FirestoreCollectionGroupSource) -> Result<Self, Self::Error> {
+        let mut stages = vec![collection_stage(
             "collection_group",
             vec![
                 // Firestore ignores the ancestor, so it is always the database root.
@@ -383,7 +379,9 @@ impl From<FirestoreCollectionGroupSource> for Stage {
                 wire_value(ValueType::StringValue(source.collection_id)),
             ],
             source.force_index,
-        )
+        )];
+        stages.extend(source.search.map(Stage::try_from).transpose()?);
+        Ok(stages)
     }
 }
 
@@ -621,6 +619,35 @@ mod tests {
 
     fn builder() -> FirestorePipelineInitialBuilder<()> {
         FirestorePipelineInitialBuilder::new(())
+    }
+
+    #[test]
+    fn a_source_converts_with_its_search() {
+        let searched = |pipeline: FirestorePipeline| match pipeline.source {
+            FirestorePipelineSource::Collection(source) => Vec::<Stage>::try_from(source),
+            FirestorePipelineSource::CollectionGroup(source) => Vec::<Stage>::try_from(source),
+            other => panic!("not a collection source: {other:?}"),
+        };
+
+        for pipeline in [
+            builder()
+                .from("pipeline-restaurants")
+                .search(|s| s.text(|t| t.term("waffles")))
+                .into_pipeline(),
+            builder()
+                .from("pipeline-restaurants")
+                .all_descendants()
+                .search(|s| s.text(|t| t.term("waffles")))
+                .into_pipeline(),
+        ] {
+            let names: Vec<_> = searched(pipeline)
+                .unwrap()
+                .into_iter()
+                .map(|stage| stage.name)
+                .collect();
+
+            assert_eq!(names[1..], ["search"]);
+        }
     }
 
     #[test]
