@@ -248,8 +248,14 @@ impl FirestorePipelineSupport for FirestoreDb {
         &self,
         params: FirestorePipelineWriteParams,
     ) -> FirestoreResult<FirestorePipelineWriteResult> {
+        let standalone = params.transaction.is_none();
         let request = self.create_pipeline_write_request(params)?;
-        self.send_pipeline_write(request).await
+        let sent = self.send_pipeline_write(request).await;
+        if standalone {
+            sent.map_err(FirestoreError::without_retry)
+        } else {
+            sent
+        }
     }
 
     async fn execute_pipeline_write_in_transaction(
@@ -586,6 +592,48 @@ mod tests {
             "{result:?}"
         );
         assert_eq!(server.calls(), ["ExecutePipeline"]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_standalone_write_is_not_retryable() {
+        for code in [Code::Unavailable, Code::ResourceExhausted] {
+            let server = failing_pipelines(code).await;
+
+            let result = server
+                .db
+                .fluent()
+                .pipeline()
+                .delete()
+                .from("pipeline-dml")
+                .execute()
+                .await;
+
+            assert!(
+                matches!(&result, Err(FirestoreError::DatabaseError(error)) if !error.retry_possible),
+                "{code:?}: {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_in_a_transaction_keeps_the_retry_of_the_transaction() {
+        let server = failing_pipelines(Code::Unavailable).await;
+        let mut transaction = server.db.begin_transaction().await.unwrap();
+
+        let result = server
+            .db
+            .fluent()
+            .pipeline()
+            .delete()
+            .from("pipeline-dml")
+            .execute_in_transaction(&mut transaction)
+            .await;
+        transaction.rollback().await.unwrap();
+
+        assert!(
+            matches!(&result, Err(FirestoreError::DatabaseError(error)) if error.retry_possible),
+            "{result:?}"
+        );
     }
 
     #[tokio::test]

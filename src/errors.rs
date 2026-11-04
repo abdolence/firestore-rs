@@ -63,6 +63,20 @@ impl FirestoreError {
         ))
     }
 
+    /// Clears `retry_possible`, for the failure of a write that may have left part of its
+    /// documents written, which nothing may send again.
+    pub(crate) fn without_retry(self) -> Self {
+        match self {
+            FirestoreError::DatabaseError(error) => {
+                FirestoreError::DatabaseError(FirestoreDatabaseError {
+                    retry_possible: false,
+                    ..error
+                })
+            }
+            other => other,
+        }
+    }
+
     /// Converts a read's failed `status` like the conversion from `tonic::Status`, except that any
     /// `DEADLINE_EXCEEDED`, the server's own included, is marked `retry_possible`: a read, unlike
     /// a write, can safely be sent again.
