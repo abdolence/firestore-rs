@@ -781,7 +781,7 @@ where
     });
 
     T::deserialize(firestore_value).map_err(|err| match err {
-        FirestoreError::DeserializeError(e) => {
+        FirestoreError::DeserializeError(e) if !document.name.is_empty() => {
             FirestoreError::DeserializeError(e.with_document_path(document.name.clone()))
         }
         _ => err,
