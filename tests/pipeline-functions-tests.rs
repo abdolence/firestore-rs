@@ -272,7 +272,7 @@ async fn array_functions_compute_arrays() -> TestResult {
 
 #[tokio::test]
 async fn map_functions_compute_maps() -> TestResult {
-    let computed = evaluate(json!({"m": {"a": 1, "b": 2}}), |e| {
+    let mut computed = evaluate(json!({"m": {"a": 1, "b": 2}}), |e| {
         vec![
             e.field("m").map_get("a").alias("map_get"),
             e.field("m").get_field("b").alias("get_field"),
@@ -287,6 +287,17 @@ async fn map_functions_compute_maps() -> TestResult {
         ]
     })
     .await?;
+
+    // The map's keys come back in the order the client built the request map in, which
+    // is not fixed, so the two key-ordered results are sorted before comparing.
+    computed["map_keys"]
+        .as_array_mut()
+        .expect("map_keys is an array")
+        .sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    computed["map_entries"]
+        .as_array_mut()
+        .expect("map_entries is an array")
+        .sort_by(|a, b| a["k"].as_str().cmp(&b["k"].as_str()));
 
     assert_eq!(
         computed,
