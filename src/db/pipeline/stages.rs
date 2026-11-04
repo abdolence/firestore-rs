@@ -1,9 +1,10 @@
 use super::expr::{selection_map, wire_value};
 use super::model::stage;
 use crate::{
-    FirestoreAggregateStage, FirestoreDefineVariablesStage, FirestoreDistinctStage, FirestoreError,
-    FirestoreFindNearestDistanceMeasure, FirestoreFindNearestStage, FirestorePipeline,
-    FirestoreReplaceWithMode, FirestoreReplaceWithStage, FirestoreSampleSize, FirestoreSampleStage,
+    FirestoreAggregateStage, FirestoreCollectionId, FirestoreDefineVariablesStage,
+    FirestoreDistinctStage, FirestoreError, FirestoreFindNearestDistanceMeasure,
+    FirestoreFindNearestStage, FirestorePipeline, FirestoreReplaceWithMode,
+    FirestoreReplaceWithStage, FirestoreSampleSize, FirestoreSampleStage,
     FirestoreSubcollectionSource, FirestoreUnionStage, FirestoreUnnestStage, FirestoreValue,
 };
 use gcloud_sdk::google::firestore::v1::{pipeline::Stage, value::ValueType, Pipeline, Value};
@@ -19,12 +20,15 @@ impl TryFrom<FirestorePipeline> for Value {
     }
 }
 
-impl From<FirestoreSubcollectionSource> for Stage {
-    fn from(source: FirestoreSubcollectionSource) -> Self {
-        stage(
+impl TryFrom<FirestoreSubcollectionSource> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(source: FirestoreSubcollectionSource) -> Result<Self, Self::Error> {
+        FirestoreCollectionId::validate_str(&source.collection_id)?;
+        Ok(stage(
             "subcollection",
             vec![wire_value(ValueType::StringValue(source.collection_id))],
-        )
+        ))
     }
 }
 

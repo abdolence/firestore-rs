@@ -1,9 +1,9 @@
 use super::expr::{selection_map, wire_value};
-use crate::db::validate_path_segment;
 use crate::{
-    FirestoreAggregateSelection, FirestoreBoolExpr, FirestoreError, FirestoreExpr,
-    FirestoreFindNearestDistanceMeasure, FirestorePipelineOrdering, FirestoreReference,
-    FirestoreResult, FirestoreSearch, FirestoreSelection, FirestoreValue, FirestoreVector,
+    FirestoreAggregateSelection, FirestoreBoolExpr, FirestoreCollectionId, FirestoreError,
+    FirestoreExpr, FirestoreFindNearestDistanceMeasure, FirestorePipelineOrdering,
+    FirestoreReference, FirestoreResult, FirestoreSearch, FirestoreSelection, FirestoreValue,
+    FirestoreVector,
 };
 use gcloud_sdk::google::firestore::v1::{pipeline::Stage, value::ValueType, Pipeline, Value};
 use rsb_derive::Builder;
@@ -331,7 +331,7 @@ impl TryFrom<FirestorePipelineSource> for Vec<Stage> {
             FirestorePipelineSource::Database => Ok(vec![stage("database", Vec::new())]),
             FirestorePipelineSource::Documents(source) => Ok(vec![source.into()]),
             FirestorePipelineSource::Literals(source) => Ok(vec![source.try_into()?]),
-            FirestorePipelineSource::Subcollection(source) => Ok(vec![source.into()]),
+            FirestorePipelineSource::Subcollection(source) => Ok(vec![source.try_into()?]),
         }
     }
 }
@@ -342,7 +342,7 @@ impl TryFrom<FirestoreCollectionSource> for Vec<Stage> {
 
     fn try_from(source: FirestoreCollectionSource) -> Result<Self, Self::Error> {
         // The collection ID is joined into a path, where a slash would name another collection.
-        validate_path_segment(&source.collection_id, "collection_id")?;
+        FirestoreCollectionId::validate_str(&source.collection_id)?;
         let path = match source.parent {
             Some(parent) => {
                 let parent = FirestoreReference(parent);
@@ -371,6 +371,7 @@ impl TryFrom<FirestoreCollectionGroupSource> for Vec<Stage> {
     type Error = FirestoreError;
 
     fn try_from(source: FirestoreCollectionGroupSource) -> Result<Self, Self::Error> {
+        FirestoreCollectionId::validate_str(&source.collection_id)?;
         let mut stages = vec![collection_stage(
             "collection_group",
             vec![
@@ -619,6 +620,24 @@ mod tests {
 
     fn builder() -> FirestorePipelineInitialBuilder<()> {
         FirestorePipelineInitialBuilder::new(())
+    }
+
+    #[test]
+    fn a_collection_id_with_a_slash_is_rejected_by_every_source() {
+        let collection = || "a/b".to_string();
+        let results = [
+            Vec::<Stage>::try_from(FirestoreCollectionSource::new(collection())),
+            Vec::<Stage>::try_from(FirestoreCollectionGroupSource::new(collection())),
+            Stage::try_from(FirestoreSubcollectionSource::new(collection()))
+                .map(|stage| vec![stage]),
+        ];
+
+        for result in results {
+            assert!(
+                matches!(result, Err(FirestoreError::InvalidParametersError(_))),
+                "{result:?}"
+            );
+        }
     }
 
     #[test]
