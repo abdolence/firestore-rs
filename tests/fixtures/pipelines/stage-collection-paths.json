@@ -1,0 +1,238 @@
+{
+  "description": "nested collection paths and the collection_group ancestor argument",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "nested_collection",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants/rest-01/reviews"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "fieldReferenceValue": "__name__"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-01/reviews/review-1"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-01/reviews/review-2"
+            }
+          ],
+          "executionTime": "2026-11-04T18:26:42.020571Z"
+        }
+      ]
+    },
+    {
+      "name": "collection_group_ancestor_document",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection_group",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants/rest-04"
+                  },
+                  {
+                    "stringValue": "reviews"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "fieldReferenceValue": "__name__"
+                        },
+                        "rating": {
+                          "fieldReferenceValue": "rating"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-01/reviews/review-1",
+              "fields": {
+                "rating": {
+                  "integerValue": "5"
+                }
+              }
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-01/reviews/review-2",
+              "fields": {
+                "rating": {
+                  "integerValue": "4"
+                }
+              }
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-02/reviews/review-1",
+              "fields": {
+                "rating": {
+                  "integerValue": "3"
+                }
+              }
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-04/reviews/review-1",
+              "fields": {
+                "rating": {
+                  "integerValue": "5"
+                }
+              }
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-04/reviews/review-2",
+              "fields": {
+                "rating": {
+                  "integerValue": "4"
+                }
+              }
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-04/reviews/review-3",
+              "fields": {
+                "rating": {
+                  "integerValue": "2"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:26:41.097579Z"
+        }
+      ]
+    },
+    {
+      "name": "collection_group_ancestor_full_name",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection_group",
+                "args": [
+                  {
+                    "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-04"
+                  },
+                  {
+                    "stringValue": "reviews"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "fieldReferenceValue": "__name__"
+                        },
+                        "rating": {
+                          "fieldReferenceValue": "rating"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Document path name \"projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-restaurants/rest-04\" lacks \"/\" at index 0.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "collection_group_ancestor_collection",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection_group",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  },
+                  {
+                    "stringValue": "reviews"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "fieldReferenceValue": "__name__"
+                        },
+                        "rating": {
+                          "fieldReferenceValue": "rating"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Document path name \"/pipeline-restaurants\" lacks \"/\" at index 21.",
+        "status": "INVALID_ARGUMENT"
+      }
+    }
+  ]
+}

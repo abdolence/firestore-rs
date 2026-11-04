@@ -959,6 +959,69 @@
         "message": "Forcing a vector index is not supported.",
         "status": "INVALID_ARGUMENT"
       }
+    },
+    {
+      "name": "database",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "database",
+                "options": {
+                  "force_index": {
+                    "stringValue": "primary"
+                  }
+                }
+              },
+              {
+                "name": "limit",
+                "args": [
+                  {
+                    "integerValue": "1"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Stage 'database()' does not support option(s) [force_index].",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "documents",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "documents",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books/book-01"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "primary"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Stage 'documents(paths: Path*)' does not support option(s) [force_index].",
+        "status": "INVALID_ARGUMENT"
+      }
     }
   ]
 }
