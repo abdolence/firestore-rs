@@ -94,9 +94,7 @@ where
         I: IntoIterator,
         I::Item: Into<FirestoreAggregateSelection>,
     {
-        self.stage(FirestorePipelineStage::Aggregate(
-            FirestoreAggregateStage::new(build_all(accumulators)),
-        ))
+        self.aggregate_grouped(|_| Vec::<FirestoreSelection>::new(), accumulators)
     }
 
     /// Computes accumulators per group, and outputs one document per group that holds the
