@@ -38,6 +38,36 @@ let listener = db
     .await?;
 ```
 
+### Results without a document name have no ID fields
+
+An aggregation result has no document name. Before, deserialising one set `_firestore_id` and `_firestore_full_id` to an
+empty string; now it has neither. A struct field aliased to `_firestore_id` or `_firestore_full_id` that is not an
+`Option` fails to deserialise such a result, because the field is missing. Make it `Option<String>`:
+
+```rust,ignore
+#[derive(Deserialize)]
+struct Totals {
+    #[serde(alias = "_firestore_id")]
+    id: Option<String>,
+    total: i64,
+}
+```
+
+Documents that have a name are unchanged. See [Reading Firestore document metadata as struct fields](https://firestore-rust.abdolence.dev/document-metadata.html).
+
+### Text and geo search indexes in index management
+
+Index management declares and lists the text and geo indexes of an Enterprise edition database. The public types change
+with it:
+
+- `FirestoreIndexFieldMode` gains the variants `Text` and `Geo`, so an exhaustive `match` on it needs two more arms;
+- `FirestoreCompositeIndex` gains the field `search_options`, so a struct literal needs it set, to `None` for the
+  defaults. Indexes declared with the fluent builder are unaffected.
+
+`.plan()` and `.sync()` fail with `InvalidParametersError` before writing anything when the plan includes a field
+override and the database is an Enterprise edition database, which has no single-field index overrides. Before, the
+sync created its indexes and then failed on the first override with `INVALID_ARGUMENT`.
+
 ## 0.61
 
 v0.61.0 takes retry limits and delays as `std::time::Duration` instead of `FirestoreDuration`
