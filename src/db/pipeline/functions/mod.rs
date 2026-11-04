@@ -59,6 +59,8 @@ mod tests {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            FirestoreExpr::ArraySubquery(_) => "array(<pipeline>)".to_string(),
+            FirestoreExpr::ScalarSubquery(_) => "scalar(<pipeline>)".to_string(),
         }
     }
 
