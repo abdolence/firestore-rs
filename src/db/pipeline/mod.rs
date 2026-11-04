@@ -5,6 +5,7 @@ mod expr;
 pub use expr::*;
 
 mod functions;
+pub use functions::*;
 
 mod params;
 pub use params::*;
