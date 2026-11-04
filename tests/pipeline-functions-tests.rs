@@ -288,12 +288,16 @@ async fn map_functions_compute_maps() -> TestResult {
     })
     .await?;
 
-    // The map's keys come back in the order the client built the request map in, which
-    // is not fixed, so the two key-ordered results are sorted before comparing.
+    // The request map is built from a HashMap, so the order its keys and values come back
+    // in is not fixed; the results are sorted before comparing.
     computed["map_keys"]
         .as_array_mut()
         .expect("map_keys is an array")
         .sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    computed["map_values"]
+        .as_array_mut()
+        .expect("map_values is an array")
+        .sort_by_key(|a| a.as_i64());
     computed["map_entries"]
         .as_array_mut()
         .expect("map_entries is an array")
