@@ -35,7 +35,7 @@ async fn a_none_constant_compares_with_null() -> TestResult {
             },
             Row { id: 2, tag: None },
         ])
-        .filter(|e| e.field("tag").eq(None::<String>))
+        .filter(|q| q.field("tag").eq(None::<String>))
         .fields(|e| [e.field("id")])
         .obj()
         .query()
