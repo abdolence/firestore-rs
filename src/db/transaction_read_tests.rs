@@ -14,6 +14,7 @@ enum Read {
     Query,
     Aggregate,
     AggregateStream,
+    Pipeline,
 }
 
 impl Read {
@@ -43,6 +44,14 @@ impl Read {
                         .try_collect::<Vec<_>>()
                         .await?;
                 }
+            }
+            Self::Pipeline => {
+                db.query_pipeline_doc(FirestorePipelineParams::new(FirestorePipeline::new(
+                    FirestorePipelineSource::Collection(FirestoreCollectionSource::new(
+                        "items".into(),
+                    )),
+                )))
+                .await?;
             }
         }
         Ok(())
@@ -97,6 +106,7 @@ async fn read_retry_scope() {
         Read::Query,
         Read::Aggregate,
         Read::AggregateStream,
+        Read::Pipeline,
     ] {
         check_read_retries(read).await;
     }

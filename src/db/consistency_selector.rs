@@ -85,6 +85,19 @@ impl TryFrom<&FirestoreConsistencySelector>
 }
 
 impl TryFrom<&FirestoreConsistencySelector>
+    for gcloud_sdk::google::firestore::v1::execute_pipeline_request::ConsistencySelector
+{
+    type Error = FirestoreError;
+
+    fn try_from(selector: &FirestoreConsistencySelector) -> Result<Self, Self::Error> {
+        match selector {
+            FirestoreConsistencySelector::Transaction(tid) => Ok(gcloud_sdk::google::firestore::v1::execute_pipeline_request::ConsistencySelector::Transaction(tid.clone())),
+            FirestoreConsistencySelector::ReadTime(ts) => Ok(gcloud_sdk::google::firestore::v1::execute_pipeline_request::ConsistencySelector::ReadTime(to_timestamp(*ts)))
+        }
+    }
+}
+
+impl TryFrom<&FirestoreConsistencySelector>
     for gcloud_sdk::google::firestore::v1::partition_query_request::ConsistencySelector
 {
     type Error = FirestoreError;

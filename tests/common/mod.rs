@@ -12,9 +12,7 @@ pub fn config_env_var(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|e| format!("{name}: {e}"))
 }
 
-#[allow(dead_code)]
-pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + Sync>> {
-    // Logging with debug enabled
+fn init_logging() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let filter =
         tracing_subscriber::EnvFilter::builder().parse("info,firestore=debug,gcloud_sdk=debug")?;
 
@@ -23,9 +21,25 @@ pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + S
         .with_env_filter(filter)
         .try_init()
         .ok();
+    Ok(())
+}
 
-    // Create an instance
+#[allow(dead_code)]
+pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + Sync>> {
+    init_logging()?;
     let db = FirestoreDb::new(&config_env_var("GCP_PROJECT")?).await?;
+
+    Ok(db)
+}
+
+/// A client of the Enterprise edition database `GCP_ENTERPRISE_DATABASE_ID`, which pipelines
+/// need.
+#[allow(dead_code)]
+pub async fn setup_enterprise() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + Sync>> {
+    init_logging()?;
+    let options = FirestoreDbOptions::new(config_env_var("GCP_PROJECT")?)
+        .with_database_id(config_env_var("GCP_ENTERPRISE_DATABASE_ID")?);
+    let db = FirestoreDb::with_options(options).await?;
 
     Ok(db)
 }

@@ -481,6 +481,63 @@ pub trait FirestoreListenSupport {
     ) -> FirestoreResult<ListenRequest>;
 }
 
+/// Runs pipelines on an Enterprise edition database.
+#[async_trait]
+pub trait FirestorePipelineSupport {
+    async fn query_pipeline_doc(
+        &self,
+        params: FirestorePipelineParams,
+    ) -> FirestoreResult<Vec<FirestoreDocument>>;
+
+    async fn stream_pipeline_doc<'b>(
+        &self,
+        params: FirestorePipelineParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreDocument>>;
+
+    async fn stream_pipeline_doc_with_errors<'b>(
+        &self,
+        params: FirestorePipelineParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>>;
+
+    async fn stream_pipeline_doc_with_metadata<'b>(
+        &self,
+        params: FirestorePipelineParams,
+    ) -> FirestoreResult<
+        BoxStream<'b, FirestoreResult<FirestoreWithPipelineMetadata<FirestoreDocument>>>,
+    >;
+
+    async fn query_pipeline_obj<T>(
+        &self,
+        params: FirestorePipelineParams,
+    ) -> FirestoreResult<Vec<T>>
+    where
+        for<'de> T: Deserialize<'de>;
+
+    async fn stream_pipeline_obj<'b, T>(
+        &self,
+        params: FirestorePipelineParams,
+    ) -> FirestoreResult<BoxStream<'b, T>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b;
+
+    async fn stream_pipeline_obj_with_errors<'b, T>(
+        &self,
+        params: FirestorePipelineParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<T>>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b;
+
+    async fn stream_pipeline_obj_with_metadata<'b, T>(
+        &self,
+        params: FirestorePipelineParams,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreWithPipelineMetadata<T>>>>
+    where
+        for<'de> T: Deserialize<'de>,
+        T: Send + 'b;
+}
+
 /// Plans or applies one collection group's declared indexes, field overrides and TTL policy.
 ///
 /// Mirrors [`FirestoreQuerySupport::query_doc`]. Today the fluent `.plan()` and `.sync()`

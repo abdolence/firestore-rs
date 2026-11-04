@@ -1,0 +1,638 @@
+use super::expr::{selection_map, wire_value};
+use crate::db::validate_path_segment;
+use crate::{
+    FirestoreBoolExpr, FirestoreError, FirestoreExpr, FirestorePipelineOrdering,
+    FirestoreReference, FirestoreResult, FirestoreSelection, FirestoreValue,
+};
+use gcloud_sdk::google::firestore::v1::{pipeline::Stage, value::ValueType, Pipeline, Value};
+use rsb_derive::Builder;
+use std::collections::{BTreeMap, HashMap};
+use std::fmt::{Display, Formatter};
+use std::str::FromStr;
+
+/// A pipeline: a source, then stages that each work on the documents of the one before.
+///
+/// The fluent API builds one from
+/// [`FirestoreExprBuilder::pipeline()`](crate::FirestoreExprBuilder::pipeline), and runs one
+/// built by hand through `db.fluent().pipeline().from_pipeline(pipeline)`.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestorePipeline {
+    pub source: FirestorePipelineSource,
+    #[default = "Vec::new()"]
+    pub stages: Vec<FirestorePipelineStage>,
+}
+
+impl FirestorePipeline {
+    /// Returns the pipeline with `stage` appended.
+    pub fn with_stage(mut self, stage: FirestorePipelineStage) -> Self {
+        self.stages.push(stage);
+        self
+    }
+}
+
+/// The first stage of a pipeline, which reads the documents the other stages work on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FirestorePipelineSource {
+    Collection(FirestoreCollectionSource),
+    CollectionGroup(FirestoreCollectionGroupSource),
+    /// Every document of the database.
+    Database,
+    Documents(FirestoreDocumentsSource),
+    Literals(FirestoreLiteralsSource),
+}
+
+/// The documents of one collection.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreCollectionSource {
+    pub collection_id: String,
+    /// The full path of the document the collection is nested under, as
+    /// [`FirestoreDb::parent_path`](crate::FirestoreDb::parent_path) builds it; `None` for a
+    /// root collection. The pipeline reads the collection in the database it runs on, whichever
+    /// project and database the path names.
+    pub parent: Option<String>,
+    pub force_index: Option<FirestoreIndexHint>,
+}
+
+/// The documents of every collection with this ID, anywhere in the database.
+///
+/// Unlike a Core collection-group query, it cannot be limited to the descendants of one
+/// document: Firestore ignores the stage's ancestor argument.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreCollectionGroupSource {
+    pub collection_id: String,
+    pub force_index: Option<FirestoreIndexHint>,
+}
+
+/// Documents by path. A path that names no document is left out, not an error.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreDocumentsSource {
+    /// Paths relative to the database's documents root, such as `"books/b1"`.
+    pub paths: Vec<String>,
+}
+
+/// Rows given in the request, rather than read from the database.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreLiteralsSource {
+    /// Each row must be a map. Converting the pipeline fails with
+    /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) for
+    /// any other value, which includes a row whose serialisation failed.
+    pub rows: Vec<FirestoreValue>,
+}
+
+/// The index a collection or collection-group source must read through.
+///
+/// An index Firestore does not have fails the request as `INVALID_ARGUMENT`. An index that
+/// cannot serve the pipeline's filter is still used, by reading all of it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FirestoreIndexHint {
+    /// Reads every document from primary storage instead of an index.
+    TableScan,
+    Index(FirestoreIndexId),
+}
+
+/// An index ID as Firestore assigns it, such as `CICAgJim14AK`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FirestoreIndexId(String);
+
+impl FirestoreIndexId {
+    /// Fails with
+    /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) for an
+    /// empty ID.
+    pub fn new<S: Into<String>>(id: S) -> FirestoreResult<Self> {
+        let id = id.into();
+        if id.is_empty() {
+            return Err(FirestoreError::invalid_parameters(
+                "index_id",
+                "an index ID must not be empty",
+            ));
+        }
+        Ok(Self(id))
+    }
+}
+
+impl FromStr for FirestoreIndexId {
+    type Err = FirestoreError;
+
+    fn from_str(id: &str) -> Result<Self, Self::Err> {
+        Self::new(id)
+    }
+}
+
+impl Display for FirestoreIndexId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// A stage after the source.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FirestorePipelineStage {
+    Where(FirestoreWhereStage),
+    Select(FirestoreSelectStage),
+    AddFields(FirestoreAddFieldsStage),
+    RemoveFields(FirestoreRemoveFieldsStage),
+    Sort(FirestoreSortStage),
+    Limit(FirestoreLimitStage),
+    Offset(FirestoreOffsetStage),
+    Raw(FirestoreRawStage),
+}
+
+/// Keeps the documents for which `condition` is true.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreWhereStage {
+    pub condition: FirestoreBoolExpr,
+}
+
+/// Replaces each document with the selected fields. Its results carry no document name unless
+/// `__name__` is selected.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreSelectStage {
+    pub fields: Vec<FirestoreSelection>,
+}
+
+/// Adds computed fields to each document, keeping the others.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreAddFieldsStage {
+    pub fields: Vec<FirestoreSelection>,
+}
+
+/// Removes fields, by path, from each document.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreRemoveFieldsStage {
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreSortStage {
+    pub orderings: Vec<FirestorePipelineOrdering>,
+}
+
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreLimitStage {
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreOffsetStage {
+    pub offset: u32,
+}
+
+/// Any stage by its wire name, for a stage that has no type of its own.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreRawStage {
+    pub name: String,
+    #[default = "Vec::new()"]
+    pub args: Vec<FirestoreExpr>,
+    #[default = "BTreeMap::new()"]
+    pub options: BTreeMap<String, FirestoreExpr>,
+}
+
+impl TryFrom<FirestorePipeline> for Pipeline {
+    type Error = FirestoreError;
+
+    fn try_from(pipeline: FirestorePipeline) -> Result<Self, Self::Error> {
+        let source = Stage::try_from(pipeline.source)?;
+        Ok(Pipeline {
+            stages: std::iter::once(Ok(source))
+                .chain(pipeline.stages.into_iter().map(Stage::try_from))
+                .collect::<FirestoreResult<_>>()?,
+        })
+    }
+}
+
+impl TryFrom<FirestorePipelineSource> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(source: FirestorePipelineSource) -> Result<Self, Self::Error> {
+        match source {
+            FirestorePipelineSource::Collection(source) => source.try_into(),
+            FirestorePipelineSource::CollectionGroup(source) => Ok(source.into()),
+            FirestorePipelineSource::Database => Ok(stage("database", Vec::new())),
+            FirestorePipelineSource::Documents(source) => Ok(source.into()),
+            FirestorePipelineSource::Literals(source) => source.try_into(),
+        }
+    }
+}
+
+impl TryFrom<FirestoreCollectionSource> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(source: FirestoreCollectionSource) -> Result<Self, Self::Error> {
+        // The collection ID is joined into a path, where a slash would name another collection.
+        validate_path_segment(&source.collection_id, "collection_id")?;
+        let path = match source.parent {
+            Some(parent) => {
+                let parent = FirestoreReference(parent);
+                let parent_path = parent.parse().map_err(|_| {
+                    FirestoreError::invalid_parameters(
+                        "parent",
+                        format!("{} is not a full document path", parent.as_str()),
+                    )
+                })?;
+                format!("/{}/{}", parent_path.path(), source.collection_id)
+            }
+            None => format!("/{}", source.collection_id),
+        };
+        Ok(collection_stage(
+            "collection",
+            vec![wire_value(ValueType::ReferenceValue(path))],
+            source.force_index,
+        ))
+    }
+}
+
+impl From<FirestoreCollectionGroupSource> for Stage {
+    fn from(source: FirestoreCollectionGroupSource) -> Self {
+        collection_stage(
+            "collection_group",
+            vec![
+                // Firestore ignores the ancestor, so it is always the database root.
+                wire_value(ValueType::ReferenceValue(String::new())),
+                wire_value(ValueType::StringValue(source.collection_id)),
+            ],
+            source.force_index,
+        )
+    }
+}
+
+impl From<FirestoreDocumentsSource> for Stage {
+    fn from(source: FirestoreDocumentsSource) -> Self {
+        stage(
+            "documents",
+            source
+                .paths
+                .into_iter()
+                .map(|path| wire_value(ValueType::ReferenceValue(format!("/{path}"))))
+                .collect(),
+        )
+    }
+}
+
+impl TryFrom<FirestoreLiteralsSource> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(source: FirestoreLiteralsSource) -> Result<Self, Self::Error> {
+        let rows = source
+            .rows
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| match row.value.value_type {
+                Some(ValueType::MapValue(_)) => Ok(row.value),
+                _ => Err(FirestoreError::invalid_parameters(
+                    "literals",
+                    format!("row {index} is not a map"),
+                )),
+            })
+            .collect::<FirestoreResult<_>>()?;
+        Ok(stage("literals", rows))
+    }
+}
+
+impl From<FirestoreIndexHint> for Value {
+    fn from(hint: FirestoreIndexHint) -> Self {
+        wire_value(ValueType::StringValue(match hint {
+            FirestoreIndexHint::TableScan => "primary".to_string(),
+            FirestoreIndexHint::Index(id) => id.0,
+        }))
+    }
+}
+
+impl TryFrom<FirestorePipelineStage> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(stage: FirestorePipelineStage) -> Result<Self, Self::Error> {
+        match stage {
+            FirestorePipelineStage::Where(stage) => stage.try_into(),
+            FirestorePipelineStage::Select(stage) => stage.try_into(),
+            FirestorePipelineStage::AddFields(stage) => stage.try_into(),
+            FirestorePipelineStage::RemoveFields(stage) => Ok(stage.into()),
+            FirestorePipelineStage::Sort(stage) => stage.try_into(),
+            FirestorePipelineStage::Limit(stage) => Ok(stage.into()),
+            FirestorePipelineStage::Offset(stage) => Ok(stage.into()),
+            FirestorePipelineStage::Raw(stage) => stage.try_into(),
+        }
+    }
+}
+
+impl TryFrom<FirestoreWhereStage> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(where_stage: FirestoreWhereStage) -> Result<Self, Self::Error> {
+        Ok(stage(
+            "where",
+            vec![FirestoreExpr::from(where_stage.condition).try_into()?],
+        ))
+    }
+}
+
+impl TryFrom<FirestoreSelectStage> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(select: FirestoreSelectStage) -> Result<Self, Self::Error> {
+        Ok(stage(
+            "select",
+            vec![selection_map("select", select.fields)?],
+        ))
+    }
+}
+
+impl TryFrom<FirestoreAddFieldsStage> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(add_fields: FirestoreAddFieldsStage) -> Result<Self, Self::Error> {
+        Ok(stage(
+            "add_fields",
+            vec![selection_map("add_fields", add_fields.fields)?],
+        ))
+    }
+}
+
+impl From<FirestoreRemoveFieldsStage> for Stage {
+    fn from(remove_fields: FirestoreRemoveFieldsStage) -> Self {
+        stage(
+            "remove_fields",
+            remove_fields
+                .fields
+                .into_iter()
+                .map(|path| wire_value(ValueType::FieldReferenceValue(path)))
+                .collect(),
+        )
+    }
+}
+
+impl TryFrom<FirestoreSortStage> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(sort: FirestoreSortStage) -> Result<Self, Self::Error> {
+        Ok(stage(
+            "sort",
+            sort.orderings
+                .into_iter()
+                .map(Value::try_from)
+                .collect::<FirestoreResult<_>>()?,
+        ))
+    }
+}
+
+impl From<FirestoreLimitStage> for Stage {
+    fn from(limit: FirestoreLimitStage) -> Self {
+        stage(
+            "limit",
+            vec![wire_value(ValueType::IntegerValue(limit.limit.into()))],
+        )
+    }
+}
+
+impl From<FirestoreOffsetStage> for Stage {
+    fn from(offset: FirestoreOffsetStage) -> Self {
+        stage(
+            "offset",
+            vec![wire_value(ValueType::IntegerValue(offset.offset.into()))],
+        )
+    }
+}
+
+impl TryFrom<FirestoreRawStage> for Stage {
+    type Error = FirestoreError;
+
+    fn try_from(raw: FirestoreRawStage) -> Result<Self, Self::Error> {
+        Ok(Stage {
+            name: raw.name,
+            args: raw
+                .args
+                .into_iter()
+                .map(Value::try_from)
+                .collect::<FirestoreResult<_>>()?,
+            options: raw
+                .options
+                .into_iter()
+                .map(|(name, expr)| Ok((name, expr.try_into()?)))
+                .collect::<FirestoreResult<_>>()?,
+        })
+    }
+}
+
+fn stage(name: &str, args: Vec<Value>) -> Stage {
+    Stage {
+        name: name.to_string(),
+        args,
+        options: HashMap::new(),
+    }
+}
+
+/// A `collection` or `collection_group` stage, the only stages that take an index hint.
+fn collection_stage(
+    name: &str,
+    args: Vec<Value>,
+    force_index: Option<FirestoreIndexHint>,
+) -> Stage {
+    Stage {
+        options: force_index
+            .map(|hint| ("force_index".to_string(), hint.into()))
+            .into_iter()
+            .collect(),
+        ..stage(name, args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::pipeline::fixtures::{fixture_case, pipeline};
+    use crate::pipeline_builder::FirestorePipelineInitialBuilder;
+
+    const ENTERPRISE_DOCUMENTS: &str =
+        "projects/latestbit/databases/firestore-rs-enterprise/documents";
+
+    #[derive(serde::Serialize)]
+    struct LiteralRow {
+        a: i64,
+        b: &'static str,
+    }
+
+    fn builder() -> FirestorePipelineInitialBuilder<()> {
+        FirestorePipelineInitialBuilder::new(())
+    }
+
+    #[test]
+    fn pipelines_convert_to_the_captured_requests() {
+        let books_index = FirestoreIndexId::new("CICAgJim14AK").unwrap();
+        let captured = [
+            (
+                "stage-collection",
+                None,
+                builder().collection("pipeline-books").into_pipeline(),
+            ),
+            (
+                "stage-collection-group",
+                None,
+                builder()
+                    .collection_group("pipeline-books")
+                    .limit(2)
+                    .into_pipeline(),
+            ),
+            (
+                "stage-collection-paths",
+                Some("nested_collection"),
+                builder()
+                    .collection("reviews")
+                    .parent(format!(
+                        "{ENTERPRISE_DOCUMENTS}/pipeline-restaurants/rest-01"
+                    ))
+                    .select(|e| [e.field("__name__")])
+                    .into_pipeline(),
+            ),
+            (
+                "stage-database",
+                None,
+                builder().database().limit(2).into_pipeline(),
+            ),
+            (
+                "stage-documents",
+                None,
+                builder()
+                    .documents([
+                        "pipeline-books/book-01",
+                        "pipeline-books/book-10",
+                        "pipeline-books/no-such-book",
+                    ])
+                    .into_pipeline(),
+            ),
+            (
+                "stage-literals",
+                None,
+                builder()
+                    .literals([LiteralRow { a: 1, b: "x" }, LiteralRow { a: 2, b: "y" }])
+                    .into_pipeline(),
+            ),
+            (
+                "stage-where-and-or",
+                None,
+                builder()
+                    .collection("pipeline-books")
+                    .filter(|e| {
+                        e.and([
+                            e.field("genre").eq("Dystopian"),
+                            e.or([
+                                e.field("published").less_than(1950),
+                                e.field("stock").greater_than(5),
+                            ]),
+                        ])
+                    })
+                    .into_pipeline(),
+            ),
+            (
+                "stage-where-sort-offset-limit",
+                None,
+                builder()
+                    .collection("pipeline-books")
+                    .filter(|e| e.field("rating").greater_than_or_equal(4.2))
+                    .sort(|e| [e.field("rating").desc(), e.field("title").asc()])
+                    .offset(1)
+                    .limit(3)
+                    .into_pipeline(),
+            ),
+            (
+                "stage-select",
+                None,
+                builder()
+                    .collection("pipeline-books")
+                    .select(|e| {
+                        [
+                            FirestoreSelection::from(e.field("title")),
+                            e.field("author").alias("author_name"),
+                        ]
+                    })
+                    .limit(2)
+                    .into_pipeline(),
+            ),
+            (
+                "stage-add-remove-fields",
+                None,
+                builder()
+                    .collection("pipeline-books")
+                    .add_fields(|e| {
+                        [
+                            e.field("published").less_than(1950).alias("is_classic"),
+                            e.raw("to_upper", [e.field("title")]).alias("title_upper"),
+                        ]
+                    })
+                    .remove_fields(["awards", "embedding", "tags"])
+                    .limit(2)
+                    .into_pipeline(),
+            ),
+            (
+                "force-index",
+                Some("primary"),
+                builder()
+                    .collection("pipeline-books")
+                    .force_index(FirestoreIndexHint::TableScan)
+                    .filter(|e| e.field("genre").eq("Dystopian"))
+                    .sort(|e| [e.field("rating").desc()])
+                    .into_pipeline(),
+            ),
+            (
+                "force-index",
+                Some("cg-primary"),
+                builder()
+                    .collection_group("pipeline-books")
+                    .force_index(FirestoreIndexHint::TableScan)
+                    .limit(1)
+                    .into_pipeline(),
+            ),
+            (
+                "force-index",
+                Some("matching"),
+                builder()
+                    .collection("pipeline-books")
+                    .force_index(FirestoreIndexHint::Index(books_index))
+                    .filter(|e| e.field("genre").eq("Dystopian"))
+                    .sort(|e| [e.field("rating").desc()])
+                    .into_pipeline(),
+            ),
+        ];
+
+        for (fixture, case, model) in captured {
+            assert_eq!(
+                Pipeline::try_from(model).unwrap(),
+                pipeline(&fixture_case(fixture, case)),
+                "{fixture} {case:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pipelines_that_cannot_be_sent_are_rejected_before_sending() {
+        let rejected = [
+            builder().literals([1]).into_pipeline(),
+            builder()
+                .collection("pipeline-books")
+                .select(|e| [e.raw("to_upper", [e.field("title")])])
+                .into_pipeline(),
+            builder()
+                .collection("pipeline-books")
+                .select(|e| {
+                    [
+                        FirestoreSelection::from(e.field("title")),
+                        e.field("author").alias("title"),
+                    ]
+                })
+                .into_pipeline(),
+            builder()
+                .collection("reviews")
+                .parent("pipeline-restaurants/rest-01")
+                .into_pipeline(),
+            builder()
+                .collection("pipeline-restaurants/rest-01/reviews")
+                .into_pipeline(),
+        ];
+
+        for model in rejected {
+            let result = Pipeline::try_from(model.clone());
+            assert!(
+                matches!(result, Err(FirestoreError::InvalidParametersError(_))),
+                "{model:?}: {result:?}"
+            );
+        }
+    }
+}
