@@ -15,7 +15,6 @@ use backoff::backoff::Backoff;
 use backoff::ExponentialBackoffBuilder;
 use futures::future::BoxFuture;
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
-use gcloud_sdk::tonic::Code;
 use gcloud_sdk::RequestTimeouts;
 use tracing::*;
 
@@ -225,18 +224,7 @@ impl<'a> FirestoreTransaction<'a> {
                     .request_with_timeout(request, RequestTimeouts::with_total),
             )
             .await
-            .map_err(|status| {
-                let retry_possible = status.code() == Code::Aborted;
-                match FirestoreError::from(status) {
-                    FirestoreError::DatabaseError(error) => {
-                        FirestoreError::DatabaseError(FirestoreDatabaseError {
-                            retry_possible,
-                            ..error
-                        })
-                    }
-                    other => other,
-                }
-            })?
+            .map_err(FirestoreError::from_commit_status)?
             .into_inner();
 
         let result = FirestoreTransactionResponse::new(

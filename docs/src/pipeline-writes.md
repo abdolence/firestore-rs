@@ -167,7 +167,9 @@ Firestore sets these rules for a transaction that holds a pipeline write:
 The library sends a pipeline write once and never retries it: a run without a transaction can
 have written part of its documents before it failed, and an `insert` sent again fails with
 `ALREADY_EXISTS`. A `run_transaction` retries the whole transaction on `ABORTED`, as it does for
-any other transaction, and a retried attempt starts again from the callback.
+any other transaction, and a retried attempt starts again from the callback. A failed `.atomic()`
+write reports a retry as a failed commit does: only `ABORTED`, which means nothing was applied,
+is `retry_possible`.
 
 The changes of a pipeline write reach listeners. A Core listener on the collection receives a
 change for each inserted, updated or upserted document, and a delete for each deleted one. See

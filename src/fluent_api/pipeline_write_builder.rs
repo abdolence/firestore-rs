@@ -341,6 +341,10 @@ where
 {
     /// Runs the write, which applies in full or not at all.
     ///
+    /// A failed write is reported like a failed commit: `retry_possible` is set for `ABORTED`,
+    /// which means nothing was applied, and unset for any other code, which can leave the outcome
+    /// unknown.
+    ///
     /// Fails with `InvalidParametersError` on a `db` bound to a transaction or a read time, as
     /// [`execute`](FirestorePipelineBuilder::execute) does.
     pub async fn execute(self) -> FirestoreResult<FirestorePipelineWriteResult> {

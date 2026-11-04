@@ -77,6 +77,20 @@ impl FirestoreError {
         }
     }
 
+    /// Converts the failed `status` of a write that commits, like the conversion from
+    /// `tonic::Status` except that only `ABORTED` is `retry_possible`: it means nothing was
+    /// applied, while any other code can leave the outcome unknown, so the write must not be
+    /// sent again.
+    pub(crate) fn from_commit_status(status: gcloud_sdk::tonic::Status) -> Self {
+        let aborted = status.code() == gcloud_sdk::tonic::Code::Aborted;
+        let error = FirestoreError::from(status);
+        if aborted {
+            error
+        } else {
+            error.without_retry()
+        }
+    }
+
     /// Converts a read's failed `status` like the conversion from `tonic::Status`, except that any
     /// `DEADLINE_EXCEEDED`, the server's own included, is marked `retry_possible`: a read, unlike
     /// a write, can safely be sent again.

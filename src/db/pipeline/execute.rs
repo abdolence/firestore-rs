@@ -249,8 +249,12 @@ impl FirestorePipelineSupport for FirestoreDb {
         params: FirestorePipelineWriteParams,
     ) -> FirestoreResult<FirestorePipelineWriteResult> {
         let standalone = params.transaction.is_none();
+        let map_status = match params.transaction {
+            Some(FirestorePipelineWriteTransaction::Atomic) => FirestoreError::from_commit_status,
+            _ => FirestoreError::from,
+        };
         let request = self.create_pipeline_write_request(params)?;
-        let sent = self.send_pipeline_write(request).await;
+        let sent = self.send_pipeline_write(request, map_status).await;
         if standalone {
             sent.map_err(FirestoreError::without_retry)
         } else {
@@ -268,15 +272,18 @@ impl FirestorePipelineSupport for FirestoreDb {
             params.with_transaction(FirestorePipelineWriteTransaction::Existing(transaction_id)),
         )?;
         transaction.hold_pipeline_writes();
-        self.send_pipeline_write(request).await
+        self.send_pipeline_write(request, FirestoreError::from)
+            .await
     }
 }
 
 impl FirestoreDb {
-    /// Sends a pipeline write once, never retrying it.
+    /// Sends a pipeline write once, never retrying it, and converts a failed status, whether of
+    /// the call or of a response in its stream, with `map_status`.
     async fn send_pipeline_write(
         &self,
         request: ExecutePipelineRequest,
+        map_status: fn(gcloud_sdk::tonic::Status) -> FirestoreError,
     ) -> FirestoreResult<FirestorePipelineWriteResult> {
         let span = span!(
             Level::DEBUG,
@@ -289,12 +296,14 @@ impl FirestoreDb {
             .client()
             .get()
             .execute_pipeline(self.request_with_timeout(request, RequestTimeouts::with_idle))
-            .await?
+            .await
+            .map_err(map_status)?
             .into_inner();
         let result = FirestorePipelineWriteResult::try_from(
             end_at_first_error(responses)
                 .try_collect::<Vec<_>>()
-                .await?,
+                .await
+                .map_err(map_status)?,
         )?;
 
         let duration = FirestoreInstant::now().duration_since(begin_utc);
@@ -610,6 +619,32 @@ mod tests {
 
             assert!(
                 matches!(&result, Err(FirestoreError::DatabaseError(error)) if !error.retry_possible),
+                "{code:?}: {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_atomic_write_is_retryable_only_when_aborted() {
+        for (code, retryable) in [
+            (Code::Unavailable, false),
+            (Code::ResourceExhausted, false),
+            (Code::Aborted, true),
+        ] {
+            let server = failing_pipelines(code).await;
+
+            let result = server
+                .db
+                .fluent()
+                .pipeline()
+                .delete()
+                .from("pipeline-dml")
+                .atomic()
+                .execute()
+                .await;
+
+            assert!(
+                matches!(&result, Err(FirestoreError::DatabaseError(error)) if error.retry_possible == retryable),
                 "{code:?}: {result:?}"
             );
         }
