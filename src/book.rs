@@ -57,6 +57,18 @@ mod preconditions {}
 #[doc = include_str!("../docs/src/explain-query.md")]
 mod explain_query {}
 
+#[doc = include_str!("../docs/src/pipelines.md")]
+mod pipelines {}
+
+#[doc = include_str!("../docs/src/pipeline-aggregations-and-joins.md")]
+mod pipeline_aggregations_and_joins {}
+
+#[doc = include_str!("../docs/src/pipeline-search.md")]
+mod pipeline_search {}
+
+#[doc = include_str!("../docs/src/pipeline-writes.md")]
+mod pipeline_writes {}
+
 #[doc = include_str!("../docs/src/request-tags.md")]
 mod request_tags {}
 

@@ -19,6 +19,10 @@
 - [Select aggregate functions](./aggregations.md)
 - [Update/delete preconditions](./preconditions.md)
 - [Explaining the query](./explain-query.md)
+- [Pipelines](./pipelines.md)
+    - [Pipeline aggregations and joins](./pipeline-aggregations-and-joins.md)
+    - [Pipeline search](./pipeline-search.md)
+    - [Pipeline writes](./pipeline-writes.md)
 - [Listening the document changes](./listening-changes.md)
 - [Working on dynamic/document level](./dynamic-documents.md)
 
