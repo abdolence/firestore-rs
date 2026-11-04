@@ -200,7 +200,7 @@ where
     S: Into<FirestorePipeline>,
 {
     /// Keeps the documents for which the condition is true. A closure that returns `None`, such
-    /// as an [`and_maybe`](FirestorePipelineExprBuilder::and_maybe) of no conditions, adds no
+    /// as a [`for_all`](FirestorePipelineExprBuilder::for_all) of no conditions, adds no
     /// stage.
     pub fn filter<FN, R>(self, filter: FN) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>
     where

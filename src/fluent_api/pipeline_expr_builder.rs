@@ -36,7 +36,8 @@ impl FirestorePipelineExprBuilder {
     }
 
     /// True when every condition is. A single condition is returned as it is, and no condition
-    /// gives the constant `true`, the identity of `and`.
+    /// gives the constant `true`, the identity of `and`. For a `filter` built from conditions
+    /// that may be absent, use [`for_all`](Self::for_all).
     pub fn and<I>(&self, conditions: I) -> FirestoreBoolExpr
     where
         I: IntoIterator<Item = FirestoreBoolExpr>,
@@ -45,7 +46,8 @@ impl FirestorePipelineExprBuilder {
     }
 
     /// True when any condition is. A single condition is returned as it is, and no condition
-    /// gives the constant `false`, the identity of `or`.
+    /// gives the constant `false`, the identity of `or`. For a `filter` built from conditions
+    /// that may be absent, use [`for_any`](Self::for_any).
     pub fn or<I>(&self, conditions: I) -> FirestoreBoolExpr
     where
         I: IntoIterator<Item = FirestoreBoolExpr>,
@@ -53,20 +55,32 @@ impl FirestorePipelineExprBuilder {
         self.connect("or", conditions)
     }
 
-    /// [`and`](Self::and) of the conditions that are present, or `None` when none is, which a
-    /// `filter` takes as no filter at all.
-    pub fn and_maybe<I>(&self, conditions: I) -> Option<FirestoreBoolExpr>
+    /// True when every condition present is, for a `filter` built from conditions that may be
+    /// absent.
+    ///
+    /// The items are all conditions or all `Option`s of one, and a `None` drops out. A single
+    /// condition is returned as it is, and none gives `None`, which a `filter` takes as no filter
+    /// at all. For a condition used as a value, such as in `select`, `conditional` or `not`, use
+    /// [`and`](Self::and).
+    pub fn for_all<I>(&self, conditions: I) -> Option<FirestoreBoolExpr>
     where
-        I: IntoIterator<Item = Option<FirestoreBoolExpr>>,
+        I: IntoIterator,
+        I::Item: FirestorePipelineConditionExpr,
     {
         self.connect_present("and", conditions)
     }
 
-    /// [`or`](Self::or) of the conditions that are present, or `None` when none is, which a
-    /// `filter` takes as no filter at all.
-    pub fn or_maybe<I>(&self, conditions: I) -> Option<FirestoreBoolExpr>
+    /// True when any condition present is, for a `filter` built from conditions that may be
+    /// absent.
+    ///
+    /// The items are all conditions or all `Option`s of one, and a `None` drops out. A single
+    /// condition is returned as it is, and none gives `None`, which a `filter` takes as no filter
+    /// at all. For a condition used as a value, such as in `select`, `conditional` or `not`, use
+    /// [`or`](Self::or).
+    pub fn for_any<I>(&self, conditions: I) -> Option<FirestoreBoolExpr>
     where
-        I: IntoIterator<Item = Option<FirestoreBoolExpr>>,
+        I: IntoIterator,
+        I::Item: FirestorePipelineConditionExpr,
     {
         self.connect_present("or", conditions)
     }
@@ -109,10 +123,32 @@ impl FirestorePipelineExprBuilder {
 
     fn connect_present<I>(&self, function: &str, conditions: I) -> Option<FirestoreBoolExpr>
     where
-        I: IntoIterator<Item = Option<FirestoreBoolExpr>>,
+        I: IntoIterator,
+        I::Item: FirestorePipelineConditionExpr,
     {
-        let present: Vec<FirestoreBoolExpr> = conditions.into_iter().flatten().collect();
+        let present: Vec<FirestoreBoolExpr> = conditions
+            .into_iter()
+            .filter_map(FirestorePipelineConditionExpr::build_condition)
+            .collect();
         (!present.is_empty()).then(|| self.connect(function, present))
+    }
+}
+
+/// A condition, or an `Option` of one, as the list forms `for_all` and `for_any` take them.
+pub trait FirestorePipelineConditionExpr {
+    /// The condition, or `None` for an item that stands for no condition.
+    fn build_condition(self) -> Option<FirestoreBoolExpr>;
+}
+
+impl FirestorePipelineConditionExpr for FirestoreBoolExpr {
+    fn build_condition(self) -> Option<FirestoreBoolExpr> {
+        Some(self)
+    }
+}
+
+impl<C: FirestorePipelineConditionExpr> FirestorePipelineConditionExpr for Option<C> {
+    fn build_condition(self) -> Option<FirestoreBoolExpr> {
+        self.and_then(FirestorePipelineConditionExpr::build_condition)
     }
 }
 
@@ -156,7 +192,7 @@ mod tests {
         let list = builder()
             .collection("pipeline-books")
             .filter(|e| {
-                e.and_maybe([
+                e.for_all([
                     Some(e.field("stock").greater_than(0)),
                     genre.map(|genre| e.field("genre").eq(genre)),
                     max_pages.map(|pages| e.field("pages").less_than(pages)),
@@ -207,7 +243,7 @@ mod tests {
     fn a_single_present_condition_stands_alone() {
         let joined = builder()
             .collection("pipeline-books")
-            .filter(|e| e.and_maybe([None, Some(e.field("stock").greater_than(0)), None]))
+            .filter(|e| e.for_all([None, Some(e.field("stock").greater_than(0)), None]))
             .into_pipeline();
         let alone = builder()
             .collection("pipeline-books")
@@ -222,7 +258,7 @@ mod tests {
         let genre: Option<&str> = None;
         let pipeline = builder()
             .collection("pipeline-books")
-            .filter(|e| e.or_maybe([genre.map(|genre| e.field("genre").eq(genre))]))
+            .filter(|e| e.for_any([genre.map(|genre| e.field("genre").eq(genre))]))
             .limit(1)
             .into_pipeline();
 
@@ -230,5 +266,55 @@ mod tests {
             pipeline.stages,
             vec![FirestorePipelineStage::Limit(FirestoreLimitStage::new(1))]
         );
+    }
+
+    #[test]
+    fn for_all_of_plain_conditions_is_the_and_of_them() {
+        let all = builder()
+            .collection("pipeline-books")
+            .filter(|e| {
+                e.for_all([
+                    e.field("stock").greater_than(0),
+                    e.field("genre").eq("Dystopian"),
+                ])
+            })
+            .into_pipeline();
+        let and = builder()
+            .collection("pipeline-books")
+            .filter(|e| {
+                e.and([
+                    e.field("stock").greater_than(0),
+                    e.field("genre").eq("Dystopian"),
+                ])
+            })
+            .into_pipeline();
+
+        assert_eq!(where_stages(all), where_stages(and));
+    }
+
+    #[test]
+    fn for_any_of_optional_conditions_drops_the_absent_ones() {
+        let genre: Option<&str> = None;
+        let any = builder()
+            .collection("pipeline-books")
+            .filter(|e| {
+                e.for_any([
+                    Some(e.field("stock").greater_than(0)),
+                    genre.map(|genre| e.field("genre").eq(genre)),
+                    Some(e.field("rating").greater_than_or_equal(4.0)),
+                ])
+            })
+            .into_pipeline();
+        let or = builder()
+            .collection("pipeline-books")
+            .filter(|e| {
+                e.or([
+                    e.field("stock").greater_than(0),
+                    e.field("rating").greater_than_or_equal(4.0),
+                ])
+            })
+            .into_pipeline();
+
+        assert_eq!(where_stages(any), where_stages(or));
     }
 }
