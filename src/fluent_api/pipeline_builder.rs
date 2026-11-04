@@ -146,7 +146,7 @@ impl<C> FirestorePipelineInitialBuilder<C> {
         }
     }
 
-    fn staged(
+    pub(crate) fn staged(
         self,
         source: FirestorePipelineSource,
     ) -> FirestorePipelineBuilder<C, FirestorePipelineStaged> {
@@ -317,7 +317,7 @@ where
         }
     }
 
-    fn stage(
+    pub(crate) fn stage(
         self,
         stage: FirestorePipelineStage,
     ) -> FirestorePipelineBuilder<C, FirestorePipelineStaged> {

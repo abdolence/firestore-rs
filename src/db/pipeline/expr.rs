@@ -1,4 +1,6 @@
-use crate::{FirestoreError, FirestoreQueryDirection, FirestoreResult, FirestoreValue};
+use crate::{
+    FirestoreError, FirestorePipeline, FirestoreQueryDirection, FirestoreResult, FirestoreValue,
+};
 use gcloud_sdk::google::firestore::v1::{value::ValueType, Function, MapValue, Value};
 use rsb_derive::Builder;
 use std::collections::hash_map::{Entry, HashMap};
@@ -19,6 +21,13 @@ pub enum FirestoreExpr {
     Function(FirestoreFunction),
     /// A variable, defined by the `let` stage or bound by a function such as `array_filter`.
     Variable(String),
+    /// The results of a nested pipeline, as an array: empty when it finds nothing, and each
+    /// result a map, or just the value when the pipeline outputs a single field. Preview.
+    ArraySubquery(FirestorePipeline),
+    /// The single result of a nested pipeline: null when it finds nothing, and the value of the
+    /// field when it outputs one. More than one result fails the request as `INVALID_ARGUMENT`.
+    /// Preview.
+    ScalarSubquery(FirestorePipeline),
 }
 
 /// A call of the pipeline function `name` with `args`.
@@ -58,6 +67,58 @@ pub struct FirestoreSelection {
 pub struct FirestorePipelineOrdering {
     pub expr: FirestoreExpr,
     pub direction: FirestoreQueryDirection,
+}
+
+/// An accumulator of an `aggregate` stage, such as `average` or `count_if`.
+///
+/// Firestore keeps these apart from scalar functions: an accumulator does not exist outside
+/// `aggregate`, and a scalar function does not exist inside it. Build one with the methods of
+/// [`FirestoreExpr`] and [`FirestoreBoolExpr`], such as
+/// [`average`](FirestoreExpr::average), or with [`raw`](Self::raw).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FirestoreAggregate(pub(crate) FirestoreFunction);
+
+/// An accumulator with the field name its result is output under, which `aggregate` requires
+/// for every accumulator.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreAggregateSelection {
+    pub aggregate: FirestoreAggregate,
+    pub alias: String,
+}
+
+impl FirestoreAggregate {
+    /// A call of the accumulator `name`, for one that has no method of its own.
+    pub fn raw<N, I>(name: N, args: I) -> Self
+    where
+        N: Into<String>,
+        I: IntoIterator,
+        I::Item: Into<FirestoreExpr>,
+    {
+        Self(FirestoreFunction::new(
+            name.into(),
+            args.into_iter().map(Into::into).collect(),
+        ))
+    }
+
+    /// Outputs this accumulator's result under the field name `alias`.
+    pub fn alias<S: Into<String>>(self, alias: S) -> FirestoreAggregateSelection {
+        FirestoreAggregateSelection::new(self, alias.into())
+    }
+}
+
+impl FirestoreSelection {
+    /// The expression and the field name it is output under: the alias, or else the field's own
+    /// path. Fails for a computed expression without an alias.
+    pub(super) fn into_named(self, stage: &str) -> FirestoreResult<(String, FirestoreExpr)> {
+        match (self.alias, self.expr) {
+            (Some(alias), expr) => Ok((alias, expr)),
+            (None, FirestoreExpr::Field(path)) => Ok((path.clone(), FirestoreExpr::Field(path))),
+            (None, expr) => Err(FirestoreError::invalid_parameters(
+                stage,
+                format!("a computed expression needs an alias: {expr:?}"),
+            )),
+        }
+    }
 }
 
 impl FirestoreExpr {
@@ -144,6 +205,13 @@ impl From<FirestoreExpr> for FirestoreSelection {
     }
 }
 
+impl From<FirestoreAggregateSelection> for FirestoreSelection {
+    fn from(selection: FirestoreAggregateSelection) -> Self {
+        FirestoreSelection::new(FirestoreExpr::Function(selection.aggregate.0))
+            .with_alias(selection.alias)
+    }
+}
+
 impl TryFrom<FirestoreExpr> for Value {
     type Error = FirestoreError;
 
@@ -155,6 +223,8 @@ impl TryFrom<FirestoreExpr> for Value {
                 wire_value(ValueType::FunctionValue(function.try_into()?))
             }
             FirestoreExpr::Variable(name) => wire_value(ValueType::VariableReferenceValue(name)),
+            FirestoreExpr::ArraySubquery(pipeline) => subquery("array", pipeline)?,
+            FirestoreExpr::ScalarSubquery(pipeline) => subquery("scalar", pipeline)?,
         })
     }
 }
@@ -201,6 +271,16 @@ pub(super) fn wire_value(value_type: ValueType) -> Value {
     }
 }
 
+/// The call of `name` on a nested pipeline, which is how the wire spells a subquery. Not a
+/// conversion: the function name is the context the pipeline lacks.
+fn subquery(name: &str, pipeline: FirestorePipeline) -> FirestoreResult<Value> {
+    Ok(wire_value(ValueType::FunctionValue(Function {
+        name: name.to_string(),
+        args: vec![pipeline.try_into()?],
+        options: HashMap::new(),
+    })))
+}
+
 /// The `{name: expression}` map that the projecting stage `stage` takes as its argument.
 pub(super) fn selection_map(
     stage: &str,
@@ -208,16 +288,7 @@ pub(super) fn selection_map(
 ) -> FirestoreResult<Value> {
     let mut fields = HashMap::with_capacity(selections.len());
     for selection in selections {
-        let name = match (selection.alias, &selection.expr) {
-            (Some(alias), _) => alias,
-            (None, FirestoreExpr::Field(path)) => path.clone(),
-            (None, expr) => {
-                return Err(FirestoreError::invalid_parameters(
-                    stage,
-                    format!("a computed expression needs an alias: {expr:?}"),
-                ))
-            }
-        };
+        let (name, expr) = selection.into_named(stage)?;
         match fields.entry(name) {
             Entry::Occupied(entry) => {
                 return Err(FirestoreError::invalid_parameters(
@@ -226,7 +297,7 @@ pub(super) fn selection_map(
                 ))
             }
             Entry::Vacant(entry) => {
-                entry.insert(Value::try_from(selection.expr)?);
+                entry.insert(Value::try_from(expr)?);
             }
         }
     }

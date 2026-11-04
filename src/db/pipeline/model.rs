@@ -1,8 +1,9 @@
 use super::expr::{selection_map, wire_value};
 use crate::db::validate_path_segment;
 use crate::{
-    FirestoreBoolExpr, FirestoreError, FirestoreExpr, FirestorePipelineOrdering,
-    FirestoreReference, FirestoreResult, FirestoreSelection, FirestoreValue,
+    FirestoreAggregateSelection, FirestoreBoolExpr, FirestoreError, FirestoreExpr,
+    FirestoreFindNearestDistanceMeasure, FirestorePipelineOrdering, FirestoreReference,
+    FirestoreResult, FirestoreSelection, FirestoreValue, FirestoreVector,
 };
 use gcloud_sdk::google::firestore::v1::{pipeline::Stage, value::ValueType, Pipeline, Value};
 use rsb_derive::Builder;
@@ -39,6 +40,10 @@ pub enum FirestorePipelineSource {
     Database,
     Documents(FirestoreDocumentsSource),
     Literals(FirestoreLiteralsSource),
+    /// A collection under each document of the enclosing pipeline. Preview, and valid only at
+    /// the start of a subquery: a top-level pipeline with this source fails as
+    /// `INVALID_ARGUMENT`.
+    Subcollection(FirestoreSubcollectionSource),
 }
 
 /// The documents of one collection.
@@ -77,6 +82,13 @@ pub struct FirestoreLiteralsSource {
     /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) for
     /// any other value, which includes a row whose serialisation failed.
     pub rows: Vec<FirestoreValue>,
+}
+
+/// The collection `collection_id` under the current document of the enclosing pipeline, for a
+/// subquery. Preview.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreSubcollectionSource {
+    pub collection_id: String,
 }
 
 /// The index a collection or collection-group source must read through.
@@ -135,6 +147,15 @@ pub enum FirestorePipelineStage {
     Limit(FirestoreLimitStage),
     Offset(FirestoreOffsetStage),
     Raw(FirestoreRawStage),
+    Aggregate(FirestoreAggregateStage),
+    Distinct(FirestoreDistinctStage),
+    FindNearest(FirestoreFindNearestStage),
+    Sample(FirestoreSampleStage),
+    Union(FirestoreUnionStage),
+    Unnest(FirestoreUnnestStage),
+    ReplaceWith(FirestoreReplaceWithStage),
+    /// The wire stage `let`.
+    Define(FirestoreDefineStage),
 }
 
 /// Keeps the documents for which `condition` is true.
@@ -187,6 +208,100 @@ pub struct FirestoreRawStage {
     pub options: BTreeMap<String, FirestoreExpr>,
 }
 
+/// Replaces the documents with one document per group, holding the accumulators computed over
+/// each group, or over all documents when `groups` is empty.
+///
+/// A variable defined before this stage is not visible after it.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreAggregateStage {
+    pub accumulators: Vec<FirestoreAggregateSelection>,
+    #[default = "Vec::new()"]
+    pub groups: Vec<FirestoreSelection>,
+}
+
+/// Replaces the documents with one document per distinct combination of the selected values.
+/// A null value is a group of its own.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreDistinctStage {
+    pub groups: Vec<FirestoreSelection>,
+}
+
+/// Keeps the `neighbors_limit` documents whose vector field is nearest to `query_vector`.
+///
+/// This is the stage and the options type at once. It has the fields of Core's
+/// [`FirestoreFindNearestOptions`](crate::FirestoreFindNearestOptions) except
+/// `distance_threshold`, which the stage rejects. It scans every document and sorts by
+/// distance: the pipeline stage does not use a vector index.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreFindNearestStage {
+    /// The path of the vector field.
+    pub field_name: String,
+    pub query_vector: FirestoreVector,
+    pub distance_measure: FirestoreFindNearestDistanceMeasure,
+    pub neighbors_limit: u32,
+    /// The field to output each document's distance under.
+    pub distance_result_field: Option<String>,
+}
+
+/// Keeps a random sample of the documents.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreSampleStage {
+    pub size: FirestoreSampleSize,
+}
+
+/// How many documents a `sample` stage keeps.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FirestoreSampleSize {
+    /// This many documents.
+    Documents(u32),
+    /// This fraction of the documents, from 0.0 to 1.0. Firestore calls the mode `percent`, but
+    /// it takes a fraction.
+    Fraction(f64),
+}
+
+/// Appends the documents of another pipeline.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreUnionStage {
+    pub other: FirestorePipeline,
+}
+
+/// Replaces each document by one document per element of an array.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreUnnestStage {
+    /// The array expression, and the field name each element is output under. Without an alias
+    /// the expression must be a field, and its elements replace it.
+    pub selection: FirestoreSelection,
+    /// The field to output each element's position in the array under.
+    pub index_field: Option<String>,
+}
+
+/// Replaces each document with the value of an expression, which must be a map.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreReplaceWithStage {
+    pub expr: FirestoreExpr,
+    pub mode: FirestoreReplaceWithMode,
+}
+
+/// What a `replace_with` stage does with the fields the map and the document have in common
+/// and those only one has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirestoreReplaceWithMode {
+    /// The map becomes the document.
+    FullReplace,
+    /// The map's fields are added to the document, and replace its fields of the same name.
+    MergeOverwriteExisting,
+    /// The map's fields are added to the document, and its fields of the same name stay.
+    MergeKeepExisting,
+}
+
+/// Defines variables for the stages after it, read with
+/// [`variable`](crate::pipeline_expr_builder::FirestorePipelineExprBuilder::variable). Preview.
+/// The wire stage is `let`, which is a Rust keyword.
+#[derive(Debug, Clone, PartialEq, Builder)]
+pub struct FirestoreDefineStage {
+    pub variables: Vec<FirestoreSelection>,
+}
+
 impl TryFrom<FirestorePipeline> for Pipeline {
     type Error = FirestoreError;
 
@@ -210,6 +325,7 @@ impl TryFrom<FirestorePipelineSource> for Stage {
             FirestorePipelineSource::Database => Ok(stage("database", Vec::new())),
             FirestorePipelineSource::Documents(source) => Ok(source.into()),
             FirestorePipelineSource::Literals(source) => source.try_into(),
+            FirestorePipelineSource::Subcollection(source) => Ok(source.into()),
         }
     }
 }
@@ -310,6 +426,14 @@ impl TryFrom<FirestorePipelineStage> for Stage {
             FirestorePipelineStage::Limit(stage) => Ok(stage.into()),
             FirestorePipelineStage::Offset(stage) => Ok(stage.into()),
             FirestorePipelineStage::Raw(stage) => stage.try_into(),
+            FirestorePipelineStage::Aggregate(stage) => stage.try_into(),
+            FirestorePipelineStage::Distinct(stage) => stage.try_into(),
+            FirestorePipelineStage::FindNearest(stage) => stage.try_into(),
+            FirestorePipelineStage::Sample(stage) => Ok(stage.into()),
+            FirestorePipelineStage::Union(stage) => stage.try_into(),
+            FirestorePipelineStage::Unnest(stage) => stage.try_into(),
+            FirestorePipelineStage::ReplaceWith(stage) => stage.try_into(),
+            FirestorePipelineStage::Define(stage) => stage.try_into(),
         }
     }
 }
@@ -412,7 +536,7 @@ impl TryFrom<FirestoreRawStage> for Stage {
     }
 }
 
-fn stage(name: &str, args: Vec<Value>) -> Stage {
+pub(super) fn stage(name: &str, args: Vec<Value>) -> Stage {
     Stage {
         name: name.to_string(),
         args,
