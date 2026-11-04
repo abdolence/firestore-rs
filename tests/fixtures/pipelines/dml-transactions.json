@@ -560,6 +560,52 @@
         }
       ],
       "replay": false
+    },
+    {
+      "name": "dml_at_read_time",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-read-time"
+                        },
+                        "title": {
+                          "stringValue": "rt"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        },
+        "readTime": "2026-11-04T18:30:00Z"
+      },
+      "error": {
+        "code": 400,
+        "message": "Snapshot concurrency is not supported for DML pipelines.",
+        "status": "INVALID_ARGUMENT",
+        "details": [
+          {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "SNAPSHOT_TRANSACTION_DML",
+            "domain": "firestore.googleapis.com"
+          }
+        ]
+      },
+      "replay": false
     }
   ]
 }
