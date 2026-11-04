@@ -1,0 +1,16 @@
+{
+  "description": "Commit with no writes of a transaction whose only mutation was a pipeline insert",
+  "captured": "2026-11-04",
+  "rpc": "Commit",
+  "request": {
+    "transaction": "(the ID BeginTransaction returned)"
+  },
+  "response": {
+    "writeResults": [
+      {
+        "updateTime": "1969-12-31T23:59:59.999999Z"
+      }
+    ],
+    "commitTime": "2026-11-04T18:06:46.601555Z"
+  }
+}

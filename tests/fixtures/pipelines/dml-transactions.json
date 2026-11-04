@@ -1,0 +1,611 @@
+{
+  "description": "transactions and auto_commit_transaction with pipelines",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "auto_commit_new_read_write",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-tx-auto"
+                        },
+                        "title": {
+                          "stringValue": "auto-commit"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        },
+        "newTransaction": {
+          "readWrite": {}
+        },
+        "autoCommitTransaction": true
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "auto_commit_without_transaction",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-tx-alone"
+                        },
+                        "title": {
+                          "stringValue": "x"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        },
+        "autoCommitTransaction": true
+      },
+      "error": {
+        "code": 400,
+        "message": "'auto_commit_transaction' must be used with a transaction.",
+        "status": "INVALID_ARGUMENT",
+        "details": [
+          {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "AUTO_COMMIT_REQUIRES_TRANSACTION",
+            "domain": "firestore.googleapis.com"
+          }
+        ]
+      },
+      "replay": false
+    },
+    {
+      "name": "new_read_write_without_auto_commit",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-tx-manual"
+                        },
+                        "title": {
+                          "stringValue": "manual"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        },
+        "newTransaction": {
+          "readWrite": {}
+        }
+      },
+      "responses": [
+        {
+          "transaction": "ERkCIzuVS3z0IlkAdsw0yAJKbzisyxERYwndrpfok3D5+UVuBRXhqgxJwCAFTflu5/k2aClsIlHaaEb+cdrGOPZtCM5LMqYrpaG//GVRki1zwDh3JpOJ8OLuqlzboDfUDeDbFA==",
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "new_read_only_with_dml",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-tx-ro"
+                        },
+                        "title": {
+                          "stringValue": "ro"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        },
+        "newTransaction": {
+          "readOnly": {}
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Cannot modify entities in a read-only transaction.",
+        "status": "INVALID_ARGUMENT"
+      },
+      "replay": false
+    },
+    {
+      "name": "new_read_only_read",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "limit",
+                "args": [
+                  {
+                    "integerValue": "1"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "title": {
+                          "fieldReferenceValue": "title"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "newTransaction": {
+          "readOnly": {}
+        }
+      },
+      "responses": [
+        {
+          "transaction": "EergOICLh1e3IlkAdsw0yA3NdIbB5iEU21ZhAs5Y4e2a8fPyNbYd5zKORzwxhPmNo1UuPxM1LI/2RqJ+K9HA7NB3eUd5zMaLd6H2YP+20nFcuOfe02WlXBXSAuAkv7XhmB8Aeg==",
+          "results": [
+            {
+              "fields": {
+                "title": {
+                  "stringValue": "Untitled draft"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:05:10.220672Z"
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "new_read_only_read_auto_commit",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "limit",
+                "args": [
+                  {
+                    "integerValue": "1"
+                  }
+                ]
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "title": {
+                          "fieldReferenceValue": "title"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "newTransaction": {
+          "readOnly": {}
+        },
+        "autoCommitTransaction": true
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "title": {
+                  "stringValue": "Untitled draft"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:05:11.218143Z"
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "read_in_existing_transaction",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "aggregate",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "c": {
+                          "functionValue": {
+                            "name": "count"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "mapValue": {}
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "transaction": "ERGsa08TBRisIlkAdsw0yN3qze3XJc7D88hKovvJDiPIN7QHZntjR1jLC1ZhhufwrgnZ1qM21nQBFL5ca9KZXiewdm1Dr7TgKa2A7R5HANHjP9wBV2SvthjDLkya8Sw2tz7QxQ=="
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "c": {
+                  "integerValue": "8"
+                }
+              }
+            }
+          ],
+          "executionTime": "2026-11-04T18:06:44.458320Z"
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "dml_in_existing_transaction",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-tx-existing"
+                        },
+                        "title": {
+                          "stringValue": "existing-tx"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        },
+        "transaction": "ERGsa08TBRisIlkAdsw0yN3qze3XJc7D88hKovvJDiPIN7QHZntjR1jLC1ZhhufwrgnZ1qM21nQBFL5ca9KZXiewdm1Dr7TgKa2A7R5HANHjP9wBV2SvthjDLkya8Sw2tz7QxQ=="
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "read_after_write_in_transaction",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "aggregate",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "c": {
+                          "functionValue": {
+                            "name": "count"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "mapValue": {}
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "transaction": "ERGsa08TBRisIlkAdsw0yN3qze3XJc7D88hKovvJDiPIN7QHZntjR1jLC1ZhhufwrgnZ1qM21nQBFL5ca9KZXiewdm1Dr7TgKa2A7R5HANHjP9wBV2SvthjDLkya8Sw2tz7QxQ=="
+      },
+      "error": {
+        "code": 400,
+        "message": "Cannot have reads after the first write in a Firestore transaction.",
+        "status": "FAILED_PRECONDITION",
+        "details": [
+          {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "READS_AFTER_WRITE_NOT_ALLOWED",
+            "domain": "firestore.googleapis.com"
+          }
+        ]
+      },
+      "replay": false
+    },
+    {
+      "name": "dml_in_existing_transaction_auto_commit",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-tx-existing-auto"
+                        },
+                        "title": {
+                          "stringValue": "existing-auto"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        },
+        "transaction": "EVOTKs5R5ayEIlkAdsw0yLlEmUMZCMo0lRUeLpxcNio9EAUtQSi0dzU9BvL4MOLGMK44m0wSbhY43EMfu5j4dmSW+3F57cWIx8g0vialvW8InW5oJ7Vja7ruuyMPj0QHeZWgfg==",
+        "autoCommitTransaction": true
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "dml_in_existing_transaction_rolled_back",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-tx-rolled-back"
+                        },
+                        "title": {
+                          "stringValue": "rolled-back"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        },
+        "transaction": "EUfkURZaNXvrIlkAdsw0yHSp55Gbd6DOf8l4FQ0N2xdG2j5QvlV9ye9ufuyJH2xCrnXk5lN0fFAo9vC9TbXnqHO088JTRmsDfhUof5p2p6xDCjc/PomP8boXCZb4mpzUhuxKuQ=="
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "dml_at_read_time",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-read-time"
+                        },
+                        "title": {
+                          "stringValue": "rt"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "insert"
+              }
+            ]
+          }
+        },
+        "readTime": "2026-11-04T18:30:00Z"
+      },
+      "error": {
+        "code": 400,
+        "message": "Snapshot concurrency is not supported for DML pipelines.",
+        "status": "INVALID_ARGUMENT",
+        "details": [
+          {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "SNAPSHOT_TRANSACTION_DML",
+            "domain": "firestore.googleapis.com"
+          }
+        ]
+      },
+      "replay": false
+    }
+  ]
+}

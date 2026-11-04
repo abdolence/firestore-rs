@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 400,
+    "message": "Enterprise Edition does not support updating field index configuration.",
+    "status": "INVALID_ARGUMENT"
+  }
+}

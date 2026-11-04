@@ -1,0 +1,217 @@
+{
+  "description": "aggregate with accumulators and groups: results carry no name",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "aggregate",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "avg_rating": {
+                      "functionValue": {
+                        "name": "average",
+                        "args": [
+                          {
+                            "fieldReferenceValue": "rating"
+                          }
+                        ]
+                      }
+                    },
+                    "books": {
+                      "functionValue": {
+                        "name": "count"
+                      }
+                    },
+                    "max_pages": {
+                      "functionValue": {
+                        "name": "maximum",
+                        "args": [
+                          {
+                            "fieldReferenceValue": "pages"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "mapValue": {
+                  "fields": {
+                    "genre": {
+                      "fieldReferenceValue": "genre"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "max_pages": {
+              "integerValue": "328"
+            },
+            "books": {
+              "integerValue": "2"
+            },
+            "avg_rating": {
+              "doubleValue": 4.15
+            },
+            "genre": {
+              "stringValue": "Dystopian"
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Romance"
+            },
+            "max_pages": {
+              "integerValue": "432"
+            },
+            "books": {
+              "integerValue": "1"
+            },
+            "avg_rating": {
+              "doubleValue": 4.5
+            }
+          }
+        },
+        {
+          "fields": {
+            "books": {
+              "integerValue": "1"
+            },
+            "avg_rating": {
+              "doubleValue": 4.3
+            },
+            "genre": {
+              "stringValue": "Magical Realism"
+            },
+            "max_pages": {
+              "integerValue": "417"
+            }
+          }
+        },
+        {
+          "fields": {
+            "genre": {
+              "stringValue": "Fantasy"
+            },
+            "max_pages": {
+              "integerValue": "1178"
+            },
+            "books": {
+              "integerValue": "1"
+            },
+            "avg_rating": {
+              "doubleValue": 4.7
+            }
+          }
+        },
+        {
+          "fields": {
+            "max_pages": {
+              "integerValue": "281"
+            },
+            "avg_rating": {
+              "doubleValue": 4.2
+            },
+            "genre": {
+              "stringValue": "Southern Gothic"
+            },
+            "books": {
+              "integerValue": "1"
+            }
+          }
+        },
+        {
+          "fields": {
+            "avg_rating": {
+              "doubleValue": 4.4
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "max_pages": {
+              "integerValue": "412"
+            },
+            "books": {
+              "integerValue": "2"
+            }
+          }
+        },
+        {
+          "fields": {
+            "max_pages": {
+              "integerValue": "671"
+            },
+            "books": {
+              "integerValue": "1"
+            },
+            "avg_rating": {
+              "doubleValue": 4.3
+            },
+            "genre": {
+              "stringValue": "Psychological Thriller"
+            }
+          }
+        },
+        {
+          "fields": {
+            "max_pages": {
+              "integerValue": "180"
+            },
+            "avg_rating": {
+              "doubleValue": 4
+            },
+            "books": {
+              "integerValue": "1"
+            },
+            "genre": {
+              "stringValue": "Modernist"
+            }
+          }
+        },
+        {
+          "fields": {
+            "books": {
+              "integerValue": "1"
+            },
+            "avg_rating": {
+              "nullValue": null
+            },
+            "max_pages": {
+              "integerValue": "12"
+            },
+            "genre": {
+              "nullValue": null
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:53.755047Z"
+    }
+  ]
+}

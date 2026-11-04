@@ -1,0 +1,8 @@
+{
+  "fields": [
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/__default__/fields/*",
+      "indexConfig": {}
+    }
+  ]
+}

@@ -36,6 +36,14 @@ pub struct FirestoreVectorIndexConfig {
     pub dimension: u32,
 }
 
+/// A geospatial search index's configuration.
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Builder)]
+pub struct FirestoreGeoIndexConfig {
+    /// Leaves GeoJSON points in the field out of the index. Firestore indexes them by default.
+    #[default = "false"]
+    pub geo_json_indexing_disabled: bool,
+}
+
 /// How a single field participates in an index.
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum FirestoreIndexFieldMode {
@@ -45,6 +53,30 @@ pub enum FirestoreIndexFieldMode {
     ArrayContains,
     /// A flat vector index of a fixed dimension, for nearest-neighbor search.
     Vector(FirestoreVectorIndexConfig),
+    /// A text search index: the field's text is tokenised and matched anywhere in the field,
+    /// the one kind of text index Firestore offers. Enterprise edition only.
+    Text,
+    /// A geospatial search index. Enterprise edition only.
+    Geo(FirestoreGeoIndexConfig),
+}
+
+/// The index-level options of a search index.
+#[derive(Debug, PartialEq, Eq, Clone, Builder)]
+pub struct FirestoreSearchIndexOptions {
+    /// The BCP 47 language code text fields are indexed in, unless a document overrides it.
+    /// When this is unset, Firestore detects each document's language and lists the option as
+    /// `und`, the BCP 47 code for an undetermined language.
+    pub text_language: Option<String>,
+    /// The field that holds a document's own language code, overriding `text_language` for
+    /// that document. When this is unset, Firestore reads `language` and lists that.
+    pub text_language_override_field_path: Option<String>,
+}
+
+impl FirestoreSearchIndexOptions {
+    /// The text language Firestore lists for a search index created without one.
+    pub(crate) const DEFAULT_TEXT_LANGUAGE: &'static str = "und";
+    /// The override field Firestore lists for a search index created without one.
+    pub(crate) const DEFAULT_TEXT_LANGUAGE_OVERRIDE_FIELD_PATH: &'static str = "language";
 }
 
 /// One field of a composite index: its path and how it participates.
@@ -73,6 +105,8 @@ pub struct FirestoreCompositeIndex {
     pub fields: Vec<FirestoreIndexField>,
     /// Whether this index serves a single collection or every collection with the same ID.
     pub query_scope: FirestoreIndexQueryScope,
+    /// The index-level options of a search index, `None` for Firestore's defaults.
+    pub search_options: Option<FirestoreSearchIndexOptions>,
 }
 
 impl FirestoreCompositeIndex {
@@ -80,6 +114,7 @@ impl FirestoreCompositeIndex {
         Self {
             fields,
             query_scope: FirestoreIndexQueryScope::Collection,
+            search_options: None,
         }
     }
 
@@ -87,6 +122,14 @@ impl FirestoreCompositeIndex {
     #[inline]
     pub fn all_descendants(mut self) -> Self {
         self.query_scope = FirestoreIndexQueryScope::AllDescendants;
+        self
+    }
+
+    /// Sets the options of a search index, an index of [`Text`](FirestoreIndexFieldMode::Text)
+    /// or [`Geo`](FirestoreIndexFieldMode::Geo) fields.
+    #[inline]
+    pub fn search_options(mut self, options: FirestoreSearchIndexOptions) -> Self {
+        self.search_options = Some(options);
         self
     }
 }
@@ -408,11 +451,11 @@ pub struct FirestoreListedField {
 /// One listed index or field resource this crate's domain model cannot represent, kept for
 /// visibility instead of being silently dropped.
 ///
-/// Covers a search index, a MongoDB-compat or Datastore-mode API scope, a `COLLECTION_RECURSIVE`
-/// query scope, and an unspecified field order - none of which a declared [`FirestoreCompositeIndex`]
-/// or [`FirestoreFieldOverride`] can express. The planner never proposes deleting or reverting
-/// one of these, even when pruning, because it cannot know that doing so is what the declaration
-/// intends.
+/// Covers a search config other than one text or geo spec, a MongoDB-compat or Datastore-mode API
+/// scope, a `COLLECTION_RECURSIVE` query scope, and an unspecified field order - none of which a
+/// declared [`FirestoreCompositeIndex`] or [`FirestoreFieldOverride`] can express. The planner
+/// never proposes deleting or reverting one of these, even when pruning, because it cannot know
+/// that doing so is what the declaration intends.
 #[derive(Debug, PartialEq, Clone)]
 pub struct FirestoreUnrecognisedIndexItem {
     /// The resource name Firestore assigned it.
@@ -611,9 +654,9 @@ pub struct FirestoreIndexDeletesWithheld {
 /// Why a pruning `.sync()` sent none of its planned index deletes.
 #[derive(Debug, PartialEq, Clone)]
 pub enum FirestoreIndexDeletesWithheldReason {
-    /// `CreateIndex` answered `ALREADY_EXISTS` for these declared indexes, although the listing
-    /// matched none of them. Firestore holds an index it counts as equivalent, which may be one of
-    /// the indexes planned for deletion.
+    /// `CreateIndex` answered `ALREADY_EXISTS` for these declared indexes, which the listing the
+    /// sync planned from did not show. A fresh listing does, so another writer created them since,
+    /// and it may be changing the indexes planned for deletion too.
     AlreadyExists(Vec<FirestoreCompositeIndex>),
     /// These indexes, created by the same sync, had not finished building: an operation failed,
     /// or the sync's deadline passed first. A delete sent then could remove the index queries use
@@ -651,7 +694,8 @@ const MAX_INDEX_FIELDS_WITH_IMPLIED_NAME: usize = 100;
 ///
 /// # Errors
 /// Returns [`FirestoreError::InvalidParametersError`] if a composite index has fewer than two
-/// fields (a lone vector field excepted), more than 100 fields counting an implied `__name__`,
+/// fields (a lone vector, text or geo field excepted), mixes text or geo fields with other
+/// fields, has more than 100 fields counting an implied `__name__`,
 /// more than one vector field, a vector field that is not last, a vector dimension outside
 /// `1..=2048`, an empty field path, or duplicates an earlier declared index once a trailing
 /// `__name__` is normalised away; if a field override path is declared more than once, declares
@@ -705,12 +749,36 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
             .map(|(field_position, _)| field_position)
             .collect();
 
-        let is_lone_vector_field = index.fields.len() == 1 && vector_positions == [0];
-        if index.fields.len() < 2 && !is_lone_vector_field {
+        // Firestore refuses the mix: "Mixing search and non-search indexes is not supported."
+        let search_fields = index
+            .fields
+            .iter()
+            .filter(|field| {
+                matches!(
+                    field.mode,
+                    FirestoreIndexFieldMode::Text | FirestoreIndexFieldMode::Geo(_)
+                )
+            })
+            .count();
+        if search_fields > 0 && search_fields < index.fields.len() {
             return Err(FirestoreError::invalid_parameters(
                 "composite_indexes",
                 format!(
-                    "index {position} needs at least two fields, or exactly one vector field, has {}",
+                    "index {position} mixes {search_fields} text or geo fields with {} other \
+                     fields; a search index holds only text and geo fields",
+                    index.fields.len() - search_fields
+                ),
+            ));
+        }
+
+        let is_lone_vector_or_search_field =
+            index.fields.len() == 1 && (vector_positions == [0] || search_fields == 1);
+        if index.fields.len() < 2 && !is_lone_vector_or_search_field {
+            return Err(FirestoreError::invalid_parameters(
+                "composite_indexes",
+                format!(
+                    "index {position} needs at least two fields, or exactly one vector, text or \
+                     geo field, has {}",
                     index.fields.len()
                 ),
             ));
@@ -933,6 +1001,11 @@ impl Display for FirestoreIndexFieldMode {
             }
             FirestoreIndexFieldMode::ArrayContains => f.write_str("CONTAINS"),
             FirestoreIndexFieldMode::Vector(vector) => write!(f, "VECTOR({})", vector.dimension),
+            FirestoreIndexFieldMode::Text => f.write_str("TEXT"),
+            FirestoreIndexFieldMode::Geo(geo) if geo.geo_json_indexing_disabled => {
+                f.write_str("GEO(geo_json_indexing_disabled)")
+            }
+            FirestoreIndexFieldMode::Geo(_) => f.write_str("GEO"),
         }
     }
 }
@@ -947,7 +1020,17 @@ impl Display for FirestoreCompositeIndex {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "[{}] (", self.query_scope)?;
         write_comma_joined(f, &self.fields)?;
-        write!(f, ")")
+        write!(f, ")")?;
+        let Some(options) = &self.search_options else {
+            return Ok(());
+        };
+        if let Some(language) = &options.text_language {
+            write!(f, " text_language={language}")?;
+        }
+        if let Some(path) = &options.text_language_override_field_path {
+            write!(f, " text_language_override_field_path={path}")?;
+        }
+        Ok(())
     }
 }
 
@@ -1329,6 +1412,50 @@ mod tests {
             ),
         ]);
         assert!(validate_composite_indexes(&[index]).is_ok());
+    }
+
+    #[test]
+    fn a_search_index_must_not_mix_search_and_non_search_fields() {
+        let index = FirestoreCompositeIndex::new(vec![
+            field("menu", FirestoreIndexFieldMode::Text),
+            asc("rating"),
+        ]);
+        let err = validate_composite_indexes(&[index]).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                FirestoreError::InvalidParametersError(invalid)
+                    if invalid.public.field == "composite_indexes"
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_search_index_displays_its_field_modes_and_options() {
+        let index = FirestoreCompositeIndex::new(vec![
+            field("menu", FirestoreIndexFieldMode::Text),
+            field(
+                "location",
+                FirestoreIndexFieldMode::Geo(
+                    FirestoreGeoIndexConfig::new().with_geo_json_indexing_disabled(true),
+                ),
+            ),
+            field(
+                "area",
+                FirestoreIndexFieldMode::Geo(FirestoreGeoIndexConfig::new()),
+            ),
+        ])
+        .search_options(
+            FirestoreSearchIndexOptions::new()
+                .with_text_language("en".to_string())
+                .with_text_language_override_field_path("lang".to_string()),
+        );
+        assert_eq!(
+            index.to_string(),
+            "[COLLECTION] (menu TEXT, location GEO(geo_json_indexing_disabled), area GEO) \
+             text_language=en text_language_override_field_path=lang"
+        );
     }
 
     #[test]

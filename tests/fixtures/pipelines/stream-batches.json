@@ -1,0 +1,1472 @@
+{
+  "description": "a result stream of more than one message",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-bulk"
+              }
+            ]
+          },
+          {
+            "name": "sort",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "expression": {
+                      "fieldReferenceValue": "n"
+                    },
+                    "direction": {
+                      "stringValue": "ascending"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "limit",
+            "args": [
+              {
+                "integerValue": "200"
+              }
+            ]
+          },
+          {
+            "name": "select",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "n": {
+                      "fieldReferenceValue": "n"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "n": {
+              "integerValue": "0"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "1"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "2"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "3"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "4"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "5"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "6"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "7"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "8"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "9"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "10"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "11"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "12"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "13"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "14"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "15"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "16"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "17"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "18"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "19"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "20"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "21"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "22"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "23"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "24"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "25"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "26"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "27"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "28"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "29"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "30"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "31"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "32"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "33"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "34"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "35"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "36"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "37"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "38"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "39"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "40"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "41"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "42"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "43"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "44"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "45"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "46"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "47"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "48"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "49"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "50"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "51"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "52"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "53"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "54"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "55"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "56"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "57"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "58"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "59"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "60"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "61"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "62"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "63"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "64"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "65"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "66"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "67"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "68"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "69"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "70"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "71"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "72"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "73"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "74"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "75"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "76"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "77"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "78"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "79"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "80"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "81"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "82"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "83"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "84"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "85"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "86"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "87"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "88"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "89"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "90"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "91"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "92"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "93"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "94"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "95"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "96"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "97"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "98"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "99"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "100"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "101"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "102"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "103"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "104"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "105"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "106"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "107"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "108"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "109"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "110"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "111"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "112"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "113"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "114"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "115"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "116"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "117"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "118"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "119"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "120"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "121"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "122"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "123"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "124"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "125"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "126"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "127"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "128"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "129"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "130"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "131"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "132"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "133"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "134"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "135"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "136"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "137"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "138"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "139"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "140"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "141"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "142"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "143"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "144"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "145"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "146"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "147"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "148"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "149"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "150"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "151"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "152"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "153"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "154"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "155"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "156"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "157"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "158"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "159"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "160"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "161"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "162"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "163"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "164"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "165"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "166"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "167"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "168"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "169"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "170"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "171"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "172"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "173"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "174"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T18:17:43.002135Z"
+    },
+    {
+      "results": [
+        {
+          "fields": {
+            "n": {
+              "integerValue": "175"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "176"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "177"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "178"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "179"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "180"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "181"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "182"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "183"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "184"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "185"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "186"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "187"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "188"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "189"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "190"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "191"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "192"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "193"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "194"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "195"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "196"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "197"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "198"
+            }
+          }
+        },
+        {
+          "fields": {
+            "n": {
+              "integerValue": "199"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T18:17:43.002135Z"
+    }
+  ]
+}

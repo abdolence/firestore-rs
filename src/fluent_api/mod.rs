@@ -34,6 +34,40 @@ pub mod insert_builder;
 /// Reach for this from [`FirestoreExprBuilder::list()`](FirestoreExprBuilder::list).
 pub mod listing_builder;
 
+/// Builds and runs pipelines, the queries of Firestore Enterprise edition: a source followed by
+/// stages such as `filter`, `fields` and `sort`.
+///
+/// Reach for this from [`FirestoreExprBuilder::pipeline()`](FirestoreExprBuilder::pipeline).
+pub mod pipeline_builder;
+
+/// Starts the expressions of a pipeline: fields, constants, variables and the logical functions.
+///
+/// Reach for this as the argument of a pipeline closure such as `.fields(|e| ..)`, not directly.
+pub mod pipeline_expr_builder;
+
+/// Builds the conditions of a pipeline's `filter`, the way a Core query builds its filter.
+///
+/// Reach for this as the argument of `.filter(|q| ..)` on a pipeline builder, not directly.
+pub mod pipeline_filter_builder;
+
+mod pipeline_function_builder;
+
+/// Builds the text and geo search of a pipeline.
+///
+/// Reach for this via `.search()` on a pipeline builder, not directly.
+pub mod pipeline_search_builder;
+
+/// Builds the further pipeline stages, such as `aggregate` and `union`, and subqueries.
+///
+/// Reach for this via the stage methods of a pipeline builder, not directly.
+pub mod pipeline_stage_builder;
+
+/// Builds the write stages of a pipeline: `update`, `delete`, `insert` and `upsert`.
+///
+/// Reach for this via `.update()`, `.delete()`, `.insert()` or `.upsert()` on a pipeline builder,
+/// not directly.
+pub mod pipeline_write_builder;
+
 /// Builds `COUNT`, `SUM` and `AVG` aggregations for a query.
 ///
 /// Reach for this via `.aggregate()` on a select builder, not directly.
@@ -65,11 +99,12 @@ use crate::delete_builder::FirestoreDeleteInitialBuilder;
 use crate::fluent_api::select_builder::FirestoreSelectInitialBuilder;
 use crate::insert_builder::FirestoreInsertInitialBuilder;
 use crate::listing_builder::FirestoreListingInitialBuilder;
+use crate::pipeline_builder::FirestorePipelineVerbBuilder;
 use crate::update_builder::FirestoreUpdateInitialBuilder;
 use crate::{
     FirestoreAggregatedQuerySupport, FirestoreCreateSupport, FirestoreDb, FirestoreDeleteSupport,
     FirestoreGetByIdSupport, FirestoreListenSupport, FirestoreListingSupport,
-    FirestoreQuerySupport, FirestoreUpdateSupport,
+    FirestorePipelineSupport, FirestoreQuerySupport, FirestoreUpdateSupport,
 };
 
 /// The entry point for building fluent Firestore expressions.
@@ -148,6 +183,51 @@ where
     #[inline]
     pub fn indexes(self) -> crate::index_builder::FirestoreIndexesInitialBuilder<'a, D> {
         crate::index_builder::FirestoreIndexesInitialBuilder::new(self.db)
+    }
+}
+
+// A separate impl block, bounded only by `FirestorePipelineSupport`, as `indexes()` is.
+impl<'a, D> FirestoreExprBuilder<'a, D>
+where
+    D: FirestorePipelineSupport + Clone + Send + Sync + 'static,
+{
+    /// Starts a pipeline, which needs an Enterprise edition database. Continue with `.select()` to
+    /// read documents, then a source such as `.from()`.
+    ///
+    /// ```rust,no_run
+    /// use firestore::{path, FirestoreDb, FirestoreResult};
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Book {
+    ///     title: String,
+    ///     genre: String,
+    ///     rating: f64,
+    /// }
+    ///
+    /// # async fn example(db: FirestoreDb) -> FirestoreResult<()> {
+    /// let books: Vec<Book> = db
+    ///     .fluent()
+    ///     .pipeline()
+    ///     .select()
+    ///     .from("books")
+    ///     .filter(|q| {
+    ///         q.for_all([
+    ///             q.field(path!(Book::genre)).eq("Dystopian"),
+    ///             q.field(path!(Book::rating)).greater_than_or_equal(4.0),
+    ///         ])
+    ///     })
+    ///     .sort(|e| [e.field(path!(Book::rating)).desc()])
+    ///     .limit(10)
+    ///     .obj::<Book>()
+    ///     .query()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn pipeline(self) -> FirestorePipelineVerbBuilder<'a, D> {
+        FirestorePipelineVerbBuilder::new(self.db)
     }
 }
 

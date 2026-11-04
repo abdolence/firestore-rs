@@ -189,6 +189,54 @@ The ID is shared across the whole database, including subcollections your own co
 to. A statement owns the collection group, so `.prune_undeclared()` on `collection_group("posts")`
 reaches the indexes of every `posts` collection in the database.
 
+## Text and geo search indexes
+
+The pipeline [search stage](./pipeline-search.md) runs against search indexes, which only a
+database of the Firestore Enterprise edition has. A text index covers one or more string fields,
+and a geo index covers a geo point field. Declare them as composite indexes with `.text()` and
+`.geo()` on a field:
+
+```rust,no_run
+# use firestore::*;
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+db.fluent()
+    .indexes()
+    .collection_group("restaurants")
+    .composite(|i| {
+        i.indexes([
+            i.index([i.field("menu").text(), i.field("description").text()])
+                .search_options(
+                    FirestoreSearchIndexOptions::new().with_text_language("en".to_string()),
+                ),
+            i.index([i.field("location").geo()]),
+        ])
+    })
+    .sync()
+    .await?;
+# Ok(())
+# }
+```
+
+- A search index holds text and geo fields only. An index that mixes them with ordered, array or
+  vector fields is rejected with `InvalidParametersError` at `.plan()`/`.sync()`;
+- A text search covers all the text fields of the index it uses, and Firestore offers no index
+  that matches one field by name;
+- `.search_options(..)` sets the options of a text index. `text_language` is the BCP 47 language
+  tag the fields are indexed in, such as `en`; when it is left unset, Firestore detects each
+  document's language and lists the option as `und`, the code for an undetermined language.
+  `text_language_override_field_path` names the field that holds a document's own language, and
+  Firestore reads `language` when it is unset. An index declared without options matches the
+  index Firestore lists with those defaults;
+- `.geo_with(config)` takes a `FirestoreGeoIndexConfig` that can leave GeoJSON points out of a geo
+  index, which Firestore indexes by default;
+- `.all_descendants()` on the index scopes it to a collection group, which a collection-group
+  search needs.
+
+An Enterprise edition database has no single-field index overrides, and Firestore refuses to
+write one. When `.plan()` or `.sync()` would have to write a `.field_overrides(..)` entry there,
+it fails with `InvalidParametersError` before anything is written. Declare the indexes a
+pipeline needs as composite indexes.
+
 ## Removing what you no longer declare
 
 By default, an index, override or TTL field Firestore lists for the owned group but this
@@ -221,10 +269,15 @@ minutes. The wait ends by the sync's deadline: the `.wait_until_ready(timeout)` 
 set one, 30 minutes from the start of the sync otherwise. If a new index fails to build, or is
 still building at the deadline, the sync deletes nothing and returns the error.
 
-The sync also deletes nothing when Firestore answers a `CreateIndex` with `ALREADY_EXISTS`. That
-means Firestore holds an index it counts as the declared one, but the library did not match it to
-any listed index, so it can be one of the indexes planned for deletion. The sync logs a warning
-naming the declared index and carries on with everything else.
+The sync also deletes nothing when Firestore answers a `CreateIndex` with `ALREADY_EXISTS` and a
+fresh listing shows a matching index: another deployment created it after the sync planned its
+changes. The sync reports the index as unchanged, logs a warning naming it and carries on with
+everything else.
+
+When the fresh listing shows no matching index, the sync returns the `ALREADY_EXISTS` error
+instead of reporting the index as unchanged. On an Enterprise edition database Firestore keeps
+answering `ALREADY_EXISTS` for several minutes after an index with the same fields is deleted,
+while the listing no longer shows it. Run the sync again once the answer changes.
 
 In both cases `withheld_deletes` on the report lists the indexes left in place and the reason.
 Reverts and TTL disables do not wait for new indexes.
@@ -341,8 +394,8 @@ The job's service account needs `roles/datastore.indexAdmin`, the role `.sync()`
 Replicas that only call `.plan()` need `roles/datastore.viewer`.
 
 When two syncs do overlap regardless, index creates and deletes converge on their own: a
-`CreateIndex` answered `ALREADY_EXISTS`, and a `DeleteIndex` answered `NOT_FOUND`, both count as
-done. A field revert Firestore refuses because another writer already reverted it counts as done
+`CreateIndex` answered `ALREADY_EXISTS` for an index a fresh listing shows, and a `DeleteIndex`
+answered `NOT_FOUND`, both count as done. A field revert Firestore refuses because another writer already reverted it counts as done
 too. One refused while another writer's revert is still in progress is polled until that revert
 finishes, within this sync's deadline, and then counts as done. A TTL disable does not get that wait: Firestore reports no in-progress state for a TTL
 field, so a disable refused while another writer's disable is still running fails. It converges
@@ -475,10 +528,11 @@ Field paths compare in one spelling, so `` `expires_at` `` and `expires_at`, or 
 ## Unrecognised items
 
 Firestore can list index or field shapes this crate's domain model has no representation for: a
-search index, a MongoDB-compat or Datastore-mode API scope, a `COLLECTION_RECURSIVE` query scope,
-or an unspecified field order. These are reported in `unrecognised`, with the reason, and never
-proposed for deletion or reversion, even with `.prune_undeclared()` set, since the plan cannot
-know that removing them is what the declaration intends.
+search field configured other than as one text or geo spec, a MongoDB-compat or Datastore-mode
+API scope, a `COLLECTION_RECURSIVE` query scope, or an unspecified field order. These are
+reported in `unrecognised`, with the reason, and never proposed for deletion or reversion, even
+with `.prune_undeclared()` set, since the plan cannot know that removing them is what the
+declaration intends.
 
 ## Logs and spans
 

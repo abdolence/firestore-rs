@@ -61,6 +61,7 @@ regex = "1.13"
 serde_json = "1"
 
 [dev-dependencies]
+base64 = "0.22"
 h2 = "0.4"
 cargo-husky = { version = "1.5", default-features = false, features = ["run-for-all", "prepush-hook", "run-cargo-fmt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -128,6 +129,36 @@ required-features = ["caching-memory"]
 name = "caching_watched_documents_test"
 path = "tests/caching_watched_documents_test.rs"
 required-features = ["caching-memory", "caching-persistent"]
+
+[[test]]
+name = "pipeline-integration-tests"
+path = "tests/pipeline-integration-tests.rs"
+required-features = ["admin"]
+
+[[test]]
+name = "pipeline-stages-tests"
+path = "tests/pipeline-stages-tests.rs"
+required-features = ["admin"]
+
+[[test]]
+name = "pipeline-functions-tests"
+path = "tests/pipeline-functions-tests.rs"
+required-features = ["admin"]
+
+[[test]]
+name = "pipeline-search-tests"
+path = "tests/pipeline-search-tests.rs"
+required-features = ["admin"]
+
+[[test]]
+name = "pipeline-null-tests"
+path = "tests/pipeline-null-tests.rs"
+required-features = ["admin"]
+
+[[test]]
+name = "pipeline-dml-tests"
+path = "tests/pipeline-dml-tests.rs"
+required-features = ["admin"]
 
 [[test]]
 name = "admin-indexes-tests"

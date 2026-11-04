@@ -720,8 +720,9 @@ impl<'de> serde::Deserializer<'de> for FirestoreValue {
 ///
 /// Besides the document's own fields, `T` can read four synthetic fields added here:
 /// `_firestore_id` (the last path segment of the document name) and `_firestore_full_id` (the
-/// full document name) always, plus `_firestore_created` and `_firestore_updated` when Firestore
-/// returned those timestamps. Map a struct field onto one with, for example,
+/// full document name) when the document has a name, which an aggregation result or the result
+/// of a pipeline's `select` does not, plus `_firestore_created` and `_firestore_updated` when
+/// Firestore returned those timestamps. Map a struct field onto one with, for example,
 /// `#[serde(alias = "_firestore_id")]`.
 ///
 /// Returns an error if `T`'s `Deserialize` impl rejects the document's shape - a missing
@@ -739,27 +740,21 @@ where
         fields.insert(k.to_owned(), v.to_owned());
     }
 
-    let doc_name = document.name.clone();
-
-    let doc_id = doc_name
-        .split('/')
-        .next_back()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| doc_name.clone());
-
-    fields.insert(
-        "_firestore_id".to_string(),
-        gcloud_sdk::google::firestore::v1::Value {
-            value_type: Some(value::ValueType::StringValue(doc_id)),
-        },
-    );
-
-    fields.insert(
-        "_firestore_full_id".to_string(),
-        gcloud_sdk::google::firestore::v1::Value {
-            value_type: Some(value::ValueType::StringValue(doc_name.clone())),
-        },
-    );
+    if !document.name.is_empty() {
+        let (_, document_id) = crate::db::split_document_path(&document.name);
+        fields.insert(
+            "_firestore_id".to_string(),
+            gcloud_sdk::google::firestore::v1::Value {
+                value_type: Some(value::ValueType::StringValue(document_id.to_string())),
+            },
+        );
+        fields.insert(
+            "_firestore_full_id".to_string(),
+            gcloud_sdk::google::firestore::v1::Value {
+                value_type: Some(value::ValueType::StringValue(document.name.clone())),
+            },
+        );
+    }
 
     if let Some(created_time) = &document.create_time {
         fields.insert(
@@ -786,8 +781,8 @@ where
     });
 
     T::deserialize(firestore_value).map_err(|err| match err {
-        FirestoreError::DeserializeError(e) => {
-            FirestoreError::DeserializeError(e.with_document_path(doc_name))
+        FirestoreError::DeserializeError(e) if !document.name.is_empty() => {
+            FirestoreError::DeserializeError(e.with_document_path(document.name.clone()))
         }
         _ => err,
     })

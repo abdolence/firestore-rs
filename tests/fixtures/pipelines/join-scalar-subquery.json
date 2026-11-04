@@ -1,0 +1,172 @@
+{
+  "description": "scalar subquery with an aggregate: null when nothing matches",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-restaurants"
+              }
+            ]
+          },
+          {
+            "name": "where",
+            "args": [
+              {
+                "functionValue": {
+                  "name": "equal",
+                  "args": [
+                    {
+                      "fieldReferenceValue": "cuisine"
+                    },
+                    {
+                      "stringValue": "breakfast"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "let",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "rname": {
+                      "fieldReferenceValue": "__name__"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "select",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "name": {
+                      "fieldReferenceValue": "name"
+                    },
+                    "avg_rating": {
+                      "functionValue": {
+                        "name": "scalar",
+                        "args": [
+                          {
+                            "pipelineValue": {
+                              "stages": [
+                                {
+                                  "name": "collection_group",
+                                  "args": [
+                                    {
+                                      "referenceValue": ""
+                                    },
+                                    {
+                                      "stringValue": "reviews"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "where",
+                                  "args": [
+                                    {
+                                      "functionValue": {
+                                        "name": "equal",
+                                        "args": [
+                                          {
+                                            "fieldReferenceValue": "restaurant"
+                                          },
+                                          {
+                                            "variableReferenceValue": "rname"
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "aggregate",
+                                  "args": [
+                                    {
+                                      "mapValue": {
+                                        "fields": {
+                                          "avg": {
+                                            "functionValue": {
+                                              "name": "average",
+                                              "args": [
+                                                {
+                                                  "fieldReferenceValue": "rating"
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "mapValue": {
+                                        "fields": {}
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "avg_rating": {
+              "doubleValue": 4.5
+            },
+            "name": {
+              "stringValue": "Sunrise Waffle House"
+            }
+          }
+        },
+        {
+          "fields": {
+            "avg_rating": {
+              "nullValue": null
+            },
+            "name": {
+              "stringValue": "Waffle and Bacon Co"
+            }
+          }
+        },
+        {
+          "fields": {
+            "avg_rating": {
+              "doubleValue": 3
+            },
+            "name": {
+              "stringValue": "Pancake Palace"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T18:03:49.047569Z"
+    }
+  ]
+}

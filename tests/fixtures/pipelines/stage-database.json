@@ -1,0 +1,138 @@
+{
+  "description": "database source with limit",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "database"
+          },
+          {
+            "name": "limit",
+            "args": [
+              {
+                "integerValue": "2"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-11",
+          "fields": {
+            "author": {
+              "stringValue": "Anonymous"
+            },
+            "published": {
+              "integerValue": "2024"
+            },
+            "title": {
+              "stringValue": "Untitled draft"
+            },
+            "genre": {
+              "nullValue": null
+            },
+            "tags": {
+              "arrayValue": {}
+            },
+            "pages": {
+              "integerValue": "12"
+            },
+            "stock": {
+              "integerValue": "0"
+            }
+          },
+          "createTime": "2026-11-04T17:51:53.592249Z",
+          "updateTime": "2026-11-04T17:51:53.592249Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-01",
+          "fields": {
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.9
+                        },
+                        {
+                          "doubleValue": 0.1
+                        },
+                        {
+                          "doubleValue": 0.2
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "title": {
+              "stringValue": "The Hitchhiker's Guide to the Galaxy"
+            },
+            "pages": {
+              "integerValue": "224"
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "stock": {
+              "integerValue": "3"
+            },
+            "published": {
+              "integerValue": "1979"
+            },
+            "rating": {
+              "doubleValue": 4.2
+            },
+            "author": {
+              "stringValue": "Douglas Adams"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "comedy"
+                  },
+                  {
+                    "stringValue": "space"
+                  },
+                  {
+                    "stringValue": "adventure"
+                  }
+                ]
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "hugo": {
+                    "booleanValue": true
+                  },
+                  "nebula": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:58.838846Z"
+    }
+  ]
+}

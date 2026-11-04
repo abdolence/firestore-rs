@@ -10,17 +10,21 @@ use crate::errors::FirestoreError;
 use crate::{
     FirestoreCompositeIndex, FirestoreExplicitFieldOverride, FirestoreFieldOverride,
     FirestoreFieldOverrideIndex, FirestoreFieldOverrideOutcome, FirestoreFieldTtlOutcome,
-    FirestoreFieldTtlState, FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexParams,
-    FirestoreIndexPlan, FirestoreIndexQueryScope, FirestoreIndexState,
+    FirestoreFieldTtlState, FirestoreGeoIndexConfig, FirestoreIndexField, FirestoreIndexFieldMode,
+    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexQueryScope, FirestoreIndexState,
     FirestoreListedCompositeIndex, FirestoreListedField, FirestoreQueryDirection, FirestoreResult,
-    FirestoreUnrecognisedIndexItem, FirestoreVectorIndexConfig,
+    FirestoreSearchIndexOptions, FirestoreUnrecognisedIndexItem, FirestoreVectorIndexConfig,
+};
+use gcloud_sdk::google::firestore::admin::v1::index::index_field::search_config::{
+    SearchGeoSpec, SearchTextIndexSpec, SearchTextSpec, TextIndexType, TextMatchType,
 };
 use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
-    vector_config, ArrayConfig as ProtoArrayConfig, Order as ProtoOrder, ValueMode,
-    VectorConfig as ProtoVectorConfig,
+    vector_config, ArrayConfig as ProtoArrayConfig, Order as ProtoOrder,
+    SearchConfig as ProtoSearchConfig, ValueMode, VectorConfig as ProtoVectorConfig,
 };
 use gcloud_sdk::google::firestore::admin::v1::index::{
-    ApiScope, IndexField as ProtoIndexField, QueryScope as ProtoQueryScope, State as ProtoState,
+    ApiScope, IndexField as ProtoIndexField, QueryScope as ProtoQueryScope, SearchIndexOptions,
+    State as ProtoState,
 };
 use gcloud_sdk::google::firestore::admin::v1::{field, Field as ProtoField, Index as ProtoIndex};
 use std::collections::HashSet;
@@ -181,12 +185,30 @@ impl TryFrom<FirestoreIndexFieldMode> for ValueMode {
                     r#type: Some(vector_config::Type::Flat(vector_config::FlatIndex {})),
                 })
             }
+            FirestoreIndexFieldMode::Text => ValueMode::SearchConfig(ProtoSearchConfig {
+                text_spec: Some(SearchTextSpec {
+                    index_specs: vec![SearchTextIndexSpec {
+                        index_type: TextIndexType::Tokenized.into(),
+                        match_type: TextMatchType::MatchGlobally.into(),
+                    }],
+                }),
+                geo_spec: None,
+            }),
+            FirestoreIndexFieldMode::Geo(FirestoreGeoIndexConfig {
+                geo_json_indexing_disabled,
+            }) => ValueMode::SearchConfig(ProtoSearchConfig {
+                text_spec: None,
+                geo_spec: Some(SearchGeoSpec {
+                    geo_json_indexing_disabled,
+                }),
+            }),
         })
     }
 }
 
-/// Converts a listed value mode. `SearchConfig` has no domain equivalent (search indexes are
-/// MongoDB-compat only) and an unspecified order is rejected rather than guessed at; both make
+/// Converts a listed value mode. A search config converts when it holds one text spec, tokenised
+/// and matched globally, or one geo spec: the two kinds of search field Firestore offers. Any
+/// other search config, and an unspecified order, is rejected rather than guessed at; both make
 /// the containing index or field unrecognised instead of silently mismatched.
 impl TryFrom<ValueMode> for FirestoreIndexFieldMode {
     type Error = FirestoreError;
@@ -227,10 +249,24 @@ impl TryFrom<ValueMode> for FirestoreIndexFieldMode {
                     FirestoreVectorIndexConfig::new(dimension),
                 ))
             }
-            ValueMode::SearchConfig(_) => Err(FirestoreError::invalid_parameters(
-                "value_mode",
-                "search config is not a comparable index mode",
-            )),
+            ValueMode::SearchConfig(search) => match (&search.text_spec, &search.geo_spec) {
+                (Some(text), None)
+                    if matches!(
+                        text.index_specs.as_slice(),
+                        [spec] if spec.index_type() == TextIndexType::Tokenized
+                            && spec.match_type() == TextMatchType::MatchGlobally
+                    ) =>
+                {
+                    Ok(FirestoreIndexFieldMode::Text)
+                }
+                (None, Some(geo)) => Ok(FirestoreIndexFieldMode::Geo(FirestoreGeoIndexConfig {
+                    geo_json_indexing_disabled: geo.geo_json_indexing_disabled,
+                })),
+                _ => Err(FirestoreError::invalid_parameters(
+                    "value_mode",
+                    format!("search config {search:?} has no domain equivalent"),
+                )),
+            },
         }
     }
 }
@@ -276,8 +312,31 @@ impl TryFrom<FirestoreCompositeIndex> for ProtoIndex {
                 .into_iter()
                 .map(ProtoIndexField::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
+            search_index_options: index.search_options.map(Into::into),
             ..Default::default()
         })
+    }
+}
+
+impl From<FirestoreSearchIndexOptions> for SearchIndexOptions {
+    fn from(options: FirestoreSearchIndexOptions) -> Self {
+        SearchIndexOptions {
+            text_language: options.text_language.unwrap_or_default(),
+            text_language_override_field_path: options
+                .text_language_override_field_path
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// An empty string is how proto3 carries an option left unset.
+impl From<SearchIndexOptions> for FirestoreSearchIndexOptions {
+    fn from(options: SearchIndexOptions) -> Self {
+        FirestoreSearchIndexOptions {
+            text_language: Some(options.text_language).filter(|language| !language.is_empty()),
+            text_language_override_field_path: Some(options.text_language_override_field_path)
+                .filter(|path| !path.is_empty()),
+        }
     }
 }
 
@@ -317,6 +376,7 @@ impl TryFrom<ProtoIndex> for FirestoreCompositeIndex {
         Ok(FirestoreCompositeIndex {
             fields,
             query_scope,
+            search_options: index.search_index_options.map(Into::into),
         })
     }
 }
@@ -522,6 +582,32 @@ impl TryFrom<ProtoField> for FirestoreListedField {
 }
 
 impl FirestoreCompositeIndex {
+    /// This index's search options, each unset one filled in as Firestore lists it for a text
+    /// index created without it. Firestore lists no options for a geo index, so filling both
+    /// sides of a comparison the same way lets a declaration that leaves them unset match its
+    /// own listing.
+    fn listed_search_options(&self) -> FirestoreSearchIndexOptions {
+        let options = self
+            .search_options
+            .clone()
+            .unwrap_or_else(FirestoreSearchIndexOptions::new);
+        FirestoreSearchIndexOptions {
+            text_language: Some(
+                options.text_language.unwrap_or_else(|| {
+                    FirestoreSearchIndexOptions::DEFAULT_TEXT_LANGUAGE.to_string()
+                }),
+            ),
+            text_language_override_field_path: Some(
+                options
+                    .text_language_override_field_path
+                    .unwrap_or_else(|| {
+                        FirestoreSearchIndexOptions::DEFAULT_TEXT_LANGUAGE_OVERRIDE_FIELD_PATH
+                            .to_string()
+                    }),
+            ),
+        }
+    }
+
     /// This index with every field path spelled canonically (see [`CanonicalFieldPath`]), the
     /// spelling a listed index already carries, so the two compare field by field.
     fn with_canonical_field_paths(&self) -> Self {
@@ -632,7 +718,9 @@ pub(crate) fn composite_index_matches(
     declared: &FirestoreCompositeIndex,
     listed: &FirestoreCompositeIndex,
 ) -> bool {
-    if declared.query_scope != listed.query_scope {
+    if declared.query_scope != listed.query_scope
+        || declared.listed_search_options() != listed.listed_search_options()
+    {
         return false;
     }
     let declared = declared.with_canonical_field_paths();
@@ -694,12 +782,12 @@ impl FirestoreError {
 /// terminals already run before calling in, so every caller gets it - including a
 /// `FirestoreIndexSupport` implementation that reaches this function some other way.
 ///
-/// A listed index or field this crate's domain model cannot represent - search config, a
-/// MongoDB-compat or Datastore-mode API scope, `COLLECTION_RECURSIVE`, an unspecified or unknown
-/// order, array config, index state or TTL state - is reported in the returned plan's
-/// `unrecognised` list. It is never matched against a declaration and never planned for deletion
-/// or revert, even when pruning: this crate cannot know that removing it is what the declaration
-/// intends.
+/// A listed index or field this crate's domain model cannot represent - a search config other
+/// than one text or geo spec, a MongoDB-compat or Datastore-mode API scope, `COLLECTION_RECURSIVE`,
+/// an unspecified or unknown order, array config, index state or TTL state - is reported in the
+/// returned plan's `unrecognised` list. It is never matched against a declaration and never
+/// planned for deletion or revert, even when pruning: this crate cannot know that removing it is
+/// what the declaration intends.
 ///
 /// `prune` decides where every other undeclared item goes: into the lists `.sync()` acts on
 /// (`delete_indexes`, `revert_fields`, `disable_ttl`), or into the `kept_undeclared_*` lists.

@@ -9,6 +9,8 @@
 //! on took 6-7 minutes against the real service on 2026-09-26, even on an empty collection. So
 //! each carries `#[ignore]` and only runs on
 //! `cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture`.
+//! `search_indexes_against_real_firestore_enterprise` runs against the Enterprise edition database
+//! `GCP_ENTERPRISE_DATABASE_ID` of the same project instead, on a group of its own.
 //!
 //! Safety net: `ListIndexes` scoped to one collection group's parent has been measured, against
 //! this same project, to answer with composite indexes belonging to *every* group in the
@@ -19,14 +21,18 @@
 //! but identical in fields, scope and state - after every write it makes, including the final
 //! cleanup.
 
+use firestore::errors::FirestoreError;
+use firestore::index_builder::FirestoreIndexesBuilder;
 use firestore::*;
+use futures::FutureExt;
 use gcloud_sdk::google::firestore::admin::v1::firestore_admin_client::FirestoreAdminClient;
 use gcloud_sdk::google::firestore::admin::v1::{Index as ProtoIndex, ListIndexesRequest};
 use std::collections::BTreeMap;
+use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 mod common;
-use common::setup;
+use common::{setup, setup_enterprise};
 
 const SYNC_GROUP: &str = "firestore-rs-index-sync-test";
 const PROBE_GROUP: &str = "firestore-rs-index-probe";
@@ -66,14 +72,13 @@ async fn list_all_database_indexes(
     Ok(indexes)
 }
 
-/// The subset of `indexes` outside this test's own two groups, keyed by resource name so a
-/// before/after comparison catches a changed field list or state, not only a missing or added
-/// entry.
-fn outside_owned_groups(indexes: &[ProtoIndex]) -> BTreeMap<String, ProtoIndex> {
+/// The subset of `indexes` outside `groups`, keyed by resource name so a before/after comparison
+/// catches a changed field list or state, not only a missing or added entry.
+fn outside_groups(indexes: &[ProtoIndex], groups: &[&str]) -> BTreeMap<String, ProtoIndex> {
     indexes
         .iter()
         .filter(|index| {
-            !OWNED_GROUPS
+            !groups
                 .iter()
                 .any(|group| index.name.contains(&format!("/collectionGroups/{group}/")))
         })
@@ -349,7 +354,7 @@ async fn admin_index_management_against_real_firestore(
     let db = setup().await?;
 
     let baseline = list_all_database_indexes(&db).await?;
-    let baseline_outside = outside_owned_groups(&baseline);
+    let baseline_outside = outside_groups(&baseline, &OWNED_GROUPS);
     println!(
         "[safety] {} indexes outside {SYNC_GROUP:?} and {PROBE_GROUP:?} before this run; they \
          must be exactly the same, field for field, after cleanup.",
@@ -390,7 +395,7 @@ async fn admin_index_management_against_real_firestore(
     let after = list_all_database_indexes(&db).await;
     let outside_unchanged = match &after {
         Ok(after) => {
-            let after_outside = outside_owned_groups(after);
+            let after_outside = outside_groups(after, &OWNED_GROUPS);
             if after_outside == baseline_outside {
                 Ok(())
             } else {
@@ -456,13 +461,133 @@ async fn plan_is_read_only_and_scoped_to_the_owned_group(
     }
 
     // Every real listed shape in this database converts cleanly under the current domain model;
-    // a MongoDB-compat, search or Datastore-mode index would be the known, accepted exception,
-    // but this project has none, so nothing here is expected to land in `unrecognised`.
+    // a MongoDB-compat or Datastore-mode index would be the known, accepted exception, but this
+    // project has none, so nothing here is expected to land in `unrecognised`.
     assert!(
         plan.unrecognised.is_empty(),
         "unexpected unrecognised listed item(s): {:?}",
         plan.unrecognised
     );
 
+    Ok(())
+}
+
+const SEARCH_GROUP: &str = "admin-search-index-test";
+
+/// A text index on `body_{run}` and a geo index on `location_{run}`. Firestore refuses to
+/// recreate an index for minutes after deleting it, answering `ALREADY_EXISTS` while the listing
+/// no longer shows it, so each run declares field paths no earlier run has used.
+fn declare_search_indexes(db: &FirestoreDb, run: u128) -> FirestoreIndexesBuilder<'_, FirestoreDb> {
+    db.fluent()
+        .indexes()
+        .collection_group(SEARCH_GROUP)
+        .composite(|i| {
+            i.indexes([
+                i.index([i.field(format!("body_{run}")).text()]),
+                i.index([i.field(format!("location_{run}")).geo()]),
+            ])
+        })
+}
+
+/// Creates a text index and a geo index on the Enterprise database
+/// (`GCP_ENTERPRISE_DATABASE_ID`), replans them, checks that a field override is refused before
+/// anything is written, and prunes them again. Every index of the database is snapshotted first:
+/// the create adds exactly the two declared indexes, and after the prune every index outside
+/// `SEARCH_GROUP` is unchanged and the group holds none.
+#[tokio::test]
+#[ignore = "creates and deletes real search indexes in GCP_ENTERPRISE_DATABASE_ID; takes minutes; run with --ignored"]
+async fn search_indexes_against_real_firestore_enterprise(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let db = setup_enterprise().await?;
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis();
+
+    let baseline_outside = outside_groups(&list_all_database_indexes(&db).await?, &[SEARCH_GROUP]);
+    println!(
+        "[safety] {} indexes outside {SEARCH_GROUP:?} before this run",
+        baseline_outside.len()
+    );
+
+    // A failed assertion must not skip the prune below, so the scenario's panic is held until
+    // the group is empty again.
+    let scenario = AssertUnwindSafe(async {
+        let emptied = prune_to_empty(&db, SEARCH_GROUP).await?;
+        println!("[search] emptied:\n{emptied}");
+
+        let report = declare_search_indexes(&db, run)
+            .wait_until_ready_with_options(FirestoreOperationWaitOptions::new(WAIT_TIMEOUT))
+            .sync()
+            .await?;
+        println!("[search] create report:\n{report}");
+        assert_eq!(report.created_indexes.len(), 2, "both indexes are new");
+
+        let listed = list_all_database_indexes(&db).await?;
+        assert_eq!(
+            outside_groups(&listed, &[SEARCH_GROUP]),
+            baseline_outside,
+            "the create touched only {SEARCH_GROUP:?}"
+        );
+        let created: Vec<&ProtoIndex> = listed
+            .iter()
+            .filter(|index| {
+                index
+                    .name
+                    .contains(&format!("/collectionGroups/{SEARCH_GROUP}/"))
+            })
+            .collect();
+        println!("[search] listed after the create: {created:#?}");
+        assert_eq!(
+            created.len(),
+            2,
+            "exactly the two declared indexes were added"
+        );
+
+        let replan = declare_search_indexes(&db, run).plan().await?;
+        println!("[search] replan:\n{replan}");
+        assert_eq!(
+            replan.unchanged.len(),
+            2,
+            "both indexes match their listing"
+        );
+        assert!(replan.create_indexes.is_empty() && replan.unrecognised.is_empty());
+
+        let refused = db
+            .fluent()
+            .indexes()
+            .collection_group(SEARCH_GROUP)
+            .field_overrides(|f| f.fields([f.field("body").exempt()]))
+            .sync()
+            .await;
+        println!("[search] field override sync: {refused:?}");
+        assert!(
+            matches!(
+                &refused,
+                Err(FirestoreError::InvalidParametersError(invalid))
+                    if invalid.public.field == "field_overrides"
+            ),
+            "an Enterprise database refuses field overrides before any write"
+        );
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .catch_unwind()
+    .await;
+
+    let cleanup = prune_to_empty(&db, SEARCH_GROUP).await;
+    let after = list_all_database_indexes(&db).await?;
+    let after_outside = outside_groups(&after, &[SEARCH_GROUP]);
+    println!(
+        "[safety] indexes outside {SEARCH_GROUP:?} unchanged: {}",
+        after_outside == baseline_outside
+    );
+
+    scenario.unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
+    println!("[search] prune report:\n{}", cleanup?);
+    assert_eq!(after_outside, baseline_outside);
+    assert_eq!(
+        after.len(),
+        baseline_outside.len(),
+        "{SEARCH_GROUP:?} holds no index after the prune"
+    );
     Ok(())
 }

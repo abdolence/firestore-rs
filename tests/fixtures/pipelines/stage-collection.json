@@ -1,0 +1,846 @@
+{
+  "description": "collection source: every document comes back with name, createTime and updateTime",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-11",
+          "fields": {
+            "author": {
+              "stringValue": "Anonymous"
+            },
+            "tags": {
+              "arrayValue": {}
+            },
+            "published": {
+              "integerValue": "2024"
+            },
+            "title": {
+              "stringValue": "Untitled draft"
+            },
+            "stock": {
+              "integerValue": "0"
+            },
+            "genre": {
+              "nullValue": null
+            },
+            "pages": {
+              "integerValue": "12"
+            }
+          },
+          "createTime": "2026-11-04T17:51:53.592249Z",
+          "updateTime": "2026-11-04T17:51:53.592249Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-01",
+          "fields": {
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": true
+                  }
+                }
+              }
+            },
+            "rating": {
+              "doubleValue": 4.2
+            },
+            "author": {
+              "stringValue": "Douglas Adams"
+            },
+            "stock": {
+              "integerValue": "3"
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  },
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.9
+                        },
+                        {
+                          "doubleValue": 0.1
+                        },
+                        {
+                          "doubleValue": 0.2
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "comedy"
+                  },
+                  {
+                    "stringValue": "space"
+                  },
+                  {
+                    "stringValue": "adventure"
+                  }
+                ]
+              }
+            },
+            "pages": {
+              "integerValue": "224"
+            },
+            "published": {
+              "integerValue": "1979"
+            },
+            "title": {
+              "stringValue": "The Hitchhiker's Guide to the Galaxy"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-05",
+          "fields": {
+            "rating": {
+              "doubleValue": 4.1
+            },
+            "author": {
+              "stringValue": "Margaret Atwood"
+            },
+            "published": {
+              "integerValue": "1985"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.6
+                        },
+                        {
+                          "doubleValue": 0.5
+                        },
+                        {
+                          "doubleValue": 0.1
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "title": {
+              "stringValue": "The Handmaid's Tale"
+            },
+            "pages": {
+              "integerValue": "311"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "feminism"
+                  },
+                  {
+                    "stringValue": "totalitarianism"
+                  },
+                  {
+                    "stringValue": "resistance"
+                  }
+                ]
+              }
+            },
+            "stock": {
+              "integerValue": "0"
+            },
+            "genre": {
+              "stringValue": "Dystopian"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-09",
+          "fields": {
+            "stock": {
+              "integerValue": "0"
+            },
+            "genre": {
+              "stringValue": "Modernist"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "wealth"
+                  },
+                  {
+                    "stringValue": "american dream"
+                  },
+                  {
+                    "stringValue": "love"
+                  }
+                ]
+              }
+            },
+            "title": {
+              "stringValue": "The Great Gatsby"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.1
+                        },
+                        {
+                          "doubleValue": 0.7
+                        },
+                        {
+                          "doubleValue": 0.3
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "180"
+            },
+            "published": {
+              "integerValue": "1925"
+            },
+            "rating": {
+              "doubleValue": 4
+            },
+            "author": {
+              "stringValue": "F. Scott Fitzgerald"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-04",
+          "fields": {
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.4
+                        },
+                        {
+                          "doubleValue": 0.2
+                        },
+                        {
+                          "doubleValue": 0.9
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "1178"
+            },
+            "published": {
+              "integerValue": "1954"
+            },
+            "title": {
+              "stringValue": "The Lord of the Rings"
+            },
+            "rating": {
+              "doubleValue": 4.7
+            },
+            "author": {
+              "stringValue": "J.R.R. Tolkien"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "adventure"
+                  },
+                  {
+                    "stringValue": "magic"
+                  },
+                  {
+                    "stringValue": "epic"
+                  }
+                ]
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "hugo": {
+                    "booleanValue": false
+                  },
+                  "nebula": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "stock": {
+              "integerValue": "2"
+            },
+            "genre": {
+              "stringValue": "Fantasy"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+          "fields": {
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "surveillance"
+                  },
+                  {
+                    "stringValue": "totalitarianism"
+                  },
+                  {
+                    "stringValue": "propaganda"
+                  }
+                ]
+              }
+            },
+            "title": {
+              "stringValue": "1984"
+            },
+            "pages": {
+              "integerValue": "328"
+            },
+            "stock": {
+              "integerValue": "7"
+            },
+            "genre": {
+              "stringValue": "Dystopian"
+            },
+            "rating": {
+              "doubleValue": 4.2
+            },
+            "author": {
+              "stringValue": "George Orwell"
+            },
+            "published": {
+              "integerValue": "1949"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.7
+                        },
+                        {
+                          "doubleValue": 0.4
+                        },
+                        {
+                          "doubleValue": 0.1
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+          "fields": {
+            "title": {
+              "stringValue": "Dune"
+            },
+            "published": {
+              "integerValue": "1965"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.95
+                        },
+                        {
+                          "doubleValue": 0.15
+                        },
+                        {
+                          "doubleValue": 0.35
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "412"
+            },
+            "rating": {
+              "doubleValue": 4.6
+            },
+            "author": {
+              "stringValue": "Frank Herbert"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "politics"
+                  },
+                  {
+                    "stringValue": "desert"
+                  },
+                  {
+                    "stringValue": "ecology"
+                  }
+                ]
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": true
+                  },
+                  "hugo": {
+                    "booleanValue": true
+                  }
+                }
+              }
+            },
+            "stock": {
+              "integerValue": "6"
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-02",
+          "fields": {
+            "title": {
+              "stringValue": "Pride and Prejudice"
+            },
+            "pages": {
+              "integerValue": "432"
+            },
+            "rating": {
+              "doubleValue": 4.5
+            },
+            "author": {
+              "stringValue": "Jane Austen"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "classic"
+                  },
+                  {
+                    "stringValue": "social commentary"
+                  },
+                  {
+                    "stringValue": "love"
+                  }
+                ]
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "published": {
+              "integerValue": "1813"
+            },
+            "stock": {
+              "integerValue": "0"
+            },
+            "genre": {
+              "stringValue": "Romance"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.1
+                        },
+                        {
+                          "doubleValue": 0.9
+                        },
+                        {
+                          "doubleValue": 0.1
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-06",
+          "fields": {
+            "published": {
+              "integerValue": "1866"
+            },
+            "stock": {
+              "integerValue": "1"
+            },
+            "genre": {
+              "stringValue": "Psychological Thriller"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  },
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.2
+                        },
+                        {
+                          "doubleValue": 0.7
+                        },
+                        {
+                          "doubleValue": 0.4
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "philosophy"
+                  },
+                  {
+                    "stringValue": "crime"
+                  },
+                  {
+                    "stringValue": "redemption"
+                  }
+                ]
+              }
+            },
+            "rating": {
+              "doubleValue": 4.3
+            },
+            "author": {
+              "stringValue": "Fyodor Dostoevsky"
+            },
+            "pages": {
+              "integerValue": "671"
+            },
+            "title": {
+              "stringValue": "Crime and Punishment"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-07",
+          "fields": {
+            "title": {
+              "stringValue": "To Kill a Mockingbird"
+            },
+            "published": {
+              "integerValue": "1960"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.2
+                        },
+                        {
+                          "doubleValue": 0.8
+                        },
+                        {
+                          "doubleValue": 0.2
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "281"
+            },
+            "rating": {
+              "doubleValue": 4.2
+            },
+            "author": {
+              "stringValue": "Harper Lee"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "racism"
+                  },
+                  {
+                    "stringValue": "injustice"
+                  },
+                  {
+                    "stringValue": "coming-of-age"
+                  }
+                ]
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "stock": {
+              "integerValue": "4"
+            },
+            "genre": {
+              "stringValue": "Southern Gothic"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-03",
+          "fields": {
+            "stock": {
+              "integerValue": "5"
+            },
+            "genre": {
+              "stringValue": "Magical Realism"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "hugo": {
+                    "booleanValue": false
+                  },
+                  "nebula": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "family"
+                  },
+                  {
+                    "stringValue": "history"
+                  },
+                  {
+                    "stringValue": "fantasy"
+                  }
+                ]
+              }
+            },
+            "rating": {
+              "doubleValue": 4.3
+            },
+            "author": {
+              "stringValue": "Gabriel García Márquez"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.3
+                        },
+                        {
+                          "doubleValue": 0.6
+                        },
+                        {
+                          "doubleValue": 0.6
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "417"
+            },
+            "published": {
+              "integerValue": "1967"
+            },
+            "title": {
+              "stringValue": "One Hundred Years of Solitude"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:37.848180Z"
+    }
+  ]
+}

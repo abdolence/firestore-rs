@@ -6,6 +6,9 @@ Firestore provides additional generated fields for each of document you create:
 - `_firestore_created`: The time at which the document was created;
 - `_firestore_updated`: The time at which the document was last changed;
 
+An aggregation result and the result of a pipeline `select` have no document name, and so neither
+`_firestore_id` nor `_firestore_full_id`. Make a field that reads either of them an `Option`.
+
 To be able to read them the library makes them available
 as system fields for the Serde deserializer with reserved names,
 so you can specify them in your structures as:

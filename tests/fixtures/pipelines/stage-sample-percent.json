@@ -1,0 +1,384 @@
+{
+  "description": "sample by fraction: the percent mode takes a value between 0.0 and 1.0",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "sample",
+            "args": [
+              {
+                "doubleValue": 0.5
+              },
+              {
+                "stringValue": "percent"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-11",
+          "fields": {
+            "pages": {
+              "integerValue": "12"
+            },
+            "stock": {
+              "integerValue": "0"
+            },
+            "author": {
+              "stringValue": "Anonymous"
+            },
+            "published": {
+              "integerValue": "2024"
+            },
+            "title": {
+              "stringValue": "Untitled draft"
+            },
+            "genre": {
+              "nullValue": null
+            },
+            "tags": {
+              "arrayValue": {}
+            }
+          },
+          "createTime": "2026-11-04T17:51:53.592249Z",
+          "updateTime": "2026-11-04T17:51:53.592249Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-01",
+          "fields": {
+            "title": {
+              "stringValue": "The Hitchhiker's Guide to the Galaxy"
+            },
+            "pages": {
+              "integerValue": "224"
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "comedy"
+                  },
+                  {
+                    "stringValue": "space"
+                  },
+                  {
+                    "stringValue": "adventure"
+                  }
+                ]
+              }
+            },
+            "author": {
+              "stringValue": "Douglas Adams"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  },
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.9
+                        },
+                        {
+                          "doubleValue": 0.1
+                        },
+                        {
+                          "doubleValue": 0.2
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "stock": {
+              "integerValue": "3"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": true
+                  }
+                }
+              }
+            },
+            "published": {
+              "integerValue": "1979"
+            },
+            "rating": {
+              "doubleValue": 4.2
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-09",
+          "fields": {
+            "pages": {
+              "integerValue": "180"
+            },
+            "author": {
+              "stringValue": "F. Scott Fitzgerald"
+            },
+            "title": {
+              "stringValue": "The Great Gatsby"
+            },
+            "rating": {
+              "doubleValue": 4
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "genre": {
+              "stringValue": "Modernist"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.1
+                        },
+                        {
+                          "doubleValue": 0.7
+                        },
+                        {
+                          "doubleValue": 0.3
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "stock": {
+              "integerValue": "0"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "wealth"
+                  },
+                  {
+                    "stringValue": "american dream"
+                  },
+                  {
+                    "stringValue": "love"
+                  }
+                ]
+              }
+            },
+            "published": {
+              "integerValue": "1925"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+          "fields": {
+            "published": {
+              "integerValue": "1965"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": true
+                  },
+                  "hugo": {
+                    "booleanValue": true
+                  }
+                }
+              }
+            },
+            "stock": {
+              "integerValue": "6"
+            },
+            "rating": {
+              "doubleValue": 4.6
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  },
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.95
+                        },
+                        {
+                          "doubleValue": 0.15
+                        },
+                        {
+                          "doubleValue": 0.35
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "author": {
+              "stringValue": "Frank Herbert"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "politics"
+                  },
+                  {
+                    "stringValue": "desert"
+                  },
+                  {
+                    "stringValue": "ecology"
+                  }
+                ]
+              }
+            },
+            "title": {
+              "stringValue": "Dune"
+            },
+            "pages": {
+              "integerValue": "412"
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-03",
+          "fields": {
+            "stock": {
+              "integerValue": "5"
+            },
+            "title": {
+              "stringValue": "One Hundred Years of Solitude"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": false
+                  },
+                  "hugo": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "417"
+            },
+            "published": {
+              "integerValue": "1967"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "family"
+                  },
+                  {
+                    "stringValue": "history"
+                  },
+                  {
+                    "stringValue": "fantasy"
+                  }
+                ]
+              }
+            },
+            "rating": {
+              "doubleValue": 4.3
+            },
+            "genre": {
+              "stringValue": "Magical Realism"
+            },
+            "author": {
+              "stringValue": "Gabriel García Márquez"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  },
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.3
+                        },
+                        {
+                          "doubleValue": 0.6
+                        },
+                        {
+                          "doubleValue": 0.6
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        }
+      ],
+      "executionTime": "2026-11-04T17:54:32.181619Z"
+    }
+  ],
+  "replay": false
+}

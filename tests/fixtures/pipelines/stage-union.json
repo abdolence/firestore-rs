@@ -1,0 +1,215 @@
+{
+  "description": "union with a pipelineValue argument",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "select",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "name": {
+                      "fieldReferenceValue": "title"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "union",
+            "args": [
+              {
+                "pipelineValue": {
+                  "stages": [
+                    {
+                      "name": "collection",
+                      "args": [
+                        {
+                          "referenceValue": "/pipeline-restaurants"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "select",
+                      "args": [
+                        {
+                          "mapValue": {
+                            "fields": {
+                              "name": {
+                                "fieldReferenceValue": "name"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Untitled draft"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "The Hitchhiker's Guide to the Galaxy"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "The Handmaid's Tale"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "The Great Gatsby"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "The Lord of the Rings"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "1984"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Dune"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Pride and Prejudice"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Crime and Punishment"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "To Kill a Mockingbird"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "One Hundred Years of Solitude"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Gluten-Free Kitchen"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Slice of New York"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "The \"Best\" Diner"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Sunrise Waffle House"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Windy City Deep Dish"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Coffee Corner"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Waffle and Bacon Co"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Pancake Palace"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Café Crêpe"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T17:54:15.350174Z"
+    }
+  ]
+}

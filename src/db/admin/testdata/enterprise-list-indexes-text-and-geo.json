@@ -1,0 +1,35 @@
+{
+  "indexes": [
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/fixes-index-probe/indexes/CICAgJjmiJEK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "body_probe",
+          "searchConfig": {
+            "textSpec": {
+              "indexSpecs": [
+                {
+                  "indexType": "TOKENIZED",
+                  "matchType": "MATCH_GLOBALLY"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "fieldPath": "location_probe",
+          "searchConfig": {
+            "geoSpec": {}
+          }
+        }
+      ],
+      "state": "CREATING",
+      "density": "SPARSE_ANY",
+      "searchIndexOptions": {
+        "textLanguage": "und",
+        "textLanguageOverrideFieldPath": "language"
+      }
+    }
+  ]
+}

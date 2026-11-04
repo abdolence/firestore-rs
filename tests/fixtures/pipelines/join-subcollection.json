@@ -1,0 +1,161 @@
+{
+  "description": "subcollection source inside array subqueries",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-restaurants"
+              }
+            ]
+          },
+          {
+            "name": "where",
+            "args": [
+              {
+                "functionValue": {
+                  "name": "equal",
+                  "args": [
+                    {
+                      "fieldReferenceValue": "cuisine"
+                    },
+                    {
+                      "stringValue": "pizza"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "select",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "name": {
+                      "fieldReferenceValue": "name"
+                    },
+                    "reviews": {
+                      "functionValue": {
+                        "name": "array",
+                        "args": [
+                          {
+                            "pipelineValue": {
+                              "stages": [
+                                {
+                                  "name": "subcollection",
+                                  "args": [
+                                    {
+                                      "stringValue": "reviews"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "select",
+                                  "args": [
+                                    {
+                                      "mapValue": {
+                                        "fields": {
+                                          "rating": {
+                                            "fieldReferenceValue": "rating"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "review_count": {
+                      "functionValue": {
+                        "name": "array_length",
+                        "args": [
+                          {
+                            "functionValue": {
+                              "name": "array",
+                              "args": [
+                                {
+                                  "pipelineValue": {
+                                    "stages": [
+                                      {
+                                        "name": "subcollection",
+                                        "args": [
+                                          {
+                                            "stringValue": "reviews"
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "review_count": {
+              "integerValue": "3"
+            },
+            "reviews": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "integerValue": "5"
+                  },
+                  {
+                    "integerValue": "4"
+                  },
+                  {
+                    "integerValue": "2"
+                  }
+                ]
+              }
+            },
+            "name": {
+              "stringValue": "Slice of New York"
+            }
+          }
+        },
+        {
+          "fields": {
+            "name": {
+              "stringValue": "Windy City Deep Dish"
+            },
+            "review_count": {
+              "integerValue": "0"
+            },
+            "reviews": {
+              "arrayValue": {}
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T18:03:51.355515Z"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 400,
+    "message": "Mixing search and non-search indexes is not supported.",
+    "status": "INVALID_ARGUMENT"
+  }
+}

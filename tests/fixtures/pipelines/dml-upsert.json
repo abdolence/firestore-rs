@@ -1,0 +1,212 @@
+{
+  "description": "upsert stage",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "literals_non_transactional",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-1"
+                        },
+                        "title": {
+                          "stringValue": "one-replaced"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-5"
+                        },
+                        "title": {
+                          "stringValue": "five"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "upsert",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "source": {
+                          "stringValue": "upsert"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The non-transactional DML operation was rejected because it was impossible to guarantee document-level atomicity.\n\nFirestore guarantees that all non-transactional writes to a document are applied atomically by requiring that all field transforms (e.g. add_fields(...)) & filters (e.g. where(...)) reference only a single document at a time. For example the following is supported outside of a transaction:\n\n  collection_group('users')\n    | where(x = 1)\n    | where(y != 2)\n    | add_fields(add(z, 1) as z)\n    | update(add(a, 1) as a)\n\nEven though there are multiple different field transformations and filters, they all can be applied to a single document at one time. Conversely, DML operations that have preconditions across multiple documents cannot be supported outside of a transaction while ensuring this document-level atomicity. The most common way this happens is when attempting to perform an aggregation, unnest, union, search, or subquery as part of the non-transactional DML operation.\n\nTo work around this, either refactor the DML operation to not require these stages, perform the entire DML operation within a transaction, or use the 'atomic' setting provided by the SDKs.",
+        "status": "INVALID_ARGUMENT",
+        "details": [
+          {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "NON_TRANSACTIONAL_DML_NOT_LINEARIZABLE",
+            "domain": "firestore.googleapis.com"
+          }
+        ]
+      },
+      "replay": false
+    },
+    {
+      "name": "collection_non_transactional",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "title"
+                        },
+                        {
+                          "stringValue": "two"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "upsert",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "source": {
+                          "stringValue": "upsert-collection"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The non-transactional DML operation was rejected because it was impossible to guarantee document-level atomicity.\n\nFirestore guarantees that all non-transactional writes to a document are applied atomically by requiring that all field transforms (e.g. add_fields(...)) & filters (e.g. where(...)) reference only a single document at a time. For example the following is supported outside of a transaction:\n\n  collection_group('users')\n    | where(x = 1)\n    | where(y != 2)\n    | add_fields(add(z, 1) as z)\n    | update(add(a, 1) as a)\n\nEven though there are multiple different field transformations and filters, they all can be applied to a single document at one time. Conversely, DML operations that have preconditions across multiple documents cannot be supported outside of a transaction while ensuring this document-level atomicity. The most common way this happens is when attempting to perform an aggregation, unnest, union, search, or subquery as part of the non-transactional DML operation.\n\nTo work around this, either refactor the DML operation to not require these stages, perform the entire DML operation within a transaction, or use the 'atomic' setting provided by the SDKs.",
+        "status": "INVALID_ARGUMENT",
+        "details": [
+          {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "NON_TRANSACTIONAL_DML_NOT_LINEARIZABLE",
+            "domain": "firestore.googleapis.com"
+          }
+        ]
+      },
+      "replay": false
+    },
+    {
+      "name": "atomic",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-1"
+                        },
+                        "title": {
+                          "stringValue": "one-replaced"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/doc-5"
+                        },
+                        "title": {
+                          "stringValue": "five"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "upsert",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "source": {
+                          "stringValue": "upsert"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "newTransaction": {
+          "readWrite": {}
+        },
+        "autoCommitTransaction": true
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "2"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    }
+  ]
+}

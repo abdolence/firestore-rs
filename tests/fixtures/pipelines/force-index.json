@@ -1,0 +1,1027 @@
+{
+  "description": "force_index on input stages",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "primary",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "primary"
+                  }
+                }
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "sort",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "expression": {
+                          "fieldReferenceValue": "rating"
+                        },
+                        "direction": {
+                          "stringValue": "descending"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+              "fields": {
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.7
+                            },
+                            {
+                              "doubleValue": 0.4
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "stock": {
+                  "integerValue": "7"
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "surveillance"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "propaganda"
+                      }
+                    ]
+                  }
+                },
+                "title": {
+                  "stringValue": "1984"
+                },
+                "author": {
+                  "stringValue": "George Orwell"
+                },
+                "pages": {
+                  "integerValue": "328"
+                },
+                "published": {
+                  "integerValue": "1949"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-05",
+              "fields": {
+                "title": {
+                  "stringValue": "The Handmaid's Tale"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      },
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.6
+                            },
+                            {
+                              "doubleValue": 0.5
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "feminism"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "resistance"
+                      }
+                    ]
+                  }
+                },
+                "pages": {
+                  "integerValue": "311"
+                },
+                "author": {
+                  "stringValue": "Margaret Atwood"
+                },
+                "rating": {
+                  "doubleValue": 4.1
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "hugo": {
+                        "booleanValue": false
+                      },
+                      "nebula": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "stock": {
+                  "integerValue": "0"
+                },
+                "published": {
+                  "integerValue": "1985"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:54:54.925172Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 2\n query id: d0a19f0071953222\n request peak memory usage: 6.00 KiB (6,144 B)\n data bytes read: 3.45 KiB (3,533 B)\n entity row scanned: 11\n\nBilling:\n read units: 1\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 2\n|   latency: 10.20 ms (local <1 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 2\n    |   latency: 9.67 ms (local <1 ms)\n    |\n    └── • MajorSort\n        |  fields: [$v_2 DESC]\n        |  output: [$__key___2, $record_1]\n        |\n        |  Execution:\n        |   records returned: 2\n        |   latency: 9.66 ms (local <1 ms)\n        |   peak memory usage: 6.00 KiB (6,144 B)\n        |\n        └── • Compute\n            |  $v_2: $rating_1\n            |\n            |  Execution:\n            |   records returned: 2\n            |   latency: 9.62 ms (local <1 ms)\n            |\n            └── • TableScan\n                   source: /pipeline-books\n                   order: UNDEFINED\n                   filter: (get_field(row(), \"genre\") == \"Dystopian\")\n                   output bindings: {$__key___2=get_field(row(), \"__key__\"), $rating_1=get_field(row(), \"rating\"), $record_1=row()}\n                   output: [$__key___2, $rating_1, $record_1]\n\n                   Execution:\n                    records returned: 2\n                    latency: 9.27 ms\n                    post-filtered rows: 9\n                    records scanned: 11\n                    data bytes read: 3.45 KiB (3,533 B)\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "cg-primary",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection_group",
+                "args": [
+                  {
+                    "referenceValue": ""
+                  },
+                  {
+                    "stringValue": "pipeline-books"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "primary"
+                  }
+                }
+              },
+              {
+                "name": "limit",
+                "args": [
+                  {
+                    "integerValue": "1"
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-11",
+              "fields": {
+                "genre": {
+                  "nullValue": null
+                },
+                "author": {
+                  "stringValue": "Anonymous"
+                },
+                "tags": {
+                  "arrayValue": {}
+                },
+                "stock": {
+                  "integerValue": "0"
+                },
+                "title": {
+                  "stringValue": "Untitled draft"
+                },
+                "published": {
+                  "integerValue": "2024"
+                },
+                "pages": {
+                  "integerValue": "12"
+                }
+              },
+              "createTime": "2026-11-04T17:51:53.592249Z",
+              "updateTime": "2026-11-04T17:51:53.592249Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:54:56.940152Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 1\n query id: ac637ae11ca53936\n data bytes read: 168 B\n entity row scanned: 1\n\nBilling:\n read units: 1\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 1\n|   latency: 17.56 ms (local <1 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 1\n    |   latency: 16.70 ms (local <1 ms)\n    |\n    └── • TableScan\n           source: **/pipeline-books\n           order: UNDEFINED\n           limit: 1\n           output bindings: {$__key___2=get_field(row(), \"__key__\"), $record_1=row()}\n           output: [$__key___2, $record_1]\n\n           Execution:\n            records returned: 1\n            latency: 16.67 ms\n            records scanned: 1\n            data bytes read: 168 B\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "matching",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "CICAgJim14AK"
+                  }
+                }
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "sort",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "expression": {
+                          "fieldReferenceValue": "rating"
+                        },
+                        "direction": {
+                          "stringValue": "descending"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-08",
+              "fields": {
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      },
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.7
+                            },
+                            {
+                              "doubleValue": 0.4
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                },
+                "stock": {
+                  "integerValue": "7"
+                },
+                "title": {
+                  "stringValue": "1984"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "surveillance"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "propaganda"
+                      }
+                    ]
+                  }
+                },
+                "pages": {
+                  "integerValue": "328"
+                },
+                "author": {
+                  "stringValue": "George Orwell"
+                },
+                "rating": {
+                  "doubleValue": 4.2
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "published": {
+                  "integerValue": "1949"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            },
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-05",
+              "fields": {
+                "author": {
+                  "stringValue": "Margaret Atwood"
+                },
+                "published": {
+                  "integerValue": "1985"
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      },
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.6
+                            },
+                            {
+                              "doubleValue": 0.5
+                            },
+                            {
+                              "doubleValue": 0.1
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": false
+                      },
+                      "hugo": {
+                        "booleanValue": false
+                      }
+                    }
+                  }
+                },
+                "pages": {
+                  "integerValue": "311"
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "feminism"
+                      },
+                      {
+                        "stringValue": "totalitarianism"
+                      },
+                      {
+                        "stringValue": "resistance"
+                      }
+                    ]
+                  }
+                },
+                "rating": {
+                  "doubleValue": 4.1
+                },
+                "stock": {
+                  "integerValue": "0"
+                },
+                "title": {
+                  "stringValue": "The Handmaid's Tale"
+                },
+                "genre": {
+                  "stringValue": "Dystopian"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:55:17.826055Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 2\n query id: be2185d50b4e4c43\n request peak memory usage: 6.00 KiB (6,144 B)\n data bytes read: 879 B\n entity row scanned: 2\n index row scanned: 2\n\nBilling:\n read units: 3\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 2\n|   latency: 5.84 ms (local <1 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 2\n    |   latency: 5.28 ms (local <1 ms)\n    |\n    └── • Fetch\n        |  order: PRESERVE_INPUT_ORDER\n        |  source: /pipeline-books\n        |  input record id: $rid_3\n        |  output bindings: {$__key___2=get_field(row(), \"__key__\"), $record_1=row()}\n        |  output: [$__key___2, $record_1]\n        |\n        |  Execution:\n        |   records returned: 2\n        |   latency: 5.27 ms (local 1.91 ms)\n        |   peak memory usage: 6.00 KiB (6,144 B)\n        |   data bytes read: 669 B\n        |\n        └── • SequentialScan\n               properties: Selection {  }\n               fields: [null, null, $rid_3]\n               index: /pipeline-books (genre ASC, rating DESC)@[id = CICAgJim14AK]\n               partition: /\n               key ordering length: 3\n               ranges: /\n                       |----[\"Dystopian\"]\n\n               Execution:\n                records returned: 2\n                latency: 3.37 ms\n                records scanned: 2\n                data bytes read: 210 B\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "non-matching",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "CICAgJim14AK"
+                  }
+                }
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "author"
+                        },
+                        {
+                          "stringValue": "Frank Herbert"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+              "fields": {
+                "stock": {
+                  "integerValue": "6"
+                },
+                "title": {
+                  "stringValue": "Dune"
+                },
+                "rating": {
+                  "doubleValue": 4.6
+                },
+                "tags": {
+                  "arrayValue": {
+                    "values": [
+                      {
+                        "stringValue": "politics"
+                      },
+                      {
+                        "stringValue": "desert"
+                      },
+                      {
+                        "stringValue": "ecology"
+                      }
+                    ]
+                  }
+                },
+                "author": {
+                  "stringValue": "Frank Herbert"
+                },
+                "pages": {
+                  "integerValue": "412"
+                },
+                "awards": {
+                  "mapValue": {
+                    "fields": {
+                      "nebula": {
+                        "booleanValue": true
+                      },
+                      "hugo": {
+                        "booleanValue": true
+                      }
+                    }
+                  }
+                },
+                "embedding": {
+                  "mapValue": {
+                    "fields": {
+                      "value": {
+                        "arrayValue": {
+                          "values": [
+                            {
+                              "doubleValue": 0.95
+                            },
+                            {
+                              "doubleValue": 0.15
+                            },
+                            {
+                              "doubleValue": 0.35
+                            }
+                          ]
+                        }
+                      },
+                      "__type__": {
+                        "stringValue": "__vector__"
+                      }
+                    }
+                  }
+                },
+                "genre": {
+                  "stringValue": "Science Fiction"
+                },
+                "published": {
+                  "integerValue": "1965"
+                }
+              },
+              "createTime": "2026-11-04T17:51:52.549531Z",
+              "updateTime": "2026-11-04T17:51:52.549531Z"
+            }
+          ],
+          "executionTime": "2026-11-04T17:55:18.869377Z",
+          "explainStats": {
+            "data": {
+              "@type": "type.googleapis.com/google.protobuf.StringValue",
+              "value": "Execution:\n results returned: 1\n query id: 3db03fcedd6af3a7\n data bytes read: 4.59 KiB (4,705 B)\n entity row scanned: 11\n index row scanned: 11\n\nBilling:\n read units: 12\n\nTree:\n• Compute\n|  $out_1: map_set($record_1, \"__name__\", $__name___1, \"__key__\", unset)\n|  is query result: true\n|\n|  Execution:\n|   records returned: 1\n|   latency: 7.54 ms (local <1 ms)\n|\n└── • Compute\n    |  $__name___1: $__key___2\n    |\n    |  Execution:\n    |   records returned: 1\n    |   latency: 6.68 ms (local <1 ms)\n    |\n    └── • Filter\n        |  expression: ($author_1 == \"Frank Herbert\")\n        |\n        |  Execution:\n        |   records returned: 1\n        |   latency: 6.67 ms (local <1 ms)\n        |   post-filtered rows: 10\n        |\n        └── • Fetch\n            |  order: UNDEFINED\n            |  source: /pipeline-books\n            |  input record id: $rid_1\n            |  output bindings: {$__key___2=get_field(row(), \"__key__\"), $author_1=get_field(row(), \"author\"), $record_1=row()}\n            |  output: [$__key___2, $author_1, $record_1]\n            |\n            |  Execution:\n            |   records returned: 11\n            |   latency: 6.64 ms (local 1.52 ms)\n            |   data bytes read: 3.45 KiB (3,533 B)\n            |\n            └── • SequentialScan\n                   properties: Selection {  }\n                   fields: [null, null, $rid_1]\n                   index: /pipeline-books (genre ASC, rating DESC)@[id = CICAgJim14AK]\n                   partition: /\n                   key ordering length: 3\n                   ranges: /\n\n                   Execution:\n                    records returned: 11\n                    latency: 5.12 ms\n                    records scanned: 11\n                    data bytes read: 1.14 KiB (1,172 B)\n"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "CICAgNoSuchIdx"
+                  }
+                }
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Invalid index resource id \"CICAgNoSuchIdx\".",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "unknown-valid-id",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "CICAgNiav4AK"
+                  }
+                }
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The provided index 'CICAgNiav4AK' in hint does not exist.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "other-group",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "CICAgOjXh4EK"
+                  }
+                }
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "genre"
+                        },
+                        {
+                          "stringValue": "Dystopian"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "The provided index 'CICAgOjXh4EK' in hint does not exist.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "vector",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "CICAgJjF9oIK"
+                  }
+                }
+              },
+              {
+                "name": "find_nearest",
+                "args": [
+                  {
+                    "fieldReferenceValue": "embedding"
+                  },
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__type__": {
+                          "stringValue": "__vector__"
+                        },
+                        "value": {
+                          "arrayValue": {
+                            "values": [
+                              {
+                                "doubleValue": 0.9
+                              },
+                              {
+                                "doubleValue": 0.1
+                              },
+                              {
+                                "doubleValue": 0.2
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "stringValue": "euclidean"
+                  }
+                ],
+                "options": {
+                  "limit": {
+                    "integerValue": "3"
+                  }
+                }
+              }
+            ]
+          },
+          "options": {
+            "explain_options": {
+              "mapValue": {
+                "fields": {
+                  "mode": {
+                    "stringValue": "analyze"
+                  },
+                  "output_format": {
+                    "stringValue": "text"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Forcing a vector index is not supported.",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "database",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "database",
+                "options": {
+                  "force_index": {
+                    "stringValue": "primary"
+                  }
+                }
+              },
+              {
+                "name": "limit",
+                "args": [
+                  {
+                    "integerValue": "1"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Stage 'database()' does not support option(s) [force_index].",
+        "status": "INVALID_ARGUMENT"
+      }
+    },
+    {
+      "name": "documents",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "documents",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books/book-01"
+                  }
+                ],
+                "options": {
+                  "force_index": {
+                    "stringValue": "primary"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Stage 'documents(paths: Path*)' does not support option(s) [force_index].",
+        "status": "INVALID_ARGUMENT"
+      }
+    }
+  ]
+}

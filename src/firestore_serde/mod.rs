@@ -8,7 +8,7 @@
 //! the blanket [`From`] impl below with no attribute needed.
 
 mod deserializer;
-mod serializer;
+pub(crate) mod serializer;
 
 mod timestamp_serializers;
 pub use timestamp_serializers::*;

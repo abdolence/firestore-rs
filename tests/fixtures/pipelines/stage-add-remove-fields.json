@@ -1,0 +1,149 @@
+{
+  "description": "add_fields with computed values, then remove_fields",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "add_fields",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "is_classic": {
+                      "functionValue": {
+                        "name": "less_than",
+                        "args": [
+                          {
+                            "fieldReferenceValue": "published"
+                          },
+                          {
+                            "integerValue": "1950"
+                          }
+                        ]
+                      }
+                    },
+                    "title_upper": {
+                      "functionValue": {
+                        "name": "to_upper",
+                        "args": [
+                          {
+                            "fieldReferenceValue": "title"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "name": "remove_fields",
+            "args": [
+              {
+                "fieldReferenceValue": "awards"
+              },
+              {
+                "fieldReferenceValue": "embedding"
+              },
+              {
+                "fieldReferenceValue": "tags"
+              }
+            ]
+          },
+          {
+            "name": "limit",
+            "args": [
+              {
+                "integerValue": "2"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-11",
+          "fields": {
+            "author": {
+              "stringValue": "Anonymous"
+            },
+            "title_upper": {
+              "stringValue": "UNTITLED DRAFT"
+            },
+            "title": {
+              "stringValue": "Untitled draft"
+            },
+            "published": {
+              "integerValue": "2024"
+            },
+            "genre": {
+              "nullValue": null
+            },
+            "stock": {
+              "integerValue": "0"
+            },
+            "pages": {
+              "integerValue": "12"
+            },
+            "is_classic": {
+              "booleanValue": false
+            }
+          },
+          "createTime": "2026-11-04T17:51:53.592249Z",
+          "updateTime": "2026-11-04T17:51:53.592249Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-01",
+          "fields": {
+            "rating": {
+              "doubleValue": 4.2
+            },
+            "title": {
+              "stringValue": "The Hitchhiker's Guide to the Galaxy"
+            },
+            "title_upper": {
+              "stringValue": "THE HITCHHIKER'S GUIDE TO THE GALAXY"
+            },
+            "stock": {
+              "integerValue": "3"
+            },
+            "author": {
+              "stringValue": "Douglas Adams"
+            },
+            "published": {
+              "integerValue": "1979"
+            },
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "is_classic": {
+              "booleanValue": false
+            },
+            "pages": {
+              "integerValue": "224"
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:51.772054Z"
+    }
+  ]
+}

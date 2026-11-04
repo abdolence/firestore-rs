@@ -1,0 +1,173 @@
+{
+  "description": "search without a covering search index",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "collection_without_index",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-books"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "dune"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "No matching search index found for query. Please create a search index that covers all fields used in the search query.",
+        "status": "FAILED_PRECONDITION"
+      }
+    },
+    {
+      "name": "collection_group_with_collection_scoped_index",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection_group",
+                "args": [
+                  {
+                    "referenceValue": ""
+                  },
+                  {
+                    "stringValue": "pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "document_matches",
+                      "args": [
+                        {
+                          "stringValue": "waffles"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "No matching search index found for query. Please create a search index that covers all fields used in the search query.",
+        "status": "FAILED_PRECONDITION"
+      }
+    },
+    {
+      "name": "geo_on_unindexed_field",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-restaurants"
+                  }
+                ]
+              },
+              {
+                "name": "search",
+                "options": {
+                  "query": {
+                    "functionValue": {
+                      "name": "less_than_or_equal",
+                      "args": [
+                        {
+                          "functionValue": {
+                            "name": "geo_distance",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "name"
+                              },
+                              {
+                                "geoPointValue": {
+                                  "latitude": 38.989177,
+                                  "longitude": -107.065076
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "doubleValue": 1000.0
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "name": "select",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "name": {
+                          "fieldReferenceValue": "name"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "No matching search index found for query. Please create a search index that covers all fields used in the search query.",
+        "status": "FAILED_PRECONDITION"
+      }
+    }
+  ]
+}

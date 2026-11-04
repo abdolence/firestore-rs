@@ -1,0 +1,318 @@
+{
+  "description": "update stage",
+  "captured": "2026-11-04",
+  "cases": [
+    {
+      "name": "transformed_fields",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "title"
+                        },
+                        {
+                          "stringValue": "one"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "update",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "status": {
+                          "stringValue": "updated"
+                        },
+                        "n": {
+                          "functionValue": {
+                            "name": "add",
+                            "args": [
+                              {
+                                "fieldReferenceValue": "n"
+                              },
+                              {
+                                "integerValue": "10"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "in_place_after_add_fields",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "title"
+                        },
+                        {
+                          "stringValue": "two"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "add_fields",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "flag": {
+                          "booleanValue": true
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "remove_fields",
+                "args": [
+                  {
+                    "fieldReferenceValue": "n"
+                  }
+                ]
+              },
+              {
+                "name": "update",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {}
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "1"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "no_args",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "collection",
+                "args": [
+                  {
+                    "referenceValue": "/pipeline-dml"
+                  }
+                ]
+              },
+              {
+                "name": "where",
+                "args": [
+                  {
+                    "functionValue": {
+                      "name": "equal",
+                      "args": [
+                        {
+                          "fieldReferenceValue": "title"
+                        },
+                        {
+                          "stringValue": "two"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "update"
+              }
+            ]
+          }
+        }
+      },
+      "error": {
+        "code": 400,
+        "message": "Stage 'update(transforms: Map[FieldPath, Expr])' takes [1..1] argument(s), received 0.",
+        "status": "INVALID_ARGUMENT"
+      },
+      "replay": false
+    },
+    {
+      "name": "missing_document_non_transactional",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/no-such-doc"
+                        },
+                        "title": {
+                          "stringValue": "x"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "update",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {}
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "responses": [
+        {
+          "results": [
+            {
+              "fields": {
+                "documents_modified": {
+                  "integerValue": "0"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "replay": false
+    },
+    {
+      "name": "missing_document_atomic",
+      "request": {
+        "database": "projects/latestbit/databases/firestore-rs-enterprise",
+        "structuredPipeline": {
+          "pipeline": {
+            "stages": [
+              {
+                "name": "literals",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {
+                        "__name__": {
+                          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/no-such-doc"
+                        },
+                        "title": {
+                          "stringValue": "x"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "update",
+                "args": [
+                  {
+                    "mapValue": {
+                      "fields": {}
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "newTransaction": {
+          "readWrite": {}
+        },
+        "autoCommitTransaction": true
+      },
+      "error": {
+        "code": 404,
+        "message": "No document to update: projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-dml/no-such-doc",
+        "status": "NOT_FOUND"
+      },
+      "replay": false
+    }
+  ]
+}

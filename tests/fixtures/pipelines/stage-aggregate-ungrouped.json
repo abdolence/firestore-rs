@@ -1,0 +1,79 @@
+{
+  "description": "aggregate with an empty groups map: one result",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "aggregate",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "total": {
+                      "functionValue": {
+                        "name": "count"
+                      }
+                    },
+                    "in_stock": {
+                      "functionValue": {
+                        "name": "count_if",
+                        "args": [
+                          {
+                            "functionValue": {
+                              "name": "greater_than",
+                              "args": [
+                                {
+                                  "fieldReferenceValue": "stock"
+                                },
+                                {
+                                  "integerValue": "0"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "mapValue": {
+                  "fields": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "in_stock": {
+              "integerValue": "7"
+            },
+            "total": {
+              "integerValue": "11"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:54.048612Z"
+    }
+  ]
+}

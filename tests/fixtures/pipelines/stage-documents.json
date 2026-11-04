@@ -1,0 +1,192 @@
+{
+  "description": "documents source: a missing document is left out, not an error",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "documents",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books/book-01"
+              },
+              {
+                "referenceValue": "/pipeline-books/book-10"
+              },
+              {
+                "referenceValue": "/pipeline-books/no-such-book"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-01",
+          "fields": {
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "published": {
+              "integerValue": "1979"
+            },
+            "rating": {
+              "doubleValue": 4.2
+            },
+            "author": {
+              "stringValue": "Douglas Adams"
+            },
+            "title": {
+              "stringValue": "The Hitchhiker's Guide to the Galaxy"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "comedy"
+                  },
+                  {
+                    "stringValue": "space"
+                  },
+                  {
+                    "stringValue": "adventure"
+                  }
+                ]
+              }
+            },
+            "stock": {
+              "integerValue": "3"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.9
+                        },
+                        {
+                          "doubleValue": 0.1
+                        },
+                        {
+                          "doubleValue": 0.2
+                        }
+                      ]
+                    }
+                  },
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  }
+                }
+              }
+            },
+            "pages": {
+              "integerValue": "224"
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "hugo": {
+                    "booleanValue": true
+                  },
+                  "nebula": {
+                    "booleanValue": false
+                  }
+                }
+              }
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        },
+        {
+          "name": "projects/latestbit/databases/firestore-rs-enterprise/documents/pipeline-books/book-10",
+          "fields": {
+            "genre": {
+              "stringValue": "Science Fiction"
+            },
+            "rating": {
+              "doubleValue": 4.6
+            },
+            "published": {
+              "integerValue": "1965"
+            },
+            "author": {
+              "stringValue": "Frank Herbert"
+            },
+            "title": {
+              "stringValue": "Dune"
+            },
+            "stock": {
+              "integerValue": "6"
+            },
+            "tags": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "politics"
+                  },
+                  {
+                    "stringValue": "desert"
+                  },
+                  {
+                    "stringValue": "ecology"
+                  }
+                ]
+              }
+            },
+            "pages": {
+              "integerValue": "412"
+            },
+            "embedding": {
+              "mapValue": {
+                "fields": {
+                  "__type__": {
+                    "stringValue": "__vector__"
+                  },
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "doubleValue": 0.95
+                        },
+                        {
+                          "doubleValue": 0.15
+                        },
+                        {
+                          "doubleValue": 0.35
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "awards": {
+              "mapValue": {
+                "fields": {
+                  "nebula": {
+                    "booleanValue": true
+                  },
+                  "hugo": {
+                    "booleanValue": true
+                  }
+                }
+              }
+            }
+          },
+          "createTime": "2026-11-04T17:51:52.549531Z",
+          "updateTime": "2026-11-04T17:51:52.549531Z"
+        }
+      ],
+      "executionTime": "2026-11-04T17:53:57.865446Z"
+    }
+  ]
+}

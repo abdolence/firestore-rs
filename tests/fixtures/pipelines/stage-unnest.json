@@ -1,0 +1,91 @@
+{
+  "description": "unnest with an alias field reference and the index_field option",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "documents",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books/book-01"
+              }
+            ]
+          },
+          {
+            "name": "unnest",
+            "args": [
+              {
+                "fieldReferenceValue": "tags"
+              },
+              {
+                "fieldReferenceValue": "tag"
+              }
+            ],
+            "options": {
+              "index_field": {
+                "fieldReferenceValue": "tag_index"
+              }
+            }
+          },
+          {
+            "name": "select",
+            "args": [
+              {
+                "mapValue": {
+                  "fields": {
+                    "tag": {
+                      "fieldReferenceValue": "tag"
+                    },
+                    "tag_index": {
+                      "fieldReferenceValue": "tag_index"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "responses": [
+    {
+      "results": [
+        {
+          "fields": {
+            "tag_index": {
+              "integerValue": "0"
+            },
+            "tag": {
+              "stringValue": "comedy"
+            }
+          }
+        },
+        {
+          "fields": {
+            "tag": {
+              "stringValue": "space"
+            },
+            "tag_index": {
+              "integerValue": "1"
+            }
+          }
+        },
+        {
+          "fields": {
+            "tag_index": {
+              "integerValue": "2"
+            },
+            "tag": {
+              "stringValue": "adventure"
+            }
+          }
+        }
+      ],
+      "executionTime": "2026-11-04T17:54:15.717645Z"
+    }
+  ]
+}
