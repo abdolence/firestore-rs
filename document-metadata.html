@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-801040e0.js";
+            window.path_to_searchindex_js = "searchindex-24028ef7.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c0735130.js"></script>
+        <script src="toc-65a52393.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -184,6 +184,8 @@
 <li><code>_firestore_created</code>: The time at which the document was created;</li>
 <li><code>_firestore_updated</code>: The time at which the document was last changed;</li>
 </ul>
+<p>An aggregation result and the result of a pipeline <code>select</code> have no document name, and so neither
+<code>_firestore_id</code> nor <code>_firestore_full_id</code>. Make a field that reads either of them an <code>Option</code>.</p>
 <p>To be able to read them the library makes them available
 as system fields for the Serde deserializer with reserved names,
 so you can specify them in your structures as:</p>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-801040e0.js";
+            window.path_to_searchindex_js = "searchindex-24028ef7.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c0735130.js"></script>
+        <script src="toc-65a52393.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -335,6 +335,49 @@ let tagged_rust: Vec&lt;Post&gt; = db
 <p>The ID is shared across the whole database, including subcollections your own code never writes
 to. A statement owns the collection group, so <code>.prune_undeclared()</code> on <code>collection_group("posts")</code>
 reaches the indexes of every <code>posts</code> collection in the database.</p>
+<h2 id="text-and-geo-search-indexes"><a class="header" href="#text-and-geo-search-indexes">Text and geo search indexes</a></h2>
+<p>The pipeline <a href="./pipeline-search.html">search stage</a> runs against search indexes, which only a
+database of the Firestore Enterprise edition has. A text index covers one or more string fields,
+and a geo index covers a geo point field. Declare them as composite indexes with <code>.text()</code> and
+<code>.geo()</code> on a field:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .indexes()
+    .collection_group("restaurants")
+    .composite(|i| {
+        i.indexes([
+            i.index([i.field("menu").text(), i.field("description").text()])
+                .search_options(
+                    FirestoreSearchIndexOptions::new().with_text_language("en".to_string()),
+                ),
+            i.index([i.field("location").geo()]),
+        ])
+    })
+    .sync()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<ul>
+<li>A search index holds text and geo fields only. An index that mixes them with ordered, array or
+vector fields is rejected with <code>InvalidParametersError</code> at <code>.plan()</code>/<code>.sync()</code>;</li>
+<li>A text search covers all the text fields of the index it uses, and Firestore offers no index
+that matches one field by name;</li>
+<li><code>.search_options(..)</code> sets the options of a text index. <code>text_language</code> is the BCP 47 language
+tag the fields are indexed in, such as <code>en</code>; when it is left unset, Firestore detects each
+document’s language and lists the option as <code>und</code>, the code for an undetermined language.
+<code>text_language_override_field_path</code> names the field that holds a document’s own language, and
+Firestore reads <code>language</code> when it is unset. An index declared without options matches the
+index Firestore lists with those defaults;</li>
+<li><code>.geo_with(config)</code> takes a <code>FirestoreGeoIndexConfig</code> that can leave GeoJSON points out of a geo
+index, which Firestore indexes by default;</li>
+<li><code>.all_descendants()</code> on the index scopes it to a collection group, which a collection-group
+search needs.</li>
+</ul>
+<p>An Enterprise edition database has no single-field index overrides, and Firestore refuses to
+write one. When <code>.plan()</code> or <code>.sync()</code> would have to write a <code>.field_overrides(..)</code> entry there,
+it fails with <code>InvalidParametersError</code> before anything is written. Declare the indexes a
+pipeline needs as composite indexes.</p>
 <h2 id="removing-what-you-no-longer-declare"><a class="header" href="#removing-what-you-no-longer-declare">Removing what you no longer declare</a></h2>
 <p>By default, an index, override or TTL field Firestore lists for the owned group but this
 statement does not declare is only reported, never touched. Add <code>.prune_undeclared()</code> to also
@@ -360,10 +403,14 @@ waits for that even without <code>.wait_until_ready(...)</code>, and a composite
 minutes. The wait ends by the sync’s deadline: the <code>.wait_until_ready(timeout)</code> timeout when you
 set one, 30 minutes from the start of the sync otherwise. If a new index fails to build, or is
 still building at the deadline, the sync deletes nothing and returns the error.</p>
-<p>The sync also deletes nothing when Firestore answers a <code>CreateIndex</code> with <code>ALREADY_EXISTS</code>. That
-means Firestore holds an index it counts as the declared one, but the library did not match it to
-any listed index, so it can be one of the indexes planned for deletion. The sync logs a warning
-naming the declared index and carries on with everything else.</p>
+<p>The sync also deletes nothing when Firestore answers a <code>CreateIndex</code> with <code>ALREADY_EXISTS</code> and a
+fresh listing shows a matching index: another deployment created it after the sync planned its
+changes. The sync reports the index as unchanged, logs a warning naming it and carries on with
+everything else.</p>
+<p>When the fresh listing shows no matching index, the sync returns the <code>ALREADY_EXISTS</code> error
+instead of reporting the index as unchanged. On an Enterprise edition database Firestore keeps
+answering <code>ALREADY_EXISTS</code> for several minutes after an index with the same fields is deleted,
+while the listing no longer shows it. Run the sync again once the answer changes.</p>
 <p>In both cases <code>withheld_deletes</code> on the report lists the indexes left in place and the reason.
 Reverts and TTL disables do not wait for new indexes.</p>
 <p><code>.prune_undeclared().plan()</code> previews a pruning sync without writing anything: <code>delete_indexes</code>,
@@ -460,8 +507,8 @@ drift and fail its probe at once.</p>
 <p>The job’s service account needs <code>roles/datastore.indexAdmin</code>, the role <code>.sync()</code> always needs.
 Replicas that only call <code>.plan()</code> need <code>roles/datastore.viewer</code>.</p>
 <p>When two syncs do overlap regardless, index creates and deletes converge on their own: a
-<code>CreateIndex</code> answered <code>ALREADY_EXISTS</code>, and a <code>DeleteIndex</code> answered <code>NOT_FOUND</code>, both count as
-done. A field revert Firestore refuses because another writer already reverted it counts as done
+<code>CreateIndex</code> answered <code>ALREADY_EXISTS</code> for an index a fresh listing shows, and a <code>DeleteIndex</code>
+answered <code>NOT_FOUND</code>, both count as done. A field revert Firestore refuses because another writer already reverted it counts as done
 too. One refused while another writer’s revert is still in progress is polled until that revert
 finishes, within this sync’s deadline, and then counts as done. A TTL disable does not get that wait: Firestore reports no in-progress state for a TTL
 field, so a disable refused while another writer’s disable is still running fails. It converges
@@ -566,10 +613,11 @@ direction; an explicit declaration then matches only a listed index with exactly
 (letters, digits and <code>_</code>, not starting with a digit).</p>
 <h2 id="unrecognised-items"><a class="header" href="#unrecognised-items">Unrecognised items</a></h2>
 <p>Firestore can list index or field shapes this crate’s domain model has no representation for: a
-search index, a MongoDB-compat or Datastore-mode API scope, a <code>COLLECTION_RECURSIVE</code> query scope,
-or an unspecified field order. These are reported in <code>unrecognised</code>, with the reason, and never
-proposed for deletion or reversion, even with <code>.prune_undeclared()</code> set, since the plan cannot
-know that removing them is what the declaration intends.</p>
+search field configured other than as one text or geo spec, a MongoDB-compat or Datastore-mode
+API scope, a <code>COLLECTION_RECURSIVE</code> query scope, or an unspecified field order. These are
+reported in <code>unrecognised</code>, with the reason, and never proposed for deletion or reversion, even
+with <code>.prune_undeclared()</code> set, since the plan cannot know that removing them is what the
+declaration intends.</p>
 <h2 id="logs-and-spans"><a class="header" href="#logs-and-spans">Logs and spans</a></h2>
 <p>Index management logs through <code>tracing</code>. One span covers a whole <code>.plan()</code> or <code>.sync()</code> call
 (<code>Firestore Index Plan</code> or <code>Firestore Index Sync</code>), and nests child spans for listing, diffing,
