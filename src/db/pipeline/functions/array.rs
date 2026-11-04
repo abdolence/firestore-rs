@@ -1,12 +1,19 @@
 use crate::{FirestoreBoolExpr, FirestoreExpr};
-use serde::Serialize;
 
 /// Which occurrence of a value `array_index_of` reports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirestoreSearchDirection {
     First,
     Last,
+}
+
+impl From<FirestoreSearchDirection> for FirestoreExpr {
+    fn from(value: FirestoreSearchDirection) -> Self {
+        FirestoreExpr::constant(match value {
+            FirestoreSearchDirection::First => "first",
+            FirestoreSearchDirection::Last => "last",
+        })
+    }
 }
 
 impl FirestoreExpr {

@@ -1,9 +1,7 @@
 use crate::FirestoreExpr;
-use serde::Serialize;
 
 /// The unit of the amount in `timestamp_add`, `timestamp_subtract` and `timestamp_diff`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirestoreTimestampUnit {
     Microsecond,
     Millisecond,
@@ -14,8 +12,7 @@ pub enum FirestoreTimestampUnit {
 }
 
 /// The unit a timestamp is cut down to by `timestamp_trunc`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirestoreTimestampGranularity {
     Microsecond,
     Millisecond,
@@ -24,19 +21,12 @@ pub enum FirestoreTimestampGranularity {
     Hour,
     Day,
     Week,
-    #[serde(rename = "week(monday)")]
     WeekStartingMonday,
-    #[serde(rename = "week(tuesday)")]
     WeekStartingTuesday,
-    #[serde(rename = "week(wednesday)")]
     WeekStartingWednesday,
-    #[serde(rename = "week(thursday)")]
     WeekStartingThursday,
-    #[serde(rename = "week(friday)")]
     WeekStartingFriday,
-    #[serde(rename = "week(saturday)")]
     WeekStartingSaturday,
-    #[serde(rename = "week(sunday)")]
     WeekStartingSunday,
     IsoWeek,
     Month,
@@ -46,8 +36,7 @@ pub enum FirestoreTimestampGranularity {
 }
 
 /// The part of a timestamp that `timestamp_extract` returns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirestoreTimestampPart {
     Microsecond,
     Millisecond,
@@ -58,25 +47,85 @@ pub enum FirestoreTimestampPart {
     Day,
     DayOfYear,
     Week,
-    #[serde(rename = "week(monday)")]
     WeekStartingMonday,
-    #[serde(rename = "week(tuesday)")]
     WeekStartingTuesday,
-    #[serde(rename = "week(wednesday)")]
     WeekStartingWednesday,
-    #[serde(rename = "week(thursday)")]
     WeekStartingThursday,
-    #[serde(rename = "week(friday)")]
     WeekStartingFriday,
-    #[serde(rename = "week(saturday)")]
     WeekStartingSaturday,
-    #[serde(rename = "week(sunday)")]
     WeekStartingSunday,
     IsoWeek,
     Month,
     Quarter,
     Year,
     IsoYear,
+}
+
+impl From<FirestoreTimestampUnit> for FirestoreExpr {
+    fn from(value: FirestoreTimestampUnit) -> Self {
+        FirestoreExpr::constant(match value {
+            FirestoreTimestampUnit::Microsecond => "microsecond",
+            FirestoreTimestampUnit::Millisecond => "millisecond",
+            FirestoreTimestampUnit::Second => "second",
+            FirestoreTimestampUnit::Minute => "minute",
+            FirestoreTimestampUnit::Hour => "hour",
+            FirestoreTimestampUnit::Day => "day",
+        })
+    }
+}
+
+impl From<FirestoreTimestampGranularity> for FirestoreExpr {
+    fn from(value: FirestoreTimestampGranularity) -> Self {
+        FirestoreExpr::constant(match value {
+            FirestoreTimestampGranularity::Microsecond => "microsecond",
+            FirestoreTimestampGranularity::Millisecond => "millisecond",
+            FirestoreTimestampGranularity::Second => "second",
+            FirestoreTimestampGranularity::Minute => "minute",
+            FirestoreTimestampGranularity::Hour => "hour",
+            FirestoreTimestampGranularity::Day => "day",
+            FirestoreTimestampGranularity::Week => "week",
+            FirestoreTimestampGranularity::WeekStartingMonday => "week(monday)",
+            FirestoreTimestampGranularity::WeekStartingTuesday => "week(tuesday)",
+            FirestoreTimestampGranularity::WeekStartingWednesday => "week(wednesday)",
+            FirestoreTimestampGranularity::WeekStartingThursday => "week(thursday)",
+            FirestoreTimestampGranularity::WeekStartingFriday => "week(friday)",
+            FirestoreTimestampGranularity::WeekStartingSaturday => "week(saturday)",
+            FirestoreTimestampGranularity::WeekStartingSunday => "week(sunday)",
+            FirestoreTimestampGranularity::IsoWeek => "isoweek",
+            FirestoreTimestampGranularity::Month => "month",
+            FirestoreTimestampGranularity::Quarter => "quarter",
+            FirestoreTimestampGranularity::Year => "year",
+            FirestoreTimestampGranularity::IsoYear => "isoyear",
+        })
+    }
+}
+
+impl From<FirestoreTimestampPart> for FirestoreExpr {
+    fn from(value: FirestoreTimestampPart) -> Self {
+        FirestoreExpr::constant(match value {
+            FirestoreTimestampPart::Microsecond => "microsecond",
+            FirestoreTimestampPart::Millisecond => "millisecond",
+            FirestoreTimestampPart::Second => "second",
+            FirestoreTimestampPart::Minute => "minute",
+            FirestoreTimestampPart::Hour => "hour",
+            FirestoreTimestampPart::DayOfWeek => "dayofweek",
+            FirestoreTimestampPart::Day => "day",
+            FirestoreTimestampPart::DayOfYear => "dayofyear",
+            FirestoreTimestampPart::Week => "week",
+            FirestoreTimestampPart::WeekStartingMonday => "week(monday)",
+            FirestoreTimestampPart::WeekStartingTuesday => "week(tuesday)",
+            FirestoreTimestampPart::WeekStartingWednesday => "week(wednesday)",
+            FirestoreTimestampPart::WeekStartingThursday => "week(thursday)",
+            FirestoreTimestampPart::WeekStartingFriday => "week(friday)",
+            FirestoreTimestampPart::WeekStartingSaturday => "week(saturday)",
+            FirestoreTimestampPart::WeekStartingSunday => "week(sunday)",
+            FirestoreTimestampPart::IsoWeek => "isoweek",
+            FirestoreTimestampPart::Month => "month",
+            FirestoreTimestampPart::Quarter => "quarter",
+            FirestoreTimestampPart::Year => "year",
+            FirestoreTimestampPart::IsoYear => "isoyear",
+        })
+    }
 }
 
 impl FirestoreExpr {

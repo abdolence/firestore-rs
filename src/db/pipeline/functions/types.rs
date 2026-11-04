@@ -1,11 +1,9 @@
 use crate::{FirestoreBoolExpr, FirestoreExpr};
-use serde::Serialize;
 
 /// A Firestore value type, as `is_type` tests for it.
 ///
 /// `Number` stands for `Int32`, `Int64`, `Float64` and `Decimal128` together.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirestoreValueType {
     Null,
     Array,
@@ -27,6 +25,33 @@ pub enum FirestoreValueType {
     ObjectId,
     Regex,
     BsonTimestamp,
+}
+
+impl From<FirestoreValueType> for FirestoreExpr {
+    fn from(value: FirestoreValueType) -> Self {
+        FirestoreExpr::constant(match value {
+            FirestoreValueType::Null => "null",
+            FirestoreValueType::Array => "array",
+            FirestoreValueType::Boolean => "boolean",
+            FirestoreValueType::Bytes => "bytes",
+            FirestoreValueType::Timestamp => "timestamp",
+            FirestoreValueType::GeoPoint => "geo_point",
+            FirestoreValueType::Number => "number",
+            FirestoreValueType::Int32 => "int32",
+            FirestoreValueType::Int64 => "int64",
+            FirestoreValueType::Float64 => "float64",
+            FirestoreValueType::Decimal128 => "decimal128",
+            FirestoreValueType::Map => "map",
+            FirestoreValueType::Reference => "reference",
+            FirestoreValueType::String => "string",
+            FirestoreValueType::Vector => "vector",
+            FirestoreValueType::MaxKey => "max_key",
+            FirestoreValueType::MinKey => "min_key",
+            FirestoreValueType::ObjectId => "object_id",
+            FirestoreValueType::Regex => "regex",
+            FirestoreValueType::BsonTimestamp => "bson_timestamp",
+        })
+    }
 }
 
 impl FirestoreExpr {
