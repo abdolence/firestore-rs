@@ -15,6 +15,12 @@ pub use results::*;
 
 mod execute;
 
+mod search;
+pub use search::*;
+
+mod text_query;
+pub use text_query::*;
+
 mod stages;
 
 mod aggregate;

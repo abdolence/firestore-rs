@@ -3,7 +3,7 @@ use crate::db::validate_path_segment;
 use crate::{
     FirestoreAggregateSelection, FirestoreBoolExpr, FirestoreError, FirestoreExpr,
     FirestoreFindNearestDistanceMeasure, FirestorePipelineOrdering, FirestoreReference,
-    FirestoreResult, FirestoreSelection, FirestoreValue, FirestoreVector,
+    FirestoreResult, FirestoreSearch, FirestoreSelection, FirestoreValue, FirestoreVector,
 };
 use gcloud_sdk::google::firestore::v1::{pipeline::Stage, value::ValueType, Pipeline, Value};
 use rsb_derive::Builder;
@@ -56,6 +56,9 @@ pub struct FirestoreCollectionSource {
     /// project and database the path names.
     pub parent: Option<String>,
     pub force_index: Option<FirestoreIndexHint>,
+    /// Searches the collection. Firestore accepts a search only as the stage right after the
+    /// source, so the source carries it.
+    pub search: Option<FirestoreSearch>,
 }
 
 /// The documents of every collection with this ID, anywhere in the database.
@@ -66,6 +69,10 @@ pub struct FirestoreCollectionSource {
 pub struct FirestoreCollectionGroupSource {
     pub collection_id: String,
     pub force_index: Option<FirestoreIndexHint>,
+    /// Searches the collection group, which needs a search index scoped to the collection
+    /// group. Firestore accepts a search only as the stage right after the source, so the source
+    /// carries it.
+    pub search: Option<FirestoreSearch>,
 }
 
 /// Documents by path. A path that names no document is left out, not an error.
@@ -306,27 +313,36 @@ impl TryFrom<FirestorePipeline> for Pipeline {
     type Error = FirestoreError;
 
     fn try_from(pipeline: FirestorePipeline) -> Result<Self, Self::Error> {
-        let source = Stage::try_from(pipeline.source)?;
-        Ok(Pipeline {
-            stages: std::iter::once(Ok(source))
-                .chain(pipeline.stages.into_iter().map(Stage::try_from))
-                .collect::<FirestoreResult<_>>()?,
-        })
+        let mut stages = Vec::<Stage>::try_from(pipeline.source)?;
+        for stage in pipeline.stages {
+            stages.push(stage.try_into()?);
+        }
+        Ok(Pipeline { stages })
     }
 }
 
-impl TryFrom<FirestorePipelineSource> for Stage {
+/// The source stage, followed by its `search` stage when it has one.
+impl TryFrom<FirestorePipelineSource> for Vec<Stage> {
     type Error = FirestoreError;
 
     fn try_from(source: FirestorePipelineSource) -> Result<Self, Self::Error> {
-        match source {
-            FirestorePipelineSource::Collection(source) => source.try_into(),
-            FirestorePipelineSource::CollectionGroup(source) => Ok(source.into()),
-            FirestorePipelineSource::Database => Ok(stage("database", Vec::new())),
-            FirestorePipelineSource::Documents(source) => Ok(source.into()),
-            FirestorePipelineSource::Literals(source) => source.try_into(),
-            FirestorePipelineSource::Subcollection(source) => Ok(source.into()),
-        }
+        let (source, search) = match source {
+            FirestorePipelineSource::Collection(mut source) => {
+                let search = source.search.take();
+                (Stage::try_from(source)?, search)
+            }
+            FirestorePipelineSource::CollectionGroup(mut source) => {
+                let search = source.search.take();
+                (source.into(), search)
+            }
+            FirestorePipelineSource::Database => (stage("database", Vec::new()), None),
+            FirestorePipelineSource::Documents(source) => (source.into(), None),
+            FirestorePipelineSource::Literals(source) => (source.try_into()?, None),
+            FirestorePipelineSource::Subcollection(source) => (source.into(), None),
+        };
+        let mut stages = vec![source];
+        stages.extend(search.map(Stage::try_from).transpose()?);
+        Ok(stages)
     }
 }
 

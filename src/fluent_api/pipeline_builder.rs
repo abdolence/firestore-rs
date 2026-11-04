@@ -1,5 +1,6 @@
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::pipeline_filter_builder::FirestorePipelineFilterBuilder;
+use crate::pipeline_search_builder::FirestorePipelineSearchBuilder;
 use crate::{
     FirestoreAddFieldsStage, FirestoreBoolExpr, FirestoreCollectionGroupSource,
     FirestoreCollectionSource, FirestoreDocument, FirestoreDocumentsSource,
@@ -7,8 +8,8 @@ use crate::{
     FirestoreOffsetStage, FirestorePipeline, FirestorePipelineOrdering, FirestorePipelineParams,
     FirestorePipelineSource, FirestorePipelineStage, FirestorePipelineSupport, FirestoreRawStage,
     FirestoreRemoveFieldsStage, FirestoreRequestOptions, FirestoreRequestTag, FirestoreResult,
-    FirestoreSelectStage, FirestoreSelection, FirestoreSortStage, FirestoreWhereStage,
-    FirestoreWithPipelineMetadata,
+    FirestoreSearch, FirestoreSelectStage, FirestoreSelection, FirestoreSortStage,
+    FirestoreWhereStage, FirestoreWithPipelineMetadata,
 };
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
@@ -193,6 +194,60 @@ impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionGroupSource> {
             state: FirestorePipelineCollectionGroupSource(self.state.0.with_force_index(hint)),
             ..self
         }
+    }
+}
+
+impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionSource> {
+    /// Searches the collection, which needs a search index that covers the query. The search
+    /// must come straight after the source, so no option of the source follows it.
+    ///
+    /// ```no_run
+    /// use firestore::*;
+    ///
+    /// # async fn example(db: &FirestoreDb) -> FirestoreResult<()> {
+    /// let hits = db
+    ///     .fluent()
+    ///     .pipeline()
+    ///     .collection("restaurants")
+    ///     .search(|s| {
+    ///         s.text(|t| t.for_all([t.term("waffles"), t.exclude(t.term("bacon"))]))
+    ///             .sort_by_score()
+    ///             .score_field("score")
+    ///             .limit(20)
+    ///     })
+    ///     .query()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn search<FN, R>(self, search: FN) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>
+    where
+        FN: FnOnce(FirestorePipelineSearchBuilder) -> R,
+        R: Into<FirestoreSearch>,
+    {
+        let search = search(FirestorePipelineSearchBuilder).into();
+        Self {
+            state: FirestorePipelineCollectionSource(self.state.0.with_search(search)),
+            ..self
+        }
+        .staged()
+    }
+}
+
+impl<C> FirestorePipelineBuilder<C, FirestorePipelineCollectionGroupSource> {
+    /// Searches the collection group, which needs a search index scoped to the collection group.
+    /// The search must come straight after the source, so no option of the source follows it.
+    pub fn search<FN, R>(self, search: FN) -> FirestorePipelineBuilder<C, FirestorePipelineStaged>
+    where
+        FN: FnOnce(FirestorePipelineSearchBuilder) -> R,
+        R: Into<FirestoreSearch>,
+    {
+        let search = search(FirestorePipelineSearchBuilder).into();
+        Self {
+            state: FirestorePipelineCollectionGroupSource(self.state.0.with_search(search)),
+            ..self
+        }
+        .staged()
     }
 }
 
