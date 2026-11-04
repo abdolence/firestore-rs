@@ -35,7 +35,8 @@ impl FirestorePipelineExprBuilder {
         FirestoreExpr::raw(name, args)
     }
 
-    /// True when every condition is. A single condition is returned as it is.
+    /// True when every condition is. A single condition is returned as it is, and no condition
+    /// gives the constant `true`, the identity of `and`.
     pub fn and<I>(&self, conditions: I) -> FirestoreBoolExpr
     where
         I: IntoIterator<Item = FirestoreBoolExpr>,
@@ -43,7 +44,8 @@ impl FirestorePipelineExprBuilder {
         self.connect("and", conditions)
     }
 
-    /// True when any condition is. A single condition is returned as it is.
+    /// True when any condition is. A single condition is returned as it is, and no condition
+    /// gives the constant `false`, the identity of `or`.
     pub fn or<I>(&self, conditions: I) -> FirestoreBoolExpr
     where
         I: IntoIterator<Item = FirestoreBoolExpr>,
@@ -90,14 +92,17 @@ impl FirestorePipelineExprBuilder {
         FirestoreBoolExpr(FirestoreExpr::raw("not", [condition]))
     }
 
-    /// `function` of `conditions`, where a single condition stands for itself, since Firestore's
-    /// `and` and `or` take two or more arguments.
+    /// `function` of `conditions`, where a single condition stands for itself and none stands for
+    /// the identity of `function`, since Firestore's `and` and `or` take two or more arguments.
     fn connect<I>(&self, function: &str, conditions: I) -> FirestoreBoolExpr
     where
         I: IntoIterator<Item = FirestoreBoolExpr>,
     {
         match <[FirestoreBoolExpr; 1]>::try_from(conditions.into_iter().collect::<Vec<_>>()) {
             Ok([condition]) => condition,
+            Err(conditions) if conditions.is_empty() => {
+                FirestoreBoolExpr(FirestoreExpr::constant(function == "and"))
+            }
             Err(conditions) => FirestoreBoolExpr(FirestoreExpr::raw(function, conditions)),
         }
     }
