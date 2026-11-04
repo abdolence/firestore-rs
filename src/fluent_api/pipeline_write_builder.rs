@@ -260,7 +260,8 @@ where
     /// Runs the write, writing each document on its own.
     ///
     /// A failure stops the run and can leave part of the documents written, so the write is
-    /// never sent again: a repeated insert would fail as `ALREADY_EXISTS`. Use
+    /// never sent again: a repeated insert would fail as `ALREADY_EXISTS`. The error has
+    /// `retry_possible` unset for the same reason, whatever the code. Use
     /// [`atomic`](Self::atomic) for a write that applies in full or not at all.
     ///
     /// Fails with `InvalidParametersError` on a `db` bound to a read time, at which Firestore
