@@ -14,7 +14,7 @@ fn service_account_key() -> serde_json::Value {
         "type": "service_account",
         "project_id": "orders",
         "private_key_id": "orders-key",
-        "private_key": "-----BEGIN PRIVATE KEY-----\nunused\n-----END PRIVATE KEY-----\n",
+        "private_key": "-----BEGIN PRIVATE KEY-----\nunused\n-----END PRIVATE KEY-----\n", // redacter:allow
         "client_email": "invoker@orders.iam.gserviceaccount.com",
     })
 }
