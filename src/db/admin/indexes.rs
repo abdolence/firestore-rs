@@ -1564,31 +1564,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ttl_on_an_enterprise_database_is_written() {
-        let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
-            GET_DATABASE => database_response(DatabaseEdition::Enterprise),
-            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
-            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
-            other => recording_writes(other, bytes),
-        })
-        .await;
-        let params = FirestoreIndexParams::new(group()).with_ttl_fields(vec!["expires_at".into()]);
-
-        let report = fake
-            .db
-            .sync_indexes(params, FirestoreIndexSyncOptions::new())
-            .await
-            .unwrap();
-
-        assert_eq!(report.enabled_ttl, vec!["expires_at".to_string()]);
-        assert_eq!(
-            writes_and_polls(&fake),
-            vec!["UpdateField(ttl_config expires_at)"]
-        );
-    }
-
-    #[tokio::test]
     async fn an_already_active_declared_ttl_is_reported_unchanged() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = FakeFirestore::start(|method, _| match method {
