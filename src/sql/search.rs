@@ -3,9 +3,9 @@ use super::scope::FirestoreSqlScope;
 use super::translator::{expr_start, name_start, FirestoreSqlTranslator};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::{
-    FirestoreExpr, FirestoreGeoPoint, FirestoreGeoSearch, FirestoreLatLng, FirestorePipelineSource,
-    FirestoreResult, FirestoreSearch, FirestoreSearchQuery, FirestoreTextQuery,
-    FirestoreTextSearch, FirestoreValue,
+    FirestoreExpr, FirestoreGeoPoint, FirestoreGeoSearch, FirestoreLatLng, FirestorePipeline,
+    FirestorePipelineSource, FirestoreResult, FirestoreSearch, FirestoreSearchQuery,
+    FirestoreTextQuery, FirestoreTextSearch, FirestoreValue,
 };
 use gcloud_sdk::google::firestore::v1::{value::ValueType, Value};
 use sqlparser::ast::{
@@ -26,7 +26,7 @@ impl FirestoreSqlTranslator<'_> {
     pub(super) fn split_search(
         &mut self,
         scope: &FirestoreSqlScope,
-        source: &FirestorePipelineSource,
+        pipeline: &FirestorePipeline,
         selection: &Expr,
     ) -> FirestoreResult<(Option<FirestoreSearchQuery>, Option<FirestoreExpr>)> {
         let mut searches = Vec::new();
@@ -47,13 +47,16 @@ impl FirestoreSqlTranslator<'_> {
                 expr_start(other_condition),
             ));
         }
-        if !matches!(
-            source,
-            FirestorePipelineSource::Collection(_) | FirestorePipelineSource::CollectionGroup(_)
-        ) {
+        if !pipeline.stages.is_empty()
+            || !matches!(
+                pipeline.source,
+                FirestorePipelineSource::Collection(_)
+                    | FirestorePipelineSource::CollectionGroup(_)
+            )
+        {
             return Err(FirestoreError::invalid_sql(
                 name,
-                "a search reads a collection or a collection group",
+                "a search reads a collection or a collection group directly, before any join or other stage",
                 expr_start(condition),
             ));
         }

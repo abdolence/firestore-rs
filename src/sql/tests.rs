@@ -10,8 +10,8 @@ use crate::{
     FirestoreLatLng, FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage,
     FirestorePipelineWrite, FirestorePipelineWriteParams, FirestorePipelineWriteTransaction,
     FirestoreReference, FirestoreReplaceWithMode, FirestoreResult, FirestoreSelection,
-    FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUpdateWrite,
-    FirestoreUpsertWrite, FirestoreValueType, FirestoreWriteCollection,
+    FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUnionStage,
+    FirestoreUpdateWrite, FirestoreUpsertWrite, FirestoreValueType, FirestoreWriteCollection,
 };
 
 use serde::Serialize;
@@ -361,15 +361,6 @@ fn constructs_without_a_translation_are_refused_by_name() {
             "JOIN",
         ),
         ("SELECT * FROM books, reviews", "JOIN"),
-        (
-            "WITH recent AS (SELECT * FROM books) SELECT * FROM recent",
-            "WITH",
-        ),
-        (
-            "SELECT * FROM books WHERE stock = (SELECT stock FROM archive)",
-            "a subquery",
-        ),
-        ("SELECT * FROM books WHERE 'sf' IN UNNEST(tags)", "UNNEST"),
         (
             "SELECT ROW_NUMBER() OVER () AS n FROM books",
             "a window function",
@@ -1436,4 +1427,593 @@ fn the_collection_allowlist_applies_to_the_target_of_a_write() {
             "{sql}"
         );
     }
+}
+
+fn subqueries_allowed() -> FirestoreSqlOptions {
+    FirestoreSqlOptions::new().allow_subqueries()
+}
+
+fn translated_allowing_subqueries(sql: &str) -> FirestorePipeline {
+    translate(sql, &FirestoreSqlParameters::new(), &subqueries_allowed())
+        .unwrap_or_else(|error| panic!("{sql}: {error}"))
+}
+
+fn refused_with_subqueries(sql: &str) -> FirestoreInvalidParametersPublicDetails {
+    refused_with(sql, &FirestoreSqlParameters::new(), &subqueries_allowed())
+}
+
+/// The reviews of the restaurant held by the variable `variable`, as an array.
+fn reviews_of(variable: &str) -> FirestoreExpr {
+    FirestorePipelineExprBuilder.array_subquery(|p| {
+        p.from("reviews")
+            .all_descendants()
+            .filter(|q| q.field("restaurant").eq(q.variable(variable)))
+    })
+}
+
+const RESTAURANTS_JOINED_TO_REVIEWS: &str = "FROM `pipeline-restaurants` AS rest \
+    JOIN collection_group('reviews') AS r ON r.restaurant = rest.__name__";
+
+#[test]
+fn a_join_translates_to_an_array_subquery_that_unnest_flattens() {
+    let sql = format!(
+        "SELECT rest.name AS name, r.rating AS rating {RESTAURANTS_JOINED_TO_REVIEWS} \
+         WHERE r.rating >= 4 ORDER BY rest.name, r.rating DESC"
+    );
+
+    let expected = fluent()
+        .from("pipeline-restaurants")
+        .define_variables(|e| [e.field("__name__").alias("rest___name__")])
+        .add_fields(|_| [reviews_of("rest___name__").alias("r")])
+        .unnest(|e| e.field("r"))
+        .filter(|q| q.field("r.rating").greater_than_or_equal(4))
+        .sort(|e| [e.field("name").asc(), e.field("r.rating").desc()])
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("name")),
+                e.field("r.rating").alias("rating"),
+            ]
+        })
+        .into_pipeline();
+
+    assert_eq!(translated_allowing_subqueries(&sql), expected);
+}
+
+#[test]
+fn a_left_join_keeps_a_row_without_a_match_as_a_null_element() {
+    let sql = "SELECT rest.name AS name, r.rating AS rating \
+               FROM `pipeline-restaurants` AS rest \
+               LEFT OUTER JOIN collection_group('reviews') AS r ON r.restaurant = rest.__name__";
+
+    let expected = fluent()
+        .from("pipeline-restaurants")
+        .define_variables(|e| [e.field("__name__").alias("rest___name__")])
+        .add_fields(|_| [reviews_of("rest___name__").alias("r")])
+        .add_fields(|e| {
+            [e.conditional(
+                e.field("r").array_length().equal(0),
+                e.array([FirestoreExpr::constant(None::<bool>)]),
+                e.field("r"),
+            )
+            .alias("r")]
+        })
+        .unnest(|e| e.field("r"))
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("name")),
+                e.field("r.rating").alias("rating"),
+            ]
+        })
+        .into_pipeline();
+
+    assert_eq!(translated_allowing_subqueries(sql), expected);
+}
+
+#[test]
+fn a_join_on_a_document_name_looks_the_document_up_by_an_array_of_the_key() {
+    let sql = "SELECT r.rating, rest.name AS restaurant \
+               FROM collection_group('reviews') AS r \
+               JOIN `pipeline-restaurants` AS rest ON rest.__name__ = r.restaurant";
+
+    let expected = fluent()
+        .from("reviews")
+        .all_descendants()
+        .define_variables(|e| [e.field("restaurant").alias("r_restaurant")])
+        .add_fields(|e| {
+            [e.array_subquery(|p| {
+                p.from("pipeline-restaurants").filter(|q| {
+                    q.field("__name__")
+                        .is_in(q.values().array([q.variable("r_restaurant")]))
+                })
+            })
+            .alias("rest")]
+        })
+        .unnest(|e| e.field("rest"))
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("rating")),
+                e.field("rest.name").alias("restaurant"),
+            ]
+        })
+        .into_pipeline();
+
+    assert_eq!(translated_allowing_subqueries(sql), expected);
+}
+
+#[test]
+fn a_join_into_a_subcollection_reads_the_children_without_a_variable_or_the_opt_in() {
+    let expected = fluent()
+        .from("pipeline-restaurants")
+        .add_fields(|e| [e.array_subquery(|p| p.subcollection("reviews")).alias("r")])
+        .unnest(|e| e.field("r"))
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("name")),
+                e.field("r.rating").alias("rating"),
+            ]
+        })
+        .into_pipeline();
+
+    for join in [
+        "JOIN subcollection('reviews') AS r ON TRUE",
+        "CROSS JOIN subcollection('reviews') AS r",
+        ", subcollection('reviews') AS r",
+    ] {
+        let sql = format!(
+            "SELECT rest.name, r.rating AS rating FROM `pipeline-restaurants` AS rest {join}"
+        );
+        assert_eq!(translated(&sql), expected, "{sql}");
+    }
+}
+
+#[test]
+fn select_star_over_a_join_holds_each_joined_table_as_a_map_under_its_alias() {
+    assert_eq!(
+        translated(
+            "SELECT * FROM `pipeline-restaurants` AS rest JOIN subcollection('reviews') AS r ON TRUE"
+        ),
+        fluent()
+            .from("pipeline-restaurants")
+            .add_fields(|e| {
+                [e.array_subquery(|p| p.subcollection("reviews"))
+                    .alias("r")]
+            })
+            .unnest(|e| e.field("r"))
+            .into_pipeline()
+    );
+}
+
+#[test]
+fn a_join_or_a_correlated_subquery_runs_per_row_so_it_needs_the_opt_in() {
+    let per_row = [
+        (
+            format!("SELECT rest.name AS name {RESTAURANTS_JOINED_TO_REVIEWS}"),
+            "JOIN",
+        ),
+        ("SELECT * FROM books, reviews".to_string(), "JOIN"),
+        (
+            "SELECT * FROM books AS b CROSS JOIN reviews AS r".to_string(),
+            "JOIN",
+        ),
+        (
+            "SELECT rest.name AS name FROM `pipeline-restaurants` AS rest WHERE EXISTS \
+             (SELECT 1 FROM collection_group('reviews') AS r WHERE r.restaurant = rest.__name__)"
+                .to_string(),
+            "subquery",
+        ),
+        (
+            "SELECT rest.name AS name, (SELECT COUNT(*) AS n FROM collection_group('reviews') AS r \
+             WHERE r.restaurant = rest.__name__) AS reviews FROM `pipeline-restaurants` AS rest"
+                .to_string(),
+            "subquery",
+        ),
+        (
+            "SELECT rest.name AS name FROM `pipeline-restaurants` AS rest WHERE rest.__name__ IN \
+             (SELECT r.restaurant FROM collection_group('reviews') AS r WHERE r.rating > rest.rating)"
+                .to_string(),
+            "subquery",
+        ),
+    ];
+
+    for (sql, construct) in per_row {
+        assert_eq!(refused(&sql).field, construct, "{sql}");
+        translated_allowing_subqueries(&sql);
+    }
+}
+
+#[test]
+fn a_scalar_subquery_is_a_scalar_subquery_of_the_variables_it_reads() {
+    let sql = "SELECT rest.name AS name, \
+               (SELECT AVG(r.rating) AS average FROM collection_group('reviews') AS r \
+                WHERE r.restaurant = rest.__name__) AS average_rating \
+               FROM `pipeline-restaurants` AS rest";
+
+    let expected = fluent()
+        .from("pipeline-restaurants")
+        .define_variables(|e| [e.field("__name__").alias("rest___name__")])
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("name")),
+                e.scalar_subquery(|p| {
+                    p.from("reviews")
+                        .all_descendants()
+                        .filter(|q| q.field("restaurant").eq(q.variable("rest___name__")))
+                        .aggregate(|e| [e.field("rating").average().alias("average")])
+                })
+                .alias("average_rating"),
+            ]
+        })
+        .into_pipeline();
+
+    assert_eq!(translated_allowing_subqueries(sql), expected);
+}
+
+#[test]
+fn exists_tests_that_the_subquery_finds_a_row() {
+    let subquery = |variable: &str| {
+        FirestorePipelineExprBuilder
+            .array_subquery(|p| {
+                p.from("reviews")
+                    .all_descendants()
+                    .filter(|q| q.field("restaurant").eq(q.variable(variable)))
+                    .limit(1)
+            })
+            .array_length()
+    };
+    let exists = |test: FirestoreBoolExpr| {
+        fluent()
+            .from("pipeline-restaurants")
+            .define_variables(|e| [e.field("__name__").alias("rest___name__")])
+            .filter(|_| Some(test))
+            .fields(|e| [e.field("name")])
+            .into_pipeline()
+    };
+
+    for (negation, test) in [
+        ("", subquery("rest___name__").greater_than(0)),
+        ("NOT ", subquery("rest___name__").equal(0)),
+    ] {
+        let sql = format!(
+            "SELECT rest.name AS name FROM `pipeline-restaurants` AS rest WHERE {negation}EXISTS \
+             (SELECT 1 FROM collection_group('reviews') AS r WHERE r.restaurant = rest.__name__)"
+        );
+        assert_eq!(translated_allowing_subqueries(&sql), exists(test), "{sql}");
+    }
+}
+
+#[test]
+fn in_and_array_subqueries_translate_to_array_subqueries() {
+    let high_ratings = FirestorePipelineExprBuilder.array_subquery(|p| {
+        p.from("reviews")
+            .all_descendants()
+            .filter(|q| q.field("rating").greater_than_or_equal(5))
+            .fields(|e| [e.field("restaurant")])
+    });
+
+    for (negation, test) in [
+        ("", field("__name__").equal_any(high_ratings.clone())),
+        ("NOT ", field("__name__").not_equal_any(high_ratings)),
+    ] {
+        let sql = format!(
+            "SELECT rest.name AS name FROM `pipeline-restaurants` AS rest WHERE rest.__name__ \
+             {negation}IN (SELECT r.restaurant FROM collection_group('reviews') AS r WHERE r.rating >= 5)"
+        );
+        assert_eq!(
+            translated(&sql),
+            fluent()
+                .from("pipeline-restaurants")
+                .filter(|_| Some(test))
+                .fields(|e| [e.field("name")])
+                .into_pipeline(),
+            "{sql}"
+        );
+    }
+
+    assert_eq!(
+        translated(
+            "SELECT rest.name AS name, ARRAY(SELECT rating FROM subcollection('reviews')) AS ratings \
+             FROM `pipeline-restaurants` AS rest"
+        ),
+        fluent()
+            .from("pipeline-restaurants")
+            .fields(|e| {
+                [
+                    FirestoreSelection::from(e.field("name")),
+                    e.array_subquery(|p| p.subcollection("reviews").fields(|e| [e.field("rating")]))
+                        .alias("ratings"),
+                ]
+            })
+            .into_pipeline()
+    );
+}
+
+#[test]
+fn a_derived_table_continues_the_pipeline_of_its_query() {
+    assert_eq!(
+        translated(
+            "SELECT t.title AS title FROM (SELECT title, rating FROM books WHERE rating > 4) AS t \
+             WHERE t.rating > 4.5 ORDER BY t.title"
+        ),
+        fluent()
+            .from("books")
+            .filter(|q| q.field("rating").greater_than(4))
+            .fields(|e| [e.field("title"), e.field("rating")])
+            .filter(|q| q.field("rating").greater_than(4.5))
+            .sort(|e| [e.field("title").asc()])
+            .fields(|e| [e.field("title")])
+            .into_pipeline()
+    );
+}
+
+#[test]
+fn a_cte_runs_again_for_each_reference_to_it() {
+    let good_titles = || {
+        fluent()
+            .from("books")
+            .filter(|q| q.field("rating").greater_than(4))
+            .fields(|e| [e.field("title")])
+            .into_pipeline()
+    };
+
+    assert_eq!(
+        translated(
+            "WITH good AS (SELECT title FROM books WHERE rating > 4) \
+             SELECT * FROM good UNION ALL SELECT * FROM good"
+        ),
+        good_titles().with_stage(FirestorePipelineStage::Union(FirestoreUnionStage::new(
+            good_titles()
+        )))
+    );
+}
+
+#[test]
+fn a_cte_sees_the_ones_before_it_and_shadows_a_collection_of_the_same_name() {
+    assert_eq!(
+        translated(
+            "WITH a AS (SELECT * FROM books WHERE stock > 0), b AS (SELECT title FROM a) \
+             SELECT * FROM b"
+        ),
+        fluent()
+            .from("books")
+            .filter(|q| q.field("stock").greater_than(0))
+            .fields(|e| [e.field("title")])
+            .into_pipeline()
+    );
+    assert_eq!(
+        translated("WITH Books AS (SELECT title FROM archive) SELECT * FROM books"),
+        fluent()
+            .from("archive")
+            .fields(|e| [e.field("title")])
+            .into_pipeline()
+    );
+}
+
+#[test]
+fn unnest_flattens_an_array_of_the_row_and_can_number_its_elements() {
+    let expected = fluent()
+        .from("pipeline-books")
+        .unnest_with_index_field(|e| e.field("tags").alias("tag"), "pos")
+        .filter(|q| q.field("tag").eq("space"))
+        .fields(|e| [e.field("title"), e.field("tag"), e.field("pos")])
+        .into_pipeline();
+
+    for join in [
+        "CROSS JOIN UNNEST(b.tags) AS tag WITH OFFSET AS pos",
+        ", UNNEST(b.tags) AS tag WITH OFFSET AS pos",
+        "INNER JOIN UNNEST(b.tags) AS tag WITH OFFSET AS pos ON TRUE",
+    ] {
+        let sql = format!(
+            "SELECT b.title, tag, pos FROM `pipeline-books` AS b {join} WHERE tag = 'space'"
+        );
+        assert_eq!(translated(&sql), expected, "{sql}");
+    }
+}
+
+#[test]
+fn in_unnest_tests_membership_in_an_array() {
+    assert_eq!(
+        condition("SELECT * FROM books WHERE 'space' IN UNNEST(tags)"),
+        FirestoreExpr::constant("space")
+            .equal_any(field("tags"))
+            .into()
+    );
+    assert_eq!(
+        condition("SELECT * FROM books WHERE stock NOT IN UNNEST([0, 7])"),
+        field("stock").not_equal_any(vec![0, 7]).into()
+    );
+
+    let ids = FirestoreSqlParameters::new().param("ids", ["b1", "b2"]);
+    assert_eq!(
+        translate(
+            "SELECT * FROM books WHERE __name__ IN UNNEST(@ids)",
+            &ids,
+            &FirestoreSqlOptions::new()
+        )
+        .unwrap(),
+        fluent().documents(["books/b1", "books/b2"]).into_pipeline()
+    );
+}
+
+#[test]
+fn a_name_in_a_join_is_a_table_or_alias_or_an_error() {
+    let refusals = [
+        (
+            "SELECT rest.name FROM `pipeline-restaurants` AS rest \
+             JOIN subcollection('reviews') AS r ON TRUE WHERE rv.rating > 3",
+            "rv",
+        ),
+        (
+            "SELECT rest.name FROM `pipeline-restaurants` AS rest \
+             JOIN subcollection('reviews') AS r ON TRUE WHERE awards.hugo",
+            "awards",
+        ),
+        (
+            "SELECT * FROM `pipeline-restaurants` AS rest \
+             JOIN collection_group('reviews') AS r ON restaurant = rest.__name__",
+            "restaurant",
+        ),
+        (
+            "SELECT * FROM `pipeline-restaurants` AS rest \
+             JOIN collection_group('reviews') AS rest ON rest.restaurant = rest.__name__",
+            "rest",
+        ),
+        (
+            "SELECT * FROM `pipeline-restaurants` AS rest \
+             JOIN collection_group('reviews') AS r ON c.restaurant = rest.__name__ \
+             JOIN `cities` AS c ON c.__name__ = rest.city",
+            "c",
+        ),
+        (
+            "SELECT * FROM `pipeline-restaurants` AS rest WHERE EXISTS \
+             (SELECT 1 FROM subcollection('reviews') AS r WHERE rv.rating > 3)",
+            "rv",
+        ),
+    ];
+
+    for (sql, name) in refusals {
+        assert_eq!(refused_with_subqueries(sql).field, name, "{sql}");
+    }
+}
+
+#[test]
+fn joins_subqueries_and_ctes_outside_their_forms_are_refused_by_name() {
+    let refusals = [
+        ("SELECT * FROM a RIGHT JOIN b ON a.k = b.k", "RIGHT JOIN"),
+        (
+            "SELECT * FROM a FULL OUTER JOIN b ON a.k = b.k",
+            "FULL JOIN",
+        ),
+        ("SELECT * FROM a JOIN b USING (k)", "JOIN USING"),
+        ("SELECT * FROM a NATURAL JOIN b", "NATURAL JOIN"),
+        ("SELECT * FROM a JOIN b", "JOIN"),
+        (
+            "SELECT * FROM a LEFT JOIN UNNEST(a.tags) AS tag ON TRUE",
+            "LEFT JOIN UNNEST",
+        ),
+        ("SELECT * FROM a CROSS JOIN UNNEST(a.tags)", "UNNEST"),
+        ("SELECT * FROM UNNEST([1, 2]) AS n", "UNNEST"),
+        (
+            "WITH RECURSIVE t AS (SELECT * FROM a) SELECT * FROM t",
+            "WITH RECURSIVE",
+        ),
+        (
+            "WITH t(x) AS (SELECT * FROM a) SELECT * FROM t",
+            "an alias with columns",
+        ),
+        ("SELECT * FROM subcollection('reviews')", "subcollection"),
+        ("SELECT * FROM a WHERE x = (SELECT x, y FROM b)", "subquery"),
+        ("SELECT * FROM a WHERE x = (SELECT * FROM b)", "subquery"),
+        (
+            "SELECT * FROM a WHERE x IN (SELECT x FROM b UNION ALL SELECT x FROM c)",
+            "subquery",
+        ),
+        (
+            "SELECT * FROM a WHERE x IN (SELECT x, y FROM b)",
+            "subquery",
+        ),
+    ];
+
+    for (sql, construct) in refusals {
+        assert_eq!(refused_with_subqueries(sql).field, construct, "{sql}");
+    }
+}
+
+#[test]
+fn a_subquery_the_clause_cannot_define_a_variable_for_is_refused() {
+    let correlated_set = "UPDATE items AS i SET stock = (SELECT MAX(o.stock) AS most \
+                          FROM other AS o WHERE o.sku = i.sku) WHERE TRUE";
+
+    assert_eq!(refused_with_subqueries(correlated_set).field, "subquery");
+}
+
+#[test]
+fn a_subquery_in_the_where_of_a_write_reads_the_variables_before_the_write_stage() {
+    let sql = "DELETE FROM items WHERE EXISTS \
+               (SELECT 1 FROM other AS o WHERE o.sku = items.sku)";
+
+    let found = FirestorePipelineExprBuilder
+        .array_subquery(|p| {
+            p.from("other")
+                .filter(|q| q.field("sku").eq(q.variable("items_sku")))
+                .limit(1)
+        })
+        .array_length();
+    let expected = atomic(
+        fluent()
+            .from("items")
+            .define_variables(|e| [e.field("sku").alias("items_sku")])
+            .filter(|_| Some(found.greater_than(0)))
+            .into_pipeline(),
+        FirestorePipelineWrite::Delete,
+    );
+
+    assert_eq!(
+        translated_write_with(sql, &FirestoreSqlParameters::new(), &subqueries_allowed()),
+        expected
+    );
+    assert_eq!(refused(sql).field, "subquery");
+}
+
+#[test]
+fn a_cte_that_doubles_at_each_step_is_refused_and_a_long_chain_is_not() {
+    let doubling = {
+        let steps: Vec<String> = (1..=30)
+            .map(|step| {
+                let previous = step - 1;
+                format!(
+                    "c{step} AS (SELECT * FROM c{previous} UNION ALL SELECT * FROM c{previous})"
+                )
+            })
+            .collect();
+        format!(
+            "WITH c0 AS (SELECT * FROM books), {} SELECT * FROM c30",
+            steps.join(", ")
+        )
+    };
+    let chain = {
+        let steps: Vec<String> = (1..=40)
+            .map(|step| format!("c{step} AS (SELECT * FROM c{})", step - 1))
+            .collect();
+        format!(
+            "WITH c0 AS (SELECT * FROM books), {} SELECT * FROM c40",
+            steps.join(", ")
+        )
+    };
+    let nested = format!(
+        "SELECT * FROM a WHERE x IN (SELECT x FROM b WHERE x IN (SELECT x FROM c WHERE {}))",
+        "x IN (SELECT x FROM d)"
+    );
+
+    // An overflow aborts the process, so a statement that recurses too deep fails the run.
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            assert_eq!(refused(&doubling).field, "WITH");
+            assert_eq!(translated(&chain), fluent().from("books").into_pipeline());
+            translated(&nested);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn a_string_compared_with_the_name_of_a_joined_table_must_be_a_path() {
+    let sql = |name: &str| {
+        format!(
+            "SELECT rest.name FROM `pipeline-restaurants` AS rest \
+             JOIN subcollection('reviews') AS r ON TRUE WHERE r.__name__ = '{name}'"
+        )
+    };
+    let path = "pipeline-restaurants/rest-01/reviews/review-1";
+
+    let stages = translated(&sql(path)).stages;
+    let [_, _, FirestorePipelineStage::Where(filter), _] = stages.as_slice() else {
+        panic!("{stages:?}")
+    };
+    assert_eq!(
+        FirestoreExpr::from(filter.condition.clone()),
+        field("r.__name__").equal(reference(path)).into()
+    );
+    assert_eq!(refused(&sql("review-1")).field, "__name__");
 }

@@ -4,6 +4,8 @@ mod expr;
 
 mod functions;
 
+mod join;
+
 mod options;
 pub use options::*;
 
@@ -20,6 +22,8 @@ mod set_operation;
 
 mod statement;
 pub use statement::*;
+
+mod subquery;
 
 mod translator;
 

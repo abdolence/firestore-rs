@@ -1,6 +1,6 @@
 use super::expr::SQL_DOCUMENT_NAME_FIELD;
 use super::query::{table_start, FirestoreSqlBranch};
-use super::scope::{FirestoreSqlRelation, FirestoreSqlScope};
+use super::scope::{FirestoreSqlPlace, FirestoreSqlRelation, FirestoreSqlScope};
 use super::translator::{
     at, expr_start, is_parameter, name_start, refuse_set, FirestoreSqlTranslator,
 };
@@ -207,6 +207,7 @@ impl FirestoreSqlTranslator<'_> {
         Self::refuse_unmapped_clauses(query)?;
         refuse_set(
             &[
+                (query.with.is_some(), "WITH"),
                 (query.order_by.is_some(), "ORDER BY"),
                 (query.limit_clause.is_some(), "LIMIT"),
             ],
@@ -267,7 +268,12 @@ impl FirestoreSqlTranslator<'_> {
             let start = expr_start(value);
             let mut expr = self.expr(scope, value)?;
             if name == SQL_DOCUMENT_NAME_FIELD {
-                expr = self.document_reference(scope, expr, start)?;
+                expr = self.document_reference(
+                    scope,
+                    &FirestoreExpr::field(SQL_DOCUMENT_NAME_FIELD),
+                    expr,
+                    start,
+                )?;
                 self.check_in_collection(collection_path, &expr, start)?;
             }
             let FirestoreExpr::Constant(constant) = expr else {
@@ -326,7 +332,7 @@ impl FirestoreSqlTranslator<'_> {
             mut pipeline,
             columns: selected,
             ..
-        } = self.query(query)?;
+        } = self.query(query, FirestoreSqlPlace::top())?;
         if columns.is_empty() {
             return Ok(FirestoreSqlRows {
                 pipeline,
@@ -471,7 +477,7 @@ impl FirestoreSqlTranslator<'_> {
                     }
                 })
                 .collect::<FirestoreResult<Vec<Ident>>>()?;
-            let path = targets.column(&parts)?;
+            let path = targets.field(&parts)?;
             if path == SQL_DOCUMENT_NAME_FIELD {
                 return Err(FirestoreError::invalid_sql(
                     "__name__",
@@ -723,7 +729,7 @@ impl FirestoreSqlTranslator<'_> {
         sources: &[TableWithJoins],
         selection: Option<&Expr>,
         start: Option<FirestoreSqlLocation>,
-    ) -> FirestoreResult<(FirestorePipeline, FirestoreSqlScope)> {
+    ) -> FirestoreResult<(FirestorePipeline, FirestoreSqlScope<'static>)> {
         let [TableWithJoins { relation, joins }] = sources else {
             return Err(FirestoreError::invalid_sql(
                 "FROM",
@@ -737,11 +743,13 @@ impl FirestoreSqlTranslator<'_> {
                 table_start(&join.relation),
             ));
         }
-        let (source, relation) = self.table(relation)?;
-        let FirestorePipelineSource::Collection(_) = source else {
+        let (mut pipeline, relation) = self.table(relation, FirestoreSqlPlace::top(), false)?;
+        let (FirestorePipelineSource::Collection(_), true) =
+            (&pipeline.source, pipeline.stages.is_empty())
+        else {
             return Err(FirestoreError::invalid_sql(
                 "a write",
-                "a write names a collection, not collection_group(..), documents(..) or database()",
+                "a write names a collection, not a derived table, collection_group(..), documents(..) or database()",
                 start,
             ));
         };
@@ -753,7 +761,6 @@ impl FirestoreSqlTranslator<'_> {
             ));
         };
         let scope = FirestoreSqlScope::new(relation);
-        let mut pipeline = FirestorePipeline::new(source);
         let condition = self.expr(&scope, selection)?;
         self.filter(&scope, &mut pipeline, condition, true);
         Ok((pipeline, scope))

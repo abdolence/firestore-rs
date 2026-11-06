@@ -293,6 +293,387 @@ async fn a_geo_distance_condition_returns_the_places_of_the_fluent_search() -> T
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct RestaurantRating {
+    name: String,
+    rating: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct RestaurantAverage {
+    name: String,
+    average_rating: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct ReviewedRestaurant {
+    rating: i64,
+    restaurant: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct BookTag {
+    title: String,
+    tag: String,
+    pos: i64,
+}
+
+fn per_row_allowed() -> FirestoreSqlOptions {
+    FirestoreSqlOptions::new().allow_subqueries()
+}
+
+#[tokio::test]
+async fn an_inner_join_returns_the_rows_of_the_fluent_join() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<RestaurantRating> = db
+        .fluent()
+        .sql(
+            "SELECT rest.name, r.rating AS rating \
+             FROM `pipeline-restaurants` AS rest \
+             JOIN collection_group('reviews') AS r ON r.restaurant = rest.__name__ \
+             ORDER BY rest.name, r.rating DESC",
+        )
+        .options(per_row_allowed())
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<RestaurantRating> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(RESTAURANTS)
+        .define_variables(|e| [e.field("__name__").alias("rest___name__")])
+        .add_fields(|e| {
+            [e.array_subquery(|p| {
+                p.from("reviews")
+                    .all_descendants()
+                    .filter(|q| q.field("restaurant").eq(q.variable("rest___name__")))
+            })
+            .alias("r")]
+        })
+        .unnest(|e| e.field("r"))
+        .sort(|e| [e.field("name").asc(), e.field("r.rating").desc()])
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("name")),
+                e.field("r.rating").alias("rating"),
+            ]
+        })
+        .obj()
+        .query()
+        .await?;
+
+    assert_eq!(fluent.len(), 6);
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_left_join_returns_the_rows_of_the_fluent_join_and_the_restaurants_without_reviews(
+) -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<RestaurantRating> = db
+        .fluent()
+        .sql(
+            "SELECT rest.name, r.rating AS rating \
+             FROM `pipeline-restaurants` AS rest \
+             LEFT JOIN collection_group('reviews') AS r ON r.restaurant = rest.__name__ \
+             ORDER BY rest.name, r.rating DESC",
+        )
+        .options(per_row_allowed())
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<RestaurantRating> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(RESTAURANTS)
+        .define_variables(|e| [e.field("__name__").alias("rest___name__")])
+        .add_fields(|e| {
+            [e.array_subquery(|p| {
+                p.from("reviews")
+                    .all_descendants()
+                    .filter(|q| q.field("restaurant").eq(q.variable("rest___name__")))
+            })
+            .alias("r")]
+        })
+        .add_fields(|e| {
+            [e.conditional(
+                e.field("r").array_length().equal(0),
+                e.array([FirestoreExpr::constant(None::<bool>)]),
+                e.field("r"),
+            )
+            .alias("r")]
+        })
+        .unnest(|e| e.field("r"))
+        .sort(|e| [e.field("name").asc(), e.field("r.rating").desc()])
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("name")),
+                e.field("r.rating").alias("rating"),
+            ]
+        })
+        .obj()
+        .query()
+        .await?;
+
+    assert_eq!(fluent.len(), 12);
+    assert!(fluent.iter().any(|row| row.rating.is_none()));
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_join_on_a_document_name_returns_the_rows_of_the_fluent_lookup() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<ReviewedRestaurant> = db
+        .fluent()
+        .sql(
+            "SELECT r.rating, rest.name AS restaurant \
+             FROM collection_group('reviews') AS r \
+             JOIN `pipeline-restaurants` AS rest ON rest.__name__ = r.restaurant \
+             ORDER BY rest.name, r.rating DESC",
+        )
+        .options(per_row_allowed())
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<ReviewedRestaurant> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from("reviews")
+        .all_descendants()
+        .define_variables(|e| [e.field("restaurant").alias("r_restaurant")])
+        .add_fields(|e| {
+            [e.array_subquery(|p| {
+                p.from(RESTAURANTS).filter(|q| {
+                    q.field("__name__")
+                        .is_in(q.values().array([q.variable("r_restaurant")]))
+                })
+            })
+            .alias("rest")]
+        })
+        .unnest(|e| e.field("rest"))
+        .sort(|e| [e.field("rest.name").asc(), e.field("rating").desc()])
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("rating")),
+                e.field("rest.name").alias("restaurant"),
+            ]
+        })
+        .obj()
+        .query()
+        .await?;
+
+    assert_eq!(fluent.len(), 6);
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_scalar_subquery_returns_the_values_of_the_fluent_scalar_subquery() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<RestaurantAverage> = db
+        .fluent()
+        .sql(
+            "SELECT rest.name, \
+               (SELECT AVG(r.rating) AS average FROM collection_group('reviews') AS r \
+                WHERE r.restaurant = rest.__name__) AS average_rating \
+             FROM `pipeline-restaurants` AS rest ORDER BY rest.name",
+        )
+        .options(per_row_allowed())
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<RestaurantAverage> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(RESTAURANTS)
+        .define_variables(|e| [e.field("__name__").alias("rest___name__")])
+        .sort(|e| [e.field("name").asc()])
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("name")),
+                e.scalar_subquery(|p| {
+                    p.from("reviews")
+                        .all_descendants()
+                        .filter(|q| q.field("restaurant").eq(q.variable("rest___name__")))
+                        .aggregate(|e| [e.field("rating").average().alias("average")])
+                })
+                .alias("average_rating"),
+            ]
+        })
+        .obj()
+        .query()
+        .await?;
+
+    assert_eq!(fluent.len(), 9);
+    assert!(fluent.iter().any(|row| row.average_rating.is_none()));
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn exists_returns_the_rows_of_the_fluent_array_length_test() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<Name> = db
+        .fluent()
+        .sql(
+            "SELECT rest.name FROM `pipeline-restaurants` AS rest \
+             WHERE EXISTS (SELECT 1 FROM collection_group('reviews') AS r \
+                           WHERE r.restaurant = rest.__name__) \
+             ORDER BY rest.name",
+        )
+        .options(per_row_allowed())
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<Name> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(RESTAURANTS)
+        .define_variables(|e| [e.field("__name__").alias("rest___name__")])
+        .filter(|q| {
+            q.expr(
+                q.values()
+                    .array_subquery(|p| {
+                        p.from("reviews")
+                            .all_descendants()
+                            .filter(|q| q.field("restaurant").eq(q.variable("rest___name__")))
+                            .limit(1)
+                    })
+                    .array_length(),
+            )
+            .greater_than(0)
+        })
+        .sort(|e| [e.field("name").asc()])
+        .fields(|e| [e.field("name")])
+        .obj()
+        .query()
+        .await?;
+
+    assert_eq!(fluent.len(), 3);
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cte_used_twice_runs_again_for_each_reference_like_the_fluent_union() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<Title> = db
+        .fluent()
+        .sql(
+            "WITH good AS (SELECT title, rating FROM `pipeline-books` WHERE rating >= 4.5) \
+             SELECT title FROM good UNION ALL SELECT title FROM good ORDER BY title",
+        )
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<Title> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(BOOKS)
+        .filter(|q| q.field("rating").greater_than_or_equal(4.5))
+        .fields(|e| [e.field("title"), e.field("rating")])
+        .fields(|e| [e.field("title")])
+        .union(|p| {
+            p.from(BOOKS)
+                .filter(|q| q.field("rating").greater_than_or_equal(4.5))
+                .fields(|e| [e.field("title"), e.field("rating")])
+                .fields(|e| [e.field("title")])
+        })
+        .sort(|e| [e.field("title").asc()])
+        .obj()
+        .query()
+        .await?;
+
+    assert!(!fluent.is_empty());
+    assert_eq!(fluent.len() % 2, 0);
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn unnest_with_offset_returns_the_rows_of_the_fluent_unnest() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<BookTag> = db
+        .fluent()
+        .sql(
+            "SELECT b.title, tag, pos FROM `pipeline-books` AS b \
+             CROSS JOIN UNNEST(b.tags) AS tag WITH OFFSET AS pos \
+             WHERE b.genre = 'Science Fiction' ORDER BY b.title, pos",
+        )
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<BookTag> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(BOOKS)
+        .unnest_with_index_field(|e| e.field("tags").alias("tag"), "pos")
+        .filter(|q| q.field("genre").eq("Science Fiction"))
+        .sort(|e| [e.field("title").asc(), e.field("pos").asc()])
+        .fields(|e| [e.field("title"), e.field("tag"), e.field("pos")])
+        .obj()
+        .query()
+        .await?;
+
+    assert!(!fluent.is_empty());
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_join_into_a_subcollection_works_without_the_opt_in() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<RestaurantRating> = db
+        .fluent()
+        .sql(
+            "SELECT rest.name, r.rating AS rating \
+             FROM `pipeline-restaurants` AS rest \
+             JOIN subcollection('reviews') AS r ON TRUE \
+             ORDER BY rest.name, r.rating DESC",
+        )
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<RestaurantRating> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(RESTAURANTS)
+        .add_fields(|e| [e.array_subquery(|p| p.subcollection("reviews")).alias("r")])
+        .unnest(|e| e.field("r"))
+        .sort(|e| [e.field("name").asc(), e.field("r.rating").desc()])
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("name")),
+                e.field("r.rating").alias("rating"),
+            ]
+        })
+        .obj()
+        .query()
+        .await?;
+
+    assert_eq!(fluent.len(), 6);
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
 /// Every collection a SQL write may change starts with this.
 const WRITE_COLLECTION_PREFIX: &str = "sql-tests-";
 

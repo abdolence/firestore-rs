@@ -1,5 +1,5 @@
 use super::functions::FirestoreSqlCall;
-use super::scope::FirestoreSqlScope;
+use super::scope::{FirestoreSqlColumn, FirestoreSqlScope};
 use super::translator::{at, expr_start, is_column, is_parameter, FirestoreSqlTranslator};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::{
@@ -354,6 +354,7 @@ impl FirestoreSqlTranslator<'_> {
             name,
             arguments,
             duplicate_treatment,
+            subquery: _,
         } = call;
         let distinct = matches!(duplicate_treatment, Some(DuplicateTreatment::Distinct));
         let accumulator = match (name.as_str(), distinct) {
@@ -401,17 +402,28 @@ impl FirestoreSqlTranslator<'_> {
         ))
     }
 
-    /// The column `parts` names, noted as read for the aggregation to check.
+    /// The column `parts` names. A column of the query is noted as read for the aggregation to
+    /// check, and a column of an enclosing query becomes the variable a subquery reads it
+    /// through.
     pub(super) fn column(
         &mut self,
         scope: &FirestoreSqlScope,
         parts: &[Ident],
     ) -> FirestoreResult<FirestoreExpr> {
-        let path = scope.column(parts)?;
-        if let Some(aggregation) = self.aggregation.as_mut() {
-            aggregation.read(path.clone(), parts.first().and_then(|part| at(part.span)));
+        let start = parts.first().and_then(|part| at(part.span));
+        match scope.column(parts)? {
+            FirestoreSqlColumn::Own { path } => {
+                if let Some(aggregation) = self.aggregation.as_mut() {
+                    aggregation.read(path.clone(), start);
+                }
+                Ok(FirestoreExpr::Field(path))
+            }
+            FirestoreSqlColumn::Outer {
+                depth,
+                qualifier,
+                path,
+            } => Ok(self.capture(depth, &qualifier, path, start)),
         }
-        Ok(FirestoreExpr::Field(path))
     }
 
     /// How many columns the aggregation has seen read so far.

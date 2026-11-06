@@ -1,5 +1,5 @@
 use super::query::{FirestoreSqlBranch, FirestoreSqlProjection};
-use super::scope::{FirestoreSqlRelation, FirestoreSqlScope};
+use super::scope::{FirestoreSqlPlace, FirestoreSqlRelation, FirestoreSqlScope};
 use super::translator::FirestoreSqlTranslator;
 use crate::errors::FirestoreError;
 use crate::{
@@ -20,6 +20,7 @@ impl FirestoreSqlTranslator<'_> {
         &mut self,
         body: &SetExpr,
         order_by: Option<&OrderBy>,
+        place: FirestoreSqlPlace<'_>,
     ) -> FirestoreResult<FirestoreSqlBranch> {
         let mut unions = Vec::new();
         let mut first = body;
@@ -51,9 +52,9 @@ impl FirestoreSqlTranslator<'_> {
             mut pipeline,
             columns,
             start,
-        } = self.branch(first)?;
+        } = self.branch(first, place)?;
         for (index, &(deduplicates, right)) in unions.iter().enumerate() {
-            let branch = self.branch(right)?;
+            let branch = self.branch(right, place)?;
             match (&columns, &branch.columns) {
                 (Some(expected), Some(actual)) if expected == actual => {}
                 (None, None) if !deduplicates => {}
@@ -109,9 +110,13 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    fn branch(&mut self, set_expr: &SetExpr) -> FirestoreResult<FirestoreSqlBranch> {
+    fn branch(
+        &mut self,
+        set_expr: &SetExpr,
+        place: FirestoreSqlPlace<'_>,
+    ) -> FirestoreResult<FirestoreSqlBranch> {
         match set_expr {
-            SetExpr::Select(select) => self.select(select, None),
+            SetExpr::Select(select) => self.select(select, None, place),
             other => Err(Self::unsupported_body(other)),
         }
     }

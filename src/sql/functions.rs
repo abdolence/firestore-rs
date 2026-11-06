@@ -4,7 +4,7 @@ use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::{FirestoreExpr, FirestoreResult};
 use sqlparser::ast::{
     DuplicateTreatment, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentList,
-    FunctionArguments, ObjectName, ObjectNamePart,
+    FunctionArguments, ObjectName, ObjectNamePart, Query,
 };
 
 /// The parts of a plain function call.
@@ -13,6 +13,8 @@ pub(super) struct FirestoreSqlCall<'f> {
     pub(super) name: String,
     pub(super) arguments: &'f [FunctionArg],
     pub(super) duplicate_treatment: Option<&'f DuplicateTreatment>,
+    /// The query of a call written `name(SELECT ..)`, which has no arguments.
+    pub(super) subquery: Option<&'f Query>,
 }
 
 impl FirestoreSqlTranslator<'_> {
@@ -36,6 +38,15 @@ impl FirestoreSqlTranslator<'_> {
     ) -> FirestoreResult<FirestoreExpr> {
         let call = Self::call_parts(function)?;
         let start = name_start(&function.name);
+        if let Some(query) = call.subquery {
+            return match call.name.as_str() {
+                "array" => self.array_subquery(scope, query),
+                name => Err(FirestoreError::unsupported_sql(
+                    &format!("a subquery as the argument of {name}"),
+                    start,
+                )),
+            };
+        }
         if is_aggregate(&call.name) {
             return self.aggregate(scope, &call, output, start);
         }
@@ -112,6 +123,12 @@ impl FirestoreSqlTranslator<'_> {
                 name_start(&function.name),
             ));
         }
+        if call.subquery.is_some() {
+            return Err(FirestoreError::unsupported_sql(
+                "a subquery as an argument",
+                name_start(&function.name),
+            ));
+        }
         Ok((call.name, call.arguments))
     }
 
@@ -144,8 +161,8 @@ impl FirestoreSqlTranslator<'_> {
             start,
         )?;
         let name = Self::function_name(name, start)?;
-        let (arguments, duplicate_treatment) = match args {
-            FunctionArguments::None => (&[][..], None),
+        let (arguments, duplicate_treatment, subquery) = match args {
+            FunctionArguments::None => (&[][..], None, None),
             FunctionArguments::List(FunctionArgumentList {
                 duplicate_treatment,
                 args,
@@ -154,16 +171,15 @@ impl FirestoreSqlTranslator<'_> {
                 if !clauses.is_empty() {
                     return Err(FirestoreError::unsupported_sql("a clause in a call", start));
                 }
-                (args.as_slice(), duplicate_treatment.as_ref())
+                (args.as_slice(), duplicate_treatment.as_ref(), None)
             }
-            FunctionArguments::Subquery(_) => {
-                return Err(FirestoreError::unsupported_sql("a subquery", start))
-            }
+            FunctionArguments::Subquery(query) => (&[][..], None, Some(query.as_ref())),
         };
         Ok(FirestoreSqlCall {
             name,
             arguments,
             duplicate_treatment,
+            subquery,
         })
     }
 

@@ -1,5 +1,5 @@
 use super::scope::FirestoreSqlScope;
-use super::translator::{at, expr_start, is_parameter, FirestoreSqlTranslator};
+use super::translator::{at, expr_start, field_path, is_parameter, FirestoreSqlTranslator};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::{
@@ -153,12 +153,21 @@ impl FirestoreSqlTranslator<'_> {
                 field: CeilFloorKind::DateTimeField(DateTimeField::NoDateTime),
             } => self.value_of(scope, operand, FirestoreExpr::floor),
             Expr::Array(Array { elem, named: _ }) => self.array_literal(scope, elem),
-            Expr::InSubquery { .. } | Expr::Exists { .. } | Expr::Subquery(_) => Err(
-                FirestoreError::unsupported_sql("a subquery", expr_start(expr)),
-            ),
-            Expr::InUnnest { .. } => {
-                Err(FirestoreError::unsupported_sql("UNNEST", expr_start(expr)))
+            Expr::Subquery(query) => self.scalar_subquery(scope, query),
+            Expr::Exists { subquery, negated } => self.exists(scope, subquery, *negated),
+            Expr::InSubquery {
+                expr: operand,
+                subquery,
+                negated,
+            } => {
+                let operand = self.expr(scope, operand)?;
+                self.in_subquery(scope, operand, subquery, *negated)
             }
+            Expr::InUnnest {
+                expr: operand,
+                array_expr,
+                negated,
+            } => self.in_unnest(scope, operand, array_expr, *negated),
             Expr::Cast { .. } => Err(FirestoreError::unsupported_sql("CAST", expr_start(expr))),
             Expr::Ceil { .. } | Expr::Floor { .. } => Err(FirestoreError::unsupported_sql(
                 "CEIL or FLOOR with a unit or scale",
@@ -210,6 +219,48 @@ impl FirestoreSqlTranslator<'_> {
     ) -> FirestoreResult<FirestoreExpr> {
         let (left, right) = self.compared(scope, left, right)?;
         Ok(compare(left, right).into())
+    }
+
+    /// `left = right`. A document looked up by a variable, as a join or a correlated subquery
+    /// does, is looked up by `IN` an array of the variable: Firestore reads the document by its
+    /// key for that, where it scans the collection for each row to evaluate `=`.
+    fn equality(
+        &mut self,
+        scope: &FirestoreSqlScope,
+        left: &Expr,
+        right: &Expr,
+    ) -> FirestoreResult<FirestoreExpr> {
+        let (left, right) = self.compared(scope, left, right)?;
+        Ok(match (left, right) {
+            (name, key @ FirestoreExpr::Variable(_)) | (key @ FirestoreExpr::Variable(_), name)
+                if Self::is_own_document_name(&name) =>
+            {
+                name.equal_any(Self::array(vec![key])).into()
+            }
+            (left, right) => left.equal(right).into(),
+        })
+    }
+
+    /// `operand [NOT] IN UNNEST(array)`.
+    fn in_unnest(
+        &mut self,
+        scope: &FirestoreSqlScope,
+        operand: &Expr,
+        array: &Expr,
+        negated: bool,
+    ) -> FirestoreResult<FirestoreExpr> {
+        let operand = self.expr(scope, operand)?;
+        let mut search_space = self.expr(scope, array)?;
+        if Self::is_document_name(&operand) {
+            search_space =
+                self.document_references(scope, &operand, search_space, expr_start(array))?;
+        }
+        Ok(if negated {
+            operand.not_equal_any(search_space)
+        } else {
+            operand.equal_any(search_space)
+        }
+        .into())
     }
 
     /// An arithmetic operation on two values.
@@ -315,7 +366,7 @@ impl FirestoreSqlTranslator<'_> {
                 FirestorePipelineExprBuilder.or(conditions)
             }),
             BinaryOperator::StringConcat => self.concatenation(scope, expr, op),
-            BinaryOperator::Eq => self.comparison(scope, left, right, FirestoreExpr::equal),
+            BinaryOperator::Eq => self.equality(scope, left, right),
             BinaryOperator::NotEq => self.comparison(scope, left, right, FirestoreExpr::not_equal),
             BinaryOperator::Lt => self.comparison(scope, left, right, FirestoreExpr::less_than),
             BinaryOperator::LtEq => {
@@ -431,10 +482,12 @@ impl FirestoreSqlTranslator<'_> {
         let left_value = self.expr(scope, left)?;
         let right_value = self.expr(scope, right)?;
         if Self::is_document_name(&left_value) {
-            let right_value = self.document_reference(scope, right_value, expr_start(right))?;
+            let right_value =
+                self.document_reference(scope, &left_value, right_value, expr_start(right))?;
             Ok((left_value, right_value))
         } else if Self::is_document_name(&right_value) {
-            let left_value = self.document_reference(scope, left_value, expr_start(left))?;
+            let left_value =
+                self.document_reference(scope, &right_value, left_value, expr_start(left))?;
             Ok((left_value, right_value))
         } else {
             Ok((left_value, right_value))
@@ -454,7 +507,7 @@ impl FirestoreSqlTranslator<'_> {
         for element in list {
             let value = self.expr(scope, element)?;
             elements.push(if names_documents {
-                self.document_reference(scope, value, expr_start(element))?
+                self.document_reference(scope, &operand, value, expr_start(element))?
             } else {
                 value
             });
@@ -479,7 +532,7 @@ impl FirestoreSqlTranslator<'_> {
         let (operand, low) = self.compared(scope, operand, low)?;
         let mut high_value = self.expr(scope, high)?;
         if Self::is_document_name(&operand) {
-            high_value = self.document_reference(scope, high_value, expr_start(high))?;
+            high_value = self.document_reference(scope, &operand, high_value, expr_start(high))?;
         }
         let values = FirestorePipelineExprBuilder;
         Ok(if negated {
@@ -619,7 +672,7 @@ impl FirestoreSqlTranslator<'_> {
             value = match access {
                 AccessExpr::Dot(Expr::Identifier(ident)) => match value {
                     FirestoreExpr::Field(path) => {
-                        let nested = scope.column(std::slice::from_ref(ident))?;
+                        let nested = field_path(std::slice::from_ref(ident));
                         FirestoreExpr::Field(format!("{path}.{nested}"))
                     }
                     other => other.map_get(ident.value.clone()),
@@ -674,6 +727,7 @@ impl FirestoreSqlTranslator<'_> {
     pub(super) fn document_reference(
         &self,
         scope: &FirestoreSqlScope,
+        name_field: &FirestoreExpr,
         operand: FirestoreExpr,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<FirestoreExpr> {
@@ -686,7 +740,10 @@ impl FirestoreSqlTranslator<'_> {
         else {
             return Ok(operand);
         };
-        let path = match (name.contains('/'), &scope.relation().collection_path) {
+        let collection_path = Self::is_own_document_name(name_field)
+            .then_some(&scope.relation().collection_path)
+            .and_then(Option::as_ref);
+        let path = match (name.contains('/'), collection_path) {
             (true, _) => Cow::Borrowed(name.as_str()),
             (false, Some(collection_path)) => Cow::Owned(format!("{collection_path}/{name}")),
             (false, None) => {
@@ -706,9 +763,44 @@ impl FirestoreSqlTranslator<'_> {
         ))))
     }
 
-    /// Whether `expr` is the field that holds each document's path.
-    pub(super) fn is_document_name(expr: &FirestoreExpr) -> bool {
+    /// Whether `expr` is the field that holds the path of the documents the query reads.
+    pub(super) fn is_own_document_name(expr: &FirestoreExpr) -> bool {
         matches!(expr, FirestoreExpr::Field(path) if path == SQL_DOCUMENT_NAME_FIELD)
+    }
+
+    /// Whether `expr` is the field that holds the path of a document: of the query's own, or of
+    /// a joined table.
+    pub(super) fn is_document_name(expr: &FirestoreExpr) -> bool {
+        matches!(expr, FirestoreExpr::Field(path)
+            if path.rsplit('.').next() == Some(SQL_DOCUMENT_NAME_FIELD))
+    }
+
+    /// `values`, an array of constants, with each string among them turned into the reference to
+    /// the document it names.
+    fn document_references(
+        &self,
+        scope: &FirestoreSqlScope,
+        name_field: &FirestoreExpr,
+        values: FirestoreExpr,
+        start: Option<FirestoreSqlLocation>,
+    ) -> FirestoreResult<FirestoreExpr> {
+        let FirestoreExpr::Constant(FirestoreValue {
+            value:
+                Value {
+                    value_type: Some(ValueType::ArrayValue(ArrayValue { values: elements })),
+                },
+        }) = values
+        else {
+            return Ok(values);
+        };
+        let references = elements
+            .into_iter()
+            .map(|element| {
+                let element = FirestoreExpr::Constant(FirestoreValue::from(element));
+                self.document_reference(scope, name_field, element, start)
+            })
+            .collect::<FirestoreResult<_>>()?;
+        Ok(Self::array(references))
     }
 
     /// An array of `elements`: a constant when they all are, so that `IN` reads like the fluent

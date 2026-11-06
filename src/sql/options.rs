@@ -100,7 +100,9 @@ impl FirestoreSqlOptions {
 
     /// Allows joins and correlated subqueries. Each runs one subquery per row of the query it is
     /// in, and without an index on the join key each of those reads the whole joined
-    /// collection.
+    /// collection. A join or subquery into `subcollection(..)` reads only the children of each
+    /// row, and a derived table or a common table expression does not multiply with the rows, so
+    /// none of them needs this.
     pub fn allow_subqueries(self) -> Self {
         Self {
             subqueries: true,

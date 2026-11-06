@@ -1,5 +1,6 @@
 use super::aggregation::FirestoreSqlAggregation;
 use super::parameters::FirestoreSqlBinding;
+use super::subquery::{FirestoreSqlCapture, FirestoreSqlCte};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::{
     FirestoreCollectionId, FirestoreDocumentId, FirestoreResult, FirestoreSearchQuery,
@@ -26,6 +27,14 @@ pub(super) struct FirestoreSqlTranslator<'t> {
     pub(super) aggregation: Option<FirestoreSqlAggregation>,
     /// The search the `SELECT` being translated lifted out of its `WHERE`.
     pub(super) search: Option<FirestoreSearchQuery>,
+    /// The columns of enclosing queries that subqueries have read and no stage defines yet.
+    pub(super) pending: Vec<FirestoreSqlCapture>,
+    /// The depth of the enclosing query behind every column a subquery has read from one.
+    pub(super) outer_reads: Vec<usize>,
+    /// The common table expressions in scope, the latest last.
+    pub(super) ctes: Vec<FirestoreSqlCte>,
+    /// How many times the pipelines of common table expressions have been repeated.
+    pub(super) cte_copies: usize,
     depth: usize,
 }
 
@@ -41,6 +50,10 @@ impl<'t> FirestoreSqlTranslator<'t> {
             binding,
             aggregation: None,
             search: None,
+            pending: Vec::new(),
+            outer_reads: Vec::new(),
+            ctes: Vec::new(),
+            cte_copies: 0,
             depth: 0,
         }
     }
@@ -49,32 +62,34 @@ impl<'t> FirestoreSqlTranslator<'t> {
         &mut self,
         statement: &Statement,
     ) -> FirestoreResult<FirestoreSqlStatement> {
-        match statement {
-            Statement::Query(query) => {
-                Ok(FirestoreSqlStatement::Query(self.top_level_query(query)?))
-            }
+        let translated = match statement {
+            Statement::Query(query) => FirestoreSqlStatement::Query(self.top_level_query(query)?),
             Statement::Insert(_)
             | Statement::Update(_)
             | Statement::Delete(_)
             | Statement::Merge(_)
                 if self.options.read_only =>
             {
-                Err(FirestoreError::invalid_sql(
+                return Err(FirestoreError::invalid_sql(
                     "read_only",
                     "a write is refused by the read-only options",
                     None,
                 ))
             }
-            Statement::Insert(insert) => self.insert(insert),
-            Statement::Update(update) => self.update(update),
-            Statement::Delete(delete) => self.delete(delete),
-            Statement::Merge(merge) => Err(Self::merge(merge)),
-            _ => Err(FirestoreError::invalid_sql(
-                "statement",
-                "only a SELECT, INSERT, UPDATE or DELETE statement translates to a pipeline",
-                None,
-            )),
-        }
+            Statement::Insert(insert) => self.insert(insert)?,
+            Statement::Update(update) => self.update(update)?,
+            Statement::Delete(delete) => self.delete(delete)?,
+            Statement::Merge(merge) => return Err(Self::merge(merge)),
+            _ => {
+                return Err(FirestoreError::invalid_sql(
+                    "statement",
+                    "only a SELECT, INSERT, UPDATE or DELETE statement translates to a pipeline",
+                    None,
+                ))
+            }
+        };
+        self.ensure_variables_defined()?;
+        Ok(translated)
     }
 
     /// Runs `translate` one level deeper into the statement, or fails at the depth limit.
@@ -275,7 +290,7 @@ pub(super) fn field_path(parts: &[Ident]) -> String {
 
 /// `name` as one segment of a field path. Firestore's field path syntax takes a name other than
 /// letters, digits and underscores, such as one with a dot, between backticks.
-fn field_segment(name: &str) -> Cow<'_, str> {
+pub(super) fn field_segment(name: &str) -> Cow<'_, str> {
     let simple = name
         .chars()
         .next()
