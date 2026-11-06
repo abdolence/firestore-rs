@@ -591,3 +591,63 @@ async fn search_indexes_against_real_firestore_enterprise(
     );
     Ok(())
 }
+
+const ENTERPRISE_TTL_GROUP: &str = "ttl-probe-enterprise";
+
+/// Enables TTL on the Enterprise database (`GCP_ENTERPRISE_DATABASE_ID`), replans it, and disables
+/// it again with a pruning sync. The disable runs even when an assertion fails, so the policy
+/// never outlives the test.
+#[tokio::test]
+#[ignore = "enables and disables real TTL policy in GCP_ENTERPRISE_DATABASE_ID; takes minutes; run with --ignored"]
+async fn ttl_against_real_firestore_enterprise(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let db = setup_enterprise().await?;
+    let ttl_declaration = || {
+        db.fluent()
+            .indexes()
+            .collection_group(ENTERPRISE_TTL_GROUP)
+            .ttl(["expires_at"])
+            .wait_until_ready_with_options(FirestoreOperationWaitOptions::new(WAIT_TIMEOUT))
+    };
+
+    let scenario = AssertUnwindSafe(async {
+        let report = ttl_declaration().sync().await?;
+        println!("[enterprise ttl] enable report:\n{report}");
+        assert_eq!(report.enabled_ttl, vec!["expires_at".to_string()]);
+
+        let replan = ttl_declaration().plan().await?;
+        println!("[enterprise ttl] replan:\n{replan}");
+        assert_eq!(replan.unchanged_ttl, vec!["expires_at".to_string()]);
+        assert!(replan.enable_ttl.is_empty() && replan.unrecognised.is_empty());
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .catch_unwind()
+    .await;
+
+    let cleanup = db
+        .fluent()
+        .indexes()
+        .collection_group(ENTERPRISE_TTL_GROUP)
+        .prune_undeclared()
+        .wait_until_ready_with_options(FirestoreOperationWaitOptions::new(WAIT_TIMEOUT))
+        .sync()
+        .await;
+
+    scenario.unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
+    let cleanup = cleanup?;
+    println!("[enterprise ttl] disable report:\n{cleanup}");
+    assert_eq!(cleanup.disabled_ttl.len(), 1);
+
+    let after = db
+        .fluent()
+        .indexes()
+        .collection_group(ENTERPRISE_TTL_GROUP)
+        .prune_undeclared()
+        .plan()
+        .await?;
+    assert!(
+        after.disable_ttl.is_empty() && after.unchanged_ttl.is_empty(),
+        "{ENTERPRISE_TTL_GROUP:?} carries no TTL policy after the disable"
+    );
+    Ok(())
+}

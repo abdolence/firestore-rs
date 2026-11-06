@@ -237,6 +237,9 @@ write one. When `.plan()` or `.sync()` would have to write a `.field_overrides(.
 it fails with `InvalidParametersError` before anything is written. Declare the indexes a
 pipeline needs as composite indexes.
 
+`.ttl(..)` declarations are written on an Enterprise edition database as on any other, and
+`.prune_undeclared()` disables them there the same way.
+
 ## Removing what you no longer declare
 
 By default, an index, override or TTL field Firestore lists for the owned group but this
