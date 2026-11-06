@@ -1,7 +1,9 @@
+use crate::errors::FirestoreError;
 use crate::{
     FirestoreDb, FirestoreDocument, FirestoreExplainOptions, FirestorePipelineParams,
-    FirestorePipelineSupport, FirestoreRequestOptions, FirestoreRequestTag, FirestoreResult,
-    FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement,
+    FirestorePipelineSupport, FirestorePipelineWriteParams, FirestorePipelineWriteResult,
+    FirestoreRequestOptions, FirestoreRequestTag, FirestoreResult, FirestoreSqlOptions,
+    FirestoreSqlParameters, FirestoreSqlStatement, FirestoreTransaction,
     FirestoreWithPipelineMetadata,
 };
 use futures::stream::BoxStream;
@@ -11,6 +13,11 @@ use std::marker::PhantomData;
 /// A SQL statement, the values of its parameters and the options it runs with. It is translated
 /// when it runs, so an error in the text arrives from the terminal method, before any request is
 /// sent.
+///
+/// A `SELECT` runs with `query` or one of its streaming variants. An `INSERT`, `UPDATE` or
+/// `DELETE` runs with [`execute`](Self::execute) or
+/// [`execute_in_transaction`](Self::execute_in_transaction), and fails from the other terminals,
+/// as a `SELECT` does from these two.
 ///
 /// Created by [`FirestoreExprBuilder::sql()`](crate::FirestoreExprBuilder::sql).
 #[derive(Clone, Debug)]
@@ -147,6 +154,37 @@ impl<'a> FirestoreSqlBuilder<'a> {
             .await
     }
 
+    /// Runs an `INSERT`, `UPDATE` or `DELETE` atomically: it applies in full or not at all.
+    ///
+    /// A failed write is reported like a failed commit: `retry_possible` is set for `ABORTED`,
+    /// which means nothing was applied, and unset for any other code, which can leave the outcome
+    /// unknown. The write is sent once and never retried.
+    ///
+    /// Fails with `InvalidParametersError` before any request for a `SELECT`, and for a statement
+    /// with [`explain`](Self::explain), which would run the write as well when it analyses. It
+    /// fails the same way on a `db` bound to a transaction or a read time: a write in a
+    /// transaction runs with [`execute_in_transaction`](Self::execute_in_transaction).
+    pub async fn execute(self) -> FirestoreResult<FirestorePipelineWriteResult> {
+        let db = self.db;
+        db.execute_pipeline_write(self.into_write_params()?).await
+    }
+
+    /// Runs an `INSERT`, `UPDATE` or `DELETE` in `transaction`, which holds it until the
+    /// transaction commits and drops it on rollback.
+    ///
+    /// The transaction takes pipeline writes or buffered writes, not both, and every read comes
+    /// before the first pipeline write: see
+    /// [`execute_in_transaction`](crate::pipeline_builder::FirestorePipelineBuilder::execute_in_transaction)
+    /// of the pipeline write builder.
+    pub async fn execute_in_transaction(
+        self,
+        transaction: &mut FirestoreTransaction<'_>,
+    ) -> FirestoreResult<FirestorePipelineWriteResult> {
+        let db = self.db;
+        db.execute_pipeline_write_in_transaction(self.into_write_params()?, transaction)
+            .await
+    }
+
     /// The translated query and the options it runs with.
     fn into_params(self) -> FirestoreResult<FirestorePipelineParams> {
         match FirestoreSqlStatement::translate(self.db, &self.sql, &self.parameters, &self.options)?
@@ -154,6 +192,30 @@ impl<'a> FirestoreSqlBuilder<'a> {
             FirestoreSqlStatement::Query(pipeline) => Ok(FirestorePipelineParams::new(pipeline)
                 .opt_explain_options(self.explain_options)
                 .opt_request_options(self.request_options)),
+            FirestoreSqlStatement::Write(_) => Err(FirestoreError::invalid_parameters(
+                "sql",
+                "an INSERT, UPDATE or DELETE runs with execute() or execute_in_transaction(), and returns a count rather than rows",
+            )),
+        }
+    }
+
+    /// The translated write and the options it runs with.
+    fn into_write_params(self) -> FirestoreResult<FirestorePipelineWriteParams> {
+        match FirestoreSqlStatement::translate(self.db, &self.sql, &self.parameters, &self.options)?
+        {
+            FirestoreSqlStatement::Write(_) if self.explain_options.is_some() => {
+                Err(FirestoreError::invalid_parameters(
+                    "explain",
+                    "Firestore rejects explain on a write, or with analyze runs the write as well",
+                ))
+            }
+            FirestoreSqlStatement::Write(write) => {
+                Ok(write.opt_request_options(self.request_options))
+            }
+            FirestoreSqlStatement::Query(_) => Err(FirestoreError::invalid_parameters(
+                "sql",
+                "a SELECT runs with query() or one of its streaming variants, and returns rows rather than a count",
+            )),
         }
     }
 }

@@ -1,10 +1,13 @@
 use crate::common::setup_enterprise;
+use firestore::errors::{BackoffError, FirestoreError};
 use firestore::*;
-use serde::Deserialize;
+use futures::FutureExt;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 mod common;
 
-type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const BOOKS: &str = "pipeline-books";
 
@@ -287,5 +290,460 @@ async fn a_geo_distance_condition_returns_the_places_of_the_fluent_search() -> T
 
     assert_eq!(fluent.len(), 7);
     assert_eq!(translated, fluent);
+    Ok(())
+}
+
+/// Every collection a SQL write may change starts with this.
+const WRITE_COLLECTION_PREFIX: &str = "sql-tests-";
+
+#[derive(Serialize)]
+struct Stock {
+    #[serde(rename = "__name__")]
+    name: FirestoreReference,
+    sku: String,
+    stock: i64,
+    price: f64,
+    extra: &'static str,
+}
+
+#[derive(Serialize)]
+struct Replacement {
+    #[serde(rename = "__name__")]
+    name: FirestoreReference,
+    sku: String,
+    stock: i64,
+}
+
+fn reference(db: &FirestoreDb, collection: &str, id: &str) -> FirestoreReference {
+    FirestoreReference(format!("{}/{collection}/{id}", db.get_documents_path()))
+}
+
+fn stock(db: &FirestoreDb, collection: &str, id: &str, stock: i64, price: f64) -> Stock {
+    Stock {
+        name: reference(db, collection, id),
+        sku: id.to_string(),
+        stock,
+        price,
+        extra: "old",
+    }
+}
+
+fn replacement(db: &FirestoreDb, collection: &str, id: &str, stock: i64) -> Replacement {
+    Replacement {
+        name: reference(db, collection, id),
+        sku: id.to_string(),
+        stock,
+    }
+}
+
+/// The documents of a collection by ID, with their fields.
+type Contents = BTreeMap<String, serde_json::Value>;
+
+async fn contents(db: &FirestoreDb, collection: &str) -> TestResult<Contents> {
+    let mut contents = Contents::new();
+    for document in db.fluent().select().from(collection).query().await? {
+        let id = document
+            .name
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let mut fields: BTreeMap<String, serde_json::Value> =
+            FirestoreDb::deserialize_doc_to(&document)?;
+        fields.retain(|field, _| !field.starts_with("_firestore_"));
+        contents.insert(id, serde_json::to_value(fields)?);
+    }
+    Ok(contents)
+}
+
+/// The fields of the documents without their IDs, for a write that leaves Firestore to name them.
+fn fields_only(contents: Contents) -> Vec<String> {
+    let mut fields: Vec<String> = contents.values().map(ToString::to_string).collect();
+    fields.sort();
+    fields
+}
+
+/// Empties `collection`, which a failed run may have left documents in.
+async fn empty(db: &FirestoreDb, collection: &str) -> TestResult {
+    assert!(
+        collection.starts_with(WRITE_COLLECTION_PREFIX),
+        "{collection} is not a test collection"
+    );
+    db.fluent()
+        .pipeline()
+        .delete()
+        .from(collection)
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Replaces the documents of `collection` with the stock `seed` names, as `(id, stock, price)`.
+async fn seed(db: &FirestoreDb, collection: &str, seed: &[(&str, i64, f64)]) -> TestResult {
+    empty(db, collection).await?;
+    if !seed.is_empty() {
+        db.fluent()
+            .pipeline()
+            .insert()
+            .literals(
+                seed.iter()
+                    .map(|(id, stock_, price)| stock(db, collection, id, *stock_, *price))
+                    .collect::<Vec<_>>(),
+            )
+            .execute()
+            .await?;
+    }
+    Ok(())
+}
+
+/// Two collections, one for the SQL write and one for the same write in the fluent API, each
+/// holding the stock `stock_` names.
+async fn collections(
+    db: &FirestoreDb,
+    name: &str,
+    stock_: &[(&str, i64, f64)],
+) -> TestResult<(String, String)> {
+    let by_sql = format!("{WRITE_COLLECTION_PREFIX}{name}-sql");
+    let by_fluent = format!("{WRITE_COLLECTION_PREFIX}{name}-fluent");
+    seed(db, &by_sql, stock_).await?;
+    seed(db, &by_fluent, stock_).await?;
+    Ok((by_sql, by_fluent))
+}
+
+/// Returns `sql` once it is clear that its write changes the test collections alone: it writes
+/// to one of them, or it changes the documents of its source, which is one of them.
+fn guarded(db: &FirestoreDb, sql: String) -> String {
+    let translated = FirestoreSqlStatement::translate(
+        db,
+        &sql,
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::new(),
+    );
+    let Ok(FirestoreSqlStatement::Write(write)) = translated else {
+        panic!("{sql} does not translate to a write: {translated:?}");
+    };
+    let in_test_collections = match &write.write {
+        FirestorePipelineWrite::Insert(FirestoreInsertWrite { target })
+        | FirestorePipelineWrite::Upsert(FirestoreUpsertWrite { target, .. }) => target
+            .as_ref()
+            .is_some_and(|target| target.collection_path.starts_with(WRITE_COLLECTION_PREFIX)),
+        FirestorePipelineWrite::Update(_) | FirestorePipelineWrite::Delete => {
+            match &write.pipeline.source {
+                FirestorePipelineSource::Collection(source) => {
+                    source.parent.is_none()
+                        && source.collection_id.starts_with(WRITE_COLLECTION_PREFIX)
+                }
+                FirestorePipelineSource::Documents(source) => source
+                    .paths
+                    .iter()
+                    .all(|path| path.starts_with(WRITE_COLLECTION_PREFIX)),
+                _ => false,
+            }
+        }
+    };
+    assert!(
+        in_test_collections,
+        "the write leaves the test collections: {write:?}"
+    );
+    sql
+}
+
+#[tokio::test]
+async fn an_insert_with_values_writes_the_documents_of_the_fluent_insert() -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, by_fluent) = collections(&db, "insert-values", &[]).await?;
+
+    let inserted = db
+        .fluent()
+        .sql(guarded(
+            &db,
+            format!(
+                "INSERT INTO `{by_sql}` (__name__, sku, stock, price, extra) VALUES \
+                 ('a-1', 'a-1', 3, 9.5, 'old'), ('a-2', 'a-2', 0, 4.0, 'old'), \
+                 ('a-3', 'a-3', 0, 1.25, 'old')"
+            ),
+        ))
+        .execute()
+        .await?;
+    let fluent_inserted = db
+        .fluent()
+        .pipeline()
+        .insert()
+        .into(&by_fluent)
+        .literals([
+            stock(&db, &by_fluent, "a-1", 3, 9.5),
+            stock(&db, &by_fluent, "a-2", 0, 4.0),
+            stock(&db, &by_fluent, "a-3", 0, 1.25),
+        ])
+        .atomic()
+        .execute()
+        .await?;
+
+    let written = contents(&db, &by_sql).await?;
+    assert_eq!(written.len(), 3);
+    assert_eq!(written, contents(&db, &by_fluent).await?);
+    assert_eq!(inserted, fluent_inserted);
+    empty(&db, &by_sql).await?;
+    empty(&db, &by_fluent).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_insert_select_writes_the_documents_of_the_fluent_insert() -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, by_fluent) = collections(&db, "insert-select", &[]).await?;
+    let source = format!("{WRITE_COLLECTION_PREFIX}insert-select-source");
+    seed(
+        &db,
+        &source,
+        &[("a-1", 3, 9.5), ("a-2", 0, 4.0), ("a-3", 0, 1.25)],
+    )
+    .await?;
+
+    let inserted = db
+        .fluent()
+        .sql(guarded(
+            &db,
+            format!("INSERT INTO `{by_sql}` SELECT sku, stock FROM `{source}` WHERE stock = 0"),
+        ))
+        .execute()
+        .await?;
+    let fluent_inserted = db
+        .fluent()
+        .pipeline()
+        .insert()
+        .into(&by_fluent)
+        .from(&source)
+        .filter(|q| q.field("stock").eq(0))
+        .fields(|e| [e.field("sku"), e.field("stock")])
+        .atomic()
+        .execute()
+        .await?;
+
+    // Neither write names its documents, so Firestore picks their IDs.
+    let written = fields_only(contents(&db, &by_sql).await?);
+    assert_eq!(written.len(), 2);
+    assert_eq!(written, fields_only(contents(&db, &by_fluent).await?));
+    assert_eq!(inserted, fluent_inserted);
+    for collection in [&by_sql, &by_fluent, &source] {
+        empty(&db, collection).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_insert_or_replace_writes_the_documents_of_the_fluent_upsert() -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, by_fluent) = collections(
+        &db,
+        "insert-or-replace",
+        &[("a-1", 3, 9.5), ("a-2", 1, 2.0)],
+    )
+    .await?;
+
+    let upserted = db
+        .fluent()
+        .sql(guarded(
+            &db,
+            format!(
+                "INSERT OR REPLACE INTO `{by_sql}` (__name__, sku, stock) VALUES \
+                 ('a-1', 'a-1', 9), ('a-3', 'a-3', 5)"
+            ),
+        ))
+        .execute()
+        .await?;
+    let fluent_upserted = db
+        .fluent()
+        .pipeline()
+        .upsert(|_| Vec::<FirestoreSelection>::new())
+        .into(&by_fluent)
+        .literals([
+            replacement(&db, &by_fluent, "a-1", 9),
+            replacement(&db, &by_fluent, "a-3", 5),
+        ])
+        .atomic()
+        .execute()
+        .await?;
+
+    let written = contents(&db, &by_sql).await?;
+    assert_eq!(
+        written["a-1"],
+        serde_json::json!({"sku": "a-1", "stock": 9})
+    );
+    assert_eq!(written.len(), 3);
+    assert_eq!(written, contents(&db, &by_fluent).await?);
+    assert_eq!(upserted, fluent_upserted);
+    empty(&db, &by_sql).await?;
+    empty(&db, &by_fluent).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_update_sets_the_fields_of_the_fluent_update() -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, by_fluent) = collections(
+        &db,
+        "update",
+        &[("a-1", 3, 9.5), ("a-2", 0, 4.0), ("a-3", 0, 1.25)],
+    )
+    .await?;
+
+    let updated = db
+        .fluent()
+        .sql(guarded(
+            &db,
+            format!(
+                "UPDATE `{by_sql}` SET status = 'sold_out', dims.w = 2, dims.h = price \
+                 WHERE stock = 0"
+            ),
+        ))
+        .execute()
+        .await?;
+    let fluent_updated = db
+        .fluent()
+        .pipeline()
+        .update(|e| {
+            [
+                e.constant("sold_out").alias("status"),
+                e.constant(2).alias("dims.w"),
+                e.field("price").alias("dims.h"),
+            ]
+        })
+        .in_col(&by_fluent)
+        .filter(|q| q.field("stock").eq(0))
+        .atomic()
+        .execute()
+        .await?;
+
+    let written = contents(&db, &by_sql).await?;
+    assert_eq!(
+        written["a-2"]["dims"],
+        serde_json::json!({"w": 2, "h": 4.0})
+    );
+    assert_eq!(written["a-1"].get("status"), None);
+    assert_eq!(written, contents(&db, &by_fluent).await?);
+    assert_eq!(updated, fluent_updated);
+    empty(&db, &by_sql).await?;
+    empty(&db, &by_fluent).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_delete_removes_the_documents_of_the_fluent_delete() -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, by_fluent) = collections(
+        &db,
+        "delete",
+        &[("a-1", 3, 9.5), ("a-2", 0, 4.0), ("a-3", 0, 1.25)],
+    )
+    .await?;
+
+    let deleted = db
+        .fluent()
+        .sql(guarded(
+            &db,
+            format!("DELETE FROM `{by_sql}` WHERE stock = 0"),
+        ))
+        .execute()
+        .await?;
+    let fluent_deleted = db
+        .fluent()
+        .pipeline()
+        .delete()
+        .from(&by_fluent)
+        .filter(|q| q.field("stock").eq(0))
+        .atomic()
+        .execute()
+        .await?;
+
+    let remaining = contents(&db, &by_sql).await?;
+    assert_eq!(remaining.keys().collect::<Vec<_>>(), ["a-1"]);
+    assert_eq!(remaining, contents(&db, &by_fluent).await?);
+    assert_eq!(deleted, fluent_deleted);
+    empty(&db, &by_sql).await?;
+    empty(&db, &by_fluent).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_write_in_a_transaction_changes_what_the_fluent_write_in_one_changes() -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, by_fluent) =
+        collections(&db, "transaction", &[("a-1", 3, 9.5), ("a-2", 0, 4.0)]).await?;
+    let sql = guarded(
+        &db,
+        format!("UPDATE `{by_sql}` SET stock = stock + 10 WHERE stock >= 0"),
+    );
+
+    let updated = db
+        .run_transaction(|db, transaction| {
+            let sql = sql.clone();
+            async move {
+                let updated = db
+                    .fluent()
+                    .sql(sql)
+                    .execute_in_transaction(transaction)
+                    .await?;
+                Ok::<_, BackoffError<FirestoreError>>(updated)
+            }
+            .boxed()
+        })
+        .await?;
+    let fluent_updated = db
+        .run_transaction(|db, transaction| {
+            let by_fluent = by_fluent.clone();
+            async move {
+                let updated = db
+                    .fluent()
+                    .pipeline()
+                    .update(|e| [e.field("stock").add(10).alias("stock")])
+                    .in_col(&by_fluent)
+                    .filter(|q| q.field("stock").greater_than_or_equal(0))
+                    .execute_in_transaction(transaction)
+                    .await?;
+                Ok::<_, BackoffError<FirestoreError>>(updated)
+            }
+            .boxed()
+        })
+        .await?;
+
+    let written = contents(&db, &by_sql).await?;
+    assert_eq!(written["a-1"]["stock"], 13);
+    assert_eq!(written, contents(&db, &by_fluent).await?);
+    assert_eq!(updated, fluent_updated);
+    empty(&db, &by_sql).await?;
+    empty(&db, &by_fluent).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_terminal_of_the_other_kind_fails_before_sending() -> TestResult {
+    let db = setup_enterprise().await?;
+    let collection = format!("{WRITE_COLLECTION_PREFIX}terminals");
+    let delete = guarded(&db, format!("DELETE FROM `{collection}` WHERE TRUE"));
+    let field = |result: FirestoreResult<_>| match result {
+        Err(FirestoreError::InvalidParametersError(error)) => error.public.field,
+        Err(error) => panic!("{error:?}"),
+        Ok(_) => panic!("the call succeeded"),
+    };
+
+    assert_eq!(
+        field(db.fluent().sql(&delete).query().await.map(drop)),
+        "sql"
+    );
+    assert_eq!(
+        field(db.fluent().sql(&delete).explain().execute().await.map(drop)),
+        "explain"
+    );
+    assert_eq!(
+        field(
+            db.fluent()
+                .sql(format!("SELECT * FROM `{collection}`"))
+                .execute()
+                .await
+                .map(drop)
+        ),
+        "sql"
+    );
     Ok(())
 }

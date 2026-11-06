@@ -243,7 +243,8 @@ where
 impl<'a> FirestoreExprBuilder<'a, FirestoreDb> {
     /// Starts a SQL statement in the BigQuery (GoogleSQL) dialect, translated into a pipeline,
     /// which needs an Enterprise edition database. Continue with `.param()` or `.params()` to
-    /// bind its parameters, then run it with `.query()` or `.obj()`. Requires the `sql` feature.
+    /// bind its parameters, then run a `SELECT` with `.query()` or `.obj()`, and an `INSERT`,
+    /// `UPDATE` or `DELETE` with `.execute()`. Requires the `sql` feature.
     ///
     /// ```rust,no_run
     /// use firestore::{FirestoreDb, FirestoreResult};
@@ -263,6 +264,14 @@ impl<'a> FirestoreExprBuilder<'a, FirestoreDb> {
     ///     .obj()
     ///     .query()
     ///     .await?;
+    ///
+    /// let deleted = db
+    ///     .fluent()
+    ///     .sql("DELETE FROM books WHERE stock = @stock")
+    ///     .param("stock", 0)
+    ///     .execute()
+    ///     .await?;
+    /// println!("Deleted {} documents", deleted.documents_modified);
     /// # Ok(())
     /// # }
     /// ```

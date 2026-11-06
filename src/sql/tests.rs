@@ -6,23 +6,55 @@ use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::pipeline_stage_builder::FirestorePipelineNestedContext;
 use crate::{
     FirestoreBoolExpr, FirestoreCollectionGroupSource, FirestoreCollectionSource,
-    FirestoreDocumentsSource, FirestoreExpr, FirestoreGeoPoint, FirestoreLatLng, FirestorePipeline,
-    FirestorePipelineSource, FirestorePipelineStage, FirestoreReference, FirestoreResult,
-    FirestoreSelection, FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement,
+    FirestoreDocumentsSource, FirestoreExpr, FirestoreGeoPoint, FirestoreInsertWrite,
+    FirestoreLatLng, FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage,
+    FirestorePipelineWrite, FirestorePipelineWriteParams, FirestorePipelineWriteTransaction,
+    FirestoreReference, FirestoreResult, FirestoreSelection, FirestoreSqlOptions,
+    FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUpdateWrite, FirestoreUpsertWrite,
+    FirestoreWriteCollection,
 };
 
+use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
 
 const DOCUMENTS: &str = "projects/latestbit/databases/firestore-rs-enterprise/documents";
+
+fn translate_statement(
+    sql: &str,
+    parameters: &FirestoreSqlParameters,
+    options: &FirestoreSqlOptions,
+) -> FirestoreResult<FirestoreSqlStatement> {
+    FirestoreSqlStatement::translate_on(DOCUMENTS, sql, parameters, options)
+}
 
 fn translate(
     sql: &str,
     parameters: &FirestoreSqlParameters,
     options: &FirestoreSqlOptions,
 ) -> FirestoreResult<FirestorePipeline> {
-    match FirestoreSqlStatement::translate_on(DOCUMENTS, sql, parameters, options)? {
+    match translate_statement(sql, parameters, options)? {
         FirestoreSqlStatement::Query(pipeline) => Ok(pipeline),
+        FirestoreSqlStatement::Write(write) => panic!("{sql}: {write:?}"),
+    }
+}
+
+fn translated_write(sql: &str) -> FirestorePipelineWriteParams {
+    translated_write_with(
+        sql,
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::new(),
+    )
+}
+
+fn translated_write_with(
+    sql: &str,
+    parameters: &FirestoreSqlParameters,
+    options: &FirestoreSqlOptions,
+) -> FirestorePipelineWriteParams {
+    match translate_statement(sql, parameters, options) {
+        Ok(FirestoreSqlStatement::Write(write)) => *write,
+        other => panic!("{sql}: {other:?}"),
     }
 }
 
@@ -40,7 +72,7 @@ fn refused_with(
     parameters: &FirestoreSqlParameters,
     options: &FirestoreSqlOptions,
 ) -> FirestoreInvalidParametersPublicDetails {
-    match translate(sql, parameters, options) {
+    match translate_statement(sql, parameters, options) {
         Err(FirestoreError::InvalidParametersError(error)) => error.public,
         other => panic!("{sql}: {other:?}"),
     }
@@ -348,7 +380,6 @@ fn constructs_without_a_translation_are_refused_by_name() {
             "ESCAPE",
         ),
         ("FROM books |> WHERE stock = 0", "pipe syntax"),
-        ("DELETE FROM books WHERE stock = 0", "DELETE"),
         ("SELECT LOWER(title) FROM books", "AS"),
         ("SELECT title FROM books ORDER BY 1", "ORDER BY"),
         ("SELECT 1 AS one", "FROM"),
@@ -990,4 +1021,239 @@ fn group_by_and_having_refer_to_select_aliases() {
         .into_pipeline();
 
     assert_eq!(translated(sql), expected);
+}
+
+#[derive(Serialize)]
+struct Item {
+    #[serde(rename = "__name__", skip_serializing_if = "Option::is_none")]
+    name: Option<FirestoreReference>,
+    sku: &'static str,
+    stock: i64,
+}
+
+fn item(id: Option<&str>, sku: &'static str, stock: i64) -> Item {
+    Item {
+        name: id.map(|id| FirestoreReference(format!("{DOCUMENTS}/items/{id}"))),
+        sku,
+        stock,
+    }
+}
+
+fn atomic(
+    pipeline: FirestorePipeline,
+    write: impl Into<FirestorePipelineWrite>,
+) -> FirestorePipelineWriteParams {
+    FirestorePipelineWriteParams::new(pipeline, write.into())
+        .with_transaction(FirestorePipelineWriteTransaction::Atomic)
+}
+
+fn items() -> FirestoreWriteCollection {
+    FirestoreWriteCollection::new("items".to_string())
+}
+
+#[test]
+fn an_insert_with_values_translates_to_an_atomic_insert_of_literals() {
+    let sql = "INSERT INTO items (__name__, sku, stock) \
+               VALUES ('a-1', 'a-1', 3), (?, 'a-2', ?)";
+    let parameters = FirestoreSqlParameters::new().params([json!("a-2"), json!(0)]);
+
+    let expected = atomic(
+        fluent()
+            .literals([item(Some("a-1"), "a-1", 3), item(Some("a-2"), "a-2", 0)])
+            .into_pipeline(),
+        FirestoreInsertWrite::new().with_target(items()),
+    );
+
+    assert_eq!(
+        translated_write_with(sql, &parameters, &FirestoreSqlOptions::new()),
+        expected
+    );
+}
+
+#[test]
+fn an_insert_select_translates_to_an_atomic_insert_of_the_selected_rows() {
+    let sql = "INSERT INTO archive SELECT __name__, title, stock FROM books WHERE stock = 0";
+
+    let expected = atomic(
+        fluent()
+            .from("books")
+            .filter(|q| q.field("stock").eq(0))
+            .fields(|e| [e.field("__name__"), e.field("title"), e.field("stock")])
+            .into_pipeline(),
+        FirestoreInsertWrite::new()
+            .with_target(FirestoreWriteCollection::new("archive".to_string())),
+    );
+
+    assert_eq!(translated_write(sql), expected);
+}
+
+#[test]
+fn a_column_list_names_the_fields_of_the_selected_columns() {
+    let sql = "INSERT INTO archive (name, copies) SELECT title, stock FROM books";
+
+    let expected = atomic(
+        fluent()
+            .from("books")
+            .fields(|e| [e.field("title"), e.field("stock")])
+            .fields(|e| {
+                [
+                    e.field("title").alias("name"),
+                    e.field("stock").alias("copies"),
+                ]
+            })
+            .into_pipeline(),
+        FirestoreInsertWrite::new()
+            .with_target(FirestoreWriteCollection::new("archive".to_string())),
+    );
+
+    assert_eq!(translated_write(sql), expected);
+}
+
+#[test]
+fn an_insert_or_replace_translates_to_an_atomic_upsert() {
+    let sql = "INSERT OR REPLACE INTO items (sku, stock) VALUES ('a-1', 3)";
+
+    let expected = atomic(
+        fluent().literals([item(None, "a-1", 3)]).into_pipeline(),
+        FirestoreUpsertWrite::new().with_target(items()),
+    );
+
+    assert_eq!(translated_write(sql), expected);
+}
+
+#[test]
+fn an_update_sets_each_target_and_a_dotted_target_sets_a_nested_field() {
+    let sql = "UPDATE items AS i SET status = 'sold_out', price = i.price * 2, dims.w = 2 \
+               WHERE i.stock = 0";
+
+    let expected = atomic(
+        fluent()
+            .from("items")
+            .filter(|q| q.field("stock").eq(0))
+            .into_pipeline(),
+        FirestoreUpdateWrite::new().with_transforms(vec![
+            FirestoreExpr::constant("sold_out").alias("status"),
+            field("price").multiply(2).alias("price"),
+            FirestoreExpr::constant(2).alias("dims.w"),
+        ]),
+    );
+
+    assert_eq!(translated_write(sql), expected);
+}
+
+#[test]
+fn a_delete_filters_the_documents_it_deletes() {
+    assert_eq!(
+        translated_write("DELETE FROM items WHERE stock = 0"),
+        atomic(
+            fluent()
+                .from("items")
+                .filter(|q| q.field("stock").eq(0))
+                .into_pipeline(),
+            FirestorePipelineWrite::Delete
+        )
+    );
+    assert_eq!(
+        translated_write("DELETE items WHERE __name__ IN ('a-1', 'a-2')"),
+        atomic(
+            fluent()
+                .documents(["items/a-1", "items/a-2"])
+                .into_pipeline(),
+            FirestorePipelineWrite::Delete
+        )
+    );
+}
+
+#[test]
+fn writes_outside_their_forms_are_refused_by_name() {
+    let refusals = [
+        (
+            "MERGE items AS t USING other AS s ON t.sku = s.sku WHEN MATCHED THEN DELETE",
+            "MERGE",
+        ),
+        (
+            "INSERT INTO items (sku) VALUES ('a') ON CONFLICT (sku) DO NOTHING",
+            "ON CONFLICT",
+        ),
+        (
+            "INSERT OR IGNORE INTO items (sku) VALUES ('a')",
+            "INSERT OR IGNORE",
+        ),
+        ("INSERT INTO items VALUES ('a')", "INSERT"),
+        ("INSERT INTO items (sku, stock) VALUES ('a')", "VALUES"),
+        ("INSERT INTO items (sku) VALUES (UPPER('a'))", "VALUES"),
+        ("INSERT INTO items (sku) VALUES (stock)", "VALUES"),
+        ("INSERT INTO items (sku, sku) VALUES ('a', 'b')", "INSERT"),
+        ("INSERT INTO items (dims.w) VALUES (1)", "INSERT"),
+        (
+            "INSERT INTO items (__name__) VALUES ('other/o1')",
+            "__name__",
+        ),
+        ("INSERT INTO items (__name__) VALUES ('x/y/z')", "document"),
+        ("INSERT INTO items (sku) VALUES ('a') LIMIT 1", "LIMIT"),
+        ("INSERT INTO items (sku) SELECT * FROM books", "INSERT"),
+        ("INSERT INTO items (a, b) SELECT title FROM books", "INSERT"),
+        ("INSERT INTO items DEFAULT VALUES", "INSERT"),
+        (
+            "INSERT INTO items (sku) VALUES ('a') RETURNING sku",
+            "RETURNING",
+        ),
+        ("UPDATE items SET stock = 0", "WHERE"),
+        ("DELETE FROM items", "WHERE"),
+        (
+            "UPDATE items SET __name__ = 'a' WHERE stock = 0",
+            "__name__",
+        ),
+        ("UPDATE items SET stock = 0, stock = 1 WHERE TRUE", "SET"),
+        ("UPDATE items SET dims = 0, dims.w = 1 WHERE TRUE", "SET"),
+        (
+            "UPDATE items SET (a, b) = (1, 2) WHERE TRUE",
+            "a tuple assignment",
+        ),
+        ("UPDATE items SET stock = @stock WHERE TRUE", "@stock"),
+        ("UPDATE items SET stock = 0 FROM other WHERE TRUE", "FROM"),
+        (
+            "UPDATE items SET stock = 0 WHERE TRUE RETURNING stock",
+            "RETURNING",
+        ),
+        (
+            "UPDATE collection_group('items') SET stock = 0 WHERE TRUE",
+            "a write",
+        ),
+        ("DELETE FROM documents('items/a') WHERE TRUE", "a write"),
+        (
+            "DELETE FROM items AS i JOIN other AS o ON i.a = o.a WHERE TRUE",
+            "JOIN",
+        ),
+        ("DELETE FROM items WHERE TRUE LIMIT 1", "LIMIT"),
+        (
+            "DELETE FROM items WHERE document_matches('a')",
+            "document_matches",
+        ),
+    ];
+
+    for (sql, construct) in refusals {
+        assert_eq!(refused(sql).field, construct, "{sql}");
+    }
+}
+
+#[test]
+fn the_collection_allowlist_applies_to_the_target_of_a_write() {
+    let options = FirestoreSqlOptions::new()
+        .with_collections(["items"])
+        .unwrap();
+    let parameters = FirestoreSqlParameters::new();
+
+    for sql in [
+        "INSERT INTO secrets (sku) VALUES ('a')",
+        "INSERT INTO items SELECT * FROM secrets",
+        "UPDATE secrets SET stock = 0 WHERE TRUE",
+        "DELETE FROM secrets WHERE TRUE",
+    ] {
+        assert_eq!(
+            refused_with(sql, &parameters, &options).field,
+            "collections",
+            "{sql}"
+        );
+    }
 }

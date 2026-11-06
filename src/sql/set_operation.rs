@@ -3,8 +3,8 @@ use super::scope::{FirestoreSqlRelation, FirestoreSqlScope};
 use super::translator::FirestoreSqlTranslator;
 use crate::errors::FirestoreError;
 use crate::{
-    FirestoreDistinctStage, FirestoreExpr, FirestorePipeline, FirestorePipelineStage,
-    FirestoreResult, FirestoreSelection, FirestoreSortStage, FirestoreUnionStage,
+    FirestoreDistinctStage, FirestoreExpr, FirestorePipelineStage, FirestoreResult,
+    FirestoreSelection, FirestoreSortStage, FirestoreUnionStage,
 };
 use sqlparser::ast::{OrderBy, SetExpr, SetOperator, SetQuantifier};
 
@@ -14,12 +14,13 @@ impl FirestoreSqlTranslator<'_> {
     /// A pipeline's `union` appends the documents of the other pipeline and aligns nothing, so
     /// the branches' columns meet by name where SQL aligns them by position. The branches must
     /// therefore output the same names in the same order, which makes both readings agree. A
-    /// `UNION` that deduplicates then does so over those names.
+    /// `UNION` that deduplicates then does so over those names. The result outputs the names of
+    /// its first branch.
     pub(super) fn set_operation(
         &mut self,
         body: &SetExpr,
         order_by: Option<&OrderBy>,
-    ) -> FirestoreResult<FirestorePipeline> {
+    ) -> FirestoreResult<FirestoreSqlBranch> {
         let mut unions = Vec::new();
         let mut first = body;
         while let SetExpr::SetOperation {
@@ -49,7 +50,7 @@ impl FirestoreSqlTranslator<'_> {
         let FirestoreSqlBranch {
             mut pipeline,
             columns,
-            ..
+            start,
         } = self.branch(first)?;
         for (index, &(deduplicates, right)) in unions.iter().enumerate() {
             let branch = self.branch(right)?;
@@ -101,7 +102,11 @@ impl FirestoreSqlTranslator<'_> {
                     orderings,
                 )));
         }
-        Ok(pipeline)
+        Ok(FirestoreSqlBranch {
+            pipeline,
+            columns,
+            start,
+        })
     }
 
     fn branch(&mut self, set_expr: &SetExpr) -> FirestoreResult<FirestoreSqlBranch> {

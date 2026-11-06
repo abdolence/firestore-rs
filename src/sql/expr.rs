@@ -14,7 +14,7 @@ use sqlparser::tokenizer::Span;
 use std::borrow::Cow;
 
 /// The field every document holds its own path in.
-const SQL_DOCUMENT_NAME_FIELD: &str = "__name__";
+pub(super) const SQL_DOCUMENT_NAME_FIELD: &str = "__name__";
 
 impl FirestoreSqlTranslator<'_> {
     pub(super) fn expr(
@@ -671,7 +671,7 @@ impl FirestoreSqlTranslator<'_> {
     /// The constant reference to the document a string names, when `operand` is a string: a
     /// path relative to the documents root, a full path, or a bare ID in the source's
     /// collection. Any other operand is kept.
-    fn document_reference(
+    pub(super) fn document_reference(
         &self,
         scope: &FirestoreSqlScope,
         operand: FirestoreExpr,

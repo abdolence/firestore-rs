@@ -2,7 +2,8 @@ use super::parameters::FirestoreSqlBinding;
 use super::translator::FirestoreSqlTranslator;
 use crate::errors::FirestoreError;
 use crate::{
-    FirestoreDb, FirestorePipeline, FirestoreResult, FirestoreSqlOptions, FirestoreSqlParameters,
+    FirestoreDb, FirestorePipeline, FirestorePipelineWriteParams, FirestoreResult,
+    FirestoreSqlOptions, FirestoreSqlParameters,
 };
 use sqlparser::dialect::BigQueryDialect;
 use sqlparser::parser::Parser;
@@ -17,6 +18,8 @@ const SQL_PARSER_RECURSION_LIMIT: usize = 16;
 pub enum FirestoreSqlStatement {
     /// A `SELECT`, as the pipeline that reads its rows.
     Query(FirestorePipeline),
+    /// An `INSERT`, `UPDATE` or `DELETE`, as the pipeline write that runs it atomically.
+    Write(Box<FirestorePipelineWriteParams>),
 }
 
 impl FirestoreSqlStatement {
@@ -25,6 +28,9 @@ impl FirestoreSqlStatement {
     ///
     /// A query's pipeline runs through
     /// [`from_pipeline`](crate::pipeline_builder::FirestorePipelineInitialBuilder::from_pipeline).
+    /// A write runs with [`execute`](crate::sql_builder::FirestoreSqlBuilder::execute) of the SQL
+    /// builder, which translates the statement itself.
+    ///
     /// Fails with [`InvalidParametersError`](FirestoreError::InvalidParametersError) for text that
     /// does not parse, a construct without a pipeline form, a parameter bound or used on one
     /// side only, or a statement the options refuse. Its `field` names the construct and its

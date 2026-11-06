@@ -23,5 +23,7 @@ pub use statement::*;
 
 mod translator;
 
+mod write;
+
 #[cfg(test)]
 mod tests;

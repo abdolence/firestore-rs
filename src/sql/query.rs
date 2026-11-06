@@ -111,7 +111,7 @@ impl FirestoreSqlProjection {
 impl FirestoreSqlTranslator<'_> {
     /// A query as the statement, with the options' row cap applied.
     pub(super) fn top_level_query(&mut self, query: &Query) -> FirestoreResult<FirestorePipeline> {
-        let mut pipeline = self.query(query)?;
+        let mut pipeline = self.query(query)?.pipeline;
         if let Some(max_rows) = self.options.max_rows {
             match pipeline.stages.last_mut() {
                 Some(FirestorePipelineStage::Limit(limit)) => {
@@ -127,12 +127,34 @@ impl FirestoreSqlTranslator<'_> {
         Ok(pipeline)
     }
 
-    fn query(&mut self, query: &Query) -> FirestoreResult<FirestorePipeline> {
+    /// A query as the `SELECT` it ends in, with the pipeline that reads its rows.
+    pub(super) fn query(&mut self, query: &Query) -> FirestoreResult<FirestoreSqlBranch> {
+        Self::refuse_unmapped_clauses(query)?;
         let Query {
-            with,
             body,
             order_by,
             limit_clause,
+            ..
+        } = query;
+        let mut branch = match body.as_ref() {
+            SetExpr::Select(select) => self.select(select, order_by.as_ref())?,
+            SetExpr::SetOperation { .. } => self.set_operation(body, order_by.as_ref())?,
+            other => return Err(Self::unsupported_body(other)),
+        };
+        if let Some(limit_clause) = limit_clause {
+            self.limit(limit_clause, &mut branch.pipeline)?;
+        }
+        Ok(branch)
+    }
+
+    /// Refuses the clauses of `query` that have no pipeline form, whatever its body is. The
+    /// caller maps its `body`, `order_by` and `limit_clause`.
+    pub(super) fn refuse_unmapped_clauses(query: &Query) -> FirestoreResult<()> {
+        let Query {
+            with,
+            body: _,
+            order_by: _,
+            limit_clause: _,
             fetch,
             locks,
             for_clause,
@@ -156,16 +178,7 @@ impl FirestoreSqlTranslator<'_> {
                 (format_clause.is_some(), "FORMAT"),
             ],
             None,
-        )?;
-        let mut pipeline = match body.as_ref() {
-            SetExpr::Select(select) => self.select(select, order_by.as_ref())?.pipeline,
-            SetExpr::SetOperation { .. } => self.set_operation(body, order_by.as_ref())?,
-            other => return Err(Self::unsupported_body(other)),
-        };
-        if let Some(limit_clause) = limit_clause {
-            self.limit(limit_clause, &mut pipeline)?;
-        }
-        Ok(pipeline)
+        )
     }
 
     /// The error for a query body that is neither a `SELECT` nor a `UNION`.
@@ -271,19 +284,7 @@ impl FirestoreSqlTranslator<'_> {
             let (search, condition) = self.split_search(&scope, &pipeline.source, selection)?;
             self.search = search;
             if let Some(condition) = condition {
-                let paths = match self.search {
-                    None => self.document_reads(&scope, &pipeline.source, &condition),
-                    Some(_) => None,
-                };
-                match paths {
-                    Some(paths) => {
-                        pipeline.source =
-                            FirestorePipelineSource::Documents(FirestoreDocumentsSource::new(paths))
-                    }
-                    None => pipeline.stages.push(FirestorePipelineStage::Where(
-                        FirestoreWhereStage::new(FirestoreBoolExpr::unchecked(condition)),
-                    )),
-                }
+                self.filter(&scope, &mut pipeline, condition, self.search.is_none());
             }
         }
 
@@ -356,6 +357,32 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
+    /// Filters the documents of `pipeline` by `condition`: with a `where` stage, or, when
+    /// `by_path` allows it and the condition names documents of the source collection by
+    /// `__name__` alone, by reading them as the source.
+    pub(super) fn filter(
+        &self,
+        scope: &FirestoreSqlScope,
+        pipeline: &mut FirestorePipeline,
+        condition: FirestoreExpr,
+        by_path: bool,
+    ) {
+        let paths = by_path
+            .then(|| self.document_reads(scope, &pipeline.source, &condition))
+            .flatten();
+        match paths {
+            Some(paths) => {
+                pipeline.source =
+                    FirestorePipelineSource::Documents(FirestoreDocumentsSource::new(paths))
+            }
+            None => pipeline
+                .stages
+                .push(FirestorePipelineStage::Where(FirestoreWhereStage::new(
+                    FirestoreBoolExpr::unchecked(condition),
+                ))),
+        }
+    }
+
     /// The source a query reads and the relation its names resolve against.
     fn from(
         &mut self,
@@ -392,7 +419,7 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    fn table(
+    pub(super) fn table(
         &mut self,
         factor: &TableFactor,
     ) -> FirestoreResult<(FirestorePipelineSource, FirestoreSqlRelation)> {
@@ -467,7 +494,20 @@ impl FirestoreSqlTranslator<'_> {
         name: &ObjectName,
         alias: Option<String>,
     ) -> FirestoreResult<(FirestorePipelineSource, FirestoreSqlRelation)> {
-        let start = name_start(name);
+        let path = Self::collection_name(name)?;
+        let (parent, collection_id) = self.collection_path(&path, name_start(name))?;
+        let source = FirestoreCollectionSource::new(collection_id.to_string())
+            .opt_parent(parent.map(|parent| format!("{}/{parent}", self.documents_path)));
+        let name = alias.unwrap_or_else(|| collection_id.to_string());
+        let relation = FirestoreSqlRelation {
+            name: Some(name),
+            collection_path: Some(path),
+        };
+        Ok((FirestorePipelineSource::Collection(source), relation))
+    }
+
+    /// The path a collection name spells, which is not yet checked.
+    pub(super) fn collection_name(name: &ObjectName) -> FirestoreResult<String> {
         let mut parts = Vec::with_capacity(name.0.len());
         for part in &name.0 {
             match part {
@@ -482,22 +522,13 @@ impl FirestoreSqlTranslator<'_> {
                 ObjectNamePart::Function(_) => {
                     return Err(FirestoreError::unsupported_sql(
                         "this collection name",
-                        start,
+                        name_start(name),
                     ))
                 }
             }
         }
         // sqlparser splits a backticked name at its dots, which a Firestore ID may hold.
-        let path = parts.join(".");
-        let (parent, collection_id) = self.collection_path(&path, start)?;
-        let source = FirestoreCollectionSource::new(collection_id.to_string())
-            .opt_parent(parent.map(|parent| format!("{}/{parent}", self.documents_path)));
-        let name = alias.unwrap_or_else(|| collection_id.to_string());
-        let relation = FirestoreSqlRelation {
-            name: Some(name),
-            collection_path: Some(path),
-        };
-        Ok((FirestorePipelineSource::Collection(source), relation))
+        Ok(parts.join("."))
     }
 
     /// `collection_group('id')`, `documents('path', ..)` or `database()`.
@@ -900,7 +931,7 @@ fn string_literal(expr: &Expr) -> Option<&str> {
 }
 
 /// Where a source starts, when it has a name.
-fn table_start(factor: &TableFactor) -> Option<FirestoreSqlLocation> {
+pub(super) fn table_start(factor: &TableFactor) -> Option<FirestoreSqlLocation> {
     match factor {
         TableFactor::Table { name, .. } => name_start(name),
         _ => None,

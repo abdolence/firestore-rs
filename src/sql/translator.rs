@@ -65,13 +65,13 @@ impl<'t> FirestoreSqlTranslator<'t> {
                     None,
                 ))
             }
-            Statement::Insert(_) => Err(FirestoreError::unsupported_sql("INSERT", None)),
-            Statement::Update(_) => Err(FirestoreError::unsupported_sql("UPDATE", None)),
-            Statement::Delete(_) => Err(FirestoreError::unsupported_sql("DELETE", None)),
-            Statement::Merge(_) => Err(FirestoreError::unsupported_sql("MERGE", None)),
+            Statement::Insert(insert) => self.insert(insert),
+            Statement::Update(update) => self.update(update),
+            Statement::Delete(delete) => self.delete(delete),
+            Statement::Merge(merge) => Err(Self::merge(merge)),
             _ => Err(FirestoreError::invalid_sql(
                 "statement",
-                "only a SELECT statement translates to a pipeline",
+                "only a SELECT, INSERT, UPDATE or DELETE statement translates to a pipeline",
                 None,
             )),
         }
