@@ -754,7 +754,7 @@ pub struct FirestoreIndexSyncTimings {
 }
 
 /// The maximum number of fields Firestore allows on one composite index, `__name__` included.
-const MAX_INDEX_FIELDS_WITH_IMPLIED_NAME: usize = 100;
+const MAX_INDEX_FIELDS: usize = 100;
 
 /// Checks the structural rules a declared [`FirestoreIndexParams`] must satisfy, independent of
 /// what Firestore currently has and of the database's edition (see
@@ -762,12 +762,11 @@ const MAX_INDEX_FIELDS_WITH_IMPLIED_NAME: usize = 100;
 ///
 /// # Errors
 /// Returns [`FirestoreError::InvalidParametersError`] if a composite index has no fields, mixes
-/// text or geo fields with other fields, has more than one `array_contains` field, has more than
-/// 100 fields counting an implied `__name__`, more than one vector field, a vector field that is
-/// not last, a vector dimension outside `1..=2048`, or an empty field path; if a field override
-/// path is declared more than once, declares the same single-field index twice, declares a vector
-/// index, or has an empty path; or if more than one TTL field is declared, a TTL path is empty, or
-/// a TTL path repeats.
+/// text or geo fields with other fields, has more than one `array_contains` field, more than one
+/// vector field, a vector field that is not last, a vector dimension outside `1..=2048`, or an
+/// empty field path; if a field override path is declared more than once, declares the same
+/// single-field index twice, declares a vector index, or has an empty path; or if more than one
+/// TTL field is declared, a TTL path is empty, or a TTL path repeats.
 pub(crate) fn validate_index_params(params: &FirestoreIndexParams) -> FirestoreResult<()> {
     validate_collection_group(&params.collection_group)?;
     validate_composite_indexes(&params.composite_indexes)?;
@@ -781,7 +780,9 @@ pub(crate) fn validate_index_params(params: &FirestoreIndexParams) -> FirestoreR
 ///
 /// # Errors
 /// Returns [`FirestoreError::InvalidParametersError`] if a composite index duplicates an earlier
-/// declared one, as Firestore tells indexes apart on `edition`; on a Standard edition database, if
+/// declared one, as Firestore tells indexes apart on `edition`, or has more than 100 fields,
+/// counting the `__name__` field a Standard edition database appends; if its density is one the
+/// edition refuses (see [`FirestoreIndexDensity`]); on a Standard edition database, if
 /// a composite index is unique, is a text or geo search index, or has a single field that is not
 /// a vector field; on an Enterprise edition database, if a field override lists single-field
 /// indexes.
@@ -810,6 +811,39 @@ pub(crate) fn validate_index_params_for_edition(
                         "index {position} {enterprise_only}; only an Enterprise edition database \
                          supports that"
                     ),
+                ));
+            }
+        }
+
+        let appended_name = edition == FirestoreDatabaseEdition::Standard
+            && !index
+                .fields
+                .iter()
+                .any(|field| field.field_path == IMPLIED_NAME_FIELD);
+        let max_fields = MAX_INDEX_FIELDS - usize::from(appended_name);
+        if index.fields.len() > max_fields {
+            return Err(FirestoreError::invalid_parameters(
+                "composite_indexes",
+                format!(
+                    "index {position} declares {} fields; Firestore allows at most {max_fields} \
+                     on this edition",
+                    index.fields.len()
+                ),
+            ));
+        }
+
+        if let Some(density) = index.density {
+            let accepted = match edition {
+                FirestoreDatabaseEdition::Standard => density == FirestoreIndexDensity::SparseAll,
+                FirestoreDatabaseEdition::Enterprise if index.is_search_index() => {
+                    density == FirestoreIndexDensity::SparseAny
+                }
+                FirestoreDatabaseEdition::Enterprise => density != FirestoreIndexDensity::SparseAll,
+            };
+            if !accepted {
+                return Err(FirestoreError::invalid_parameters(
+                    "composite_indexes",
+                    format!("index {position} cannot be built {density} on this edition"),
                 ));
             }
         }
@@ -937,26 +971,6 @@ fn validate_composite_indexes(indexes: &[FirestoreCompositeIndex]) -> FirestoreR
             return Err(FirestoreError::invalid_parameters(
                 "composite_indexes",
                 format!("index {position} has a field with an empty path"),
-            ));
-        }
-
-        let declares_implied_name = index
-            .fields
-            .iter()
-            .any(|field| field.field_path == IMPLIED_NAME_FIELD);
-        let max_fields = if declares_implied_name {
-            MAX_INDEX_FIELDS_WITH_IMPLIED_NAME
-        } else {
-            MAX_INDEX_FIELDS_WITH_IMPLIED_NAME - 1
-        };
-        if index.fields.len() > max_fields {
-            return Err(FirestoreError::invalid_parameters(
-                "composite_indexes",
-                format!(
-                    "index {position} declares {} fields; Firestore allows at most {max_fields} \
-                     (100 including the __name__ field it appends)",
-                    index.fields.len()
-                ),
             ));
         }
 
@@ -1533,6 +1547,56 @@ mod tests {
     }
 
     #[test]
+    fn a_density_the_edition_refuses_is_rejected_before_any_write() {
+        use FirestoreIndexDensity::{Dense, SparseAll, SparseAny};
+        let ordered = || FirestoreCompositeIndex::new(vec![asc("a"), asc("b")]);
+        let search =
+            || FirestoreCompositeIndex::new(vec![field("body", FirestoreIndexFieldMode::Text)]);
+        let refused = [
+            (
+                FirestoreDatabaseEdition::Standard,
+                ordered().density(SparseAny),
+            ),
+            (FirestoreDatabaseEdition::Standard, ordered().density(Dense)),
+            (
+                FirestoreDatabaseEdition::Enterprise,
+                ordered().density(SparseAll),
+            ),
+            (
+                FirestoreDatabaseEdition::Enterprise,
+                search().density(Dense),
+            ),
+        ];
+        for (edition, index) in refused {
+            let err =
+                validate_index_params_for_edition(&users_params(vec![index]), edition).unwrap_err();
+            assert!(is_composite_indexes_error(&err), "{edition:?}: {err:?}");
+        }
+
+        let accepted = [
+            (
+                FirestoreDatabaseEdition::Standard,
+                ordered().density(SparseAll),
+            ),
+            (
+                FirestoreDatabaseEdition::Enterprise,
+                ordered().density(SparseAny),
+            ),
+            (
+                FirestoreDatabaseEdition::Enterprise,
+                ordered().density(Dense),
+            ),
+            (
+                FirestoreDatabaseEdition::Enterprise,
+                search().density(SparseAny),
+            ),
+        ];
+        for (edition, index) in accepted {
+            validate_index_params_for_edition(&users_params(vec![index]), edition).unwrap();
+        }
+    }
+
+    #[test]
     fn composite_index_with_two_fields_is_valid() {
         let index = FirestoreCompositeIndex::new(vec![asc("a"), asc("b")]);
         assert!(validate_composite_indexes(&[index]).is_ok());
@@ -1737,18 +1801,19 @@ mod tests {
     }
 
     #[test]
-    fn composite_index_exceeding_max_declared_fields_is_rejected() {
+    fn composite_index_exceeding_max_declared_fields_is_rejected_on_standard() {
         let fields: Vec<_> = (0..100).map(|i| asc(&format!("f{i}"))).collect();
-        let index = FirestoreCompositeIndex::new(fields);
-        let err = validate_composite_indexes(&[index]).unwrap_err();
-        assert!(err.to_string().contains("at most 99"));
+        let params = users_params(vec![FirestoreCompositeIndex::new(fields)]);
+        let err = validate_index_params_for_edition(&params, FirestoreDatabaseEdition::Standard)
+            .unwrap_err();
+        assert!(is_composite_indexes_error(&err), "{err:?}");
     }
 
     #[test]
-    fn composite_index_at_max_declared_fields_is_valid() {
+    fn composite_index_at_max_declared_fields_is_valid_on_standard() {
         let fields: Vec<_> = (0..99).map(|i| asc(&format!("f{i}"))).collect();
-        let index = FirestoreCompositeIndex::new(fields);
-        assert!(validate_composite_indexes(&[index]).is_ok());
+        let params = users_params(vec![FirestoreCompositeIndex::new(fields)]);
+        validate_index_params_for_edition(&params, FirestoreDatabaseEdition::Standard).unwrap();
     }
 
     #[test]

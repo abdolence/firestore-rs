@@ -490,8 +490,8 @@ fn declare_search_indexes(db: &FirestoreDb, run: u128) -> FirestoreIndexesBuilde
 }
 
 /// Creates a text index and a geo index on the Enterprise database
-/// (`GCP_ENTERPRISE_DATABASE_ID`), replans them, checks that a field override is refused before
-/// anything is written, and prunes them again. Every index of the database is snapshotted first:
+/// (`GCP_ENTERPRISE_DATABASE_ID`), replans them, checks that a field override listing indexes is
+/// refused before anything is written, and prunes them again. Every index of the database is snapshotted first:
 /// the create adds exactly the two declared indexes, and after the prune every index outside
 /// `SEARCH_GROUP` is unchanged and the group holds none.
 #[tokio::test]
@@ -556,7 +556,7 @@ async fn search_indexes_against_real_firestore_enterprise(
             .fluent()
             .indexes()
             .collection_group(SEARCH_GROUP)
-            .field_overrides(|f| f.fields([f.field("body").exempt()]))
+            .field_overrides(|f| f.fields([f.field("body").indexes([f.ascending()])]))
             .sync()
             .await;
         println!("[search] field override sync: {refused:?}");

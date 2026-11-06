@@ -107,8 +107,7 @@ where
     ///
     /// An Enterprise edition database has no single-field indexes. There an
     /// [`exempt()`](FirestoreFieldOverrideFieldBuilder::exempt) is already satisfied and is never
-    /// written, and an override that lists indexes, or a pruning sync that would revert one, fails
-    /// `.plan()` and `.sync()` with
+    /// written, and an override that lists indexes fails `.plan()` and `.sync()` with
     /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) before
     /// anything is written. A composite index of one field indexes that field instead.
     #[inline]

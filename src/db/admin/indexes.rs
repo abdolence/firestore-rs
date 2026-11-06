@@ -374,15 +374,24 @@ impl FirestoreDb {
         &self,
         group: &'a FirestoreCollectionId,
     ) -> FirestoreResult<OwnedGroup<'a>> {
+        let span = span!(
+            Level::INFO,
+            "Firestore Index Edition",
+            "/firestore/response_time" = field::Empty,
+        );
+        let began = FirestoreInstant::now();
         let request = GetDatabaseRequest {
             name: self.inner.database_path.clone(),
         };
         let database = self
             .admin_client()
             .get_database(self.request_with_timeout(request, RequestTimeouts::with_total))
+            .instrument(span.clone())
             .await
             .map_err(FirestoreError::from)?
             .into_inner();
+        let elapsed = FirestoreInstant::now().duration_since(began);
+        span.record("/firestore/response_time", elapsed.as_millis());
         Ok(OwnedGroup {
             id: group,
             path: format!(
@@ -801,14 +810,9 @@ impl FirestoreDb {
                 paths: vec!["ttl_config".to_string()],
             }),
         };
-        // Firestore answers RESOURCE_EXHAUSTED when the group already has a TTL field, and keeps
-        // answering so until that field's TTL is disabled, so sending the enable again fails too.
         self.run_update_field(request, action)
             .await
-            .map_err(|refused| match refused.status.code() {
-                Code::ResourceExhausted => refused.into_logged_error().without_retry(),
-                _ => refused.into_logged_error(),
-            })
+            .map_err(RefusedFieldWrite::into_logged_error)
     }
 
     /// Reverts a field override or disables TTL on `listed`, the two idempotent single-field
@@ -1607,44 +1611,6 @@ mod tests {
 
         assert!(report.updated_fields.is_empty(), "{report}");
         assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
-    }
-
-    #[tokio::test]
-    async fn a_ttl_enable_refused_for_a_second_ttl_field_is_not_retryable() {
-        let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = start_standard(|method, _| match method {
-            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
-            LIST_FIELDS => (
-                "ListFields".to_string(),
-                list_fields_response(vec![field_resource("expires", None, Some(active_ttl()))]),
-            ),
-            UPDATE_FIELD => (
-                "UpdateField".to_string(),
-                FakeResponse::StatusWithMessage(
-                    Code::ResourceExhausted,
-                    "The collection group 'users' can only have at most '1' field(s) marked \
-                     with TTL but already has TTL configurations set on path 'expires'.",
-                ),
-            ),
-            other => panic!("unexpected RPC: {other}"),
-        })
-        .await;
-        let params = FirestoreIndexParams::new(group()).with_ttl_fields(vec!["expires_at".into()]);
-
-        let err = fake
-            .db
-            .sync_indexes(params, FirestoreIndexSyncOptions::new())
-            .await
-            .unwrap_err();
-
-        assert!(
-            matches!(
-                &err,
-                FirestoreError::DatabaseError(database)
-                    if database.public.code == "ResourceExhausted" && !database.retry_possible
-            ),
-            "{err:?}"
-        );
     }
 
     #[tokio::test]

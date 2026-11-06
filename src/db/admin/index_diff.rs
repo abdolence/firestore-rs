@@ -791,8 +791,8 @@ fn strip_implied_name_at_expected_position(
 /// Field paths compare in their canonical spelling (see [`CanonicalFieldPath`]).
 ///
 /// Used both to match a declaration against a listed index and, in
-/// [`validate_index_params`](crate::validate_index_params), to reject two declarations that are
-/// really the same index.
+/// [`validate_index_params_for_edition`], to reject two declarations that are really the same
+/// index.
 pub(crate) fn composite_index_matches(
     declared: &FirestoreCompositeIndex,
     listed: &FirestoreCompositeIndex,
@@ -867,7 +867,7 @@ impl FirestoreError {
 ///
 /// It also checks the rules that depend on the database's `edition`. On an Enterprise edition
 /// database, which has no single-field indexes, a declared exemption is already satisfied and is
-/// never planned, and a pruning plan that would revert a listed override is refused.
+/// never planned.
 ///
 /// A listed index or field this crate's domain model cannot represent - a search config other
 /// than one text or geo spec, a MongoDB-compat or Datastore-mode API scope, `COLLECTION_RECURSIVE`,
@@ -1018,16 +1018,6 @@ pub(crate) fn plan_index_changes(
             && !declared_override_paths
                 .contains(&CanonicalFieldPath::from(listed.field_path.as_str()))
         {
-            if prune && edition == FirestoreDatabaseEdition::Enterprise {
-                return Err(FirestoreError::invalid_parameters(
-                    "field_overrides",
-                    format!(
-                        "pruning would revert the override listed on {}, and an Enterprise \
-                         edition database refuses single-field index changes",
-                        listed.field_path
-                    ),
-                ));
-            }
             if prune {
                 plan.revert_fields.push(listed.clone());
             } else {
@@ -1074,6 +1064,22 @@ pub(crate) fn plan_index_changes(
                 plan.kept_undeclared_ttl.push(listed.clone());
             }
         }
+    }
+
+    // Firestore allows one TTL field per group and refuses a second enable only at the write,
+    // with a RESOURCE_EXHAUSTED that retrying cannot clear. Refusing it here keeps the sync's
+    // earlier writes from going out first.
+    if let (Some(declared), Some(listed)) =
+        (plan.enable_ttl.first(), plan.kept_undeclared_ttl.first())
+    {
+        return Err(FirestoreError::invalid_parameters(
+            "ttl_fields",
+            format!(
+                "{declared} cannot be enabled while {} keeps its TTL: Firestore allows one TTL \
+                 field per collection group; prune_undeclared() disables the listed one",
+                listed.field_path
+            ),
+        ));
     }
 
     Ok(plan)
@@ -1752,6 +1758,51 @@ pub(crate) mod tests {
             plan.kept_undeclared_ttl,
             vec![FirestoreListedField::try_from(listed_field).unwrap()]
         );
+    }
+
+    #[test]
+    fn an_enterprise_index_of_a_hundred_fields_is_within_the_limit() {
+        let fields: Vec<_> = (0..100).map(|i| asc_field(&format!("f{i}"))).collect();
+        let params =
+            users_params().with_composite_indexes(vec![FirestoreCompositeIndex::new(fields)]);
+        let listing = FirestoreIndexListing::default();
+
+        plan_index_changes(
+            &params,
+            &listing,
+            FirestoreDatabaseEdition::Enterprise,
+            false,
+        )
+        .unwrap();
+        plan_index_changes(&params, &listing, Standard, false).unwrap_err();
+    }
+
+    #[test]
+    fn enabling_a_second_ttl_field_is_refused_unless_pruning_disables_the_first() {
+        let params = users_params().with_ttl_fields(vec!["expires_at".to_string()]);
+        let existing: FirestoreIndexListing = FirestoreIndexExistingState {
+            indexes: vec![],
+            fields: vec![field_resource(
+                "legacy_expiry",
+                None,
+                Some(active_ttl_config()),
+            )],
+        }
+        .into();
+
+        let err = plan_index_changes(&params, &existing, Standard, false).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                FirestoreError::InvalidParametersError(invalid)
+                    if invalid.public.field == "ttl_fields"
+            ),
+            "{err:?}"
+        );
+
+        let pruning = plan_index_changes(&params, &existing, Standard, true).unwrap();
+        assert_eq!(pruning.enable_ttl, vec!["expires_at".to_string()]);
+        assert_eq!(pruning.disable_ttl.len(), 1);
     }
 
     #[test]
