@@ -93,6 +93,7 @@
 //! | `caching-memory` | In-memory collection and document cache, kept current by a listener |
 //! | `caching-persistent` | The same cache backed by an on-disk database |
 //! | `admin` | Declarative index management and bulk delete: composite indexes, vector indexes, single-field overrides, TTL policy, and `BulkDeleteDocuments` |
+//! | `sql` | SQL statements in the BigQuery (GoogleSQL) dialect, translated into pipelines: see `FirestoreExprBuilder::sql` |
 //!
 //! Runnable examples for every topic:
 //! <https://github.com/abdolence/firestore-rs/tree/master/examples>
@@ -248,6 +249,12 @@ pub use fluent_api::*;
 /// Re-exported because those macros expand to paths into it, so a caller cannot use them
 /// without it being in scope.
 pub extern crate struct_path;
+
+#[cfg(feature = "sql")]
+mod sql;
+
+#[cfg(feature = "sql")]
+pub use sql::*;
 
 #[cfg(feature = "caching")]
 mod cache;

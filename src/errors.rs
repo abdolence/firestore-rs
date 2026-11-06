@@ -55,6 +55,44 @@ impl FirestoreError {
         ))
     }
 
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for SQL text,
+    /// naming the refused `construct` and where it starts.
+    #[cfg(feature = "sql")]
+    pub(crate) fn invalid_sql(
+        construct: impl Into<String>,
+        error: impl Into<String>,
+        location: Option<FirestoreSqlLocation>,
+    ) -> Self {
+        FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
+            FirestoreInvalidParametersPublicDetails::new(construct.into(), error.into())
+                .opt_location(location),
+        ))
+    }
+
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for a SQL
+    /// `construct` that has no pipeline form.
+    #[cfg(feature = "sql")]
+    pub(crate) fn unsupported_sql(construct: &str, location: Option<FirestoreSqlLocation>) -> Self {
+        FirestoreError::invalid_sql(
+            construct,
+            format!("{construct} has no pipeline form in SQL"),
+            location,
+        )
+    }
+
+    /// Points an [`InvalidParametersError`](FirestoreError::InvalidParametersError) from a check
+    /// the crate shares, such as an ID's, at where the value starts in SQL text.
+    #[cfg(feature = "sql")]
+    pub(crate) fn located(self, location: Option<FirestoreSqlLocation>) -> Self {
+        match self {
+            FirestoreError::InvalidParametersError(mut error) => {
+                error.public.location = location;
+                FirestoreError::InvalidParametersError(error)
+            }
+            other => other,
+        }
+    }
+
     /// Builds a [`SystemError`](FirestoreError::SystemError) with the generic `SystemError` code.
     pub(crate) fn system_error(message: impl Into<String>) -> Self {
         FirestoreError::SystemError(FirestoreSystemError::new(
@@ -267,10 +305,14 @@ impl std::error::Error for FirestoreDataNotFoundError {}
 /// Provides information about which parameter was invalid and why.
 #[derive(Debug, Eq, PartialEq, Clone, Builder, Serialize, Deserialize)]
 pub struct FirestoreInvalidParametersPublicDetails {
-    /// The name of the field or parameter that was invalid.
+    /// The name of the field or parameter that was invalid. For SQL text, the construct that was
+    /// refused, such as `TABLESAMPLE` or `@genre`, or `sql` for text that does not parse.
     pub field: String,
     /// A description of why the parameter is considered invalid.
     pub error: String,
+    /// Where the refused construct starts in SQL text, when the error is about SQL text and the
+    /// position is known.
+    pub location: Option<FirestoreSqlLocation>,
 }
 
 impl Display for FirestoreInvalidParametersPublicDetails {
@@ -279,7 +321,24 @@ impl Display for FirestoreInvalidParametersPublicDetails {
             f,
             "Invalid parameters error: {}. {}",
             self.field, self.error
-        )
+        )?;
+        if let Some(location) = &self.location {
+            write!(f, " (at {location})")?;
+        }
+        Ok(())
+    }
+}
+
+/// A position in SQL text: lines and columns count from 1, and columns count characters.
+#[derive(Debug, Eq, PartialEq, Clone, Copy, Builder, Serialize, Deserialize)]
+pub struct FirestoreSqlLocation {
+    pub line: u64,
+    pub column: u64,
+}
+
+impl Display for FirestoreSqlLocation {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "line {}, column {}", self.line, self.column)
     }
 }
 
@@ -338,6 +397,56 @@ impl From<gcloud_sdk::error::Error> for FirestoreError {
             FirestoreErrorPublicGenericDetails::new(format!("{:?}", e.kind())),
             format!("GCloud system error: {e}"),
         ))
+    }
+}
+
+#[cfg(feature = "sql")]
+impl FirestoreSqlLocation {
+    /// `None` for the empty location sqlparser gives what it did not read from the text.
+    pub(crate) fn from_sqlparser(location: sqlparser::tokenizer::Location) -> Option<Self> {
+        (location.line > 0).then_some(Self::new(location.line, location.column))
+    }
+}
+
+#[cfg(feature = "sql")]
+impl From<sqlparser::tokenizer::TokenizerError> for FirestoreError {
+    fn from(error: sqlparser::tokenizer::TokenizerError) -> Self {
+        FirestoreError::invalid_sql(
+            "sql",
+            error.message,
+            FirestoreSqlLocation::from_sqlparser(error.location),
+        )
+    }
+}
+
+#[cfg(feature = "sql")]
+impl From<sqlparser::parser::ParserError> for FirestoreError {
+    fn from(error: sqlparser::parser::ParserError) -> Self {
+        use sqlparser::parser::ParserError;
+        match error {
+            ParserError::RecursionLimitExceeded => FirestoreError::invalid_sql(
+                "nesting",
+                "the statement nests deeper than the parser allows",
+                None,
+            ),
+            ParserError::TokenizerError(message) | ParserError::ParserError(message) => {
+                // sqlparser gives the position only as the end of its message.
+                let located = message
+                    .rsplit_once(" at Line: ")
+                    .and_then(|(text, position)| {
+                        let (line, column) = position.split_once(", Column: ")?;
+                        let location =
+                            FirestoreSqlLocation::new(line.parse().ok()?, column.parse().ok()?);
+                        Some((text.to_string(), location))
+                    });
+                match located {
+                    Some((text, location)) => {
+                        FirestoreError::invalid_sql("sql", text, Some(location))
+                    }
+                    None => FirestoreError::invalid_sql("sql", message, None),
+                }
+            }
+        }
     }
 }
 

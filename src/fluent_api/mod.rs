@@ -68,6 +68,12 @@ pub mod pipeline_stage_builder;
 /// not directly.
 pub mod pipeline_write_builder;
 
+/// Translates a SQL statement into a pipeline and runs it. Requires the `sql` feature.
+///
+/// Reach for this from [`FirestoreExprBuilder::sql()`](FirestoreExprBuilder::sql).
+#[cfg(feature = "sql")]
+pub mod sql_builder;
+
 /// Builds `COUNT`, `SUM` and `AVG` aggregations for a query.
 ///
 /// Reach for this via `.aggregate()` on a select builder, not directly.
@@ -228,6 +234,41 @@ where
     #[inline]
     pub fn pipeline(self) -> FirestorePipelineVerbBuilder<'a, D> {
         FirestorePipelineVerbBuilder::new(self.db)
+    }
+}
+
+// A separate impl block for `FirestoreDb` alone: a statement is translated against the
+// database's documents root, which only the client knows.
+#[cfg(feature = "sql")]
+impl<'a> FirestoreExprBuilder<'a, FirestoreDb> {
+    /// Starts a SQL statement in the BigQuery (GoogleSQL) dialect, translated into a pipeline,
+    /// which needs an Enterprise edition database. Continue with `.param()` or `.params()` to
+    /// bind its parameters, then run it with `.query()` or `.obj()`. Requires the `sql` feature.
+    ///
+    /// ```rust,no_run
+    /// use firestore::{FirestoreDb, FirestoreResult};
+    /// use serde::Deserialize;
+    ///
+    /// #[derive(Deserialize)]
+    /// struct Book {
+    ///     title: String,
+    ///     rating: f64,
+    /// }
+    ///
+    /// # async fn example(db: FirestoreDb) -> FirestoreResult<()> {
+    /// let books: Vec<Book> = db
+    ///     .fluent()
+    ///     .sql("SELECT title, rating FROM books WHERE genre = @genre ORDER BY rating DESC LIMIT 10")
+    ///     .param("genre", "Dystopian")
+    ///     .obj()
+    ///     .query()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn sql<S: AsRef<str>>(self, sql: S) -> crate::sql_builder::FirestoreSqlBuilder<'a> {
+        crate::sql_builder::FirestoreSqlBuilder::new(self.db, sql.as_ref().to_string())
     }
 }
 

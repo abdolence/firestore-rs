@@ -38,6 +38,7 @@ caching-persistent = ["caching", "dep:redb"]
 tls-roots = ["gcloud-sdk/tls-roots"]
 tls-webpki-roots = ["gcloud-sdk/tls-webpki-roots"]
 admin = ["gcloud-sdk/google-firestore-admin-v1"]
+sql = ["dep:sqlparser"]
 
 [dependencies]
 tracing = "0.1"
@@ -59,6 +60,9 @@ moka = { version = "0.12", features = ["future"], optional = true } # Caching li
 rand = "0.10"
 regex = "1.13"
 serde_json = "1"
+# Default features would add a dependency that grows the stack while parsing; the translator caps
+# the parser's nesting instead.
+sqlparser = { version = "0.63", default-features = false, features = ["std"], optional = true }
 
 [dev-dependencies]
 base64 = "0.23"
@@ -159,6 +163,11 @@ required-features = ["admin"]
 name = "pipeline-dml-tests"
 path = "tests/pipeline-dml-tests.rs"
 required-features = ["admin"]
+
+[[test]]
+name = "sql-tests"
+path = "tests/sql-tests.rs"
+required-features = ["admin", "sql"]
 
 [[test]]
 name = "admin-indexes-tests"
