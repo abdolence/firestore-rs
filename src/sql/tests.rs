@@ -185,21 +185,6 @@ fn sources_translate_to_their_pipeline_sources() {
 }
 
 #[test]
-fn an_id_only_filter_reads_the_documents_by_path() {
-    assert_eq!(
-        translated("SELECT title FROM books WHERE __name__ = 'b1'"),
-        fluent()
-            .documents(["books/b1"])
-            .fields(|e| [e.field("title")])
-            .into_pipeline()
-    );
-    assert_eq!(
-        translated("SELECT * FROM books WHERE __name__ IN ('b1', 'books/b2', 'b1')"),
-        fluent().documents(["books/b1", "books/b2"]).into_pipeline()
-    );
-}
-
-#[test]
 fn a_name_compared_with_a_string_compares_a_reference() {
     let values = FirestorePipelineExprBuilder;
     let full_path = format!(
@@ -212,6 +197,15 @@ fn a_name_compared_with_a_string_compares_a_reference() {
                 .and([
                     field("__name__").equal(reference("books/b1")),
                     field("stock").greater_than(0),
+                ])
+                .into(),
+        ),
+        (
+            "SELECT * FROM books WHERE __name__ IN ('b1', 'books/b2')",
+            field("__name__")
+                .equal_any(vec![
+                    FirestoreReference(format!("{DOCUMENTS}/books/b1")),
+                    FirestoreReference(format!("{DOCUMENTS}/books/b2")),
                 ])
                 .into(),
         ),
@@ -1179,10 +1173,14 @@ fn a_delete_filters_the_documents_it_deletes() {
         )
     );
     assert_eq!(
-        translated_write("DELETE items WHERE __name__ IN ('a-1', 'a-2')"),
+        translated_write("DELETE items WHERE __name__ = 'a-1'"),
         atomic(
             fluent()
-                .documents(["items/a-1", "items/a-2"])
+                .from("items")
+                .filter(|q| {
+                    q.field("__name__")
+                        .eq(FirestoreReference(format!("{DOCUMENTS}/items/a-1")))
+                })
                 .into_pipeline(),
             FirestorePipelineWrite::Delete
         )
@@ -1719,14 +1717,23 @@ fn in_unnest_tests_membership_in_an_array() {
     );
 
     let ids = FirestoreSqlParameters::new().param("ids", ["b1", "b2"]);
+    let names = translate(
+        "SELECT * FROM books WHERE __name__ IN UNNEST(@ids)",
+        &ids,
+        &FirestoreSqlOptions::new(),
+    )
+    .unwrap();
     assert_eq!(
-        translate(
-            "SELECT * FROM books WHERE __name__ IN UNNEST(@ids)",
-            &ids,
-            &FirestoreSqlOptions::new()
-        )
-        .unwrap(),
-        fluent().documents(["books/b1", "books/b2"]).into_pipeline()
+        names,
+        fluent()
+            .from("books")
+            .filter(|q| {
+                q.field("__name__").is_in(vec![
+                    FirestoreReference(format!("{DOCUMENTS}/books/b1")),
+                    FirestoreReference(format!("{DOCUMENTS}/books/b2")),
+                ])
+            })
+            .into_pipeline()
     );
 }
 

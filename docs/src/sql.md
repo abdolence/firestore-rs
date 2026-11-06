@@ -245,11 +245,10 @@ to case, as a table alias does, and hides a collection of the same name.
 
 ## Reads by ID
 
-A `WHERE` that holds only a document name, `__name__ = 'book-01'` or
-`__name__ IN ('book-01', 'book-02')` or `__name__ IN UNNEST(@ids)`, on a collection source, becomes
-a `documents(..)` source: Firestore reads each document by its name and scans nothing. The
-projection, `ORDER BY` and `LIMIT` still apply. A bare ID is a document of the `FROM` collection,
-and a path such as `books/book-01` is accepted too.
+A `WHERE` on `__name__`, `__name__ = 'book-01'`, `__name__ IN ('book-01', 'book-02')` or
+`__name__ IN UNNEST(@ids)`, reads each document by its name: the plan is a lookup of the named
+documents. A bare ID is a document of the `FROM` collection, and a path such as
+`books/book-01` is accepted too.
 
 ```rust,no_run
 # use firestore::*;
@@ -265,22 +264,11 @@ let rows = db
 # }
 ```
 
-A comparison of `__name__` with a constant is a lookup by name whether or not it is the whole
-`WHERE`. Query Explain with `analyze` reported these on the seed collection of the live tests,
-documents of 349 bytes each, on an Enterprise database:
-
-| Statement | Documents | Read units | Plan |
-|---|---|---|---|
-| `WHERE __name__ = 'book-01'`, as `documents(..)` | 1 | 1 | a lookup of one name |
-| `WHERE __name__ IN ` ten IDs | 10 | 10 | a lookup of ten names |
-| `WHERE __name__ = 'book-01' AND stock >= 0` | 1 | 1 | a lookup of one name, then a filter |
-| the filter `__name__ = reference` of the fluent API, on a collection source | 1 | 1 | a lookup of one name |
-
-A *read unit* is the billing quantity that Query Explain reports under "Billing". The ten documents
-read 3.29 KiB in all and cost 10 read units: a read of documents by name is charged for each
-document. The Core `get` cannot be explained. Firestore's published pricing charges a point read in
-4 KiB tranches, rounded up, so a document of up to 4 KiB costs 1 read unit through `get`, as it
-does through SQL.
+Query Explain with `analyze` on a database of the Enterprise edition reported 1 read unit for each
+document read by ID, for `=` and for `IN`, with or without a further condition such as
+`stock >= 0`. Firestore's published pricing charges a point read of the Core `get` in 4 KiB
+tranches, rounded up, so a document of up to 4 KiB costs 1 read unit through `get`, as it does
+through SQL.
 
 A name compared with a column, such as the `__name__` of a joined table, is described in
 [Join cost](#join-cost).

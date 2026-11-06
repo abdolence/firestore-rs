@@ -129,8 +129,7 @@ async fn a_document_name_selects_the_documents_of_the_fluent_pipeline() -> TestR
     let db = setup_enterprise().await?;
     let book = |id: &str| FirestoreReference(format!("{}/{BOOKS}/{id}", db.get_documents_path()));
 
-    // The first statement reads by path, and the second compares `__name__` in a filter.
-    let by_path: Vec<Title> = db
+    let by_list: Vec<Title> = db
         .fluent()
         .sql("SELECT title FROM `pipeline-books` WHERE __name__ IN ('book-08', 'book-10')")
         .obj()
@@ -160,10 +159,10 @@ async fn a_document_name_selects_the_documents_of_the_fluent_pipeline() -> TestR
         .query()
         .await?;
 
-    let mut by_path_titles = by_path;
-    by_path_titles.sort_by(|left, right| left.title.cmp(&right.title));
+    let mut by_list_titles = by_list;
+    by_list_titles.sort_by(|left, right| left.title.cmp(&right.title));
     assert_eq!(fluent.len(), 2);
-    assert_eq!(by_path_titles, fluent);
+    assert_eq!(by_list_titles, fluent);
     assert_eq!(by_filter, fluent[..1]);
     Ok(())
 }

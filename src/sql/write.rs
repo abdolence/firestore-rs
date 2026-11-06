@@ -810,7 +810,7 @@ impl FirestoreSqlTranslator<'_> {
         };
         let scope = FirestoreSqlScope::new(relation);
         let condition = self.expr(&scope, selection)?;
-        self.filter(&scope, &mut pipeline, condition, true);
+        self.filter(&scope, &mut pipeline, condition);
         Ok((pipeline, scope))
     }
 }

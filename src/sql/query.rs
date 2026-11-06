@@ -9,12 +9,12 @@ use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::{
     FirestoreAddFieldsStage, FirestoreBoolExpr, FirestoreCollectionGroupSource,
     FirestoreCollectionSource, FirestoreDocumentsSource, FirestoreExpr, FirestoreFieldsStage,
-    FirestoreFunction, FirestoreLimitStage, FirestoreOffsetStage, FirestorePipeline,
-    FirestorePipelineOrdering, FirestorePipelineSource, FirestorePipelineStage,
-    FirestoreQueryDirection, FirestoreRemoveFieldsStage, FirestoreResult, FirestoreSelection,
-    FirestoreSortStage, FirestoreSubcollectionSource, FirestoreWhereStage,
+    FirestoreLimitStage, FirestoreOffsetStage, FirestorePipeline, FirestorePipelineOrdering,
+    FirestorePipelineSource, FirestorePipelineStage, FirestoreQueryDirection,
+    FirestoreRemoveFieldsStage, FirestoreResult, FirestoreSelection, FirestoreSortStage,
+    FirestoreSubcollectionSource, FirestoreWhereStage,
 };
-use gcloud_sdk::google::firestore::v1::{value::ValueType, ArrayValue};
+use gcloud_sdk::google::firestore::v1::value::ValueType;
 use sqlparser::ast::{
     Distinct, ExceptSelectItem, Expr, FunctionArg, LimitClause, ObjectName, ObjectNamePart, Offset,
     OrderBy, OrderByExpr, OrderByKind, OrderByOptions, OrderBySort, Query, Select, SelectFlavor,
@@ -281,7 +281,7 @@ impl FirestoreSqlTranslator<'_> {
             let (search, condition) = self.split_search(&scope, &pipeline, selection)?;
             self.search = search;
             if let Some(condition) = condition {
-                self.filter(&scope, &mut pipeline, condition, self.search.is_none());
+                self.filter(&scope, &mut pipeline, condition);
             }
         }
 
@@ -370,33 +370,19 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// Filters the documents of `pipeline` by `condition`: with a `where` stage, or, when
-    /// `by_path` allows it and the condition names documents of the source collection by
-    /// `__name__` alone, by reading them as the source.
+    /// Filters the documents of `pipeline` by `condition` with a `where` stage.
     pub(super) fn filter(
         &mut self,
         scope: &FirestoreSqlScope,
         pipeline: &mut FirestorePipeline,
         condition: FirestoreExpr,
-        by_path: bool,
     ) {
-        let paths = (by_path && pipeline.stages.is_empty())
-            .then(|| self.document_reads(scope, &pipeline.source, &condition))
-            .flatten();
-        match paths {
-            Some(paths) => {
-                pipeline.source =
-                    FirestorePipelineSource::Documents(FirestoreDocumentsSource::new(paths))
-            }
-            None => {
-                self.define_variables(scope.depth(), pipeline);
-                pipeline
-                    .stages
-                    .push(FirestorePipelineStage::Where(FirestoreWhereStage::new(
-                        FirestoreBoolExpr::unchecked(condition),
-                    )))
-            }
-        }
+        self.define_variables(scope.depth(), pipeline);
+        pipeline
+            .stages
+            .push(FirestorePipelineStage::Where(FirestoreWhereStage::new(
+                FirestoreBoolExpr::unchecked(condition),
+            )))
     }
 
     /// The pipeline that reads a table and the relation its names resolve against. `children`
@@ -664,57 +650,6 @@ impl FirestoreSqlTranslator<'_> {
             collection_path: None,
         };
         Ok((source, relation))
-    }
-
-    /// The documents a filter on `__name__` alone names, when each is a document of the source
-    /// collection: read by path, each costs a point read where the filter reads the collection.
-    fn document_reads(
-        &self,
-        scope: &FirestoreSqlScope,
-        source: &FirestorePipelineSource,
-        condition: &FirestoreExpr,
-    ) -> Option<Vec<String>> {
-        let FirestorePipelineSource::Collection(_) = source else {
-            return None;
-        };
-        let collection_path = scope.relation().collection_path.as_deref()?;
-        let FirestoreExpr::Function(FirestoreFunction { name, args }) = condition else {
-            return None;
-        };
-        let references = match (name.as_str(), args.as_slice()) {
-            ("equal", [name_field, constant]) | ("equal", [constant, name_field])
-                if Self::is_own_document_name(name_field) =>
-            {
-                vec![constant.constant_value()?]
-            }
-            ("equal_any", [name_field, constants]) if Self::is_own_document_name(name_field) => {
-                match constants.constant_value()? {
-                    ValueType::ArrayValue(ArrayValue { values }) => values
-                        .iter()
-                        .map(|value| value.value_type.as_ref())
-                        .collect::<Option<Vec<_>>>()?,
-                    _ => return None,
-                }
-            }
-            _ => return None,
-        };
-        let mut paths: Vec<String> = Vec::with_capacity(references.len());
-        for reference in references {
-            let ValueType::ReferenceValue(reference) = reference else {
-                return None;
-            };
-            let path = reference
-                .strip_prefix(self.documents_path)?
-                .strip_prefix('/')?;
-            let (parent, _) = path.rsplit_once('/')?;
-            if parent != collection_path {
-                return None;
-            }
-            if !paths.iter().any(|known| known == path) {
-                paths.push(path.to_string());
-            }
-        }
-        Some(paths)
     }
 
     fn projection(
