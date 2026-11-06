@@ -1,5 +1,23 @@
 # Migration guide
 
+## 0.63
+
+### Invalid parameters errors carry a SQL location
+
+`FirestoreInvalidParametersPublicDetails` gains a public `location` field of type `Option<FirestoreSqlLocation>`. An error
+about SQL text, available with the `sql` feature, sets it to the line and column where the refused construct starts; every
+other `InvalidParametersError` leaves it `None`. Adding the field breaks code that builds the struct with a literal and
+code that destructures it without `..`; `FirestoreInvalidParametersPublicDetails::new` and its builder are unaffected, and
+so is code that reads `field` and `error`.
+
+```rust,ignore
+// Before
+let FirestoreInvalidParametersPublicDetails { field, error } = details;
+
+// After
+let FirestoreInvalidParametersPublicDetails { field, error, .. } = details;
+```
+
 ## 0.62
 
 ### Simple batch writes stop retrying after 60 seconds
