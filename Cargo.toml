@@ -109,6 +109,11 @@ name = "bulk-delete"
 path = "examples/bulk-delete.rs"
 required-features = ["admin"]
 
+[[example]]
+name = "sql"
+path = "examples/sql.rs"
+required-features = ["sql"]
+
 [[test]]
 name = "caching_memory_test"
 path = "tests/caching_memory_test.rs"
