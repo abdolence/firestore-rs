@@ -1,6 +1,8 @@
+use super::aggregation::FirestoreSqlAggregation;
+use super::functions::names_its_output;
 use super::scope::{FirestoreSqlRelation, FirestoreSqlScope};
 use super::translator::{
-    at, expr_start, is_parameter, name_start, refuse_set, FirestoreSqlTranslator,
+    at, expr_start, is_column, is_parameter, name_start, refuse_set, FirestoreSqlTranslator,
 };
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
@@ -14,14 +16,22 @@ use crate::{
 };
 use gcloud_sdk::google::firestore::v1::{value::ValueType, ArrayValue, Value};
 use sqlparser::ast::{
-    ExceptSelectItem, Expr, FunctionArg, GroupByExpr, LimitClause, ObjectName, ObjectNamePart,
-    Offset, OrderBy, OrderByExpr, OrderByKind, OrderByOptions, OrderBySort, Query, Select,
-    SelectFlavor, SelectItem, SelectItemQualifiedWildcardKind, SetExpr, TableAlias, TableFactor,
+    Distinct, ExceptSelectItem, Expr, FunctionArg, LimitClause, ObjectName, ObjectNamePart, Offset,
+    OrderBy, OrderByExpr, OrderByKind, OrderByOptions, OrderBySort, Query, Select, SelectFlavor,
+    SelectItem, SelectItemQualifiedWildcardKind, SetExpr, TableAlias, TableFactor,
     TableFunctionArgs, TableWithJoins, Value as SqlValue, ValueWithSpan, WildcardAdditionalOptions,
 };
 
+/// A `SELECT` as a pipeline.
+pub(super) struct FirestoreSqlBranch {
+    pub(super) pipeline: FirestorePipeline,
+    /// The names of the columns it outputs, or `None` for `*`, which lists none.
+    pub(super) columns: Option<Vec<String>>,
+    pub(super) start: Option<FirestoreSqlLocation>,
+}
+
 /// What a query outputs for each row.
-enum FirestoreSqlProjection {
+pub(super) enum FirestoreSqlProjection {
     /// Every field, as `*` selects them.
     Wildcard(FirestoreSqlWildcard),
     /// Only the selected fields.
@@ -29,22 +39,40 @@ enum FirestoreSqlProjection {
 }
 
 /// `*` less the fields `EXCEPT` removes, plus the query's other selected items.
-struct FirestoreSqlWildcard {
+pub(super) struct FirestoreSqlWildcard {
     removed: Vec<String>,
     added: Vec<FirestoreSelection>,
 }
 
 impl FirestoreSqlProjection {
-    /// The expression of the selected item named `alias`, which `ORDER BY` may order by.
-    fn aliased(&self, alias: &str) -> Option<&FirestoreExpr> {
-        let selections = match self {
+    fn selections(&self) -> &[FirestoreSelection] {
+        match self {
             Self::Wildcard(wildcard) => &wildcard.added,
             Self::Fields(fields) => fields,
-        };
-        selections
+        }
+    }
+
+    /// The expression of the selected item named `alias`, which `ORDER BY` may order by.
+    fn aliased(&self, alias: &str) -> Option<&FirestoreExpr> {
+        self.selections()
             .iter()
             .find(|selection| selection.alias.as_deref() == Some(alias))
             .map(|selection| &selection.expr)
+    }
+
+    /// The names of the output columns, or `None` for a `*`.
+    fn columns(&self) -> Option<Vec<String>> {
+        match self {
+            Self::Wildcard(_) => None,
+            Self::Fields(fields) => fields
+                .iter()
+                .map(|selection| match (&selection.alias, &selection.expr) {
+                    (Some(alias), _) => Some(alias.clone()),
+                    (None, FirestoreExpr::Field(path)) => Some(path.clone()),
+                    (None, _) => None,
+                })
+                .collect(),
+        }
     }
 
     fn into_stages(self) -> Vec<FirestorePipelineStage> {
@@ -58,14 +86,24 @@ impl FirestoreSqlProjection {
                 }
                 if !added.is_empty() {
                     stages.push(FirestorePipelineStage::AddFields(
-                        FirestoreAddFieldsStage::new(added),
+                        FirestoreAddFieldsStage::new(
+                            added
+                                .into_iter()
+                                .map(FirestoreSelection::without_redundant_alias)
+                                .collect(),
+                        ),
                     ));
                 }
                 stages
             }
-            Self::Fields(fields) => vec![FirestorePipelineStage::Fields(
-                FirestoreFieldsStage::new(fields),
-            )],
+            Self::Fields(fields) => {
+                vec![FirestorePipelineStage::Fields(FirestoreFieldsStage::new(
+                    fields
+                        .into_iter()
+                        .map(FirestoreSelection::without_redundant_alias)
+                        .collect(),
+                ))]
+            }
         }
     }
 }
@@ -120,21 +158,9 @@ impl FirestoreSqlTranslator<'_> {
             None,
         )?;
         let mut pipeline = match body.as_ref() {
-            SetExpr::Select(select) => self.select(select, order_by.as_ref())?,
-            SetExpr::SetOperation { op, .. } => {
-                return Err(FirestoreError::unsupported_sql(&op.to_string(), None))
-            }
-            SetExpr::Query(_) => {
-                return Err(FirestoreError::unsupported_sql(
-                    "a parenthesised query",
-                    None,
-                ))
-            }
-            SetExpr::Values(_) => return Err(FirestoreError::unsupported_sql("VALUES", None)),
-            SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Merge(_) => {
-                return Err(FirestoreError::unsupported_sql("a write in a query", None))
-            }
-            SetExpr::Table(_) => return Err(FirestoreError::unsupported_sql("TABLE", None)),
+            SetExpr::Select(select) => self.select(select, order_by.as_ref())?.pipeline,
+            SetExpr::SetOperation { .. } => self.set_operation(body, order_by.as_ref())?,
+            other => return Err(Self::unsupported_body(other)),
         };
         if let Some(limit_clause) = limit_clause {
             self.limit(limit_clause, &mut pipeline)?;
@@ -142,13 +168,41 @@ impl FirestoreSqlTranslator<'_> {
         Ok(pipeline)
     }
 
+    /// The error for a query body that is neither a `SELECT` nor a `UNION`.
+    pub(super) fn unsupported_body(body: &SetExpr) -> FirestoreError {
+        let construct = match body {
+            SetExpr::Select(_) | SetExpr::SetOperation { .. } => "a nested set operation",
+            SetExpr::Query(_) => "a parenthesised query",
+            SetExpr::Values(_) => "VALUES",
+            SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Merge(_) => {
+                "a write in a query"
+            }
+            SetExpr::Table(_) => "TABLE",
+        };
+        FirestoreError::unsupported_sql(construct, None)
+    }
+
     /// A `SELECT` with the `ORDER BY` of its query, which sorts before the projection, so that
-    /// Firestore can read an index in order rather than sort the projected rows.
-    fn select(
+    /// Firestore can read an index in order rather than sort the projected rows. A query that
+    /// groups sorts its groups, after the aggregate stage.
+    ///
+    /// A `SELECT` nested in this one translates with a state of its own.
+    pub(super) fn select(
         &mut self,
         select: &Select,
         order_by: Option<&OrderBy>,
-    ) -> FirestoreResult<FirestorePipeline> {
+    ) -> FirestoreResult<FirestoreSqlBranch> {
+        let outer = (self.aggregation.take(), self.search.take());
+        let branch = self.select_with_state(select, order_by);
+        (self.aggregation, self.search) = outer;
+        branch
+    }
+
+    fn select_with_state(
+        &mut self,
+        select: &Select,
+        order_by: Option<&OrderBy>,
+    ) -> FirestoreResult<FirestoreSqlBranch> {
         let Select {
             select_token,
             optimizer_hints,
@@ -176,10 +230,16 @@ impl FirestoreSqlTranslator<'_> {
             flavor,
         } = select;
         let select_start = at(select_token.0.span);
+        let distinct = match distinct {
+            None | Some(Distinct::All) => false,
+            Some(Distinct::Distinct) => true,
+            Some(Distinct::On(_)) => {
+                return Err(FirestoreError::unsupported_sql("DISTINCT ON", select_start))
+            }
+        };
         refuse_set(
             &[
                 (!optimizer_hints.is_empty(), "an optimizer hint"),
-                (distinct.is_some(), "DISTINCT"),
                 (select_modifiers.is_some(), "a SELECT modifier"),
                 (top.is_some(), "TOP"),
                 (exclude.is_some(), "EXCLUDE"),
@@ -187,14 +247,9 @@ impl FirestoreSqlTranslator<'_> {
                 (!lateral_views.is_empty(), "LATERAL VIEW"),
                 (prewhere.is_some(), "PREWHERE"),
                 (!connect_by.is_empty(), "CONNECT BY"),
-                (
-                    !matches!(group_by, GroupByExpr::Expressions(exprs, modifiers) if exprs.is_empty() && modifiers.is_empty()),
-                    "GROUP BY",
-                ),
                 (!cluster_by.is_empty(), "CLUSTER BY"),
                 (!distribute_by.is_empty(), "DISTRIBUTE BY"),
                 (!sort_by.is_empty(), "SORT BY"),
-                (having.is_some(), "HAVING"),
                 (!named_window.is_empty(), "WINDOW"),
                 (qualify.is_some(), "QUALIFY"),
                 (
@@ -213,32 +268,92 @@ impl FirestoreSqlTranslator<'_> {
         let scope = FirestoreSqlScope::new(relation);
         let mut pipeline = FirestorePipeline::new(source);
         if let Some(selection) = selection {
-            let condition = self.expr(&scope, selection)?;
-            match self.document_reads(&scope, &pipeline.source, &condition) {
-                Some(paths) => {
-                    pipeline.source =
-                        FirestorePipelineSource::Documents(FirestoreDocumentsSource::new(paths))
-                }
-                None => {
-                    pipeline
-                        .stages
-                        .push(FirestorePipelineStage::Where(FirestoreWhereStage::new(
-                            FirestoreBoolExpr::unchecked(condition),
-                        )))
+            let (search, condition) = self.split_search(&scope, &pipeline.source, selection)?;
+            self.search = search;
+            if let Some(condition) = condition {
+                let paths = match self.search {
+                    None => self.document_reads(&scope, &pipeline.source, &condition),
+                    Some(_) => None,
+                };
+                match paths {
+                    Some(paths) => {
+                        pipeline.source =
+                            FirestorePipelineSource::Documents(FirestoreDocumentsSource::new(paths))
+                    }
+                    None => pipeline.stages.push(FirestorePipelineStage::Where(
+                        FirestoreWhereStage::new(FirestoreBoolExpr::unchecked(condition)),
+                    )),
                 }
             }
         }
+
+        let mut aggregation =
+            FirestoreSqlAggregation::new(projection.iter().filter_map(|item| match item {
+                SelectItem::ExprWithAlias { alias, .. } => Some(alias.value.clone()),
+                _ => None,
+            }));
+        self.group_keys(&scope, group_by, projection, distinct, &mut aggregation)?;
+        self.aggregation = Some(aggregation);
         let projection = self.projection(&scope, projection)?;
-        if let Some(order_by) = order_by {
-            let orderings = self.orderings(&scope, &projection, order_by)?;
-            pipeline
-                .stages
-                .push(FirestorePipelineStage::Sort(FirestoreSortStage::new(
-                    orderings,
-                )));
+        if let Some(aggregation) = self.aggregation.as_mut().filter(|a| a.is_aggregate()) {
+            aggregation.set_outputs(projection.selections());
         }
-        pipeline.stages.extend(projection.into_stages());
-        Ok(pipeline)
+        let having = having
+            .as_ref()
+            .map(|having| self.expr(&scope, having))
+            .transpose()?;
+        let ordered_by_search = match order_by {
+            Some(order_by) => self.search_order(&scope, order_by)?,
+            None => false,
+        };
+        let orderings = match order_by {
+            Some(order_by) if !ordered_by_search => {
+                Some(self.orderings(&scope, &projection, order_by)?)
+            }
+            _ => None,
+        };
+        if let Some(search) = self.search.take() {
+            Self::install_search(&mut pipeline.source, search);
+        }
+
+        let columns = projection.columns();
+        match self.aggregation.take().filter(|a| a.is_aggregate()) {
+            Some(aggregation) => {
+                aggregation.ensure_grouped()?;
+                let FirestoreSqlProjection::Fields(selections) = projection else {
+                    return Err(FirestoreError::invalid_sql(
+                        "*",
+                        "* selects every field, where a query that groups or aggregates selects only its groups and aggregates",
+                        select_start,
+                    ));
+                };
+                pipeline
+                    .stages
+                    .extend(aggregation.into_stages(having, orderings, selections));
+            }
+            None => {
+                if having.is_some() {
+                    return Err(FirestoreError::invalid_sql(
+                        "HAVING",
+                        "HAVING filters groups, and this query has no GROUP BY or aggregate",
+                        select_start,
+                    ));
+                }
+                if let Some(orderings) = orderings {
+                    pipeline
+                        .stages
+                        .push(FirestorePipelineStage::Sort(FirestoreSortStage::new(
+                            orderings,
+                        )));
+                }
+                pipeline.stages.extend(projection.into_stages());
+            }
+        }
+        Ok(FirestoreSqlBranch {
+            pipeline,
+            columns,
+            start: select_start,
+        })
     }
 
     /// The source a query reads and the relation its names resolve against.
@@ -536,7 +651,7 @@ impl FirestoreSqlTranslator<'_> {
         for item in items {
             match item {
                 SelectItem::UnnamedExpr(expr) => match self.expr(scope, expr)? {
-                    field @ FirestoreExpr::Field(_) => {
+                    field @ FirestoreExpr::Field(_) if is_column(expr) => {
                         selections.push(FirestoreSelection::new(field))
                     }
                     _ => {
@@ -548,7 +663,13 @@ impl FirestoreSqlTranslator<'_> {
                     }
                 },
                 SelectItem::ExprWithAlias { expr, alias } => {
-                    selections.push(self.expr(scope, expr)?.alias(alias.value.clone()))
+                    let value = match expr {
+                        Expr::Function(function) if names_its_output(function) => {
+                            self.named_function(scope, function, Some(&alias.value))?
+                        }
+                        _ => self.expr(scope, expr)?,
+                    };
+                    selections.push(value.alias(alias.value.clone()))
                 }
                 SelectItem::Wildcard(options) => {
                     wildcard = Some(self.wildcard(scope, options, wildcard.is_some())?)
@@ -634,7 +755,7 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    fn orderings(
+    pub(super) fn orderings(
         &mut self,
         scope: &FirestoreSqlScope,
         projection: &FirestoreSqlProjection,

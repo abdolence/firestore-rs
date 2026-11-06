@@ -1,3 +1,5 @@
+mod aggregation;
+
 mod expr;
 
 mod functions;
@@ -11,6 +13,10 @@ pub use parameters::*;
 mod query;
 
 mod scope;
+
+mod search;
+
+mod set_operation;
 
 mod statement;
 pub use statement::*;

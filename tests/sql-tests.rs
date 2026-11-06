@@ -101,3 +101,191 @@ async fn a_document_name_selects_the_documents_of_the_fluent_pipeline() -> TestR
     assert_eq!(by_filter, fluent[..1]);
     Ok(())
 }
+
+const RESTAURANTS: &str = "pipeline-restaurants";
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct GenreBooks {
+    genre: Option<String>,
+    books: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct Genre {
+    genre: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct Name {
+    name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct Relevant {
+    name: String,
+    relevance: f64,
+}
+
+#[tokio::test]
+async fn a_group_by_returns_the_groups_of_the_fluent_aggregate() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<GenreBooks> = db
+        .fluent()
+        .sql(
+            "SELECT genre, COUNT(*) AS books FROM `pipeline-books` \
+             GROUP BY genre HAVING AVG(rating) > 4.0 ORDER BY genre",
+        )
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<GenreBooks> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(BOOKS)
+        .aggregate_grouped(
+            |e| [e.field("genre")],
+            |e| {
+                [
+                    e.count_all().alias("books"),
+                    e.field("rating").average().alias("_agg0"),
+                ]
+            },
+        )
+        .filter(|q| q.field("_agg0").greater_than(4.0))
+        .sort(|e| [e.field("genre").asc()])
+        .fields(|e| [e.field("genre"), e.field("books")])
+        .obj()
+        .query()
+        .await?;
+
+    assert!(!fluent.is_empty());
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn select_distinct_returns_the_values_of_the_fluent_distinct() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<Genre> = db
+        .fluent()
+        .sql("SELECT DISTINCT genre FROM `pipeline-books` ORDER BY genre")
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<Genre> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(BOOKS)
+        .distinct(|e| [e.field("genre")])
+        .sort(|e| [e.field("genre").asc()])
+        .obj()
+        .query()
+        .await?;
+
+    assert_eq!(fluent.len(), 9);
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_union_returns_the_rows_of_the_fluent_union() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<Name> = db
+        .fluent()
+        .sql(
+            "SELECT title AS name FROM `pipeline-books` \
+             UNION ALL SELECT name FROM `pipeline-restaurants` ORDER BY name",
+        )
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<Name> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(BOOKS)
+        .fields(|e| [e.field("title").alias("name")])
+        .union(|p| p.from(RESTAURANTS).fields(|e| [e.field("name")]))
+        .sort(|e| [e.field("name").asc()])
+        .obj()
+        .query()
+        .await?;
+
+    assert_eq!(fluent.len(), 20);
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_text_search_returns_the_hits_of_the_fluent_search() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<Relevant> = db
+        .fluent()
+        .sql(
+            "SELECT name, score() AS relevance FROM `pipeline-restaurants` \
+             WHERE document_matches(@query) ORDER BY score() DESC",
+        )
+        .param("query", "waffles -bacon")
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<Relevant> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(RESTAURANTS)
+        .search(|s| {
+            s.text(|_| "waffles -bacon")
+                .sort_by_score()
+                .score_field("relevance")
+        })
+        .fields(|e| [e.field("name"), e.field("relevance")])
+        .obj()
+        .query()
+        .await?;
+
+    assert!(!fluent.is_empty());
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_geo_distance_condition_returns_the_places_of_the_fluent_search() -> TestResult {
+    let db = setup_enterprise().await?;
+    let center = FirestoreLatLng(FirestoreGeoPoint {
+        latitude: 38.989177,
+        longitude: -107.065076,
+    });
+
+    let translated: Vec<Name> = db
+        .fluent()
+        .sql(
+            "SELECT name FROM `pipeline-restaurants` \
+             WHERE geo_distance(location, @center) <= 5000 \
+             ORDER BY geo_distance(location, @center)",
+        )
+        .param("center", &center)
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<Name> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(RESTAURANTS)
+        .search(|s| s.geo_within("location", center, 5000.0).sort_by_distance())
+        .fields(|e| [e.field("name")])
+        .obj()
+        .query()
+        .await?;
+
+    assert_eq!(fluent.len(), 7);
+    assert_eq!(translated, fluent);
+    Ok(())
+}

@@ -3,9 +3,17 @@ use super::translator::{name_start, refuse_set, FirestoreSqlTranslator};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::{FirestoreExpr, FirestoreResult};
 use sqlparser::ast::{
-    Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments,
-    ObjectName, ObjectNamePart,
+    DuplicateTreatment, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArgumentList,
+    FunctionArguments, ObjectName, ObjectNamePart,
 };
+
+/// The parts of a plain function call.
+pub(super) struct FirestoreSqlCall<'f> {
+    /// The name in lower case.
+    pub(super) name: String,
+    pub(super) arguments: &'f [FunctionArg],
+    pub(super) duplicate_treatment: Option<&'f DuplicateTreatment>,
+}
 
 impl FirestoreSqlTranslator<'_> {
     /// A call of a scalar function. A name the alias table does not rename passes through to the
@@ -15,16 +23,37 @@ impl FirestoreSqlTranslator<'_> {
         scope: &FirestoreSqlScope,
         function: &Function,
     ) -> FirestoreResult<FirestoreExpr> {
-        let (name, arguments) = Self::call(function)?;
+        self.named_function(scope, function, None)
+    }
+
+    /// As [`function`](Self::function), for a call whose result the select list names `output`:
+    /// an aggregate's accumulator and `score()`'s field take that name.
+    pub(super) fn named_function(
+        &mut self,
+        scope: &FirestoreSqlScope,
+        function: &Function,
+        output: Option<&str>,
+    ) -> FirestoreResult<FirestoreExpr> {
+        let call = Self::call_parts(function)?;
         let start = name_start(&function.name);
-        if is_aggregate(&name) {
+        if is_aggregate(&call.name) {
+            return self.aggregate(scope, &call, output, start);
+        }
+        if call.duplicate_treatment.is_some() {
             return Err(FirestoreError::unsupported_sql(
-                &format!("the aggregate function {name}"),
+                "DISTINCT or ALL in a call",
                 start,
             ));
         }
-        if matches!(name.as_str(), "document_matches" | "score") {
-            return Err(FirestoreError::unsupported_sql("search", start));
+        let FirestoreSqlCall {
+            name, arguments, ..
+        } = call;
+        match name.as_str() {
+            "score" => return self.score(arguments, output, start),
+            "document_matches" | "geo_distance" => {
+                return Err(Self::search_misplaced(&name, start))
+            }
+            _ => {}
         }
         let arguments = Self::positional_arguments(arguments, start)?
             .into_iter()
@@ -74,8 +103,21 @@ impl FirestoreSqlTranslator<'_> {
     }
 
     /// The name, in lower case, and the arguments of a plain function call. A call with a
-    /// window, a filter, an ordering or another clause is refused.
-    fn call(function: &Function) -> FirestoreResult<(String, &[FunctionArg])> {
+    /// window, a filter, an ordering or another clause is refused, and so is `DISTINCT`.
+    pub(super) fn call(function: &Function) -> FirestoreResult<(String, &[FunctionArg])> {
+        let call = Self::call_parts(function)?;
+        if call.duplicate_treatment.is_some() {
+            return Err(FirestoreError::unsupported_sql(
+                "DISTINCT or ALL in a call",
+                name_start(&function.name),
+            ));
+        }
+        Ok((call.name, call.arguments))
+    }
+
+    /// A plain function call, which may be `DISTINCT`. A call with a window, a filter, an
+    /// ordering or another clause is refused.
+    fn call_parts(function: &Function) -> FirestoreResult<FirestoreSqlCall<'_>> {
         let Function {
             name,
             uses_odbc_syntax,
@@ -102,29 +144,27 @@ impl FirestoreSqlTranslator<'_> {
             start,
         )?;
         let name = Self::function_name(name, start)?;
-        let arguments = match args {
-            FunctionArguments::None => &[][..],
+        let (arguments, duplicate_treatment) = match args {
+            FunctionArguments::None => (&[][..], None),
             FunctionArguments::List(FunctionArgumentList {
                 duplicate_treatment,
                 args,
                 clauses,
             }) => {
-                if duplicate_treatment.is_some() {
-                    return Err(FirestoreError::unsupported_sql(
-                        "DISTINCT or ALL in a call",
-                        start,
-                    ));
-                }
                 if !clauses.is_empty() {
                     return Err(FirestoreError::unsupported_sql("a clause in a call", start));
                 }
-                args.as_slice()
+                (args.as_slice(), duplicate_treatment.as_ref())
             }
             FunctionArguments::Subquery(_) => {
                 return Err(FirestoreError::unsupported_sql("a subquery", start))
             }
         };
-        Ok((name, arguments))
+        Ok(FirestoreSqlCall {
+            name,
+            arguments,
+            duplicate_treatment,
+        })
     }
 
     /// A function's name in lower case: SQL names functions without regard to case.
@@ -172,6 +212,14 @@ fn scalar_function(name: &str) -> &str {
         "regexp_contains" => "regex_contains",
         other => other,
     }
+}
+
+/// Whether the call names its result, which `AS` gives it: an aggregate, or `score()`.
+pub(super) fn names_its_output(function: &Function) -> bool {
+    matches!(
+        FirestoreSqlTranslator::function_name(&function.name, None),
+        Ok(name) if is_aggregate(&name) || name == "score"
+    )
 }
 
 /// Whether `name` is an aggregate function in SQL or an accumulator of a pipeline. `minimum` and

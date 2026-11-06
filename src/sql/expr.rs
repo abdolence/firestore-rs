@@ -22,9 +22,11 @@ impl FirestoreSqlTranslator<'_> {
         scope: &FirestoreSqlScope,
         expr: &Expr,
     ) -> FirestoreResult<FirestoreExpr> {
-        self.nested(expr_start(expr), |translator| {
+        let mark = self.read_mark();
+        let translated = self.nested(expr_start(expr), |translator| {
             translator.translate_expr(scope, expr)
-        })
+        })?;
+        Ok(self.grouped(translated, mark))
     }
 
     // Every arm is a call whose result is the function's: the translation recurses once per
@@ -36,7 +38,7 @@ impl FirestoreSqlTranslator<'_> {
     ) -> FirestoreResult<FirestoreExpr> {
         match expr {
             Expr::Identifier(ident) => self.identifier(scope, ident),
-            Expr::CompoundIdentifier(idents) => scope.column(idents).map(FirestoreExpr::Field),
+            Expr::CompoundIdentifier(idents) => self.column(scope, idents),
             Expr::CompoundFieldAccess { root, access_chain } => {
                 self.field_access(scope, root, access_chain)
             }
@@ -235,18 +237,23 @@ impl FirestoreSqlTranslator<'_> {
         Ok(Self::array(elements))
     }
 
-    /// A column, or the value bound to the parameter `@name`.
+    /// A column, or the value bound to the parameter `@name`. In an aggregate query, a name the
+    /// select list gives is the item it names.
     fn identifier(
         &mut self,
         scope: &FirestoreSqlScope,
         ident: &Ident,
     ) -> FirestoreResult<FirestoreExpr> {
         if is_parameter(ident) {
-            self.parameter(ident)
-        } else {
-            Ok(FirestoreExpr::Field(
-                scope.column(std::slice::from_ref(ident))?,
-            ))
+            return self.parameter(ident);
+        }
+        match self
+            .aggregation
+            .as_ref()
+            .and_then(|aggregation| aggregation.output(&ident.value))
+        {
+            Some(output) => Ok(output.clone()),
+            None => self.column(scope, std::slice::from_ref(ident)),
         }
     }
 
@@ -340,11 +347,34 @@ impl FirestoreSqlTranslator<'_> {
         op: &BinaryOperator,
         connect: impl FnOnce(Vec<FirestoreBoolExpr>) -> FirestoreBoolExpr,
     ) -> FirestoreResult<FirestoreExpr> {
-        let conditions = chain(expr, op)
-            .into_iter()
-            .map(|operand| Ok(FirestoreBoolExpr::unchecked(self.expr(scope, operand)?)))
-            .collect::<FirestoreResult<_>>()?;
+        let conditions = self.conditions(scope, &chain(expr, op))?;
         Ok(connect(conditions).into())
+    }
+
+    /// `operands` as one condition: itself when there is one, and their `and` otherwise.
+    pub(super) fn conjunction(
+        &mut self,
+        scope: &FirestoreSqlScope,
+        operands: &[&Expr],
+    ) -> FirestoreResult<FirestoreExpr> {
+        match operands {
+            [only] => self.expr(scope, only),
+            _ => {
+                let conditions = self.conditions(scope, operands)?;
+                Ok(FirestorePipelineExprBuilder.and(conditions).into())
+            }
+        }
+    }
+
+    fn conditions(
+        &mut self,
+        scope: &FirestoreSqlScope,
+        operands: &[&Expr],
+    ) -> FirestoreResult<Vec<FirestoreBoolExpr>> {
+        operands
+            .iter()
+            .map(|operand| Ok(FirestoreBoolExpr::unchecked(self.expr(scope, operand)?)))
+            .collect()
     }
 
     /// A chain of `||`, which becomes one `concat` of every operand.
@@ -702,7 +732,7 @@ impl FirestoreSqlTranslator<'_> {
 
 /// The operands of a chain of `op`, such as `a AND b AND c`, in order. sqlparser nests the chain
 /// to the left, one level per operator, so it is read in a loop rather than recursively.
-fn chain<'e>(expr: &'e Expr, op: &BinaryOperator) -> Vec<&'e Expr> {
+pub(super) fn chain<'e>(expr: &'e Expr, op: &BinaryOperator) -> Vec<&'e Expr> {
     let mut operands = Vec::new();
     let mut rest = expr;
     while let Expr::BinaryOp {

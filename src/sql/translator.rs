@@ -1,8 +1,9 @@
+use super::aggregation::FirestoreSqlAggregation;
 use super::parameters::FirestoreSqlBinding;
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::{
-    FirestoreCollectionId, FirestoreDocumentId, FirestoreResult, FirestoreSqlOptions,
-    FirestoreSqlStatement,
+    FirestoreCollectionId, FirestoreDocumentId, FirestoreResult, FirestoreSearchQuery,
+    FirestoreSqlOptions, FirestoreSqlStatement,
 };
 use sqlparser::ast::{Expr, Ident, ObjectName, ObjectNamePart, Statement};
 use sqlparser::tokenizer::Span;
@@ -21,6 +22,10 @@ pub(super) struct FirestoreSqlTranslator<'t> {
     pub(super) documents_path: &'t str,
     pub(super) options: &'t FirestoreSqlOptions,
     pub(super) binding: FirestoreSqlBinding<'t>,
+    /// How the `SELECT` being translated groups its documents.
+    pub(super) aggregation: Option<FirestoreSqlAggregation>,
+    /// The search the `SELECT` being translated lifted out of its `WHERE`.
+    pub(super) search: Option<FirestoreSearchQuery>,
     depth: usize,
 }
 
@@ -34,6 +39,8 @@ impl<'t> FirestoreSqlTranslator<'t> {
             documents_path,
             options,
             binding,
+            aggregation: None,
+            search: None,
             depth: 0,
         }
     }
@@ -158,9 +165,10 @@ impl<'t> FirestoreSqlTranslator<'t> {
         collection_id: &str,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<()> {
-        FirestoreCollectionId::validate_str(collection_id).map_err(|error| error.located(start))?;
+        let collection_id =
+            FirestoreCollectionId::new(collection_id).map_err(|error| error.located(start))?;
         match &self.options.collections {
-            Some(allowed) if !allowed.contains(collection_id) => Err(FirestoreError::invalid_sql(
+            Some(allowed) if !allowed.contains(&collection_id) => Err(FirestoreError::invalid_sql(
                 "collections",
                 format!("the options do not allow the collection {collection_id}"),
                 start,
@@ -184,6 +192,18 @@ pub(super) fn refuse_set(
 /// Whether `ident` is a parameter, `@name`. A backticked `` `@name` `` is a field.
 pub(super) fn is_parameter(ident: &Ident) -> bool {
     ident.quote_style.is_none() && ident.value.starts_with('@')
+}
+
+/// Whether `expr` is a column, possibly in parentheses.
+pub(super) fn is_column(mut expr: &Expr) -> bool {
+    loop {
+        expr = match expr {
+            Expr::Nested(inner) => inner,
+            Expr::Identifier(ident) => return !is_parameter(ident),
+            Expr::CompoundIdentifier(_) => return true,
+            _ => return false,
+        };
+    }
 }
 
 /// Where `span` starts, unless sqlparser made it up.

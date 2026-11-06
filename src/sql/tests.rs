@@ -3,11 +3,12 @@ use crate::errors::{
 };
 use crate::pipeline_builder::FirestorePipelineInitialBuilder;
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
+use crate::pipeline_stage_builder::FirestorePipelineNestedContext;
 use crate::{
     FirestoreBoolExpr, FirestoreCollectionGroupSource, FirestoreCollectionSource,
-    FirestoreDocumentsSource, FirestoreExpr, FirestorePipeline, FirestorePipelineSource,
-    FirestorePipelineStage, FirestoreReference, FirestoreResult, FirestoreSelection,
-    FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement,
+    FirestoreDocumentsSource, FirestoreExpr, FirestoreGeoPoint, FirestoreLatLng, FirestorePipeline,
+    FirestorePipelineSource, FirestorePipelineStage, FirestoreReference, FirestoreResult,
+    FirestoreSelection, FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement,
 };
 
 use serde_json::json;
@@ -323,12 +324,6 @@ fn an_unmapped_table_option_is_refused_rather_than_dropped() {
 #[test]
 fn constructs_without_a_translation_are_refused_by_name() {
     let refusals = [
-        ("SELECT genre FROM books GROUP BY genre", "GROUP BY"),
-        ("SELECT DISTINCT genre FROM books", "DISTINCT"),
-        (
-            "SELECT title FROM books UNION ALL SELECT title FROM archive",
-            "UNION",
-        ),
         (
             "SELECT b.title FROM books AS b JOIN reviews AS r ON r.book = b.__name__",
             "JOIN",
@@ -344,18 +339,10 @@ fn constructs_without_a_translation_are_refused_by_name() {
         ),
         ("SELECT * FROM books WHERE 'sf' IN UNNEST(tags)", "UNNEST"),
         (
-            "SELECT COUNT(*) AS n FROM books",
-            "the aggregate function count",
-        ),
-        (
             "SELECT ROW_NUMBER() OVER () AS n FROM books",
             "a window function",
         ),
         ("SELECT CAST(stock AS STRING) AS s FROM books", "CAST"),
-        (
-            "SELECT * FROM books WHERE document_matches('dune')",
-            "search",
-        ),
         (
             "SELECT * FROM books WHERE title LIKE 'a!%' ESCAPE '!'",
             "ESCAPE",
@@ -395,17 +382,23 @@ fn options_refuse_what_they_guard() {
         ),
         (
             "SELECT * FROM `secrets/s1/books`",
-            FirestoreSqlOptions::new().with_collections(["books"]),
+            FirestoreSqlOptions::new()
+                .with_collections(["books"])
+                .unwrap(),
             "collections",
         ),
         (
             "SELECT * FROM documents('secrets/s1')",
-            FirestoreSqlOptions::new().with_collections(["books"]),
+            FirestoreSqlOptions::new()
+                .with_collections(["books"])
+                .unwrap(),
             "collections",
         ),
         (
             "SELECT * FROM database()",
-            FirestoreSqlOptions::new().with_collections(["books"]),
+            FirestoreSqlOptions::new()
+                .with_collections(["books"])
+                .unwrap(),
             "database",
         ),
         (
@@ -727,4 +720,274 @@ fn wildcards_keep_every_field() {
     for (sql, expected) in wildcards {
         assert_eq!(translated(sql), expected, "{sql}");
     }
+}
+
+#[test]
+fn group_by_translates_to_the_fluent_aggregate() {
+    let sql =
+        "SELECT genre, COUNT(*) AS books, AVG(rating) AS mean, COUNT(DISTINCT author) AS authors \
+               FROM books WHERE stock > 0 GROUP BY genre HAVING COUNT(*) > 1 ORDER BY books DESC";
+
+    let expected = fluent()
+        .from("books")
+        .filter(|q| q.field("stock").greater_than(0))
+        .aggregate_grouped(
+            |e| [e.field("genre")],
+            |e| {
+                [
+                    e.count_all().alias("books"),
+                    e.field("rating").average().alias("mean"),
+                    e.field("author").count_distinct().alias("authors"),
+                ]
+            },
+        )
+        .filter(|q| q.field("books").greater_than(1))
+        .sort(|e| [e.field("books").desc()])
+        .into_pipeline();
+
+    assert_eq!(translated(sql), expected);
+}
+
+#[test]
+fn a_computed_group_and_an_unselected_aggregate_get_hidden_names_that_the_projection_drops() {
+    let sql = "SELECT LOWER(genre) AS kind, SUM(pages) AS pages FROM books \
+               GROUP BY LOWER(genre) HAVING AVG(rating) > 4.3 ORDER BY kind";
+
+    let expected = fluent()
+        .from("books")
+        .aggregate_grouped(
+            |e| [e.field("genre").to_lower().alias("kind")],
+            |e| {
+                [
+                    e.field("pages").sum().alias("pages"),
+                    e.field("rating").average().alias("_agg0"),
+                ]
+            },
+        )
+        .filter(|q| q.field("_agg0").greater_than(4.3))
+        .sort(|e| [e.field("kind").asc()])
+        .fields(|e| [e.field("kind"), e.field("pages")])
+        .into_pipeline();
+
+    assert_eq!(translated(sql), expected);
+}
+
+#[test]
+fn aggregates_without_group_by_aggregate_all_documents_and_compose_in_expressions() {
+    let sql = "SELECT COUNT(*) AS total, SUM(stock) / COUNT(*) AS per_book FROM books";
+
+    let expected = fluent()
+        .from("books")
+        .aggregate(|e| {
+            [
+                e.count_all().alias("total"),
+                e.field("stock").sum().alias("_agg0"),
+            ]
+        })
+        .fields(|e| {
+            [
+                FirestoreSelection::from(e.field("total")),
+                e.field("_agg0").divide(e.field("total")).alias("per_book"),
+            ]
+        })
+        .into_pipeline();
+
+    assert_eq!(translated(sql), expected);
+}
+
+#[test]
+fn select_distinct_translates_to_the_distinct_stage_before_the_sort() {
+    let sql = "SELECT DISTINCT genre, LOWER(author) AS writer FROM books ORDER BY writer";
+
+    let expected = fluent()
+        .from("books")
+        .distinct(|e| {
+            [
+                FirestoreSelection::from(e.field("genre")),
+                e.field("author").to_lower().alias("writer"),
+            ]
+        })
+        .sort(|e| [e.field("writer").asc()])
+        .into_pipeline();
+
+    assert_eq!(translated(sql), expected);
+}
+
+#[test]
+fn union_appends_the_branch_and_distinct_deduplicates_by_the_output_names() {
+    let union_all = "SELECT title AS name FROM books UNION ALL SELECT name FROM restaurants \
+                     ORDER BY name LIMIT 5";
+    let union_distinct = "SELECT title AS name FROM books UNION SELECT name FROM restaurants";
+
+    let books = || {
+        fluent()
+            .from("books")
+            .fields(|e| [e.field("title").alias("name")])
+    };
+    let restaurants = |p: FirestorePipelineInitialBuilder<FirestorePipelineNestedContext>| {
+        p.from("restaurants").fields(|e| [e.field("name")])
+    };
+
+    assert_eq!(
+        translated(union_all),
+        books()
+            .union(restaurants)
+            .sort(|e| [e.field("name").asc()])
+            .limit(5)
+            .into_pipeline()
+    );
+    assert_eq!(
+        translated(union_distinct),
+        books()
+            .union(restaurants)
+            .distinct(|e| [e.field("name")])
+            .into_pipeline()
+    );
+}
+
+#[test]
+fn a_text_search_condition_is_lifted_into_the_source() {
+    let sql = "SELECT name, score() AS relevance FROM restaurants \
+               WHERE document_matches(@query) AND cuisine = 'breakfast' \
+               ORDER BY score() DESC LIMIT 20";
+
+    let expected = fluent()
+        .from("restaurants")
+        .search(|s| {
+            s.text(|_| "waffles -bacon")
+                .sort_by_score()
+                .score_field("relevance")
+        })
+        .filter(|q| q.field("cuisine").eq("breakfast"))
+        .fields(|e| [e.field("name"), e.field("relevance")])
+        .limit(20)
+        .into_pipeline();
+
+    let pipeline = translate(
+        sql,
+        &FirestoreSqlParameters::new().param("query", "waffles -bacon"),
+        &FirestoreSqlOptions::new(),
+    );
+    assert_eq!(pipeline.unwrap(), expected);
+}
+
+#[test]
+fn a_geo_distance_condition_is_lifted_into_the_source() {
+    let distance = "geo_distance(location, geo_point(38.989177, -107.065076))";
+    let sql = format!(
+        "SELECT name FROM restaurants WHERE {distance} <= 1000 AND cuisine = 'diner' \
+         ORDER BY {distance}"
+    );
+    let center = FirestoreLatLng(FirestoreGeoPoint {
+        latitude: 38.989177,
+        longitude: -107.065076,
+    });
+
+    let expected = fluent()
+        .from("restaurants")
+        .search(|s| s.geo_within("location", center, 1000.0).sort_by_distance())
+        .filter(|q| q.field("cuisine").eq("diner"))
+        .fields(|e| [e.field("name")])
+        .into_pipeline();
+
+    assert_eq!(translated(&sql), expected);
+}
+
+#[test]
+fn aggregation_set_operations_and_search_outside_their_forms_are_refused_by_name() {
+    let refusals = [
+        (
+            "SELECT title, COUNT(*) AS n FROM books GROUP BY genre",
+            "GROUP BY",
+        ),
+        ("SELECT * FROM books GROUP BY genre", "*"),
+        (
+            "SELECT genre, COUNT(*) AS n FROM books GROUP BY 1",
+            "GROUP BY",
+        ),
+        ("SELECT genre FROM books GROUP BY ALL", "GROUP BY ALL"),
+        ("SELECT genre FROM books GROUP BY ROLLUP(genre)", "ROLLUP"),
+        ("SELECT genre FROM books HAVING genre = 'x'", "HAVING"),
+        ("SELECT genre FROM books WHERE COUNT(*) > 1", "count"),
+        ("SELECT SUM(SUM(stock)) AS n FROM books", "sum"),
+        ("SELECT SUM(stock, pages) AS n FROM books", "sum"),
+        ("SELECT COUNT(*) FROM books", "AS"),
+        (
+            "SELECT ANY_VALUE(title) AS t FROM books",
+            "the aggregate function any_value",
+        ),
+        ("SELECT DISTINCT * FROM books", "*"),
+        (
+            "SELECT DISTINCT genre, COUNT(*) AS n FROM books GROUP BY genre",
+            "DISTINCT with GROUP BY",
+        ),
+        ("SELECT DISTINCT ON (genre) genre FROM books", "DISTINCT ON"),
+        (
+            "SELECT title FROM books UNION ALL SELECT name FROM restaurants",
+            "UNION",
+        ),
+        ("SELECT a, b FROM x UNION ALL SELECT b, a FROM y", "UNION"),
+        (
+            "SELECT * FROM books UNION DISTINCT SELECT * FROM archive",
+            "UNION",
+        ),
+        (
+            "SELECT title FROM books UNION ALL BY NAME SELECT title FROM archive",
+            "UNION BY NAME",
+        ),
+        (
+            "SELECT * FROM books WHERE document_matches('a') OR stock = 1",
+            "document_matches",
+        ),
+        (
+            "SELECT * FROM books WHERE document_matches('a') AND document_matches('b')",
+            "document_matches",
+        ),
+        (
+            "SELECT * FROM documents('books/b1') WHERE document_matches('a')",
+            "document_matches",
+        ),
+        (
+            "SELECT * FROM books WHERE geo_distance(location, geo_point(1, 2)) >= 5",
+            "geo_distance",
+        ),
+        (
+            "SELECT * FROM books WHERE document_matches('a') ORDER BY score()",
+            "score",
+        ),
+        (
+            "SELECT * FROM books WHERE document_matches('a') ORDER BY score() DESC, title",
+            "score",
+        ),
+        ("SELECT score() AS s FROM books", "score"),
+    ];
+
+    for (sql, construct) in refusals {
+        assert_eq!(refused(sql).field, construct, "{sql}");
+    }
+}
+
+#[test]
+fn a_collection_id_the_options_cannot_hold_is_an_error() {
+    assert!(matches!(
+        FirestoreSqlOptions::new().with_collections(["books", "a/b"]),
+        Err(FirestoreError::InvalidParametersError(_))
+    ));
+}
+
+#[test]
+fn group_by_and_having_refer_to_select_aliases() {
+    let sql = "SELECT LOWER(genre) AS kind, COUNT(*) AS n FROM books \
+               GROUP BY kind HAVING n > 1";
+
+    let expected = fluent()
+        .from("books")
+        .aggregate_grouped(
+            |e| [e.field("genre").to_lower().alias("kind")],
+            |e| [e.count_all().alias("n")],
+        )
+        .filter(|q| q.field("n").greater_than(1))
+        .into_pipeline();
+
+    assert_eq!(translated(sql), expected);
 }

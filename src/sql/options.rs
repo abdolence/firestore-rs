@@ -1,3 +1,4 @@
+use crate::{FirestoreCollectionId, FirestoreError, FirestoreResult};
 use std::collections::BTreeSet;
 
 /// The longest statement accepted unless raised, in bytes. sqlparser nests a chain of infix
@@ -17,10 +18,16 @@ const SQL_DEFAULT_MAX_LENGTH: usize = 16 * 1024;
 pub struct FirestoreSqlOptions {
     pub(crate) read_only: bool,
     pub(crate) collection_groups: bool,
-    pub(crate) collections: Option<BTreeSet<String>>,
+    pub(crate) collections: Option<BTreeSet<FirestoreCollectionId>>,
     pub(crate) max_rows: Option<u32>,
     pub(crate) max_length: usize,
     pub(crate) subqueries: bool,
+}
+
+impl Default for FirestoreSqlOptions {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FirestoreSqlOptions {
@@ -57,20 +64,23 @@ impl FirestoreSqlOptions {
     /// Allows only these collection IDs, wherever a statement names a collection: a collection,
     /// each collection of a path such as `` `restaurants/r1/reviews` ``, a collection group and
     /// the paths of `documents(..)`. `database()` is refused, since it reads every collection.
-    pub fn with_collections<I>(self, collection_ids: I) -> Self
+    ///
+    /// Fails with
+    /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) for an
+    /// ID that is not a valid collection ID.
+    pub fn with_collections<I>(self, collection_ids: I) -> FirestoreResult<Self>
     where
         I: IntoIterator,
-        I::Item: AsRef<str>,
+        I::Item: TryInto<FirestoreCollectionId, Error = FirestoreError>,
     {
-        Self {
-            collections: Some(
-                collection_ids
-                    .into_iter()
-                    .map(|collection_id| collection_id.as_ref().to_string())
-                    .collect(),
-            ),
+        let collections = collection_ids
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<FirestoreResult<_>>()?;
+        Ok(Self {
+            collections: Some(collections),
             ..self
-        }
+        })
     }
 
     /// Returns at most `max_rows` rows from a query: its `LIMIT` is lowered to this, or one is
