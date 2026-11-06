@@ -103,7 +103,7 @@ to several is refused.
 
 Parameters are the way to put a value into a statement:
 
-- `@name` is bound with `.param("name", value)`, given without the `@`;
+- `@name` is bound with `.param("name", value)`, and `.param("@name", value)` binds the same;
 - `?` is bound with `.params([..])`, in the order the `?`s appear;
 - a statement uses one form, and mixing them is refused, and so is `$1` or `:name`;
 - the value is any `Serialize` type, bound as a typed constant of the pipeline, as a value in the
@@ -174,21 +174,21 @@ let rows = db
 
 `FirestoreSqlOptions` limits a statement before it runs. A statement that breaks a limit fails at
 translation with `InvalidParametersError`, and no request is sent. `FirestoreSqlOptions::new()`
-allows every statement the translator supports, except [joins and correlated
-subqueries](#joins-and-subqueries) and statements longer than 16 KiB, and `FirestoreSqlOptions::read_only()` starts the set for text
-from outside the program:
+allows every statement the translator supports, except [joins and
+subqueries](#joins-and-subqueries) and statements longer than 16 KiB, and
+`FirestoreSqlOptions::read_only()` starts the set for text from outside the program:
 
 - `read_only()` refuses `INSERT`, `UPDATE` and `DELETE`, and the `database()` source;
 - `.refuse_collection_groups()` refuses `collection_group(..)`, which reads every collection with
   that ID under any document;
-- `.with_collections(["books", "reviews"])?` allows only these collection IDs, wherever the
+- `.with_collections([BOOKS, REVIEWS])` allows only these `FirestoreCollectionId`s, wherever the
   statement names one: a collection, each collection of a path, a collection group and the paths of
-  `documents(..)`. It refuses `database()` too, and an ID that is not a valid collection ID fails
-  the call;
+  `documents(..)`. It refuses `database()` too;
 - `.with_max_rows(1_000)` returns at most that many rows: the `LIMIT` is lowered to it, or one is
-  added;
+  added. The cap counts the rows returned, not the rows read: an `OFFSET` still reads the rows it
+  skips, and `ARRAY_AGG(..)` or `ARRAY(SELECT ..)` puts a whole collection into one row;
 - `.with_max_length(bytes)` refuses a longer statement, and the default is 16 KiB;
-- `.allow_subqueries()` allows joins and correlated subqueries, see
+- `.allow_subqueries()` allows joins and subqueries, see
   [Joins and subqueries](#joins-and-subqueries).
 
 The parser also refuses a statement nested deeper than 16 levels, and the translator one nested
@@ -197,13 +197,16 @@ deeper than 64. These limits are fixed.
 ```rust,no_run
 # use firestore::*;
 # async fn example(db: FirestoreDb, text: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+const BOOKS: FirestoreCollectionId = FirestoreCollectionId::from_static("books");
+const REVIEWS: FirestoreCollectionId = FirestoreCollectionId::from_static("reviews");
+
 let rows = db
     .fluent()
     .sql(text)
     .options(
         FirestoreSqlOptions::read_only()
             .refuse_collection_groups()
-            .with_collections(["books", "reviews"])?
+            .with_collections([BOOKS, REVIEWS])
             .with_max_rows(1_000),
     )
     .query()
@@ -305,7 +308,10 @@ SQL names that differ from the pipeline function are renamed: `LOWER` to `to_low
 `to_upper`, `POWER` to `pow`, `IFNULL` to `if_null`, `REGEXP_CONTAINS` to `regex_contains`,
 `AVG` to `average`, `MIN` to `minimum`, `MAX` to `maximum`, `COUNTIF` to `count_if`.
 `SUBSTR`, `SUBSTRING` and `STRPOS` count from 1 as in SQL, and `ILIKE` compares both sides in lower
-case. `NULLS FIRST` and `NULLS LAST` add a leading sort key that tests for an absent or null
+case. A `SUBSTR` position of 0 or below passes to Firestore as written: 0 is the whole string, and a
+negative position counts from the end with -1 the last character, as in SQL. `ORDINAL(0)` reads
+the first element, and a negative `ORDINAL` or `OFFSET` counts from the end, where SQL fails or
+gives `NULL`. `NULLS FIRST` and `NULLS LAST` add a leading sort key that tests for an absent or null
 value, since Firestore sorts both first in an ascending order.
 
 ### Search
@@ -339,7 +345,7 @@ dropped, so a statement does not run with a clause missing.
 | `LIKE .. ESCAPE`, `LIKE ANY` | a backslash escapes in `LIKE` without it |
 | `TABLESAMPLE`, `FOR UPDATE`, `FETCH`, `SELECT AS STRUCT` and the other clauses of other dialects | no pipeline form |
 | Searches inside `OR` or after a join | Firestore accepts a search only right after the source, and fails the request otherwise |
-| An unaliased computed column, `ORDER BY` or `GROUP BY` a constant or a position | the column needs a name; a constant orders and groups nothing |
+| An unaliased computed column, or an unaliased nested field such as `awards.hugo` in a query that groups, `ORDER BY` or `GROUP BY` a constant or a position | the column needs a name, since a nested path cannot name an output field; a constant orders and groups nothing |
 
 ## Semantics
 
@@ -405,7 +411,9 @@ A condition earlier in the same `AND` that excludes the other types avoids the f
 - field names are case-sensitive. `SELECT Title` for a field `title` returns rows without a
   title, and `WHERE Genre = 'Dystopian'` matches nothing. A misspelled field is an absent field,
   with no error;
-- `LIKE` is case-sensitive, `%` and `_` are wildcards, and `.` and `(` are literal;
+- `LIKE` is case-sensitive, `%` and `_` are wildcards, and `.` and `(` are literal. A backslash
+  escapes a wildcard, written `'100\\%'` in the statement since a backslash escapes in a string
+  literal too;
 - `__name__` compared with a string is read as a document name, and the translator makes it a
   reference. `__name__` in `INSERT` takes an ID or a path, see [Writes](#writes).
 
@@ -414,16 +422,29 @@ A condition earlier in the same `AND` that excludes the other types avoids the f
 Joins and subqueries are in Preview in Firestore, see
 [Pipeline aggregations and joins](./pipeline-aggregations-and-joins.md#joins). Firestore plans a
 join as a nested loop: for each row of the left side it runs the right side as a subquery. A
-*correlated* subquery, which reads a column of the query around it, runs once per row of that
-query too.
+subquery in an expression, `[NOT] EXISTS`, `[NOT] IN (SELECT ..)`, `(SELECT ..)` or
+`ARRAY(SELECT ..)`, runs once per row of the query it is in too, whether or not it reads a column of
+that row. Query Explain with `analyze` on an Enterprise database, with 11 documents in the outer
+collection and 300 in the inner one:
+
+| Statement | Rows scanned | Read units |
+|---|---|---|
+| `SELECT title FROM outer` | 11 | 1 |
+| `SELECT n FROM inner` | 300 | 7 |
+| `SELECT title FROM outer WHERE n IN (SELECT n FROM inner)` | 3,311 (11 + 11 × 300) | 77 |
+| `SELECT title FROM outer WHERE (SELECT COUNT(*) AS c FROM inner) > 0` | 3,311 | 27 |
+| `SELECT title FROM outer WHERE EXISTS (SELECT 1 FROM inner WHERE n > 100000)` | 3,311 | 77 |
+
+The plan of each subquery statement is an `Apply` of the outer scan to the subquery, so the
+uncorrelated `COUNT(*)` ran 11 times too.
 
 The cost depends on the index. Without one on the join key, each run reads the whole joined
-collection. A join or correlated subquery is therefore refused unless the options say
-`.allow_subqueries()`, and the error says it runs one subquery per row. These need no opt-in, since
-they do not multiply with the rows:
+collection. A join or subquery is therefore refused unless the options say `.allow_subqueries()`,
+and the error says it runs one subquery per row. These need no opt-in:
 
 - a join or subquery into `subcollection(..)`, which reads only the children of each parent;
-- a derived table and a CTE used once;
+- a derived table or a CTE in the `FROM` of a query, which is the query's own source and does not
+  multiply with the rows; a `JOIN` into one is still a join and needs the opt-in;
 - `UNNEST` of an array of the row.
 
 ```rust,no_run
@@ -448,17 +469,24 @@ let rows = db
 Rules for the joined names:
 
 - a qualified name, `v.rating`, is a column of the table or alias `v`, searched from the nearest
-  query outwards; an alias used by two tables is an error;
+  query outwards, and a table or alias matches without regard to case; an alias used by two tables
+  is an error;
+- a joined table lives in a field named after its alias, so an alias must not be the name of a field
+  of the left side: `o.customer` is refused in `FROM orders AS o JOIN customers AS customer`, since
+  the field `customer` of the orders is replaced by the joined table. Give the table another alias;
 - in a query with a join or in a subquery, an unqualified name in an `ON` clause is an error, since
   either side could hold it, and so is a dotted name that starts with no table;
 - `SELECT *` over a join returns the base document's fields, and each joined table as a map under
-  its alias, `null` for an unmatched `LEFT JOIN`; `v.*` for a joined table is refused;
+  its alias, `null` for an unmatched `LEFT JOIN`; `b.*` is refused in a query with a join, for the
+  base table as well as for a joined one, since it would select the joined tables too;
 - the anti-join, the left rows that have no match, is `WHERE v IS NULL` on the alias.
   `WHERE v.rating IS NULL` matches nothing, since the field of an unmatched row is absent and not
   null;
 - a correlated subquery cannot sit in a query that groups, or in a clause with no stage before it
   to carry the column, such as the `SET` of an `UPDATE`;
-- `EXISTS (SELECT 1 ..)` ignores the select list.
+- `EXISTS (SELECT 1 ..)` ignores the select list, so an aggregate, `GROUP BY` or `HAVING` inside
+  `EXISTS` is refused: it would change which rows exist, and the select list that holds it is not
+  evaluated.
 
 A CTE, a named subquery defined with `WITH`, runs again for each place that uses it: a CTE
 referenced twice runs twice. Results are not kept or reused between references. A statement that
@@ -519,18 +547,22 @@ Rules per statement:
 - `INSERT .. VALUES` needs a column list. Each value is a literal or a bound parameter, and each
   column a top-level field name. An `INSERT` fails with `ALREADY_EXISTS` when a document of that
   name exists;
-- a `__name__` column gives the document's name: a bare ID resolves against the target collection,
-  and a path outside it is refused. A row without `__name__` gets an ID from Firestore. A column
-  list over a `SELECT` renames its columns by position, and is refused over `*`;
+- a `__name__` column gives the document's name. In `VALUES` a bare ID resolves against the target
+  collection and a path outside it is refused; the rows of a `SELECT` keep the name of the document
+  they were read from. A row without `__name__` gets an ID from Firestore. A column list over a
+  `SELECT` renames its columns by position, and is refused over `*`;
 - `UPDATE` and `DELETE` require a `WHERE`, as in BigQuery, and `WHERE TRUE` selects every
   document. The target is one collection. `UPDATE .. SET __name__` is refused;
 - `ON CONFLICT` takes only the target `(__name__)`, since Firestore has no other unique
-  constraint. In `DO UPDATE`, `excluded.col` is a field of the new row, and a bare column is a
-  field of the stored document. A `WHERE` on `DO UPDATE` leaves the stored document unchanged,
-  and does not count it, when it is false for it. The lookup of the stored document by its name is
-  bounded by the rows written. In `ON CONFLICT`, rows of a `SELECT` from another collection are
-  matched by their ID, which scans the target collection once per row, and so need
-  `.allow_subqueries()`;
+  constraint, and `DO NOTHING` also accepts no target. In `DO UPDATE`, `excluded.col` is a field of
+  the new row, and a bare column is a field of the stored document. A `WHERE` on `DO UPDATE` leaves
+  the stored document unchanged, and does not count it, when it is false for it. The lookup of the
+  stored document by its name is bounded by the rows written. In `ON CONFLICT`, rows of a `SELECT`
+  from another collection are matched by their ID, which scans the target collection once per row,
+  and so need `.allow_subqueries()`;
+- `ON CONFLICT` keeps the stored document of each row in a field named `_conflict_stored`. A column
+  of that name is refused, and a field of that name in the rows of a `SELECT *` is dropped from
+  them;
 - the same ID twice in one statement fails with `INVALID_ARGUMENT`, "Multiple mutations per key
   are not allowed", and nothing is written;
 - 8 concurrent `INSERT .. ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock`

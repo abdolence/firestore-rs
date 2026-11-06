@@ -21,15 +21,16 @@ impl FirestoreSqlParameters {
         Self::default()
     }
 
-    /// Binds `value` to the parameter `@name`. The name is given without the `@`, and matches
-    /// case-sensitively.
+    /// Binds `value` to the parameter `@name`. The name matches case-sensitively, and is given
+    /// with or without the `@`.
     pub fn param<N, V>(mut self, name: N, value: V) -> Self
     where
         N: Into<String>,
         V: Serialize,
     {
-        self.named
-            .insert(name.into(), FirestoreExpr::constant(value));
+        let name: String = name.into();
+        let name = name.strip_prefix('@').map(str::to_string).unwrap_or(name);
+        self.named.insert(name, FirestoreExpr::constant(value));
         self
     }
 
@@ -47,7 +48,6 @@ impl FirestoreSqlParameters {
     }
 }
 
-/// The parameters one statement uses, each with its bound value.
 pub(super) struct FirestoreSqlBinding<'p> {
     named: &'p BTreeMap<String, FirestoreExpr>,
     /// The value of each `?`, by where it starts. The translator reads a statement in another
@@ -56,7 +56,6 @@ pub(super) struct FirestoreSqlBinding<'p> {
 }
 
 impl<'p> FirestoreSqlBinding<'p> {
-    /// Matches the parameters `tokens` use with `parameters`, both ways.
     pub(super) fn new(
         tokens: &[TokenWithSpan],
         parameters: &'p FirestoreSqlParameters,
@@ -69,9 +68,8 @@ impl<'p> FirestoreSqlBinding<'p> {
                     positional_uses.push(span.start)
                 }
                 Token::Placeholder(placeholder) => {
-                    return Err(FirestoreError::invalid_sql(
+                    return Err(Self::unsupported_placeholder(
                         placeholder,
-                        "a parameter is written @name or ?",
                         FirestoreSqlLocation::from_sqlparser(span.start),
                     ))
                 }
@@ -140,12 +138,17 @@ impl<'p> FirestoreSqlBinding<'p> {
         })
     }
 
-    /// The value bound to `@name`.
+    pub(super) fn unsupported_placeholder(
+        placeholder: &str,
+        location: Option<FirestoreSqlLocation>,
+    ) -> FirestoreError {
+        FirestoreError::invalid_sql(placeholder, "a parameter is written @name or ?", location)
+    }
+
     pub(super) fn named(&self, name: &str) -> Option<&'p FirestoreExpr> {
         self.named.get(name)
     }
 
-    /// The value bound to the `?` that starts at `start`.
     pub(super) fn positional(&self, start: Location) -> Option<&'p FirestoreExpr> {
         self.positional.get(&start).copied()
     }

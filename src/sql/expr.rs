@@ -1,3 +1,4 @@
+use super::parameters::FirestoreSqlBinding;
 use super::scope::FirestoreSqlScope;
 use super::translator::{at, expr_start, field_path, is_parameter, FirestoreSqlTranslator};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
@@ -13,7 +14,6 @@ use sqlparser::ast::{
 use sqlparser::tokenizer::Span;
 use std::borrow::Cow;
 
-/// The field every document holds its own path in.
 pub(super) const SQL_DOCUMENT_NAME_FIELD: &str = "__name__";
 
 impl FirestoreSqlTranslator<'_> {
@@ -189,7 +189,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// `operand` with `compute` applied to its translation.
     fn value_of(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -199,7 +198,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(compute(self.expr(scope, operand)?))
     }
 
-    /// A test of `operand`, such as `IS NULL`.
     fn predicate(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -209,7 +207,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(test(self.expr(scope, operand)?).into())
     }
 
-    /// A comparison of two values.
     fn comparison(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -241,7 +238,6 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// `operand [NOT] IN UNNEST(array)`.
     fn in_unnest(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -263,7 +259,6 @@ impl FirestoreSqlTranslator<'_> {
         .into())
     }
 
-    /// An arithmetic operation on two values.
     fn arithmetic(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -288,8 +283,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(Self::array(elements))
     }
 
-    /// A column, or the value bound to the parameter `@name`. In an aggregate query, a name the
-    /// select list gives is the item it names.
     fn identifier(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -308,7 +301,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// The value bound to the parameter `ident` names.
     pub(super) fn parameter(&self, ident: &Ident) -> FirestoreResult<FirestoreExpr> {
         let name = ident.value.strip_prefix('@').unwrap_or(&ident.value);
         self.binding.named(name).cloned().ok_or_else(|| {
@@ -320,7 +312,6 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// A literal, or the value bound to a `?`.
     pub(super) fn value(&self, value: &ValueWithSpan) -> FirestoreResult<FirestoreExpr> {
         let ValueWithSpan { value, span } = value;
         match value {
@@ -337,7 +328,7 @@ impl FirestoreSqlTranslator<'_> {
             }
             SqlValue::Boolean(value) => Ok(FirestoreExpr::constant(*value)),
             SqlValue::Null => Ok(FirestoreExpr::constant(None::<bool>)),
-            SqlValue::Placeholder(placeholder) => {
+            SqlValue::Placeholder(placeholder) if placeholder == "?" => {
                 self.binding.positional(span.start).cloned().ok_or_else(|| {
                     FirestoreError::invalid_sql(
                         placeholder,
@@ -346,6 +337,9 @@ impl FirestoreSqlTranslator<'_> {
                     )
                 })
             }
+            SqlValue::Placeholder(placeholder) => Err(
+                FirestoreSqlBinding::unsupported_placeholder(placeholder, at(*span)),
+            ),
             _ => Err(FirestoreError::unsupported_sql("this literal", at(*span))),
         }
     }
@@ -390,7 +384,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// A chain of `AND` or `OR`, which becomes one `and` or `or` of every condition.
     fn connective(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -402,7 +395,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(connect(conditions).into())
     }
 
-    /// `operands` as one condition: itself when there is one, and their `and` otherwise.
     pub(super) fn conjunction(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -428,7 +420,6 @@ impl FirestoreSqlTranslator<'_> {
             .collect()
     }
 
-    /// A chain of `||`, which becomes one `concat` of every operand.
     fn concatenation(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -549,7 +540,6 @@ impl FirestoreSqlTranslator<'_> {
         .into())
     }
 
-    /// `LIKE`, or `ILIKE` as a `LIKE` of both sides in lower case.
     fn like(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -618,24 +608,24 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// A position SQL counts from 1, counted from 0 as pipelines count it.
+    /// A position SQL counts from 1, counted from 0 as pipelines count it. Only a positive
+    /// position moves: 0 and a negative one, which counts from the end, mean the same to both.
     pub(super) fn zero_based(
         &mut self,
         scope: &FirestoreSqlScope,
         position: &Expr,
     ) -> FirestoreResult<FirestoreExpr> {
         let position = self.expr(scope, position)?;
-        Ok(match &position {
-            FirestoreExpr::Constant(FirestoreValue {
-                value:
-                    Value {
-                        value_type: Some(ValueType::IntegerValue(counted_from_one)),
-                    },
-            }) => match counted_from_one.checked_sub(1) {
-                Some(counted_from_zero) => FirestoreExpr::constant(counted_from_zero),
-                None => position.subtract(1),
-            },
-            _ => position.subtract(1),
+        Ok(match position.constant_value() {
+            Some(ValueType::IntegerValue(counted_from_one)) if *counted_from_one > 0 => {
+                FirestoreExpr::constant(counted_from_one - 1)
+            }
+            Some(ValueType::IntegerValue(_)) => position,
+            _ => FirestorePipelineExprBuilder.conditional(
+                position.clone().greater_than(0),
+                position.clone().subtract(1),
+                position,
+            ),
         })
     }
 
@@ -660,7 +650,6 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// `x.field`, `x['key']` and `x[OFFSET(n)]` after a column or another value.
     fn field_access(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -697,8 +686,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(value)
     }
 
-    /// `value[index]`: an element of an array by its position, or the value of a map by a
-    /// string key.
     fn subscript(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -710,14 +697,10 @@ impl FirestoreSqlTranslator<'_> {
                 return Ok(value.array_get(position));
             }
         }
-        Ok(match self.expr(scope, index)? {
-            key @ FirestoreExpr::Constant(FirestoreValue {
-                value:
-                    Value {
-                        value_type: Some(ValueType::StringValue(_)),
-                    },
-            }) => value.map_get(key),
-            position => value.array_get(position),
+        let index = self.expr(scope, index)?;
+        Ok(match index.constant_value() {
+            Some(ValueType::StringValue(_)) => value.map_get(index),
+            _ => value.array_get(index),
         })
     }
 
@@ -731,13 +714,7 @@ impl FirestoreSqlTranslator<'_> {
         operand: FirestoreExpr,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<FirestoreExpr> {
-        let FirestoreExpr::Constant(FirestoreValue {
-            value:
-                Value {
-                    value_type: Some(ValueType::StringValue(name)),
-                },
-        }) = &operand
-        else {
+        let Some(ValueType::StringValue(name)) = operand.constant_value() else {
             return Ok(operand);
         };
         let collection_path = Self::is_own_document_name(name_field)
@@ -763,20 +740,15 @@ impl FirestoreSqlTranslator<'_> {
         ))))
     }
 
-    /// Whether `expr` is the field that holds the path of the documents the query reads.
     pub(super) fn is_own_document_name(expr: &FirestoreExpr) -> bool {
         matches!(expr, FirestoreExpr::Field(path) if path == SQL_DOCUMENT_NAME_FIELD)
     }
 
-    /// Whether `expr` is the field that holds the path of a document: of the query's own, or of
-    /// a joined table.
     pub(super) fn is_document_name(expr: &FirestoreExpr) -> bool {
         matches!(expr, FirestoreExpr::Field(path)
             if path.rsplit('.').next() == Some(SQL_DOCUMENT_NAME_FIELD))
     }
 
-    /// `values`, an array of constants, with each string among them turned into the reference to
-    /// the document it names.
     fn document_references(
         &self,
         scope: &FirestoreSqlScope,
@@ -784,19 +756,14 @@ impl FirestoreSqlTranslator<'_> {
         values: FirestoreExpr,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<FirestoreExpr> {
-        let FirestoreExpr::Constant(FirestoreValue {
-            value:
-                Value {
-                    value_type: Some(ValueType::ArrayValue(ArrayValue { values: elements })),
-                },
-        }) = values
+        let Some(ValueType::ArrayValue(ArrayValue { values: elements })) = values.constant_value()
         else {
             return Ok(values);
         };
         let references = elements
-            .into_iter()
+            .iter()
             .map(|element| {
-                let element = FirestoreExpr::Constant(FirestoreValue::from(element));
+                let element = FirestoreExpr::Constant(FirestoreValue::from(element.clone()));
                 self.document_reference(scope, name_field, element, start)
             })
             .collect::<FirestoreResult<_>>()?;
@@ -844,7 +811,6 @@ pub(super) fn chain<'e>(expr: &'e Expr, op: &BinaryOperator) -> Vec<&'e Expr> {
     operands
 }
 
-/// A number literal: an integer unless it has a fraction or an exponent.
 fn number_constant(number: &str, span: Span) -> FirestoreResult<FirestoreExpr> {
     let out_of_range = || {
         FirestoreError::invalid_sql(

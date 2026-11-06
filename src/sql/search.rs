@@ -5,15 +5,14 @@ use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::{
     FirestoreExpr, FirestoreGeoPoint, FirestoreGeoSearch, FirestoreLatLng, FirestorePipeline,
     FirestorePipelineSource, FirestoreResult, FirestoreSearch, FirestoreSearchQuery,
-    FirestoreTextQuery, FirestoreTextSearch, FirestoreValue,
+    FirestoreTextQuery, FirestoreTextSearch,
 };
-use gcloud_sdk::google::firestore::v1::{value::ValueType, Value};
+use gcloud_sdk::google::firestore::v1::value::ValueType;
 use sqlparser::ast::{
     BinaryOperator, Expr, Function, FunctionArg, OrderBy, OrderByExpr, OrderByKind, OrderByOptions,
     OrderBySort,
 };
 
-/// The field a score is output under when no select item names it.
 const SQL_SCORE_FIELD: &str = "_score";
 
 impl FirestoreSqlTranslator<'_> {
@@ -32,8 +31,9 @@ impl FirestoreSqlTranslator<'_> {
         let mut searches = Vec::new();
         let mut rest = Vec::new();
         for conjunct in chain(selection, &BinaryOperator::And) {
-            match search_condition(conjunct) {
-                Some((name, function)) => searches.push((name, function, conjunct)),
+            let unparenthesised = unparenthesised(conjunct);
+            match search_condition(unparenthesised) {
+                Some((name, function)) => searches.push((name, function, unparenthesised)),
                 None => rest.push(conjunct),
             }
         }
@@ -86,15 +86,10 @@ impl FirestoreSqlTranslator<'_> {
                 start,
             ));
         };
-        match self.expr(scope, query)? {
-            FirestoreExpr::Constant(FirestoreValue {
-                value:
-                    Value {
-                        value_type: Some(ValueType::StringValue(query)),
-                    },
-            }) => Ok(FirestoreSearchQuery::Text(FirestoreTextSearch::new(
-                FirestoreTextQuery::from(query),
-            ))),
+        match self.expr(scope, query)?.constant_value() {
+            Some(ValueType::StringValue(query)) => Ok(FirestoreSearchQuery::Text(
+                FirestoreTextSearch::new(FirestoreTextQuery::from(query.clone())),
+            )),
             _ => Err(FirestoreError::invalid_sql(
                 "document_matches",
                 "document_matches takes a string literal or parameter: the query is never computed",
@@ -103,7 +98,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// `geo_distance(field, point) <= meters`.
     fn geo_search(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -130,8 +124,6 @@ impl FirestoreSqlTranslator<'_> {
         )))
     }
 
-    /// The geo point field and the point of `geo_distance(field, point)`, where the point is
-    /// `geo_point(latitude, longitude)` or a bound geo point.
     fn geo_arguments(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -172,13 +164,8 @@ impl FirestoreSqlTranslator<'_> {
                         longitude: self.number(scope, longitude)?,
                     })
                 }
-                _ => match self.expr(scope, point)? {
-                    FirestoreExpr::Constant(FirestoreValue {
-                        value:
-                            Value {
-                                value_type: Some(ValueType::GeoPointValue(point)),
-                            },
-                    }) => FirestoreLatLng(FirestoreGeoPoint {
+                _ => match self.expr(scope, point)?.constant_value() {
+                    Some(ValueType::GeoPointValue(point)) => FirestoreLatLng(FirestoreGeoPoint {
                         latitude: point.latitude,
                         longitude: point.longitude,
                     }),
@@ -192,21 +179,10 @@ impl FirestoreSqlTranslator<'_> {
         Ok((field, center))
     }
 
-    /// A number literal or parameter.
     fn number(&mut self, scope: &FirestoreSqlScope, expr: &Expr) -> FirestoreResult<f64> {
-        match self.expr(scope, expr)? {
-            FirestoreExpr::Constant(FirestoreValue {
-                value:
-                    Value {
-                        value_type: Some(ValueType::DoubleValue(number)),
-                    },
-            }) => Ok(number),
-            FirestoreExpr::Constant(FirestoreValue {
-                value:
-                    Value {
-                        value_type: Some(ValueType::IntegerValue(number)),
-                    },
-            }) => Ok(number as f64),
+        match self.expr(scope, expr)?.constant_value() {
+            Some(ValueType::DoubleValue(number)) => Ok(*number),
+            Some(ValueType::IntegerValue(number)) => Ok(*number as f64),
             _ => Err(FirestoreError::invalid_sql(
                 "geo_distance",
                 "a distance and a coordinate are number literals or parameters",
@@ -215,7 +191,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// `score()`: the field the text search outputs each document's relevance under.
     pub(super) fn score(
         &mut self,
         arguments: &[FunctionArg],
@@ -319,7 +294,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(true)
     }
 
-    /// Puts the search into the source it follows.
     pub(super) fn install_search(
         source: &mut FirestorePipelineSource,
         search: FirestoreSearchQuery,
@@ -332,7 +306,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// The error for a search function anywhere but the top level of a `WHERE`.
     pub(super) fn search_misplaced(
         name: &str,
         start: Option<FirestoreSqlLocation>,
@@ -345,8 +318,13 @@ impl FirestoreSqlTranslator<'_> {
     }
 }
 
-/// The search function a `WHERE` condition is, and its call: `document_matches(..)`, or
-/// `geo_distance(..)` on the left of a comparison.
+fn unparenthesised(mut expr: &Expr) -> &Expr {
+    while let Expr::Nested(inner) = expr {
+        expr = inner;
+    }
+    expr
+}
+
 fn search_condition(condition: &Expr) -> Option<(&'static str, &Function)> {
     match condition {
         Expr::Function(call) if called(call, "document_matches") => {
@@ -360,7 +338,6 @@ fn search_condition(condition: &Expr) -> Option<(&'static str, &Function)> {
     }
 }
 
-/// Whether `call` calls the function `name`.
 fn called(call: &Function, name: &str) -> bool {
     FirestoreSqlTranslator::function_name(&call.name, None).is_ok_and(|called| called == name)
 }

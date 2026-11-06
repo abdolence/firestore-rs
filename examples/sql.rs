@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Text from outside the program runs read-only, on the collection it is meant to read, and
     // returns a bounded number of rows.
     let outside_options = FirestoreSqlOptions::read_only()
-        .with_collections([SCRATCH])?
+        .with_collections([FirestoreCollectionId::from_static(SCRATCH)])
         .with_max_rows(2);
 
     let rows = db

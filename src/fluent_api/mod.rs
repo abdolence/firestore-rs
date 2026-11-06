@@ -276,8 +276,8 @@ impl<'a> FirestoreExprBuilder<'a, FirestoreDb> {
     /// # }
     /// ```
     #[inline]
-    pub fn sql<S: AsRef<str>>(self, sql: S) -> crate::sql_builder::FirestoreSqlBuilder<'a> {
-        crate::sql_builder::FirestoreSqlBuilder::new(self.db, sql.as_ref().to_string())
+    pub fn sql(self, sql: impl Into<String>) -> crate::sql_builder::FirestoreSqlBuilder<'a> {
+        crate::sql_builder::FirestoreSqlBuilder::new(self.db, sql.into())
     }
 }
 

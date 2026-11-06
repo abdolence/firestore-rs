@@ -93,6 +93,46 @@ impl FirestoreError {
         }
     }
 
+    /// The error for SQL text that sqlparser's tokenizer rejects.
+    #[cfg(feature = "sql")]
+    pub(crate) fn from_sql_tokenizer(error: sqlparser::tokenizer::TokenizerError) -> Self {
+        FirestoreError::invalid_sql(
+            "sql",
+            error.message,
+            FirestoreSqlLocation::from_sqlparser(error.location),
+        )
+    }
+
+    /// The error for SQL text that sqlparser's parser rejects.
+    #[cfg(feature = "sql")]
+    pub(crate) fn from_sql_parser(error: sqlparser::parser::ParserError) -> Self {
+        use sqlparser::parser::ParserError;
+        match error {
+            ParserError::RecursionLimitExceeded => FirestoreError::invalid_sql(
+                "nesting",
+                "the statement nests deeper than the parser allows",
+                None,
+            ),
+            ParserError::TokenizerError(message) | ParserError::ParserError(message) => {
+                // sqlparser gives the position only as the end of its message.
+                let located = message
+                    .rsplit_once(" at Line: ")
+                    .and_then(|(text, position)| {
+                        let (line, column) = position.split_once(", Column: ")?;
+                        let location =
+                            FirestoreSqlLocation::new(line.parse().ok()?, column.parse().ok()?);
+                        Some((text.to_string(), location))
+                    });
+                match located {
+                    Some((text, location)) => {
+                        FirestoreError::invalid_sql("sql", text, Some(location))
+                    }
+                    None => FirestoreError::invalid_sql("sql", message, None),
+                }
+            }
+        }
+    }
+
     /// Builds a [`SystemError`](FirestoreError::SystemError) with the generic `SystemError` code.
     pub(crate) fn system_error(message: impl Into<String>) -> Self {
         FirestoreError::SystemError(FirestoreSystemError::new(
@@ -405,48 +445,6 @@ impl FirestoreSqlLocation {
     /// `None` for the empty location sqlparser gives what it did not read from the text.
     pub(crate) fn from_sqlparser(location: sqlparser::tokenizer::Location) -> Option<Self> {
         (location.line > 0).then_some(Self::new(location.line, location.column))
-    }
-}
-
-#[cfg(feature = "sql")]
-impl From<sqlparser::tokenizer::TokenizerError> for FirestoreError {
-    fn from(error: sqlparser::tokenizer::TokenizerError) -> Self {
-        FirestoreError::invalid_sql(
-            "sql",
-            error.message,
-            FirestoreSqlLocation::from_sqlparser(error.location),
-        )
-    }
-}
-
-#[cfg(feature = "sql")]
-impl From<sqlparser::parser::ParserError> for FirestoreError {
-    fn from(error: sqlparser::parser::ParserError) -> Self {
-        use sqlparser::parser::ParserError;
-        match error {
-            ParserError::RecursionLimitExceeded => FirestoreError::invalid_sql(
-                "nesting",
-                "the statement nests deeper than the parser allows",
-                None,
-            ),
-            ParserError::TokenizerError(message) | ParserError::ParserError(message) => {
-                // sqlparser gives the position only as the end of its message.
-                let located = message
-                    .rsplit_once(" at Line: ")
-                    .and_then(|(text, position)| {
-                        let (line, column) = position.split_once(", Column: ")?;
-                        let location =
-                            FirestoreSqlLocation::new(line.parse().ok()?, column.parse().ok()?);
-                        Some((text.to_string(), location))
-                    });
-                match located {
-                    Some((text, location)) => {
-                        FirestoreError::invalid_sql("sql", text, Some(location))
-                    }
-                    None => FirestoreError::invalid_sql("sql", message, None),
-                }
-            }
-        }
     }
 }
 

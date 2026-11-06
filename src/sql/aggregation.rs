@@ -12,10 +12,11 @@ use sqlparser::ast::{
 };
 use std::collections::BTreeSet;
 
-/// An expression the query groups by, and the field the aggregate stage outputs it under.
 struct FirestoreSqlGroupKey {
     selection: FirestoreSelection,
     name: String,
+    /// Whether `name` was made up, because neither the select list nor the expression gave one.
+    generated: bool,
 }
 
 struct FirestoreSqlAccumulator {
@@ -23,7 +24,6 @@ struct FirestoreSqlAccumulator {
     name: String,
 }
 
-/// A column a query read outside an aggregate's arguments.
 struct FirestoreSqlColumnRead {
     path: String,
     start: Option<FirestoreSqlLocation>,
@@ -42,7 +42,6 @@ pub(super) struct FirestoreSqlAggregation {
     /// The names no generated name may take: the select list's aliases and the keys' names.
     taken: BTreeSet<String>,
     reads: Vec<FirestoreSqlColumnRead>,
-    /// The select list's named items, which `HAVING` and `ORDER BY` refer to by name.
     outputs: Vec<(String, FirestoreExpr)>,
 }
 
@@ -57,7 +56,6 @@ impl FirestoreSqlAggregation {
         }
     }
 
-    /// Whether the query groups or accumulates: it does as soon as it has a key or an aggregate.
     pub(super) fn is_aggregate(&self) -> bool {
         !self.keys.is_empty() || !self.accumulators.is_empty()
     }
@@ -68,20 +66,31 @@ impl FirestoreSqlAggregation {
         if self.keys.iter().any(|key| key.selection.expr == expr) {
             return;
         }
-        let name = match (alias, &expr) {
-            (Some(alias), _) => alias.to_string(),
-            (None, FirestoreExpr::Field(path)) if !path.contains(['.', '`']) => path.clone(),
-            (None, _) => self.fresh("_group"),
+        let (name, generated) = match (alias, &expr) {
+            (Some(alias), _) => (alias.to_string(), false),
+            (None, FirestoreExpr::Field(path)) if !path.contains(['.', '`']) => {
+                (path.clone(), false)
+            }
+            (None, _) => (self.fresh("_group"), true),
         };
         self.taken.insert(name.clone());
         let selection = match &expr {
             FirestoreExpr::Field(path) if *path == name => FirestoreSelection::new(expr),
             _ => FirestoreSelection::new(expr).with_alias(name.clone()),
         };
-        self.keys.push(FirestoreSqlGroupKey { selection, name });
+        self.keys.push(FirestoreSqlGroupKey {
+            selection,
+            name,
+            generated,
+        });
     }
 
-    /// Sets the select list's named items that `HAVING` and `ORDER BY` may refer to.
+    pub(super) fn is_generated_key(&self, name: &str) -> bool {
+        self.keys
+            .iter()
+            .any(|key| key.generated && key.name == name)
+    }
+
     pub(super) fn set_outputs(&mut self, selections: &[FirestoreSelection]) {
         self.outputs = selections
             .iter()
@@ -103,7 +112,6 @@ impl FirestoreSqlAggregation {
         self.reads.push(FirestoreSqlColumnRead { path, start });
     }
 
-    /// Fails for a column that was read outside an aggregate and is not a group key.
     pub(super) fn ensure_grouped(&self) -> FirestoreResult<()> {
         match self.reads.first() {
             Some(FirestoreSqlColumnRead { path, start }) => Err(FirestoreError::invalid_sql(
@@ -149,9 +157,6 @@ impl FirestoreSqlAggregation {
         }
     }
 
-    /// The stages that group the documents and shape the result: the aggregate (or a `distinct`
-    /// when nothing accumulates), `HAVING`, the `ORDER BY`, and a projection unless the stage's
-    /// own output is already the select list.
     pub(super) fn into_stages(
         self,
         having: Option<FirestoreExpr>,
@@ -283,7 +288,52 @@ impl FirestoreSqlTranslator<'_> {
         Ok(())
     }
 
-    /// Groups by `expr`, output under the alias the select list gives that same expression.
+    /// Fails for the `SELECT` of an `EXISTS` that groups or aggregates. `EXISTS` asks whether the
+    /// query finds a row, and its select list is dropped, but an aggregate returns one row
+    /// whatever the `WHERE` found, and `GROUP BY` and `HAVING` change which rows exist.
+    pub(super) fn ensure_existence_ungrouped(
+        &mut self,
+        scope: &FirestoreSqlScope,
+        group_by: &GroupByExpr,
+        has_having: bool,
+        items: &[SelectItem],
+        start: Option<FirestoreSqlLocation>,
+    ) -> FirestoreResult<()> {
+        let refuse = |construct: &str| {
+            FirestoreError::invalid_sql(
+                "EXISTS",
+                format!("{construct} inside EXISTS changes which rows exist, and EXISTS drops the select list: select 1, or a plain column"),
+                start,
+            )
+        };
+        let groups = !matches!(
+            group_by,
+            GroupByExpr::Expressions(exprs, modifiers) if exprs.is_empty() && modifiers.is_empty()
+        );
+        if groups {
+            return Err(refuse("GROUP BY"));
+        }
+        if has_having {
+            return Err(refuse("HAVING"));
+        }
+        let pending = self.pending.len();
+        self.aggregation = Some(FirestoreSqlAggregation::new([]));
+        for item in items {
+            if let SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } = item {
+                self.expr(scope, expr)?;
+            }
+        }
+        let aggregates = self
+            .aggregation
+            .take()
+            .is_some_and(|aggregation| aggregation.is_aggregate());
+        self.pending.truncate(pending);
+        if aggregates {
+            return Err(refuse("an aggregate"));
+        }
+        Ok(())
+    }
+
     fn group_key(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -319,7 +369,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(())
     }
 
-    /// An aggregate call: the field of its accumulator in the aggregate stage.
     pub(super) fn aggregate(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -426,7 +475,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// How many columns the aggregation has seen read so far.
     pub(super) fn read_mark(&self) -> usize {
         self.aggregation
             .as_ref()

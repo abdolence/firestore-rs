@@ -42,7 +42,7 @@ impl<'a> FirestoreSqlBuilder<'a> {
         }
     }
 
-    /// Binds `value` to the parameter `@name`, given without the `@`.
+    /// Binds `value` to the parameter `@name`, given with or without the `@`.
     pub fn param<N, V>(self, name: N, value: V) -> Self
     where
         N: Into<String>,

@@ -16,14 +16,12 @@ const SQL_MAX_CTE_COPIES: usize = 1024;
 /// A column of an enclosing query that a subquery reads. The enclosing query defines it as a
 /// variable before the stage that holds the subquery, and the subquery reads the variable.
 pub(super) struct FirestoreSqlCapture {
-    /// The depth of the scope of the query whose document holds the column.
     depth: usize,
     path: String,
     variable: String,
     start: Option<FirestoreSqlLocation>,
 }
 
-/// A common table expression, translated where the statement defines it.
 pub(super) struct FirestoreSqlCte {
     name: String,
     pipeline: FirestorePipeline,
@@ -32,8 +30,6 @@ pub(super) struct FirestoreSqlCte {
 }
 
 impl FirestoreSqlTranslator<'_> {
-    /// The variable that holds the column at `path` of the enclosing query at `depth`, for a
-    /// subquery to read.
     pub(super) fn capture(
         &mut self,
         depth: usize,
@@ -41,7 +37,6 @@ impl FirestoreSqlTranslator<'_> {
         path: String,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreExpr {
-        self.outer_reads.push(depth);
         if let Some(known) = self
             .pending
             .iter()
@@ -68,8 +63,6 @@ impl FirestoreSqlTranslator<'_> {
         FirestoreExpr::Variable(variable)
     }
 
-    /// Defines, in `pipeline`, the variables that subqueries read from the query at `depth`, so
-    /// that the stage pushed next can hold them.
     pub(super) fn define_variables(&mut self, depth: usize, pipeline: &mut FirestorePipeline) {
         let (defined, pending): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending)
             .into_iter()
@@ -91,8 +84,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// Fails when a subquery reads a column of the query at `depth` in a clause that cannot define
-    /// a variable for it.
     pub(super) fn ensure_no_variables_pending(&self, depth: usize) -> FirestoreResult<()> {
         match self.pending.iter().find(|capture| capture.depth == depth) {
             Some(capture) => Err(FirestoreError::invalid_sql(
@@ -107,8 +98,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// As [`ensure_no_variables_pending`](Self::ensure_no_variables_pending), for the whole
-    /// statement.
     pub(super) fn ensure_variables_defined(&self) -> FirestoreResult<()> {
         match self.pending.first() {
             Some(capture) => self.ensure_no_variables_pending(capture.depth),
@@ -116,8 +105,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// Fails unless the options allow joins and correlated subqueries, which run one subquery per
-    /// row of the query they are in.
     pub(super) fn require_subqueries(
         &self,
         construct: &str,
@@ -138,32 +125,24 @@ impl FirestoreSqlTranslator<'_> {
     }
 
     /// A subquery of the query whose scope is `scope`, as the pipeline that runs for each of its
-    /// rows. It must opt in when it reads a column of the query, unless it reads only the
-    /// subcollection of the row.
+    /// rows. It runs once per row whether or not it reads a column of the row, so it must opt in
+    /// unless it reads only the subcollection of the row.
     fn subquery(
         &mut self,
-        scope: &FirestoreSqlScope<'_>,
         query: &Query,
         place: FirestoreSqlPlace<'_>,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<FirestoreSqlBranch> {
-        let reads = self.outer_reads.len();
         let branch = self.query(query, place)?;
-        let correlated = self.outer_reads[reads..]
-            .iter()
-            .any(|&depth| depth <= scope.depth());
-        if correlated
-            && !matches!(
-                branch.pipeline.source,
-                FirestorePipelineSource::Subcollection(_)
-            )
-        {
-            self.require_subqueries("subquery", "a correlated subquery", start)?;
+        if !matches!(
+            branch.pipeline.source,
+            FirestorePipelineSource::Subcollection(_)
+        ) {
+            self.require_subqueries("subquery", "a subquery", start)?;
         }
         Ok(branch)
     }
 
-    /// A subquery that returns values: one column, from one `SELECT`.
     fn value_subquery(
         &mut self,
         scope: &FirestoreSqlScope<'_>,
@@ -177,7 +156,7 @@ impl FirestoreSqlTranslator<'_> {
                 start,
             ));
         };
-        let branch = self.subquery(scope, query, FirestoreSqlPlace::inside(scope), start)?;
+        let branch = self.subquery(query, FirestoreSqlPlace::inside(scope), start)?;
         match branch.columns.as_deref() {
             Some([_]) => Ok(branch.pipeline),
             _ => Err(FirestoreError::invalid_sql(
@@ -188,7 +167,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// `(SELECT ..)`: the one value the subquery returns, or null when it finds nothing.
     pub(super) fn scalar_subquery(
         &mut self,
         scope: &FirestoreSqlScope<'_>,
@@ -198,7 +176,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(FirestoreExpr::ScalarSubquery(pipeline))
     }
 
-    /// `ARRAY(SELECT ..)`: the values the subquery returns.
     pub(super) fn array_subquery(
         &mut self,
         scope: &FirestoreSqlScope<'_>,
@@ -208,7 +185,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(FirestoreExpr::ArraySubquery(pipeline))
     }
 
-    /// `x [NOT] IN (SELECT ..)`: whether `operand` is among the values the subquery returns.
     pub(super) fn in_subquery(
         &mut self,
         scope: &FirestoreSqlScope<'_>,
@@ -234,9 +210,7 @@ impl FirestoreSqlTranslator<'_> {
         negated: bool,
     ) -> FirestoreResult<FirestoreExpr> {
         let place = FirestoreSqlPlace::inside(scope).for_existence();
-        let mut pipeline = self
-            .subquery(scope, query, place, query_start(query))?
-            .pipeline;
+        let mut pipeline = self.subquery(query, place, query_start(query))?.pipeline;
         pipeline
             .stages
             .push(FirestorePipelineStage::Limit(FirestoreLimitStage::new(1)));
@@ -323,7 +297,6 @@ impl FirestoreSqlTranslator<'_> {
     }
 }
 
-/// Where a query starts, when its body is a `SELECT`.
 fn query_start(query: &Query) -> Option<FirestoreSqlLocation> {
     match query.body.as_ref() {
         SetExpr::Select(select) => at(select.select_token.0.span),

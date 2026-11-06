@@ -44,8 +44,6 @@ impl FirestoreSqlStatement {
         Self::translate_on(db.get_documents_path(), sql, parameters, options)
     }
 
-    /// As [`translate`](Self::translate), for the database whose documents root is
-    /// `documents_path`.
     pub(crate) fn translate_on(
         documents_path: &str,
         sql: &str,
@@ -64,12 +62,15 @@ impl FirestoreSqlStatement {
             ));
         }
         let dialect = BigQueryDialect {};
-        let tokens = Tokenizer::new(&dialect, sql).tokenize_with_location()?;
+        let tokens = Tokenizer::new(&dialect, sql)
+            .tokenize_with_location()
+            .map_err(FirestoreError::from_sql_tokenizer)?;
         let binding = FirestoreSqlBinding::new(&tokens, parameters)?;
         let statements = Parser::new(&dialect)
             .with_recursion_limit(SQL_PARSER_RECURSION_LIMIT)
             .with_tokens_with_locations(tokens)
-            .parse_statements()?;
+            .parse_statements()
+            .map_err(FirestoreError::from_sql_parser)?;
         match <[_; 1]>::try_from(statements) {
             Ok([statement]) => {
                 FirestoreSqlTranslator::new(documents_path, options, binding).statement(&statement)

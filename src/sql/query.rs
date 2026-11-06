@@ -12,9 +12,9 @@ use crate::{
     FirestoreFunction, FirestoreLimitStage, FirestoreOffsetStage, FirestorePipeline,
     FirestorePipelineOrdering, FirestorePipelineSource, FirestorePipelineStage,
     FirestoreQueryDirection, FirestoreRemoveFieldsStage, FirestoreResult, FirestoreSelection,
-    FirestoreSortStage, FirestoreSubcollectionSource, FirestoreValue, FirestoreWhereStage,
+    FirestoreSortStage, FirestoreSubcollectionSource, FirestoreWhereStage,
 };
-use gcloud_sdk::google::firestore::v1::{value::ValueType, ArrayValue, Value};
+use gcloud_sdk::google::firestore::v1::{value::ValueType, ArrayValue};
 use sqlparser::ast::{
     Distinct, ExceptSelectItem, Expr, FunctionArg, LimitClause, ObjectName, ObjectNamePart, Offset,
     OrderBy, OrderByExpr, OrderByKind, OrderByOptions, OrderBySort, Query, Select, SelectFlavor,
@@ -22,7 +22,6 @@ use sqlparser::ast::{
     TableFunctionArgs, Value as SqlValue, ValueWithSpan, WildcardAdditionalOptions,
 };
 
-/// A `SELECT` as a pipeline.
 pub(super) struct FirestoreSqlBranch {
     pub(super) pipeline: FirestorePipeline,
     /// The names of the columns it outputs, or `None` for `*`, which lists none.
@@ -30,15 +29,11 @@ pub(super) struct FirestoreSqlBranch {
     pub(super) start: Option<FirestoreSqlLocation>,
 }
 
-/// What a query outputs for each row.
 pub(super) enum FirestoreSqlProjection {
-    /// Every field, as `*` selects them.
     Wildcard(FirestoreSqlWildcard),
-    /// Only the selected fields.
     Fields(Vec<FirestoreSelection>),
 }
 
-/// `*` less the fields `EXCEPT` removes, plus the query's other selected items.
 #[derive(Default)]
 pub(super) struct FirestoreSqlWildcard {
     removed: Vec<String>,
@@ -53,7 +48,6 @@ impl FirestoreSqlProjection {
         }
     }
 
-    /// The expression of the selected item named `alias`, which `ORDER BY` may order by.
     fn aliased(&self, alias: &str) -> Option<&FirestoreExpr> {
         self.selections()
             .iter()
@@ -61,7 +55,6 @@ impl FirestoreSqlProjection {
             .map(|selection| &selection.expr)
     }
 
-    /// The names of the output columns, or `None` for a `*`.
     fn columns(&self) -> Option<Vec<String>> {
         match self {
             Self::Wildcard(_) => None,
@@ -110,7 +103,6 @@ impl FirestoreSqlProjection {
 }
 
 impl FirestoreSqlTranslator<'_> {
-    /// A query as the statement, with the options' row cap applied.
     pub(super) fn top_level_query(&mut self, query: &Query) -> FirestoreResult<FirestorePipeline> {
         let mut pipeline = self.query(query, FirestoreSqlPlace::top())?.pipeline;
         if let Some(max_rows) = self.options.max_rows {
@@ -161,8 +153,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(branch)
     }
 
-    /// Refuses the clauses of `query` that have no pipeline form, whatever its body is. The
-    /// caller maps its `body`, `order_by` and `limit_clause`.
     pub(super) fn refuse_unmapped_clauses(query: &Query) -> FirestoreResult<()> {
         let Query {
             with: _,
@@ -189,7 +179,6 @@ impl FirestoreSqlTranslator<'_> {
         )
     }
 
-    /// The error for a query body that is neither a `SELECT` nor a `UNION`.
     pub(super) fn unsupported_body(body: &SetExpr) -> FirestoreError {
         let construct = match body {
             SetExpr::Select(_) | SetExpr::SetOperation { .. } => "a nested set operation",
@@ -296,6 +285,15 @@ impl FirestoreSqlTranslator<'_> {
             }
         }
 
+        if place.existence {
+            self.ensure_existence_ungrouped(
+                &scope,
+                group_by,
+                having.is_some(),
+                projection,
+                select_start,
+            )?;
+        }
         let items: &[SelectItem] = if place.existence { &[] } else { projection };
         let mut aggregation =
             FirestoreSqlAggregation::new(items.iter().filter_map(|item| match item {
@@ -481,7 +479,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok((FirestorePipeline::new(source), relation))
     }
 
-    /// The pipeline of the common table expression that `name` refers to, if it does.
     fn referenced_cte(
         &mut self,
         name: &ObjectName,
@@ -516,22 +513,29 @@ impl FirestoreSqlTranslator<'_> {
         Ok(name.value.clone())
     }
 
-    /// A collection by its ID, or by its path as `` `restaurants/r1/reviews` ``.
     fn collection(
         &mut self,
         name: &ObjectName,
         alias: Option<String>,
     ) -> FirestoreResult<(FirestorePipelineSource, FirestoreSqlRelation)> {
         let path = Self::collection_name(name)?;
-        let (parent, collection_id) = self.collection_path(&path, name_start(name))?;
-        let source = FirestoreCollectionSource::new(collection_id.to_string())
-            .opt_parent(parent.map(|parent| format!("{}/{parent}", self.documents_path)));
-        let name = alias.unwrap_or_else(|| collection_id.to_string());
+        let source = self.collection_source(&path, name_start(name))?;
+        let name = alias.unwrap_or_else(|| source.collection_id.clone());
         let relation = FirestoreSqlRelation {
             name: Some(name),
             collection_path: Some(path),
         };
         Ok((FirestorePipelineSource::Collection(source), relation))
+    }
+
+    pub(super) fn collection_source(
+        &self,
+        path: &str,
+        start: Option<FirestoreSqlLocation>,
+    ) -> FirestoreResult<FirestoreCollectionSource> {
+        let (parent, collection_id) = self.collection_path(path, start)?;
+        Ok(FirestoreCollectionSource::new(collection_id.to_string())
+            .opt_parent(parent.map(|parent| format!("{}/{parent}", self.documents_path))))
     }
 
     /// The path a collection name spells, which is not yet checked.
@@ -559,7 +563,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(parts.join("."))
     }
 
-    /// `collection_group('id')`, `documents('path', ..)` or `database()`.
     fn table_function(
         &mut self,
         name: &ObjectName,
@@ -679,29 +682,25 @@ impl FirestoreSqlTranslator<'_> {
             return None;
         };
         let references = match (name.as_str(), args.as_slice()) {
-            ("equal", [name_field, FirestoreExpr::Constant(reference)])
-            | ("equal", [FirestoreExpr::Constant(reference), name_field])
+            ("equal", [name_field, constant]) | ("equal", [constant, name_field])
                 if Self::is_own_document_name(name_field) =>
             {
-                vec![&reference.value]
+                vec![constant.constant_value()?]
             }
-            (
-                "equal_any",
-                [name_field, FirestoreExpr::Constant(FirestoreValue {
-                    value:
-                        Value {
-                            value_type: Some(ValueType::ArrayValue(ArrayValue { values })),
-                        },
-                })],
-            ) if Self::is_own_document_name(name_field) => values.iter().collect(),
+            ("equal_any", [name_field, constants]) if Self::is_own_document_name(name_field) => {
+                match constants.constant_value()? {
+                    ValueType::ArrayValue(ArrayValue { values }) => values
+                        .iter()
+                        .map(|value| value.value_type.as_ref())
+                        .collect::<Option<Vec<_>>>()?,
+                    _ => return None,
+                }
+            }
             _ => return None,
         };
         let mut paths: Vec<String> = Vec::with_capacity(references.len());
         for reference in references {
-            let Value {
-                value_type: Some(ValueType::ReferenceValue(reference)),
-            } = reference
-            else {
+            let ValueType::ReferenceValue(reference) = reference else {
                 return None;
             };
             let path = reference
@@ -729,6 +728,17 @@ impl FirestoreSqlTranslator<'_> {
             match item {
                 SelectItem::UnnamedExpr(expr) => match self.expr(scope, expr)? {
                     FirestoreExpr::Field(path) if is_column(expr) => {
+                        if self
+                            .aggregation
+                            .as_ref()
+                            .is_some_and(|aggregation| aggregation.is_generated_key(&path))
+                        {
+                            return Err(FirestoreError::invalid_sql(
+                                "AS",
+                                "a nested field that is grouped needs a name: add AS and a name",
+                                expr_start(expr),
+                            ));
+                        }
                         let name = scope.output_name(&path);
                         let alias = (name != path).then(|| name.to_string());
                         selections.push(
@@ -766,9 +776,17 @@ impl FirestoreSqlTranslator<'_> {
                         SelectItemQualifiedWildcardKind::Expr(_) => None,
                     };
                     match qualifier {
-                        Some(ident)
-                            if scope.relation().name.as_deref() == Some(ident.value.as_str()) =>
-                        {
+                        Some(ident) if scope.relation().is_called(&ident.value) => {
+                            if scope.is_joined() {
+                                return Err(FirestoreError::invalid_sql(
+                                    "*",
+                                    format!(
+                                        "{}.* would select the joined tables too, which a query with a join keeps in the documents under their aliases: name the columns",
+                                        ident.value
+                                    ),
+                                    at(options.wildcard_token.0.span),
+                                ));
+                            }
                             wildcard = Some(self.wildcard(scope, options, wildcard.is_some())?)
                         }
                         _ => {
@@ -796,7 +814,6 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// The fields `* EXCEPT (..)` removes.
     fn wildcard(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -943,20 +960,14 @@ impl FirestoreSqlTranslator<'_> {
         Ok(())
     }
 
-    /// The count `LIMIT` or `OFFSET` takes: a literal or a parameter.
     fn count(&mut self, expr: &Expr, clause: &str) -> FirestoreResult<u32> {
         let value = match expr {
             Expr::Value(value) => Some(self.value(value)?),
             Expr::Identifier(ident) if is_parameter(ident) => Some(self.parameter(ident)?),
             _ => None,
         };
-        match value {
-            Some(FirestoreExpr::Constant(FirestoreValue {
-                value:
-                    Value {
-                        value_type: Some(ValueType::IntegerValue(count)),
-                    },
-            })) => u32::try_from(count).ok(),
+        match value.as_ref().and_then(FirestoreExpr::constant_value) {
+            Some(ValueType::IntegerValue(count)) => u32::try_from(*count).ok(),
             _ => None,
         }
         .ok_or_else(|| {
@@ -969,7 +980,6 @@ impl FirestoreSqlTranslator<'_> {
     }
 }
 
-/// The string a literal holds, for an argument that names a source.
 fn string_literal(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::Value(ValueWithSpan {
@@ -980,7 +990,6 @@ fn string_literal(expr: &Expr) -> Option<&str> {
     }
 }
 
-/// Where a source starts, when it has a name.
 pub(super) fn table_start(factor: &TableFactor) -> Option<FirestoreSqlLocation> {
     match factor {
         TableFactor::Table { name, .. } => name_start(name),

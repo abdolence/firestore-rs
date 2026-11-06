@@ -3,9 +3,10 @@ use super::parameters::FirestoreSqlBinding;
 use super::subquery::{FirestoreSqlCapture, FirestoreSqlCte};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::{
-    FirestoreCollectionId, FirestoreDocumentId, FirestoreResult, FirestoreSearchQuery,
-    FirestoreSqlOptions, FirestoreSqlStatement,
+    FirestoreCollectionId, FirestoreDocumentId, FirestoreExpr, FirestoreResult,
+    FirestoreSearchQuery, FirestoreSqlOptions, FirestoreSqlStatement, FirestoreValue,
 };
+use gcloud_sdk::google::firestore::v1::{value::ValueType, Value};
 use sqlparser::ast::{Expr, Ident, ObjectName, ObjectNamePart, Statement};
 use sqlparser::tokenizer::Span;
 use std::borrow::Cow;
@@ -23,17 +24,11 @@ pub(super) struct FirestoreSqlTranslator<'t> {
     pub(super) documents_path: &'t str,
     pub(super) options: &'t FirestoreSqlOptions,
     pub(super) binding: FirestoreSqlBinding<'t>,
-    /// How the `SELECT` being translated groups its documents.
     pub(super) aggregation: Option<FirestoreSqlAggregation>,
-    /// The search the `SELECT` being translated lifted out of its `WHERE`.
     pub(super) search: Option<FirestoreSearchQuery>,
     /// The columns of enclosing queries that subqueries have read and no stage defines yet.
     pub(super) pending: Vec<FirestoreSqlCapture>,
-    /// The depth of the enclosing query behind every column a subquery has read from one.
-    pub(super) outer_reads: Vec<usize>,
-    /// The common table expressions in scope, the latest last.
     pub(super) ctes: Vec<FirestoreSqlCte>,
-    /// How many times the pipelines of common table expressions have been repeated.
     pub(super) cte_copies: usize,
     depth: usize,
 }
@@ -51,7 +46,6 @@ impl<'t> FirestoreSqlTranslator<'t> {
             aggregation: None,
             search: None,
             pending: Vec::new(),
-            outer_reads: Vec::new(),
             ctes: Vec::new(),
             cte_copies: 0,
             depth: 0,
@@ -92,7 +86,6 @@ impl<'t> FirestoreSqlTranslator<'t> {
         Ok(translated)
     }
 
-    /// Runs `translate` one level deeper into the statement, or fails at the depth limit.
     pub(super) fn nested<T>(
         &mut self,
         start: Option<FirestoreSqlLocation>,
@@ -136,7 +129,6 @@ impl<'t> FirestoreSqlTranslator<'t> {
         Ok(relative)
     }
 
-    /// The parent and ID of the collection `path` names, relative to the documents root.
     pub(super) fn collection_path<'p>(
         &self,
         path: &'p str,
@@ -157,8 +149,6 @@ impl<'t> FirestoreSqlTranslator<'t> {
         })
     }
 
-    /// Checks the IDs of a path that starts with a collection, and that the options allow each
-    /// collection.
     fn check_segments(
         &self,
         segments: &[&str],
@@ -174,7 +164,6 @@ impl<'t> FirestoreSqlTranslator<'t> {
         Ok(())
     }
 
-    /// Checks a collection ID, and that the options allow the collection.
     pub(super) fn check_collection(
         &self,
         collection_id: &str,
@@ -189,6 +178,17 @@ impl<'t> FirestoreSqlTranslator<'t> {
                 start,
             )),
             _ => Ok(()),
+        }
+    }
+}
+
+impl FirestoreExpr {
+    pub(super) fn constant_value(&self) -> Option<&ValueType> {
+        match self {
+            Self::Constant(FirestoreValue {
+                value: Value { value_type },
+            }) => value_type.as_ref(),
+            _ => None,
         }
     }
 }
@@ -209,7 +209,6 @@ pub(super) fn is_parameter(ident: &Ident) -> bool {
     ident.quote_style.is_none() && ident.value.starts_with('@')
 }
 
-/// Whether `expr` is a column, possibly in parentheses.
 pub(super) fn is_column(mut expr: &Expr) -> bool {
     loop {
         expr = match expr {
@@ -226,7 +225,6 @@ pub(super) fn at(span: Span) -> Option<FirestoreSqlLocation> {
     FirestoreSqlLocation::from_sqlparser(span.start)
 }
 
-/// Where `name` starts.
 pub(super) fn name_start(name: &ObjectName) -> Option<FirestoreSqlLocation> {
     match name.0.first()? {
         ObjectNamePart::Identifier(ident) => at(ident.span),
@@ -279,7 +277,6 @@ pub(super) fn expr_start(mut expr: &Expr) -> Option<FirestoreSqlLocation> {
     }
 }
 
-/// The field path of the column `parts` names, one segment per part.
 pub(super) fn field_path(parts: &[Ident]) -> String {
     parts
         .iter()

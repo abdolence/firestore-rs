@@ -10,7 +10,6 @@ use crate::{
 };
 use sqlparser::ast::{Expr, Join, JoinConstraint, JoinOperator, TableFactor, TableWithJoins};
 
-/// How a joined table combines with the rows before it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FirestoreSqlJoinKind {
     /// Each row with each match, and no row without one.
@@ -21,7 +20,6 @@ enum FirestoreSqlJoinKind {
     Cross,
 }
 
-/// A table that joins the ones before it.
 struct FirestoreSqlJoin<'a> {
     kind: FirestoreSqlJoinKind,
     table: &'a TableFactor,
@@ -77,7 +75,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok((pipeline, scope))
     }
 
-    /// The kind, table and condition of a join, or the refusal of a join that has no form.
     fn join_of(join: &Join) -> FirestoreResult<FirestoreSqlJoin<'_>> {
         let Join {
             relation,
@@ -190,8 +187,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(())
     }
 
-    /// Joins `UNNEST(array) AS element [WITH OFFSET AS position]`, which makes one row of each
-    /// element of an array of the row before it.
     fn unnest_join<'o>(
         &mut self,
         pipeline: &mut FirestorePipeline,

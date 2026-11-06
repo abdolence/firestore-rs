@@ -61,6 +61,69 @@ async fn a_select_returns_the_rows_of_the_fluent_pipeline() -> TestResult {
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct Pieces {
+    first: String,
+    whole: String,
+    last: String,
+}
+
+#[tokio::test]
+async fn a_substring_position_counts_from_1_and_a_negative_one_from_the_end() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let pieces: Vec<Pieces> = db
+        .fluent()
+        .sql(
+            "SELECT SUBSTR(title, 1, 5) AS first, SUBSTR(title, 0) AS whole, \
+             SUBSTR(title, -4) AS last FROM `pipeline-books` WHERE __name__ = 'book-02'",
+        )
+        .obj()
+        .query()
+        .await?;
+
+    let expected = Pieces {
+        first: "Pride".to_string(),
+        whole: "Pride and Prejudice".to_string(),
+        last: "dice".to_string(),
+    };
+    assert_eq!(pieces, [expected]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_computed_value_is_tested_for_null_by_the_fluent_comparison() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let translated: Vec<Title> = db
+        .fluent()
+        .sql("SELECT title FROM `pipeline-books` WHERE LOWER(title) IS NOT NULL ORDER BY title")
+        .obj()
+        .query()
+        .await?;
+    let fluent: Vec<Title> = db
+        .fluent()
+        .pipeline()
+        .select()
+        .from(BOOKS)
+        .filter(|q| {
+            q.condition(
+                FirestoreExpr::field("title")
+                    .to_lower()
+                    .not_equal(None::<bool>),
+            )
+        })
+        .sort(|e| [e.field("title").asc()])
+        .fields(|e| [e.field("title")])
+        .obj()
+        .query()
+        .await?;
+
+    assert!(!fluent.is_empty());
+    assert_eq!(translated, fluent);
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_document_name_selects_the_documents_of_the_fluent_pipeline() -> TestResult {
     let db = setup_enterprise().await?;

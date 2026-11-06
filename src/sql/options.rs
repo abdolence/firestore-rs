@@ -1,4 +1,4 @@
-use crate::{FirestoreCollectionId, FirestoreError, FirestoreResult};
+use crate::FirestoreCollectionId;
 use std::collections::BTreeSet;
 
 /// The longest statement accepted unless raised, in bytes. sqlparser nests a chain of infix
@@ -31,8 +31,8 @@ impl Default for FirestoreSqlOptions {
 }
 
 impl FirestoreSqlOptions {
-    /// Allows every statement the translator supports, except joins and correlated subqueries,
-    /// and statements longer than 16 KiB.
+    /// Allows every statement the translator supports, except joins and subqueries, and
+    /// statements longer than 16 KiB.
     pub fn new() -> Self {
         Self {
             read_only: false,
@@ -64,23 +64,14 @@ impl FirestoreSqlOptions {
     /// Allows only these collection IDs, wherever a statement names a collection: a collection,
     /// each collection of a path such as `` `restaurants/r1/reviews` ``, a collection group and
     /// the paths of `documents(..)`. `database()` is refused, since it reads every collection.
-    ///
-    /// Fails with
-    /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) for an
-    /// ID that is not a valid collection ID.
-    pub fn with_collections<I>(self, collection_ids: I) -> FirestoreResult<Self>
+    pub fn with_collections<I>(self, collection_ids: I) -> Self
     where
-        I: IntoIterator,
-        I::Item: TryInto<FirestoreCollectionId, Error = FirestoreError>,
+        I: IntoIterator<Item = FirestoreCollectionId>,
     {
-        let collections = collection_ids
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<FirestoreResult<_>>()?;
-        Ok(Self {
-            collections: Some(collections),
+        Self {
+            collections: Some(collection_ids.into_iter().collect()),
             ..self
-        })
+        }
     }
 
     /// Returns at most `max_rows` rows from a query: its `LIMIT` is lowered to this, or one is
@@ -98,11 +89,12 @@ impl FirestoreSqlOptions {
         Self { max_length, ..self }
     }
 
-    /// Allows joins and correlated subqueries. Each runs one subquery per row of the query it is
-    /// in, and without an index on the join key each of those reads the whole joined
-    /// collection. A join or subquery into `subcollection(..)` reads only the children of each
-    /// row, and a derived table or a common table expression does not multiply with the rows, so
-    /// none of them needs this.
+    /// Allows joins and subqueries. Each runs one subquery per row of the query it is in, whether
+    /// or not it reads a column of that row, and without an index on the join key each of those
+    /// reads the whole joined collection. A join or subquery into `subcollection(..)` reads only
+    /// the children of each row, so it needs no opt-in. A derived table or a common table
+    /// expression in the `FROM` of a query needs none either, since it is the query's own source;
+    /// a join into one is still a join.
     pub fn allow_subqueries(self) -> Self {
         Self {
             subqueries: true,

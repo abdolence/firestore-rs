@@ -4,7 +4,6 @@ use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::FirestoreResult;
 use sqlparser::ast::Ident;
 
-/// The source a query reads, as the query's names see it.
 #[derive(Clone)]
 pub(super) struct FirestoreSqlRelation {
     /// The name a column may be qualified with: the source's alias, or else its collection ID.
@@ -14,32 +13,35 @@ pub(super) struct FirestoreSqlRelation {
     pub(super) collection_path: Option<String>,
 }
 
-/// Where a column lives.
+impl FirestoreSqlRelation {
+    /// Whether a column may be qualified with `name`: table names match without regard to case,
+    /// as in SQL.
+    pub(super) fn is_called(&self, name: &str) -> bool {
+        self.name
+            .as_deref()
+            .is_some_and(|own| own.eq_ignore_ascii_case(name))
+    }
+}
+
 pub(super) enum FirestoreSqlColumn {
-    /// A field of the documents the query reads.
-    Own { path: String },
-    /// A field of a document of an enclosing query, which a subquery reads through a variable.
+    Own {
+        path: String,
+    },
     Outer {
-        /// The depth of the scope of the enclosing query.
         depth: usize,
-        /// The name the column was qualified with.
         qualifier: String,
-        /// The field path in the documents of the enclosing query.
         path: String,
     },
 }
 
-/// Where a query sits in its statement.
 #[derive(Clone, Copy)]
 pub(super) struct FirestoreSqlPlace<'o> {
-    /// The scope of the query this one is a subquery of.
     pub(super) outer: Option<&'o FirestoreSqlScope<'o>>,
     /// Only whether the query finds a row matters, so its select list is not translated.
     pub(super) existence: bool,
 }
 
 impl<'o> FirestoreSqlPlace<'o> {
-    /// A query that is not inside another.
     pub(super) fn top() -> Self {
         Self {
             outer: None,
@@ -47,7 +49,6 @@ impl<'o> FirestoreSqlPlace<'o> {
         }
     }
 
-    /// A subquery of the query whose scope is `scope`.
     pub(super) fn inside(scope: &'o FirestoreSqlScope<'o>) -> Self {
         Self {
             outer: Some(scope),
@@ -55,7 +56,6 @@ impl<'o> FirestoreSqlPlace<'o> {
         }
     }
 
-    /// The same place, for a query whose rows are only counted.
     pub(super) fn for_existence(self) -> Self {
         Self {
             existence: true,
@@ -63,7 +63,6 @@ impl<'o> FirestoreSqlPlace<'o> {
         }
     }
 
-    /// The same place, for a query whose rows are read.
     pub(super) fn for_rows(self) -> Self {
         Self {
             existence: false,
@@ -104,7 +103,6 @@ impl<'o> FirestoreSqlScope<'o> {
         }
     }
 
-    /// This scope, inside the query whose scope is `outer`.
     pub(super) fn inside(self, outer: Option<&'o FirestoreSqlScope<'o>>) -> Self {
         Self {
             depth: outer.map_or(0, |outer| outer.depth + 1),
@@ -113,7 +111,6 @@ impl<'o> FirestoreSqlScope<'o> {
         }
     }
 
-    /// This scope, for the `ON` clause that joins its relation to the relations of `left`.
     pub(super) fn joining(self, left: &'o FirestoreSqlScope<'o>) -> Self {
         Self {
             qualified_only: true,
@@ -121,7 +118,6 @@ impl<'o> FirestoreSqlScope<'o> {
         }
     }
 
-    /// This scope, with its columns resolved against the stored document under `field`.
     pub(super) fn with_stored(self, field: &'static str) -> Self {
         Self {
             stored: Some(field),
@@ -133,17 +129,18 @@ impl<'o> FirestoreSqlScope<'o> {
         &self.relation
     }
 
-    /// How many queries enclose this one.
     pub(super) fn depth(&self) -> usize {
         self.depth
     }
 
-    /// Joins `relation`, whose fields live under its name.
     pub(super) fn join(&mut self, relation: FirestoreSqlRelation) {
         self.joined.push(relation);
     }
 
-    /// The field path of the column `parts` names, for a clause that has no enclosing query.
+    pub(super) fn is_joined(&self) -> bool {
+        !self.joined.is_empty()
+    }
+
     pub(super) fn field(&self, parts: &[Ident]) -> FirestoreResult<String> {
         match self.column(parts)? {
             FirestoreSqlColumn::Own { path } => Ok(path),
@@ -155,7 +152,6 @@ impl<'o> FirestoreSqlScope<'o> {
         }
     }
 
-    /// Fails when a relation of this scope is already called `name`.
     pub(super) fn ensure_unused(
         &self,
         name: &str,
@@ -163,7 +159,7 @@ impl<'o> FirestoreSqlScope<'o> {
     ) -> FirestoreResult<()> {
         let used = std::iter::once(&self.relation)
             .chain(&self.joined)
-            .any(|relation| relation.name.as_deref() == Some(name));
+            .any(|relation| relation.is_called(name));
         if used {
             Err(FirestoreError::invalid_sql(
                 name,
@@ -175,13 +171,10 @@ impl<'o> FirestoreSqlScope<'o> {
         }
     }
 
-    /// The names of the field `parts` names: a first part that names the relation qualifies the
-    /// rest; any other dotted name is a path into nested fields.
     pub(super) fn field_names<'p>(&self, parts: &'p [Ident]) -> &'p [Ident] {
         match parts {
             [qualifier, rest @ ..]
-                if !rest.is_empty()
-                    && self.relation.name.as_deref() == Some(qualifier.value.as_str()) =>
+                if !rest.is_empty() && self.relation.is_called(&qualifier.value) =>
             {
                 rest
             }
@@ -191,14 +184,34 @@ impl<'o> FirestoreSqlScope<'o> {
 
     /// The field path of `rest` as the relation called `qualifier` holds it, or `None` when this
     /// scope has no such relation.
-    fn qualified_path(&self, qualifier: &str, rest: &[Ident]) -> Option<String> {
-        if self.relation.name.as_deref() == Some(qualifier) {
-            return Some(field_path(rest));
+    ///
+    /// A joined relation lives in a field named after its alias, so a field of the base relation
+    /// with that name is hidden and cannot be named through the base relation.
+    fn qualified_path(&self, qualifier: &Ident, rest: &[Ident]) -> FirestoreResult<Option<String>> {
+        if self.relation.is_called(&qualifier.value) {
+            let hidden = self
+                .joined
+                .iter()
+                .filter_map(|joined| joined.name.as_deref())
+                .find(|alias| rest.first().is_some_and(|first| first.value == *alias));
+            return match hidden {
+                Some(alias) => Err(FirestoreError::invalid_sql(
+                    alias,
+                    format!(
+                        "{alias} is the alias of a joined table, which hides the field {alias} of {}: give the table another alias",
+                        qualifier.value
+                    ),
+                    at(qualifier.span),
+                )),
+                None => Ok(Some(field_path(rest))),
+            };
         }
-        self.joined
+        Ok(self
+            .joined
             .iter()
-            .any(|joined| joined.name.as_deref() == Some(qualifier))
-            .then(|| format!("{}.{}", field_segment(qualifier), field_path(rest)))
+            .find(|joined| joined.is_called(&qualifier.value))
+            .and_then(|joined| joined.name.as_deref())
+            .map(|alias| format!("{}.{}", field_segment(alias), field_path(rest))))
     }
 
     /// The name a `SELECT` gives the column at `path` when it does not name it: the path without
@@ -236,12 +249,12 @@ impl<'o> FirestoreSqlScope<'o> {
         }
         if let [qualifier, rest @ ..] = parts {
             if !rest.is_empty() {
-                if let Some(path) = self.qualified_path(&qualifier.value, rest) {
+                if let Some(path) = self.qualified_path(qualifier, rest)? {
                     return Ok(FirestoreSqlColumn::Own { path });
                 }
                 let mut enclosing = self.outer;
                 while let Some(scope) = enclosing {
-                    if let Some(path) = scope.qualified_path(&qualifier.value, rest) {
+                    if let Some(path) = scope.qualified_path(qualifier, rest)? {
                         return Ok(FirestoreSqlColumn::Outer {
                             depth: scope.depth,
                             qualifier: qualifier.value.clone(),
@@ -279,7 +292,7 @@ impl<'o> FirestoreSqlScope<'o> {
     }
 
     fn is_strict(&self) -> bool {
-        !self.joined.is_empty() || self.outer.is_some()
+        self.is_joined() || self.outer.is_some()
     }
 
     fn stored_path(&self, stored: &str, parts: &[Ident]) -> FirestoreResult<String> {

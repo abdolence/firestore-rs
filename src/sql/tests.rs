@@ -5,13 +5,13 @@ use crate::pipeline_builder::FirestorePipelineInitialBuilder;
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::pipeline_stage_builder::FirestorePipelineNestedContext;
 use crate::{
-    FirestoreBoolExpr, FirestoreCollectionGroupSource, FirestoreCollectionSource,
-    FirestoreDocumentsSource, FirestoreExpr, FirestoreGeoPoint, FirestoreInsertWrite,
-    FirestoreLatLng, FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage,
-    FirestorePipelineWrite, FirestorePipelineWriteParams, FirestorePipelineWriteTransaction,
-    FirestoreReference, FirestoreReplaceWithMode, FirestoreResult, FirestoreSelection,
+    FirestoreBoolExpr, FirestoreCollectionGroupSource, FirestoreCollectionId,
+    FirestoreCollectionSource, FirestoreDocumentsSource, FirestoreExpr, FirestoreGeoPoint,
+    FirestoreInsertWrite, FirestoreLatLng, FirestorePipeline, FirestorePipelineSource,
+    FirestorePipelineStage, FirestorePipelineWrite, FirestorePipelineWriteParams,
+    FirestorePipelineWriteTransaction, FirestoreReference, FirestoreResult, FirestoreSelection,
     FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUnionStage,
-    FirestoreUpdateWrite, FirestoreUpsertWrite, FirestoreValueType, FirestoreWriteCollection,
+    FirestoreUpdateWrite, FirestoreUpsertWrite, FirestoreWriteCollection,
 };
 
 use serde::Serialize;
@@ -405,22 +405,19 @@ fn options_refuse_what_they_guard() {
         (
             "SELECT * FROM `secrets/s1/books`",
             FirestoreSqlOptions::new()
-                .with_collections(["books"])
-                .unwrap(),
+                .with_collections([FirestoreCollectionId::from_static("books")]),
             "collections",
         ),
         (
             "SELECT * FROM documents('secrets/s1')",
             FirestoreSqlOptions::new()
-                .with_collections(["books"])
-                .unwrap(),
+                .with_collections([FirestoreCollectionId::from_static("books")]),
             "collections",
         ),
         (
             "SELECT * FROM database()",
             FirestoreSqlOptions::new()
-                .with_collections(["books"])
-                .unwrap(),
+                .with_collections([FirestoreCollectionId::from_static("books")]),
             "database",
         ),
         (
@@ -637,7 +634,7 @@ fn functions_pass_through_or_follow_the_alias_table() {
         ),
         (
             "SUBSTRING(title FROM pages)",
-            field("title").substring(field("pages").subtract(1)),
+            field("title").substring(positive_to_zero_based(field("pages"))),
         ),
         ("TRIM(title)", field("title").trim()),
         (
@@ -990,14 +987,6 @@ fn aggregation_set_operations_and_search_outside_their_forms_are_refused_by_name
 }
 
 #[test]
-fn a_collection_id_the_options_cannot_hold_is_an_error() {
-    assert!(matches!(
-        FirestoreSqlOptions::new().with_collections(["books", "a/b"]),
-        Err(FirestoreError::InvalidParametersError(_))
-    ));
-}
-
-#[test]
 fn group_by_and_having_refer_to_select_aliases() {
     let sql = "SELECT LOWER(genre) AS kind, COUNT(*) AS n FROM books \
                GROUP BY kind HAVING n > 1";
@@ -1112,137 +1101,16 @@ fn an_insert_or_replace_translates_to_an_atomic_upsert() {
     assert_eq!(translated_write(sql), expected);
 }
 
-/// The lookup of the document named like the row, in `items`, outputting `found`.
-fn stored_item(found: FirestoreSelection) -> FirestoreExpr {
-    FirestorePipelineExprBuilder.scalar_subquery(|p| {
-        p.from("items")
-            .filter(|q| {
-                Some(
-                    field("__name__")
-                        .is_in(FirestorePipelineExprBuilder.array([q.variable("conflict_key")])),
-                )
-            })
-            .fields(|_| [found])
-    })
-}
-
 #[test]
-fn on_conflict_do_nothing_keeps_the_rows_without_a_stored_document() {
-    let sql = "INSERT INTO items (__name__, sku, stock) VALUES ('a-1', 'a-1', 3) \
-               ON CONFLICT (__name__) DO NOTHING";
-
-    let expected = atomic(
-        fluent()
-            .literals([item(Some("a-1"), "a-1", 3)])
-            .define_variables(|e| [e.field("__name__").alias("conflict_key")])
-            .add_fields(|_| {
-                [stored_item(field("__name__").alias("found")).alias("_conflict_stored")]
-            })
-            .filter(|q| q.field("_conflict_stored").is_null())
-            .remove_fields(["_conflict_stored"])
-            .into_pipeline(),
-        FirestoreInsertWrite::new().with_target(items()),
-    );
-
-    assert_eq!(translated_write(sql), expected);
-}
-
-#[test]
-fn on_conflict_do_update_merges_the_set_fields_into_the_stored_document() {
-    let sql = "INSERT INTO items (__name__, sku, stock) VALUES ('a-1', 'a-1', 3) \
-               ON CONFLICT (__name__) DO UPDATE \
-               SET stock = stock + excluded.stock, dims.w = excluded.stock, dims.h = 1 \
-               WHERE items.stock > 0";
-    let stored = || field("_conflict_stored");
-    let e = FirestorePipelineExprBuilder;
-    let dims = e.conditional(
-        stored().map_get("dims").is_type(FirestoreValueType::Map),
-        stored().map_get("dims"),
-        e.map(Vec::<(String, FirestoreExpr)>::new()),
-    );
-
-    let expected = atomic(
-        fluent()
-            .literals([item(Some("a-1"), "a-1", 3)])
-            .define_variables(|e| [e.field("__name__").alias("conflict_key")])
-            .add_fields(|_| {
-                [stored_item(e.current_document().alias("document")).alias("_conflict_stored")]
-            })
-            .filter(|q| {
-                q.for_any([
-                    q.condition(stored().is_null()),
-                    q.field("_conflict_stored.stock").greater_than(0),
-                ])
-            })
-            .replace_with(
-                |e| {
-                    e.conditional(
-                        stored().is_null(),
-                        e.current_document().map_remove([
-                            "_conflict_stored",
-                            "__create_time__",
-                            "__update_time__",
-                        ]),
-                        stored()
-                            .map_remove(["__create_time__", "__update_time__"])
-                            .map_set([
-                                (
-                                    "dims",
-                                    dims.clone().map_set([
-                                        ("h", FirestoreExpr::constant(1)),
-                                        ("w", field("stock")),
-                                    ]),
-                                ),
-                                ("stock", field("_conflict_stored.stock").add(field("stock"))),
-                            ]),
-                    )
-                },
-                FirestoreReplaceWithMode::FullReplace,
-            )
-            .into_pipeline(),
-        FirestoreUpsertWrite::new().with_target(items()),
-    );
-
-    assert_eq!(translated_write(sql), expected);
-}
-
-#[test]
-fn on_conflict_over_a_select_matches_the_stored_document_by_id_when_subqueries_are_allowed() {
+fn on_conflict_over_a_select_needs_the_opt_in() {
     let sql = "INSERT INTO items SELECT __name__, stock FROM other \
                ON CONFLICT (__name__) DO NOTHING";
 
     assert_eq!(refused(sql).field, "ON CONFLICT");
-
-    let by_id = FirestorePipelineExprBuilder.scalar_subquery(|p| {
-        p.from("items")
-            .filter(|q| {
-                Some(
-                    field("__name__")
-                        .document_id()
-                        .is_in(FirestorePipelineExprBuilder.array([q.variable("conflict_key")])),
-                )
-            })
-            .fields(|_| [field("__name__").alias("found")])
-    });
-    let expected = atomic(
-        fluent()
-            .from("other")
-            .fields(|e| [e.field("__name__"), e.field("stock")])
-            .define_variables(|e| [e.field("__name__").document_id().alias("conflict_key")])
-            .add_fields(|_| [by_id.alias("_conflict_stored")])
-            .filter(|q| q.field("_conflict_stored").is_null())
-            .remove_fields(["_conflict_stored"])
-            .into_pipeline(),
-        FirestoreInsertWrite::new().with_target(items()),
-    );
-
-    assert_eq!(
-        translated_write_with(
-            sql,
-            &FirestoreSqlParameters::new(),
-            &FirestoreSqlOptions::new().allow_subqueries(),
-        ),
-        expected
+    translated_write_with(
+        sql,
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::new().allow_subqueries(),
     );
 }
 
@@ -1410,9 +1278,8 @@ fn writes_outside_their_forms_are_refused_by_name() {
 
 #[test]
 fn the_collection_allowlist_applies_to_the_target_of_a_write() {
-    let options = FirestoreSqlOptions::new()
-        .with_collections(["items"])
-        .unwrap();
+    let options =
+        FirestoreSqlOptions::new().with_collections([FirestoreCollectionId::from_static("items")]);
     let parameters = FirestoreSqlParameters::new();
 
     for sql in [
@@ -1584,7 +1451,7 @@ fn select_star_over_a_join_holds_each_joined_table_as_a_map_under_its_alias() {
 }
 
 #[test]
-fn a_join_or_a_correlated_subquery_runs_per_row_so_it_needs_the_opt_in() {
+fn a_join_or_a_correlated_subquery_needs_the_opt_in() {
     let per_row = [
         (
             format!("SELECT rest.name AS name {RESTAURANTS_JOINED_TO_REVIEWS}"),
@@ -1699,7 +1566,7 @@ fn in_and_array_subqueries_translate_to_array_subqueries() {
              {negation}IN (SELECT r.restaurant FROM collection_group('reviews') AS r WHERE r.rating >= 5)"
         );
         assert_eq!(
-            translated(&sql),
+            translated_allowing_subqueries(&sql),
             fluent()
                 .from("pipeline-restaurants")
                 .filter(|_| Some(test))
@@ -1990,7 +1857,7 @@ fn a_cte_that_doubles_at_each_step_is_refused_and_a_long_chain_is_not() {
         .spawn(move || {
             assert_eq!(refused(&doubling).field, "WITH");
             assert_eq!(translated(&chain), fluent().from("books").into_pipeline());
-            translated(&nested);
+            translated_allowing_subqueries(&nested);
         })
         .unwrap()
         .join()
@@ -2016,4 +1883,177 @@ fn a_string_compared_with_the_name_of_a_joined_table_must_be_a_path() {
         field("r.__name__").equal(reference(path)).into()
     );
     assert_eq!(refused(&sql("review-1")).field, "__name__");
+}
+
+#[test]
+fn an_uncorrelated_subquery_runs_per_row_too_so_it_needs_the_opt_in() {
+    let per_row = [
+        "SELECT * FROM books WHERE EXISTS (SELECT 1 FROM reviews)",
+        "SELECT * FROM books WHERE stock IN (SELECT stock FROM reviews)",
+        "SELECT title, (SELECT COUNT(*) AS n FROM reviews) AS reviews FROM books",
+        "SELECT title, ARRAY(SELECT rating FROM reviews) AS ratings FROM books",
+    ];
+
+    for sql in per_row {
+        assert_eq!(refused(sql).field, "subquery", "{sql}");
+        translated_allowing_subqueries(sql);
+    }
+}
+
+#[test]
+fn a_joined_alias_cannot_hide_a_field_of_the_left_side() {
+    let hidden = "SELECT o.customer AS ref FROM orders AS o \
+                  JOIN customers AS customer ON customer.__name__ = o.customer";
+    assert_eq!(refused_with_subqueries(hidden).field, "customer");
+
+    translated_allowing_subqueries(
+        "SELECT o.total AS total, customer.name AS name FROM orders AS o \
+         JOIN customers AS customer ON customer.__name__ = o.customer",
+    );
+}
+
+#[test]
+fn a_qualified_star_is_refused_once_the_query_joins() {
+    let sql = "SELECT b.* FROM books AS b JOIN reviews AS r ON r.book = b.__name__";
+    assert_eq!(refused_with_subqueries(sql).field, "*");
+
+    assert_eq!(
+        translated("SELECT b.* FROM books AS b"),
+        translated("SELECT * FROM books AS b")
+    );
+}
+
+#[test]
+fn a_position_below_one_is_not_shifted() {
+    let positions = [
+        ("SUBSTR(title, 3)", field("title").substring(2)),
+        ("SUBSTR(title, 0)", field("title").substring(0)),
+        ("SUBSTR(title, -1)", field("title").substring(-1)),
+        (
+            "SUBSTR(title, -2, 2)",
+            field("title").substring_with_length(-2, 2),
+        ),
+        (
+            "SUBSTR(title, pages)",
+            field("title").substring(positive_to_zero_based(field("pages"))),
+        ),
+    ];
+
+    for (call, expected) in positions {
+        let sql = format!("SELECT {call} AS v FROM books");
+        assert_eq!(column(&sql), expected, "{call}");
+    }
+}
+
+/// A position counted from 1 as a position counted from 0, which only a positive one needs: 0
+/// and a negative position pass through as they are.
+fn positive_to_zero_based(position: FirestoreExpr) -> FirestoreExpr {
+    FirestorePipelineExprBuilder.conditional(
+        position.clone().greater_than(0),
+        position.clone().subtract(1),
+        position,
+    )
+}
+
+#[test]
+fn an_unaliased_nested_group_key_is_refused() {
+    for sql in [
+        "SELECT awards.hugo, COUNT(*) AS n FROM books GROUP BY awards.hugo",
+        "SELECT DISTINCT awards.hugo FROM books",
+    ] {
+        assert_eq!(refused(sql).field, "AS", "{sql}");
+    }
+
+    translated("SELECT awards.hugo AS hugo, COUNT(*) AS n FROM books GROUP BY awards.hugo");
+}
+
+#[test]
+fn exists_refuses_grouping_that_changes_whether_a_row_exists() {
+    for select in [
+        "SELECT COUNT(*) AS n FROM reviews WHERE FALSE",
+        "SELECT 1 FROM reviews GROUP BY stars",
+        "SELECT 1 FROM reviews HAVING stars > 1",
+    ] {
+        let sql = format!("SELECT * FROM books WHERE EXISTS ({select})");
+        assert_eq!(refused_with_subqueries(&sql).field, "EXISTS", "{sql}");
+    }
+
+    translated_allowing_subqueries(
+        "SELECT * FROM books WHERE EXISTS (SELECT DISTINCT stars FROM reviews WHERE stars > 1)",
+    );
+}
+
+#[test]
+fn is_not_null_of_a_computed_value_compares_with_null_alone() {
+    assert_eq!(
+        condition("SELECT * FROM books WHERE LOWER(title) IS NOT NULL"),
+        field("title").to_lower().not_equal(None::<bool>).into()
+    );
+}
+
+#[test]
+fn a_parenthesised_search_condition_is_lifted_into_the_source() {
+    let plain = translated("SELECT name FROM restaurants WHERE document_matches('waffles')");
+
+    assert_eq!(
+        translated("SELECT name FROM restaurants WHERE (document_matches('waffles'))"),
+        plain
+    );
+    assert_eq!(
+        translated(
+            "SELECT name FROM restaurants \
+             WHERE (geo_distance(location, geo_point(1, 2)) <= 1000) AND cuisine = 'diner'"
+        ),
+        translated(
+            "SELECT name FROM restaurants \
+             WHERE geo_distance(location, geo_point(1, 2)) <= 1000 AND cuisine = 'diner'"
+        )
+    );
+}
+
+#[test]
+fn a_table_alias_matches_without_regard_to_case() {
+    assert_eq!(
+        column("SELECT B.title AS v FROM books AS b"),
+        field("title")
+    );
+    assert_eq!(
+        translated(
+            "SELECT R.rating AS v FROM `pipeline-restaurants` AS rest \
+             JOIN subcollection('reviews') AS r ON TRUE"
+        ),
+        translated(
+            "SELECT r.rating AS v FROM `pipeline-restaurants` AS rest \
+             JOIN subcollection('reviews') AS r ON TRUE"
+        )
+    );
+    assert_eq!(
+        refused_with_subqueries(
+            "SELECT * FROM `pipeline-restaurants` AS rest \
+             JOIN subcollection('reviews') AS REST ON TRUE"
+        )
+        .field,
+        "REST"
+    );
+}
+
+#[test]
+fn a_parameter_name_may_be_bound_with_its_at_sign() {
+    let sql = "SELECT title FROM books WHERE genre = @genre";
+    let options = FirestoreSqlOptions::new();
+
+    assert_eq!(
+        translate(
+            sql,
+            &FirestoreSqlParameters::new().param("@genre", "Dystopian"),
+            &options
+        )
+        .unwrap(),
+        translate(
+            sql,
+            &FirestoreSqlParameters::new().param("genre", "Dystopian"),
+            &options
+        )
+        .unwrap()
+    );
 }

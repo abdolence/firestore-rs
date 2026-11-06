@@ -7,13 +7,10 @@ use sqlparser::ast::{
     FunctionArguments, ObjectName, ObjectNamePart, Query,
 };
 
-/// The parts of a plain function call.
 pub(super) struct FirestoreSqlCall<'f> {
-    /// The name in lower case.
     pub(super) name: String,
     pub(super) arguments: &'f [FunctionArg],
     pub(super) duplicate_treatment: Option<&'f DuplicateTreatment>,
-    /// The query of a call written `name(SELECT ..)`, which has no arguments.
     pub(super) subquery: Option<&'f Query>,
 }
 
@@ -28,8 +25,6 @@ impl FirestoreSqlTranslator<'_> {
         self.named_function(scope, function, None)
     }
 
-    /// As [`function`](Self::function), for a call whose result the select list names `output`:
-    /// an aggregate's accumulator and `score()`'s field take that name.
     pub(super) fn named_function(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -85,8 +80,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// The position `OFFSET(n)` or `ORDINAL(n)` gives inside `x[..]`, counted from 0, or `None`
-    /// for any other call.
     pub(super) fn array_position(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -113,8 +106,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// The name, in lower case, and the arguments of a plain function call. A call with a
-    /// window, a filter, an ordering or another clause is refused, and so is `DISTINCT`.
     pub(super) fn call(function: &Function) -> FirestoreResult<(String, &[FunctionArg])> {
         let call = Self::call_parts(function)?;
         if call.duplicate_treatment.is_some() {
@@ -132,8 +123,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok((call.name, call.arguments))
     }
 
-    /// A plain function call, which may be `DISTINCT`. A call with a window, a filter, an
-    /// ordering or another clause is refused.
     fn call_parts(function: &Function) -> FirestoreResult<FirestoreSqlCall<'_>> {
         let Function {
             name,
@@ -183,7 +172,6 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// A function's name in lower case: SQL names functions without regard to case.
     pub(super) fn function_name(
         name: &ObjectName,
         start: Option<FirestoreSqlLocation>,
@@ -197,7 +185,6 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// The expressions of `arguments`, which must all be positional.
     pub(super) fn positional_arguments(
         arguments: &[FunctionArg],
         start: Option<FirestoreSqlLocation>,
@@ -217,8 +204,6 @@ impl FirestoreSqlTranslator<'_> {
     }
 }
 
-/// The pipeline function a SQL scalar function calls. The SQL names that differ from the
-/// pipeline's are renamed, and every other name passes through.
 fn scalar_function(name: &str) -> &str {
     match name {
         "lower" => "to_lower",
@@ -230,7 +215,6 @@ fn scalar_function(name: &str) -> &str {
     }
 }
 
-/// Whether the call names its result, which `AS` gives it: an aggregate, or `score()`.
 pub(super) fn names_its_output(function: &Function) -> bool {
     matches!(
         FirestoreSqlTranslator::function_name(&function.name, None),
