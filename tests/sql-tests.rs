@@ -579,6 +579,171 @@ async fn an_insert_or_replace_writes_the_documents_of_the_fluent_upsert() -> Tes
 }
 
 #[tokio::test]
+async fn an_insert_do_nothing_writes_the_rows_the_fluent_insert_of_the_new_documents_writes(
+) -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, by_fluent) = collections(
+        &db,
+        "on-conflict-nothing",
+        &[("a-1", 3, 9.5), ("a-2", 0, 4.0)],
+    )
+    .await?;
+
+    let inserted = db
+        .fluent()
+        .sql(guarded(
+            &db,
+            format!(
+                "INSERT INTO `{by_sql}` (__name__, sku, stock) \
+                 VALUES ('a-1', 'a-1', 99), ('a-3', 'a-3', 5) \
+                 ON CONFLICT (__name__) DO NOTHING"
+            ),
+        ))
+        .execute()
+        .await?;
+    let fluent_inserted = db
+        .fluent()
+        .pipeline()
+        .insert()
+        .into(&by_fluent)
+        .literals([replacement(&db, &by_fluent, "a-3", 5)])
+        .atomic()
+        .execute()
+        .await?;
+
+    let written = contents(&db, &by_sql).await?;
+    assert_eq!(written["a-1"]["stock"], 3);
+    assert_eq!(written.len(), 3);
+    assert_eq!(written, contents(&db, &by_fluent).await?);
+    assert_eq!(inserted, fluent_inserted);
+    empty(&db, &by_sql).await?;
+    empty(&db, &by_fluent).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_insert_do_update_sets_the_fields_the_fluent_update_of_the_stored_documents_sets(
+) -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, by_fluent) = collections(
+        &db,
+        "on-conflict-update",
+        &[("a-1", 3, 9.5), ("a-2", 0, 4.0)],
+    )
+    .await?;
+
+    let written = db
+        .fluent()
+        .sql(guarded(
+            &db,
+            format!(
+                "INSERT INTO `{by_sql}` (__name__, sku, stock) \
+                 VALUES ('a-1', 'a-1', 9), ('a-3', 'a-3', 5) \
+                 ON CONFLICT (__name__) DO UPDATE \
+                 SET stock = stock + excluded.stock, dims.w = excluded.stock"
+            ),
+        ))
+        .execute()
+        .await?;
+    let fluent_updated = db
+        .fluent()
+        .pipeline()
+        .update(|e| {
+            [
+                e.field("stock").add(9).alias("stock"),
+                e.constant(9).alias("dims.w"),
+            ]
+        })
+        .in_col(&by_fluent)
+        .filter(|q| q.field("__name__").eq(reference(&db, &by_fluent, "a-1")))
+        .atomic()
+        .execute()
+        .await?;
+    let fluent_inserted = db
+        .fluent()
+        .pipeline()
+        .insert()
+        .into(&by_fluent)
+        .literals([replacement(&db, &by_fluent, "a-3", 5)])
+        .atomic()
+        .execute()
+        .await?;
+
+    let stored = contents(&db, &by_sql).await?;
+    // `price` and `extra` are named by neither side of the conflict, so the stored values stay.
+    assert_eq!(
+        stored["a-1"],
+        serde_json::json!({
+            "sku": "a-1", "stock": 12, "price": 9.5, "extra": "old", "dims": {"w": 9}
+        })
+    );
+    assert_eq!(stored.len(), 3);
+    assert_eq!(stored, contents(&db, &by_fluent).await?);
+    assert_eq!(
+        written.documents_modified,
+        fluent_updated.documents_modified + fluent_inserted.documents_modified
+    );
+    empty(&db, &by_sql).await?;
+    empty(&db, &by_fluent).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_insert_do_update_where_leaves_the_stored_documents_that_fail_the_condition(
+) -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, by_fluent) = collections(
+        &db,
+        "on-conflict-where",
+        &[("a-1", 3, 9.5), ("a-2", 0, 4.0)],
+    )
+    .await?;
+
+    let written = db
+        .fluent()
+        .sql(guarded(
+            &db,
+            format!(
+                "INSERT INTO `{by_sql}` (__name__, sku, stock) \
+                 VALUES ('a-1', 'a-1', 7), ('a-2', 'a-2', 7), ('a-4', 'a-4', 7) \
+                 ON CONFLICT (__name__) DO UPDATE SET stock = excluded.stock WHERE stock = 0"
+            ),
+        ))
+        .execute()
+        .await?;
+    let fluent_updated = db
+        .fluent()
+        .pipeline()
+        .update(|e| [e.constant(7).alias("stock")])
+        .in_col(&by_fluent)
+        .filter(|q| q.field("__name__").eq(reference(&db, &by_fluent, "a-2")))
+        .atomic()
+        .execute()
+        .await?;
+    let fluent_inserted = db
+        .fluent()
+        .pipeline()
+        .insert()
+        .into(&by_fluent)
+        .literals([replacement(&db, &by_fluent, "a-4", 7)])
+        .atomic()
+        .execute()
+        .await?;
+
+    let stored = contents(&db, &by_sql).await?;
+    assert_eq!(stored["a-1"]["stock"], 3);
+    assert_eq!(stored["a-2"]["stock"], 7);
+    assert_eq!(stored, contents(&db, &by_fluent).await?);
+    assert_eq!(
+        written.documents_modified,
+        fluent_updated.documents_modified + fluent_inserted.documents_modified
+    );
+    empty(&db, &by_sql).await?;
+    empty(&db, &by_fluent).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_update_sets_the_fields_of_the_fluent_update() -> TestResult {
     let db = setup_enterprise().await?;
     let (by_sql, by_fluent) = collections(

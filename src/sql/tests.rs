@@ -9,9 +9,9 @@ use crate::{
     FirestoreDocumentsSource, FirestoreExpr, FirestoreGeoPoint, FirestoreInsertWrite,
     FirestoreLatLng, FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage,
     FirestorePipelineWrite, FirestorePipelineWriteParams, FirestorePipelineWriteTransaction,
-    FirestoreReference, FirestoreResult, FirestoreSelection, FirestoreSqlOptions,
-    FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUpdateWrite, FirestoreUpsertWrite,
-    FirestoreWriteCollection,
+    FirestoreReference, FirestoreReplaceWithMode, FirestoreResult, FirestoreSelection,
+    FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUpdateWrite,
+    FirestoreUpsertWrite, FirestoreValueType, FirestoreWriteCollection,
 };
 
 use serde::Serialize;
@@ -1121,6 +1121,140 @@ fn an_insert_or_replace_translates_to_an_atomic_upsert() {
     assert_eq!(translated_write(sql), expected);
 }
 
+/// The lookup of the document named like the row, in `items`, outputting `found`.
+fn stored_item(found: FirestoreSelection) -> FirestoreExpr {
+    FirestorePipelineExprBuilder.scalar_subquery(|p| {
+        p.from("items")
+            .filter(|q| {
+                Some(
+                    field("__name__")
+                        .is_in(FirestorePipelineExprBuilder.array([q.variable("conflict_key")])),
+                )
+            })
+            .fields(|_| [found])
+    })
+}
+
+#[test]
+fn on_conflict_do_nothing_keeps_the_rows_without_a_stored_document() {
+    let sql = "INSERT INTO items (__name__, sku, stock) VALUES ('a-1', 'a-1', 3) \
+               ON CONFLICT (__name__) DO NOTHING";
+
+    let expected = atomic(
+        fluent()
+            .literals([item(Some("a-1"), "a-1", 3)])
+            .define_variables(|e| [e.field("__name__").alias("conflict_key")])
+            .add_fields(|_| {
+                [stored_item(field("__name__").alias("found")).alias("_conflict_stored")]
+            })
+            .filter(|q| q.field("_conflict_stored").is_null())
+            .remove_fields(["_conflict_stored"])
+            .into_pipeline(),
+        FirestoreInsertWrite::new().with_target(items()),
+    );
+
+    assert_eq!(translated_write(sql), expected);
+}
+
+#[test]
+fn on_conflict_do_update_merges_the_set_fields_into_the_stored_document() {
+    let sql = "INSERT INTO items (__name__, sku, stock) VALUES ('a-1', 'a-1', 3) \
+               ON CONFLICT (__name__) DO UPDATE \
+               SET stock = stock + excluded.stock, dims.w = excluded.stock, dims.h = 1 \
+               WHERE items.stock > 0";
+    let stored = || field("_conflict_stored");
+    let e = FirestorePipelineExprBuilder;
+    let dims = e.conditional(
+        stored().map_get("dims").is_type(FirestoreValueType::Map),
+        stored().map_get("dims"),
+        e.map(Vec::<(String, FirestoreExpr)>::new()),
+    );
+
+    let expected = atomic(
+        fluent()
+            .literals([item(Some("a-1"), "a-1", 3)])
+            .define_variables(|e| [e.field("__name__").alias("conflict_key")])
+            .add_fields(|_| {
+                [stored_item(e.current_document().alias("document")).alias("_conflict_stored")]
+            })
+            .filter(|q| {
+                q.for_any([
+                    q.condition(stored().is_null()),
+                    q.field("_conflict_stored.stock").greater_than(0),
+                ])
+            })
+            .replace_with(
+                |e| {
+                    e.conditional(
+                        stored().is_null(),
+                        e.current_document().map_remove([
+                            "_conflict_stored",
+                            "__create_time__",
+                            "__update_time__",
+                        ]),
+                        stored()
+                            .map_remove(["__create_time__", "__update_time__"])
+                            .map_set([
+                                (
+                                    "dims",
+                                    dims.clone().map_set([
+                                        ("h", FirestoreExpr::constant(1)),
+                                        ("w", field("stock")),
+                                    ]),
+                                ),
+                                ("stock", field("_conflict_stored.stock").add(field("stock"))),
+                            ]),
+                    )
+                },
+                FirestoreReplaceWithMode::FullReplace,
+            )
+            .into_pipeline(),
+        FirestoreUpsertWrite::new().with_target(items()),
+    );
+
+    assert_eq!(translated_write(sql), expected);
+}
+
+#[test]
+fn on_conflict_over_a_select_matches_the_stored_document_by_id_when_subqueries_are_allowed() {
+    let sql = "INSERT INTO items SELECT __name__, stock FROM other \
+               ON CONFLICT (__name__) DO NOTHING";
+
+    assert_eq!(refused(sql).field, "ON CONFLICT");
+
+    let by_id = FirestorePipelineExprBuilder.scalar_subquery(|p| {
+        p.from("items")
+            .filter(|q| {
+                Some(
+                    field("__name__")
+                        .document_id()
+                        .is_in(FirestorePipelineExprBuilder.array([q.variable("conflict_key")])),
+                )
+            })
+            .fields(|_| [field("__name__").alias("found")])
+    });
+    let expected = atomic(
+        fluent()
+            .from("other")
+            .fields(|e| [e.field("__name__"), e.field("stock")])
+            .define_variables(|e| [e.field("__name__").document_id().alias("conflict_key")])
+            .add_fields(|_| [by_id.alias("_conflict_stored")])
+            .filter(|q| q.field("_conflict_stored").is_null())
+            .remove_fields(["_conflict_stored"])
+            .into_pipeline(),
+        FirestoreInsertWrite::new().with_target(items()),
+    );
+
+    assert_eq!(
+        translated_write_with(
+            sql,
+            &FirestoreSqlParameters::new(),
+            &FirestoreSqlOptions::new().allow_subqueries(),
+        ),
+        expected
+    );
+}
+
 #[test]
 fn an_update_sets_each_target_and_a_dotted_target_sets_a_nested_field() {
     let sql = "UPDATE items AS i SET status = 'sold_out', price = i.price * 2, dims.w = 2 \
@@ -1174,6 +1308,52 @@ fn writes_outside_their_forms_are_refused_by_name() {
         (
             "INSERT INTO items (sku) VALUES ('a') ON CONFLICT (sku) DO NOTHING",
             "ON CONFLICT",
+        ),
+        (
+            "INSERT INTO items (__name__) VALUES ('a') ON CONFLICT (__name__, sku) DO NOTHING",
+            "ON CONFLICT",
+        ),
+        (
+            "INSERT INTO items (__name__) VALUES ('a') ON CONFLICT ON CONSTRAINT c DO NOTHING",
+            "ON CONFLICT",
+        ),
+        (
+            "INSERT INTO items (__name__, stock) VALUES ('a', 1) \
+             ON CONFLICT DO UPDATE SET stock = 0",
+            "ON CONFLICT",
+        ),
+        (
+            "INSERT INTO items (sku) VALUES ('a') ON CONFLICT (__name__) DO NOTHING",
+            "ON CONFLICT",
+        ),
+        (
+            "INSERT INTO items (__name__, _conflict_stored) VALUES ('a', 1) \
+             ON CONFLICT (__name__) DO NOTHING",
+            "_conflict_stored",
+        ),
+        (
+            "INSERT INTO items (__name__, stock) VALUES ('a', 1) \
+             ON CONFLICT (__name__) DO UPDATE SET stock = 0 WHERE __name__ = 'a'",
+            "__name__",
+        ),
+        (
+            "INSERT INTO items (__name__, stock) VALUES ('a', 1) \
+             ON CONFLICT (__name__) DO UPDATE SET __name__ = 'b'",
+            "__name__",
+        ),
+        (
+            "INSERT INTO items (__name__, stock) VALUES ('a', 1) \
+             ON CONFLICT (__name__) DO UPDATE SET stock = 0, stock = 1",
+            "SET",
+        ),
+        (
+            "INSERT OR REPLACE INTO items (__name__) VALUES ('a') \
+             ON CONFLICT (__name__) DO NOTHING",
+            "ON CONFLICT",
+        ),
+        (
+            "INSERT INTO items (sku) VALUES ('a') ON DUPLICATE KEY UPDATE sku = 'b'",
+            "ON DUPLICATE KEY UPDATE",
         ),
         (
             "INSERT OR IGNORE INTO items (sku) VALUES ('a')",

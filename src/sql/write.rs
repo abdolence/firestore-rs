@@ -5,25 +5,65 @@ use super::translator::{
     at, expr_start, is_parameter, name_start, refuse_set, FirestoreSqlTranslator,
 };
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
+use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::{
-    FirestoreExpr, FirestoreFieldsStage, FirestoreInsertWrite, FirestoreLiteralsSource,
-    FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage, FirestorePipelineWrite,
-    FirestorePipelineWriteParams, FirestorePipelineWriteTransaction, FirestoreResult,
-    FirestoreSelection, FirestoreSqlStatement, FirestoreUpdateWrite, FirestoreUpsertWrite,
-    FirestoreValue, FirestoreWriteCollection,
+    FirestoreAddFieldsStage, FirestoreBoolExpr, FirestoreCollectionSource,
+    FirestoreDefineVariablesStage, FirestoreExpr, FirestoreFieldsStage, FirestoreInsertWrite,
+    FirestoreLiteralsSource, FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage,
+    FirestorePipelineWrite, FirestorePipelineWriteParams, FirestorePipelineWriteTransaction,
+    FirestoreRemoveFieldsStage, FirestoreReplaceWithMode, FirestoreReplaceWithStage,
+    FirestoreResult, FirestoreSelection, FirestoreSqlStatement, FirestoreUpdateWrite,
+    FirestoreUpsertWrite, FirestoreValue, FirestoreValueType, FirestoreWhereStage,
+    FirestoreWriteCollection,
 };
 use gcloud_sdk::google::firestore::v1::{value::ValueType, MapValue, Value};
 use sqlparser::ast::{
-    Assignment, AssignmentTarget, Delete, Expr, FromTable, Ident, Insert, Merge, ObjectName,
-    ObjectNamePart, Parens, Query, SetExpr, SqliteOnConflict, TableObject, TableWithJoins, Update,
-    Values,
+    Assignment, AssignmentTarget, ConflictTarget, Delete, DoUpdate, Expr, FromTable, Ident, Insert,
+    Merge, ObjectName, ObjectNamePart, OnConflict, OnConflictAction, OnInsert, Parens, Query,
+    SetExpr, SqliteOnConflict, TableObject, TableWithJoins, Update, Values,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-/// Why `MERGE`, `ON CONFLICT` and `REPLACE INTO` are refused, and the form that does what they
-/// are most often written for.
-const SQL_UPSERT_FORM: &str =
-    "an upsert replaces the stored document, which INSERT OR REPLACE INTO writes";
+/// Why `MERGE` and `REPLACE INTO` are refused, and the forms that do what they are most often
+/// written for.
+const SQL_UPSERT_FORM: &str = "INSERT OR REPLACE INTO replaces the stored document, and INSERT .. ON CONFLICT (__name__) DO UPDATE changes some of its fields";
+
+/// The field that holds, during an `ON CONFLICT`, the stored document a row conflicts with.
+/// Firestore refuses a name between double underscores for a field, so the name is an ordinary
+/// one that a column of the rows must not take.
+const SQL_STORED_FIELD: &str = "_conflict_stored";
+
+/// The variable that holds, during an `ON CONFLICT`, the key a row's stored document is found by.
+const SQL_CONFLICT_KEY: &str = "conflict_key";
+
+/// The fields Firestore adds to the map of a document it reads as a whole, which are not fields
+/// a write may set.
+const SQL_DOCUMENT_METADATA: [&str; 2] = ["__create_time__", "__update_time__"];
+
+/// The rows an `INSERT` writes.
+struct FirestoreSqlRows {
+    pipeline: FirestorePipeline,
+    /// The names of the fields they hold; `None` for the rows of a `SELECT *`.
+    columns: Option<Vec<String>>,
+    /// Whether they are the literal rows of a `VALUES`, whose `__name__` is known to name a
+    /// document of the collection written to.
+    literal: bool,
+}
+
+/// What a `SET` of `ON CONFLICT DO UPDATE` or `UPDATE` assigns to which field.
+struct FirestoreSqlAssignment {
+    /// The field path, as the `update` stage names it.
+    path: String,
+    /// The names that make up the path.
+    names: Vec<String>,
+    value: FirestoreExpr,
+}
+
+/// The fields of a map that a `SET` assigns, grouped under the nested map that holds them.
+enum FirestoreSqlSet {
+    Value(FirestoreExpr),
+    Nested(BTreeMap<String, FirestoreSqlSet>),
+}
 
 impl FirestoreSqlStatement {
     /// A write as the statement that runs it. Every SQL write is atomic: it applies in full or
@@ -75,17 +115,12 @@ impl FirestoreSqlTranslator<'_> {
             multi_table_else_clause,
         } = insert;
         let start = at(insert_token.0.span);
-        for (construct, set) in [
-            ("ON CONFLICT", on.is_some()),
-            ("REPLACE INTO", *replace_into),
-        ] {
-            if set {
-                return Err(FirestoreError::invalid_sql(
-                    construct,
-                    format!("{construct} has no pipeline form in SQL: {SQL_UPSERT_FORM}"),
-                    start,
-                ));
-            }
+        if *replace_into {
+            return Err(FirestoreError::invalid_sql(
+                "REPLACE INTO",
+                format!("REPLACE INTO has no pipeline form in SQL: {SQL_UPSERT_FORM}"),
+                start,
+            ));
         }
         refuse_set(
             &[
@@ -120,12 +155,21 @@ impl FirestoreSqlTranslator<'_> {
                 ))
             }
         };
+        if upsert && on.is_some() {
+            return Err(FirestoreError::invalid_sql(
+                "ON CONFLICT",
+                "INSERT OR REPLACE replaces the stored document, which leaves no conflict to resolve",
+                start,
+            ));
+        }
 
         let TableObject::TableName(name) = table else {
             return Err(FirestoreError::unsupported_sql("this INSERT target", start));
         };
         let collection_path = Self::collection_name(name)?;
-        self.collection_path(&collection_path, name_start(name))?;
+        let (parent, collection_id) = self.collection_path(&collection_path, name_start(name))?;
+        let stored_in = FirestoreCollectionSource::new(collection_id.to_string())
+            .opt_parent(parent.map(|parent| format!("{}/{parent}", self.documents_path)));
         let Some(query) = source.as_deref() else {
             return Err(FirestoreError::invalid_sql(
                 "INSERT",
@@ -133,11 +177,15 @@ impl FirestoreSqlTranslator<'_> {
                 start,
             ));
         };
-        let pipeline = match query.body.as_ref() {
+        let rows = match query.body.as_ref() {
             SetExpr::Values(values) => {
                 self.insert_values(&collection_path, query, values, columns, start)?
             }
             _ => self.insert_select(query, columns, start)?,
+        };
+        let (pipeline, upsert) = match on {
+            None => (rows.pipeline, upsert),
+            Some(on) => self.on_conflict(on, rows, &collection_path, stored_in, start)?,
         };
         let target = FirestoreWriteCollection::new(collection_path);
         Ok(if upsert {
@@ -155,7 +203,7 @@ impl FirestoreSqlTranslator<'_> {
         values: &Values,
         columns: &[ObjectName],
         start: Option<FirestoreSqlLocation>,
-    ) -> FirestoreResult<FirestorePipeline> {
+    ) -> FirestoreResult<FirestoreSqlRows> {
         Self::refuse_unmapped_clauses(query)?;
         refuse_set(
             &[
@@ -185,9 +233,13 @@ impl FirestoreSqlTranslator<'_> {
             .iter()
             .map(|Parens { content, .. }| self.row(&scope, collection_path, &names, content))
             .collect::<FirestoreResult<_>>()?;
-        Ok(FirestorePipeline::new(FirestorePipelineSource::Literals(
-            FirestoreLiteralsSource::new(rows),
-        )))
+        Ok(FirestoreSqlRows {
+            pipeline: FirestorePipeline::new(FirestorePipelineSource::Literals(
+                FirestoreLiteralsSource::new(rows),
+            )),
+            columns: Some(names),
+            literal: true,
+        })
     }
 
     /// One row of a `VALUES` as a map. A value is a literal or a parameter, since a literal row
@@ -269,14 +321,18 @@ impl FirestoreSqlTranslator<'_> {
         query: &Query,
         columns: &[ObjectName],
         start: Option<FirestoreSqlLocation>,
-    ) -> FirestoreResult<FirestorePipeline> {
+    ) -> FirestoreResult<FirestoreSqlRows> {
         let FirestoreSqlBranch {
             mut pipeline,
             columns: selected,
             ..
         } = self.query(query)?;
         if columns.is_empty() {
-            return Ok(pipeline);
+            return Ok(FirestoreSqlRows {
+                pipeline,
+                columns: selected,
+                literal: false,
+            });
         }
         let names = Self::column_names(columns)?;
         let Some(selected) = selected else {
@@ -303,12 +359,16 @@ impl FirestoreSqlTranslator<'_> {
                 .push(FirestorePipelineStage::Fields(FirestoreFieldsStage::new(
                     selected
                         .iter()
-                        .zip(names)
+                        .zip(names.iter())
                         .map(|(selected, name)| FirestoreExpr::field(selected).alias(name))
                         .collect(),
                 )));
         }
-        Ok(pipeline)
+        Ok(FirestoreSqlRows {
+            pipeline,
+            columns: Some(names),
+            literal: false,
+        })
     }
 
     /// The field names of an `INSERT` column list, each a top-level field.
@@ -371,21 +431,28 @@ impl FirestoreSqlTranslator<'_> {
         )?;
         let (pipeline, scope) =
             self.written_documents(std::slice::from_ref(table), selection.as_ref(), start)?;
-        let transforms = self.assignments(&scope, assignments)?;
+        let transforms = self
+            .assignments(&scope, &scope, assignments)?
+            .into_iter()
+            .map(|FirestoreSqlAssignment { path, value, .. }| {
+                FirestoreSelection::new(value).with_alias(path)
+            })
+            .collect();
         Ok(FirestoreSqlStatement::atomic(
             pipeline,
             FirestoreUpdateWrite::new().with_transforms(transforms),
         ))
     }
 
-    /// The fields an `UPDATE` sets, each named by the path of its target.
+    /// The fields a `SET` assigns. The targets are the fields of `targets`, and the values are
+    /// expressions over `values`.
     fn assignments(
         &mut self,
-        scope: &FirestoreSqlScope,
+        targets: &FirestoreSqlScope,
+        values: &FirestoreSqlScope,
         assignments: &[Assignment],
-    ) -> FirestoreResult<Vec<FirestoreSelection>> {
-        let mut paths: Vec<String> = Vec::with_capacity(assignments.len());
-        let mut transforms = Vec::with_capacity(assignments.len());
+    ) -> FirestoreResult<Vec<FirestoreSqlAssignment>> {
+        let mut set: Vec<FirestoreSqlAssignment> = Vec::with_capacity(assignments.len());
         for Assignment { target, value } in assignments {
             let AssignmentTarget::ColumnName(name) = target else {
                 return Err(FirestoreError::unsupported_sql(
@@ -404,7 +471,7 @@ impl FirestoreSqlTranslator<'_> {
                     }
                 })
                 .collect::<FirestoreResult<Vec<Ident>>>()?;
-            let path = scope.column(&parts)?;
+            let path = targets.column(&parts)?;
             if path == SQL_DOCUMENT_NAME_FIELD {
                 return Err(FirestoreError::invalid_sql(
                     "__name__",
@@ -412,9 +479,9 @@ impl FirestoreSqlTranslator<'_> {
                     start,
                 ));
             }
-            if paths
+            if set
                 .iter()
-                .any(|set| encloses(set, &path) || encloses(&path, set))
+                .any(|set| encloses(&set.path, &path) || encloses(&path, &set.path))
             {
                 return Err(FirestoreError::invalid_sql(
                     "SET",
@@ -422,11 +489,196 @@ impl FirestoreSqlTranslator<'_> {
                     start,
                 ));
             }
-            transforms
-                .push(FirestoreSelection::new(self.expr(scope, value)?).with_alias(path.clone()));
-            paths.push(path);
+            set.push(FirestoreSqlAssignment {
+                names: targets
+                    .field_names(&parts)
+                    .iter()
+                    .map(|part| part.value.clone())
+                    .collect(),
+                value: self.expr(values, value)?,
+                path,
+            });
         }
-        Ok(transforms)
+        Ok(set)
+    }
+
+    /// Fails unless every row of `rows` can be matched with the stored document it conflicts
+    /// with, so that no row is written over a document it did not find.
+    fn check_conflict(
+        &self,
+        conflict_target: Option<&ConflictTarget>,
+        action: &OnConflictAction,
+        rows: &FirestoreSqlRows,
+        start: Option<FirestoreSqlLocation>,
+    ) -> FirestoreResult<()> {
+        let on_name = match conflict_target {
+            Some(ConflictTarget::Columns(columns)) => {
+                matches!(columns.as_slice(), [column] if column.value == SQL_DOCUMENT_NAME_FIELD)
+            }
+            Some(ConflictTarget::OnConstraint(_)) => false,
+            None => matches!(action, OnConflictAction::DoNothing),
+        };
+        if !on_name {
+            return Err(FirestoreError::invalid_sql(
+                "ON CONFLICT",
+                "a document conflicts on its name, the only unique key it has: write ON CONFLICT (__name__)",
+                start,
+            ));
+        }
+        if rows.columns.as_ref().is_some_and(|columns| {
+            !columns
+                .iter()
+                .any(|column| column == SQL_DOCUMENT_NAME_FIELD)
+        }) {
+            return Err(FirestoreError::invalid_sql(
+                "ON CONFLICT",
+                "the rows give no __name__, so each gets a new name and none can conflict",
+                start,
+            ));
+        }
+        if let Some(column) = rows
+            .columns
+            .iter()
+            .flatten()
+            .find(|column| *column == SQL_STORED_FIELD)
+        {
+            return Err(FirestoreError::invalid_sql(
+                column,
+                "ON CONFLICT keeps the stored document of a row under this name, so a column cannot take it",
+                start,
+            ));
+        }
+        if !rows.literal && !self.options.subqueries {
+            return Err(FirestoreError::invalid_sql(
+                "ON CONFLICT",
+                "finding the stored document of each row of a SELECT scans the collection once per row, which FirestoreSqlOptions::allow_subqueries() allows",
+                start,
+            ));
+        }
+        Ok(())
+    }
+
+    /// The rows of an `INSERT` with the conflicts with stored documents resolved, and whether
+    /// the pipeline ends in an upsert.
+    ///
+    /// Each row looks its stored document up by the name of the document it would write. A row
+    /// whose document exists is left out for `DO NOTHING`. For `DO UPDATE` it becomes the stored
+    /// document with the `SET` fields set, and a row without a stored document stays as it is;
+    /// either is then written by an upsert, since Firestore has no write that merges.
+    fn on_conflict(
+        &mut self,
+        on: &OnInsert,
+        rows: FirestoreSqlRows,
+        collection_path: &str,
+        stored_in: FirestoreCollectionSource,
+        start: Option<FirestoreSqlLocation>,
+    ) -> FirestoreResult<(FirestorePipeline, bool)> {
+        let OnInsert::OnConflict(OnConflict {
+            conflict_target,
+            action,
+        }) = on
+        else {
+            return Err(FirestoreError::unsupported_sql(
+                "ON DUPLICATE KEY UPDATE",
+                start,
+            ));
+        };
+        self.check_conflict(conflict_target.as_ref(), action, &rows, start)?;
+
+        let e = FirestorePipelineExprBuilder;
+        let name = FirestoreExpr::field(SQL_DOCUMENT_NAME_FIELD);
+        // The point lookup of a name needs the reference itself. A row of a SELECT may name a
+        // document of another collection, so it is matched by its ID, which scans.
+        let (key, stored_name) = if rows.literal {
+            (name.clone(), name)
+        } else {
+            (name.clone().document_id(), name.document_id())
+        };
+        let relation = || FirestoreSqlRelation {
+            name: Some(stored_in.collection_id.clone()),
+            collection_path: Some(collection_path.to_string()),
+        };
+        let lookup = |found: FirestoreSelection| {
+            FirestoreExpr::ScalarSubquery(
+                FirestorePipeline::new(FirestorePipelineSource::Collection(stored_in.clone()))
+                    .with_stage(FirestorePipelineStage::Where(FirestoreWhereStage::new(
+                        stored_name.clone().is_in(
+                            e.array([FirestoreExpr::Variable(SQL_CONFLICT_KEY.to_string())]),
+                        ),
+                    )))
+                    .with_stage(FirestorePipelineStage::Fields(FirestoreFieldsStage::new(
+                        vec![found],
+                    ))),
+            )
+        };
+        let stored = || FirestoreExpr::field(SQL_STORED_FIELD);
+
+        let mut pipeline = rows.pipeline;
+        pipeline
+            .stages
+            .push(FirestorePipelineStage::DefineVariables(
+                FirestoreDefineVariablesStage::new(vec![key.alias(SQL_CONFLICT_KEY)]),
+            ));
+        match action {
+            OnConflictAction::DoNothing => {
+                pipeline.stages.extend([
+                    FirestorePipelineStage::AddFields(FirestoreAddFieldsStage::new(vec![lookup(
+                        FirestoreExpr::field(SQL_DOCUMENT_NAME_FIELD).alias("found"),
+                    )
+                    .alias(SQL_STORED_FIELD)])),
+                    FirestorePipelineStage::Where(FirestoreWhereStage::new(stored().is_null())),
+                    FirestorePipelineStage::RemoveFields(FirestoreRemoveFieldsStage::new(vec![
+                        SQL_STORED_FIELD.to_string(),
+                    ])),
+                ]);
+                Ok((pipeline, false))
+            }
+            OnConflictAction::DoUpdate(DoUpdate {
+                assignments,
+                selection,
+            }) => {
+                let targets = FirestoreSqlScope::new(relation());
+                let values = FirestoreSqlScope::new(relation()).with_stored(SQL_STORED_FIELD);
+                let assignments = self.assignments(&targets, &values, assignments)?;
+                let condition = selection
+                    .as_ref()
+                    .map(|selection| self.expr(&values, selection))
+                    .transpose()?;
+
+                pipeline.stages.push(FirestorePipelineStage::AddFields(
+                    FirestoreAddFieldsStage::new(vec![lookup(
+                        e.current_document().alias("document"),
+                    )
+                    .alias(SQL_STORED_FIELD)]),
+                ));
+                if let Some(condition) = condition {
+                    pipeline
+                        .stages
+                        .push(FirestorePipelineStage::Where(FirestoreWhereStage::new(
+                            e.or([stored().is_null(), FirestoreBoolExpr::unchecked(condition)]),
+                        )));
+                }
+                let mut set = BTreeMap::new();
+                for FirestoreSqlAssignment { names, value, .. } in assignments {
+                    FirestoreSqlSet::place(&mut set, &names, value);
+                }
+                let updated = FirestoreSqlSet::apply(
+                    stored().map_remove(SQL_DOCUMENT_METADATA),
+                    &stored(),
+                    set,
+                );
+                let fresh = e
+                    .current_document()
+                    .map_remove(std::iter::once(SQL_STORED_FIELD).chain(SQL_DOCUMENT_METADATA));
+                pipeline.stages.push(FirestorePipelineStage::ReplaceWith(
+                    FirestoreReplaceWithStage::new(
+                        e.conditional(stored().is_null(), fresh, updated),
+                        FirestoreReplaceWithMode::FullReplace,
+                    ),
+                ));
+                Ok((pipeline, true))
+            }
+        }
     }
 
     pub(super) fn delete(&mut self, delete: &Delete) -> FirestoreResult<FirestoreSqlStatement> {
@@ -514,4 +766,51 @@ fn encloses(outer: &str, inner: &str) -> bool {
         || inner
             .strip_prefix(outer)
             .is_some_and(|rest| rest.starts_with('.'))
+}
+
+impl FirestoreSqlSet {
+    /// Records that `value` is assigned to the field at `names`, under the maps that hold it.
+    /// Two assignments never share a field or one inside the other: `assignments` refuses that.
+    fn place(entries: &mut BTreeMap<String, Self>, names: &[String], value: FirestoreExpr) {
+        match names {
+            [name] => {
+                entries.insert(name.clone(), Self::Value(value));
+            }
+            [name, rest @ ..] => {
+                if let Self::Nested(nested) = entries
+                    .entry(name.clone())
+                    .or_insert_with(|| Self::Nested(BTreeMap::new()))
+                {
+                    Self::place(nested, rest, value);
+                }
+            }
+            [] => {}
+        }
+    }
+
+    /// `map` with the assigned fields set. A map that holds assigned fields starts from the map
+    /// of the same name in `read`, or from an empty one when `read` has none, as `UPDATE` does
+    /// when it sets `a.b` and `a` is missing or is not a map.
+    fn apply(
+        map: FirestoreExpr,
+        read: &FirestoreExpr,
+        entries: BTreeMap<String, Self>,
+    ) -> FirestoreExpr {
+        let e = FirestorePipelineExprBuilder;
+        map.map_set(entries.into_iter().map(|(name, set)| {
+            let value = match set {
+                Self::Value(value) => value,
+                Self::Nested(nested) => {
+                    let current = read.clone().map_get(name.clone());
+                    let current = e.conditional(
+                        current.clone().is_type(FirestoreValueType::Map),
+                        current,
+                        e.map(Vec::<(String, FirestoreExpr)>::new()),
+                    );
+                    Self::apply(current.clone(), &current, nested)
+                }
+            };
+            (name, value)
+        }))
+    }
 }
