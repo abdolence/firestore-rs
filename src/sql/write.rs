@@ -48,6 +48,62 @@ struct FirestoreSqlRows {
     literal: bool,
 }
 
+impl FirestoreSqlRows {
+    /// Whether the `__name__` of each row is the reference of a document that the pipeline
+    /// carries over from its source, and not a value it computes or renames. Firestore matches a
+    /// row to its stored document by that reference, and a string or another field is not one.
+    ///
+    /// The pipeline is read from its last stage back to the first one that decides it. A stage
+    /// this does not know to keep the name answers no.
+    fn names_documents(&self) -> bool {
+        for stage in self.pipeline.stages.iter().rev() {
+            match stage {
+                FirestorePipelineStage::Where(_)
+                | FirestorePipelineStage::Sort(_)
+                | FirestorePipelineStage::Limit(_)
+                | FirestorePipelineStage::Offset(_)
+                | FirestorePipelineStage::DefineVariables(_) => {}
+                FirestorePipelineStage::RemoveFields(stage) => {
+                    if stage
+                        .fields
+                        .iter()
+                        .any(|field| field == SQL_DOCUMENT_NAME_FIELD)
+                    {
+                        return false;
+                    }
+                }
+                FirestorePipelineStage::AddFields(stage) => {
+                    if stage.fields.iter().any(|selection| {
+                        selection.alias.as_deref() == Some(SQL_DOCUMENT_NAME_FIELD)
+                    }) {
+                        return false;
+                    }
+                }
+                FirestorePipelineStage::Fields(stage) => {
+                    return stage.fields.iter().any(|selection| {
+                        match (&selection.expr, selection.alias.as_deref()) {
+                            (FirestoreExpr::Field(path), None | Some(SQL_DOCUMENT_NAME_FIELD)) => {
+                                path == SQL_DOCUMENT_NAME_FIELD
+                                    || path
+                                        .strip_suffix(SQL_DOCUMENT_NAME_FIELD)
+                                        .is_some_and(|rest| rest.ends_with('.'))
+                            }
+                            _ => false,
+                        }
+                    });
+                }
+                _ => return false,
+            }
+        }
+        matches!(
+            self.pipeline.source,
+            FirestorePipelineSource::Collection(_)
+                | FirestorePipelineSource::CollectionGroup(_)
+                | FirestorePipelineSource::Documents(_)
+        )
+    }
+}
+
 struct FirestoreSqlAssignment {
     path: String,
     names: Vec<String>,
@@ -523,6 +579,13 @@ impl FirestoreSqlTranslator<'_> {
             return Err(FirestoreError::invalid_sql(
                 "ON CONFLICT",
                 "the rows give no __name__, so each gets a new name and none can conflict",
+                start,
+            ));
+        }
+        if !rows.literal && !rows.names_documents() {
+            return Err(FirestoreError::invalid_sql(
+                "ON CONFLICT",
+                "the rows of a SELECT must carry the __name__ of a document: select __name__ itself, or * from a collection; a computed or renamed value cannot be told to be a document reference",
                 start,
             ));
         }

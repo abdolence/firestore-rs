@@ -236,7 +236,7 @@ impl FirestoreSqlTranslator<'_> {
         pipeline.stages.push(FirestorePipelineStage::Unnest(
             FirestoreUnnestStage::new(array.alias(name.clone())).opt_index_field(index_field),
         ));
-        scope.join(FirestoreSqlRelation {
+        scope.join_elements(FirestoreSqlRelation {
             name: Some(name),
             collection_path: None,
         });

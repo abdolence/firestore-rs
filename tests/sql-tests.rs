@@ -857,12 +857,12 @@ async fn collections(
 /// Returns `sql` once it is clear that its write changes the test collections alone: it writes
 /// to one of them, or it changes the documents of its source, which is one of them.
 fn guarded(db: &FirestoreDb, sql: String) -> String {
-    let translated = FirestoreSqlStatement::translate(
-        db,
-        &sql,
-        &FirestoreSqlParameters::new(),
-        &FirestoreSqlOptions::new(),
-    );
+    guarded_with(db, sql, &FirestoreSqlOptions::new())
+}
+
+fn guarded_with(db: &FirestoreDb, sql: String, options: &FirestoreSqlOptions) -> String {
+    let translated =
+        FirestoreSqlStatement::translate(db, &sql, &FirestoreSqlParameters::new(), options);
     let Ok(FirestoreSqlStatement::Write(write)) = translated else {
         panic!("{sql} does not translate to a write: {translated:?}");
     };
@@ -1062,6 +1062,36 @@ async fn an_insert_do_nothing_writes_the_rows_the_fluent_insert_of_the_new_docum
     assert_eq!(inserted, fluent_inserted);
     empty(&db, &by_sql).await?;
     empty(&db, &by_fluent).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_insert_do_nothing_over_select_star_skips_the_documents_that_exist() -> TestResult {
+    let db = setup_enterprise().await?;
+    let (by_sql, _) =
+        collections(&db, "on-conflict-star", &[("a-1", 3, 9.5), ("a-2", 0, 4.0)]).await?;
+    let source = format!("{WRITE_COLLECTION_PREFIX}on-conflict-star-source");
+    seed(&db, &source, &[("a-1", 99, 1.0), ("a-3", 5, 2.0)]).await?;
+    let options = FirestoreSqlOptions::new().allow_subqueries();
+
+    db.fluent()
+        .sql(guarded_with(
+            &db,
+            format!(
+                "INSERT INTO `{by_sql}` SELECT * FROM `{source}` ON CONFLICT (__name__) DO NOTHING"
+            ),
+            &options,
+        ))
+        .options(options)
+        .execute()
+        .await?;
+
+    let written = contents(&db, &by_sql).await?;
+    assert_eq!(written.len(), 3);
+    assert_eq!(written["a-1"]["stock"], 3);
+    assert_eq!(written["a-3"]["stock"], 5);
+    empty(&db, &by_sql).await?;
+    empty(&db, &source).await?;
     Ok(())
 }
 

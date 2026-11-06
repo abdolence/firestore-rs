@@ -1115,6 +1115,38 @@ fn on_conflict_over_a_select_needs_the_opt_in() {
 }
 
 #[test]
+fn on_conflict_over_a_select_needs_a_document_name_the_translation_can_see() {
+    let refused_sources = [
+        "INSERT INTO items SELECT 'a' AS __name__, stock FROM other \
+         ON CONFLICT (__name__) DO NOTHING",
+        "INSERT INTO items (__name__, stock) SELECT ref, stock FROM other \
+         ON CONFLICT (__name__) DO NOTHING",
+        "INSERT INTO items SELECT * FROM (SELECT stock FROM other) AS derived \
+         ON CONFLICT (__name__) DO NOTHING",
+        "INSERT INTO items SELECT * EXCEPT (__name__) FROM other \
+         ON CONFLICT (__name__) DO NOTHING",
+    ];
+    let options = FirestoreSqlOptions::new().allow_subqueries();
+    for sql in refused_sources {
+        assert_eq!(
+            refused_with(sql, &FirestoreSqlParameters::new(), &options).field,
+            "ON CONFLICT",
+            "{sql}"
+        );
+    }
+
+    for sql in [
+        "INSERT INTO items SELECT * FROM other ON CONFLICT (__name__) DO NOTHING",
+        "INSERT INTO items SELECT * FROM other WHERE stock > 0 ORDER BY stock LIMIT 5 \
+         ON CONFLICT (__name__) DO NOTHING",
+        "INSERT INTO items (__name__, stock) SELECT __name__, stock FROM other \
+         ON CONFLICT (__name__) DO UPDATE SET stock = excluded.stock",
+    ] {
+        translated_write_with(sql, &FirestoreSqlParameters::new(), &options);
+    }
+}
+
+#[test]
 fn an_update_sets_each_target_and_a_dotted_target_sets_a_nested_field() {
     let sql = "UPDATE items AS i SET status = 'sold_out', price = i.price * 2, dims.w = 2 \
                WHERE i.stock = 0";
@@ -1434,20 +1466,14 @@ fn a_join_into_a_subcollection_reads_the_children_without_a_variable_or_the_opt_
 }
 
 #[test]
-fn select_star_over_a_join_holds_each_joined_table_as_a_map_under_its_alias() {
-    assert_eq!(
-        translated(
-            "SELECT * FROM `pipeline-restaurants` AS rest JOIN subcollection('reviews') AS r ON TRUE"
-        ),
-        fluent()
-            .from("pipeline-restaurants")
-            .add_fields(|e| {
-                [e.array_subquery(|p| p.subcollection("reviews"))
-                    .alias("r")]
-            })
-            .unnest(|e| e.field("r"))
-            .into_pipeline()
-    );
+fn select_star_over_a_join_is_refused() {
+    for sql in [
+        "SELECT * FROM `pipeline-restaurants` AS rest JOIN subcollection('reviews') AS r ON TRUE",
+        "SELECT * FROM books AS b CROSS JOIN UNNEST(b.tags) AS tag",
+        "SELECT * EXCEPT (title) FROM books AS b CROSS JOIN UNNEST(b.tags) AS tag",
+    ] {
+        assert_eq!(refused_with_subqueries(sql).field, "*", "{sql}");
+    }
 }
 
 #[test]
@@ -1457,9 +1483,12 @@ fn a_join_or_a_correlated_subquery_needs_the_opt_in() {
             format!("SELECT rest.name AS name {RESTAURANTS_JOINED_TO_REVIEWS}"),
             "JOIN",
         ),
-        ("SELECT * FROM books, reviews".to_string(), "JOIN"),
         (
-            "SELECT * FROM books AS b CROSS JOIN reviews AS r".to_string(),
+            "SELECT books.title AS title FROM books, reviews".to_string(),
+            "JOIN",
+        ),
+        (
+            "SELECT b.title AS title FROM books AS b CROSS JOIN reviews AS r".to_string(),
             "JOIN",
         ),
         (
@@ -1920,6 +1949,29 @@ fn a_qualified_star_is_refused_once_the_query_joins() {
     assert_eq!(
         translated("SELECT b.* FROM books AS b"),
         translated("SELECT * FROM books AS b")
+    );
+}
+
+#[test]
+fn a_bare_name_that_is_the_alias_of_a_joined_table_is_not_read_as_a_field() {
+    for sql in [
+        "SELECT customer AS c FROM orders AS o \
+         JOIN customers AS customer ON customer.__name__ = o.customer",
+        "SELECT o.total AS total FROM orders AS o \
+         JOIN customers AS customer ON customer.__name__ = o.customer WHERE customer = 'x'",
+        "SELECT o.total AS total FROM orders AS o \
+         JOIN customers AS customer ON customer.__name__ = o.customer ORDER BY customer",
+    ] {
+        assert_eq!(refused_with_subqueries(sql).field, "customer", "{sql}");
+    }
+
+    translated_allowing_subqueries(
+        "SELECT o.total AS total FROM orders AS o \
+         LEFT JOIN customers AS customer ON customer.__name__ = o.customer \
+         WHERE customer IS NULL",
+    );
+    translated_allowing_subqueries(
+        "SELECT b.title AS title FROM books AS b CROSS JOIN UNNEST(b.tags) AS tag WHERE tag = 'x'",
     );
 }
 

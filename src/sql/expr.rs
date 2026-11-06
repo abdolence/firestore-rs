@@ -46,8 +46,8 @@ impl FirestoreSqlTranslator<'_> {
             Expr::Nested(inner) => self.expr(scope, inner),
             Expr::BinaryOp { left, op, right } => self.binary(scope, expr, left, op, right),
             Expr::UnaryOp { op, expr: operand } => self.unary(scope, expr, op, operand),
-            Expr::IsNull(operand) => self.predicate(scope, operand, FirestoreExpr::is_null),
-            Expr::IsNotNull(operand) => self.predicate(scope, operand, FirestoreExpr::is_not_null),
+            Expr::IsNull(operand) => self.null_test(scope, operand, FirestoreExpr::is_null),
+            Expr::IsNotNull(operand) => self.null_test(scope, operand, FirestoreExpr::is_not_null),
             Expr::IsTrue(operand) => self.predicate(scope, operand, |value| value.equal(true)),
             Expr::IsNotTrue(operand) => {
                 self.predicate(scope, operand, |value| value.not_equal(true))
@@ -198,6 +198,23 @@ impl FirestoreSqlTranslator<'_> {
         Ok(compute(self.expr(scope, operand)?))
     }
 
+    /// `operand IS [NOT] NULL`. Here the alias of a joined table stands for the table, which is
+    /// null for a row of a `LEFT JOIN` without a match: the anti-join is `WHERE alias IS NULL`.
+    fn null_test(
+        &mut self,
+        scope: &FirestoreSqlScope,
+        operand: &Expr,
+        test: impl FnOnce(FirestoreExpr) -> FirestoreBoolExpr,
+    ) -> FirestoreResult<FirestoreExpr> {
+        match operand {
+            Expr::Identifier(ident) if scope.is_joined_table(&ident.value) => {
+                let table = self.column(scope, std::slice::from_ref(ident))?;
+                Ok(test(table).into())
+            }
+            _ => self.predicate(scope, operand, test),
+        }
+    }
+
     fn predicate(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -297,6 +314,14 @@ impl FirestoreSqlTranslator<'_> {
             .and_then(|aggregation| aggregation.output(&ident.value))
         {
             Some(output) => Ok(output.clone()),
+            None if scope.is_joined_table(&ident.value) => Err(FirestoreError::invalid_sql(
+                &ident.value,
+                format!(
+                    "{0} is the alias of a joined table, which replaces a field {0} of the left side: name a column of the table as `{0}.column`, or give the table another alias",
+                    ident.value
+                ),
+                at(ident.span),
+            )),
             None => self.column(scope, std::slice::from_ref(ident)),
         }
     }

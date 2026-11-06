@@ -240,8 +240,8 @@ The `FROM` clause names where the documents come from:
 | `FROM (SELECT ..) AS t` | a derived table: the rows of another `SELECT` |
 | `FROM cte` | a [common table expression](#joins-and-subqueries) |
 
-A table alias is written `FROM books AS b`. A name that is defined by `WITH` hides a collection of
-the same name.
+A table alias is written `FROM books AS b`. A name that is defined by `WITH` matches without regard
+to case, as a table alias does, and hides a collection of the same name.
 
 ## Reads by ID
 
@@ -471,14 +471,17 @@ Rules for the joined names:
 - a qualified name, `v.rating`, is a column of the table or alias `v`, searched from the nearest
   query outwards, and a table or alias matches without regard to case; an alias used by two tables
   is an error;
-- a joined table lives in a field named after its alias, so an alias must not be the name of a field
-  of the left side: `o.customer` is refused in `FROM orders AS o JOIN customers AS customer`, since
-  the field `customer` of the orders is replaced by the joined table. Give the table another alias;
+- a joined table lives in a field named after its alias, and a document can hold a field of any
+  name, so the translation cannot tell whether the alias is the name of a field of the left side.
+  It refuses every way to read such a field instead. In `FROM orders AS o JOIN customers AS
+  customer`, `o.customer` is refused, and so is a bare `customer` in any place but `customer IS
+  NULL`, since the field `customer` of the orders is replaced by the joined table. Give the table
+  another alias. A bare alias of an `UNNEST` names its element, and is allowed;
 - in a query with a join or in a subquery, an unqualified name in an `ON` clause is an error, since
   either side could hold it, and so is a dotted name that starts with no table;
-- `SELECT *` over a join returns the base document's fields, and each joined table as a map under
-  its alias, `null` for an unmatched `LEFT JOIN`; `b.*` is refused in a query with a join, for the
-  base table as well as for a joined one, since it would select the joined tables too;
+- `SELECT *` and `b.*` are refused in a query with a join, for the base table as well as for a
+  joined one. The joined tables would come with the base document's fields, and replace any of them
+  that has the name of an alias. Name the columns;
 - the anti-join, the left rows that have no match, is `WHERE v IS NULL` on the alias.
   `WHERE v.rating IS NULL` matches nothing, since the field of an unmatched row is absent and not
   null;
@@ -559,7 +562,10 @@ Rules per statement:
   the stored document unchanged, and does not count it, when it is false for it. The lookup of the
   stored document by its name is bounded by the rows written. In `ON CONFLICT`, rows of a `SELECT`
   from another collection are matched by their ID, which scans the target collection once per row,
-  and so need `.allow_subqueries()`;
+  and so need `.allow_subqueries()`. The `__name__` of such a row must be the name of a document
+  that the translation can see: `SELECT __name__, ..`, or `*` of a collection. A string or another
+  field renamed to `__name__`, `*` of a derived table, and `* EXCEPT (__name__)` are refused before
+  any request, since a row without a document reference cannot be matched;
 - `ON CONFLICT` keeps the stored document of each row in a field named `_conflict_stored`. A column
   of that name is refused, and a field of that name in the rows of a `SELECT *` is dropped from
   them;

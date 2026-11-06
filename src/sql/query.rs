@@ -777,16 +777,6 @@ impl FirestoreSqlTranslator<'_> {
                     };
                     match qualifier {
                         Some(ident) if scope.relation().is_called(&ident.value) => {
-                            if scope.is_joined() {
-                                return Err(FirestoreError::invalid_sql(
-                                    "*",
-                                    format!(
-                                        "{}.* would select the joined tables too, which a query with a join keeps in the documents under their aliases: name the columns",
-                                        ident.value
-                                    ),
-                                    at(options.wildcard_token.0.span),
-                                ));
-                            }
                             wildcard = Some(self.wildcard(scope, options, wildcard.is_some())?)
                         }
                         _ => {
@@ -830,6 +820,13 @@ impl FirestoreSqlTranslator<'_> {
             opt_alias,
         } = options;
         let start = at(wildcard_token.0.span);
+        if scope.is_joined() {
+            return Err(FirestoreError::invalid_sql(
+                "*",
+                "* of a query with a join would select the joined tables too, which replace any field of the left side with the name of their alias: name the columns",
+                start,
+            ));
+        }
         refuse_set(
             &[
                 (repeated, "a second *"),

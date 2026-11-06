@@ -71,14 +71,23 @@ impl<'o> FirestoreSqlPlace<'o> {
     }
 }
 
+/// A relation joined to the base one.
+struct FirestoreSqlJoined {
+    relation: FirestoreSqlRelation,
+    /// Whether it holds the elements of an array, which are values, and not documents.
+    elements: bool,
+}
+
 /// The relations the names of one query resolve against.
 ///
 /// The base relation's fields are fields of the documents the query reads. Each joined relation
-/// is a map in those documents under the relation's name, so that two relations never share a
-/// field.
+/// is a field of those documents named after the relation, so two relations never share one. A
+/// schemaless document can hold a field of any name, so the field of a joined relation replaces
+/// a field of the base relation with the same name: the scope refuses every spelling that would
+/// read the replaced field, and every `*`.
 pub(super) struct FirestoreSqlScope<'o> {
     relation: FirestoreSqlRelation,
-    joined: Vec<FirestoreSqlRelation>,
+    joined: Vec<FirestoreSqlJoined>,
     /// The field that holds the stored document in the clauses of `ON CONFLICT DO UPDATE`. A
     /// column there is a field of the stored document, unless `excluded` qualifies it as a field
     /// of the row being inserted.
@@ -134,7 +143,25 @@ impl<'o> FirestoreSqlScope<'o> {
     }
 
     pub(super) fn join(&mut self, relation: FirestoreSqlRelation) {
-        self.joined.push(relation);
+        self.joined.push(FirestoreSqlJoined {
+            relation,
+            elements: false,
+        });
+    }
+
+    pub(super) fn join_elements(&mut self, relation: FirestoreSqlRelation) {
+        self.joined.push(FirestoreSqlJoined {
+            relation,
+            elements: true,
+        });
+    }
+
+    /// Whether `name`, written alone, is the alias of a joined table. The elements of an array
+    /// are values that a query reads by their alias, but a table is read through its columns.
+    pub(super) fn is_joined_table(&self, name: &str) -> bool {
+        self.joined
+            .iter()
+            .any(|joined| !joined.elements && joined.relation.name.as_deref() == Some(name))
     }
 
     pub(super) fn is_joined(&self) -> bool {
@@ -158,7 +185,7 @@ impl<'o> FirestoreSqlScope<'o> {
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<()> {
         let used = std::iter::once(&self.relation)
-            .chain(&self.joined)
+            .chain(self.joined.iter().map(|joined| &joined.relation))
             .any(|relation| relation.is_called(name));
         if used {
             Err(FirestoreError::invalid_sql(
@@ -192,7 +219,7 @@ impl<'o> FirestoreSqlScope<'o> {
             let hidden = self
                 .joined
                 .iter()
-                .filter_map(|joined| joined.name.as_deref())
+                .filter_map(|joined| joined.relation.name.as_deref())
                 .find(|alias| rest.first().is_some_and(|first| first.value == *alias));
             return match hidden {
                 Some(alias) => Err(FirestoreError::invalid_sql(
@@ -209,8 +236,8 @@ impl<'o> FirestoreSqlScope<'o> {
         Ok(self
             .joined
             .iter()
-            .find(|joined| joined.is_called(&qualifier.value))
-            .and_then(|joined| joined.name.as_deref())
+            .find(|joined| joined.relation.is_called(&qualifier.value))
+            .and_then(|joined| joined.relation.name.as_deref())
             .map(|alias| format!("{}.{}", field_segment(alias), field_path(rest))))
     }
 
@@ -219,7 +246,7 @@ impl<'o> FirestoreSqlScope<'o> {
     pub(super) fn output_name<'p>(&self, path: &'p str) -> &'p str {
         self.joined
             .iter()
-            .filter_map(|joined| joined.name.as_deref())
+            .filter_map(|joined| joined.relation.name.as_deref())
             .find_map(|name| {
                 path.strip_prefix(field_segment(name).as_ref())
                     .and_then(|rest| rest.strip_prefix('.'))
