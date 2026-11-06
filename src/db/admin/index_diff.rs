@@ -5,16 +5,21 @@
 //! without a server: [`plan_index_changes`] takes the state a `ListIndexes`/`ListFields` call
 //! already fetched and never performs I/O of its own.
 
-use crate::db::admin::index_models::{CanonicalFieldPath, IMPLIED_NAME_FIELD};
+use crate::db::admin::index_models::{
+    validate_index_params_for_edition, CanonicalFieldPath, FirestoreDatabaseEdition,
+    IMPLIED_NAME_FIELD,
+};
 use crate::errors::FirestoreError;
 use crate::{
     FirestoreCompositeIndex, FirestoreExplicitFieldOverride, FirestoreFieldOverride,
     FirestoreFieldOverrideIndex, FirestoreFieldOverrideOutcome, FirestoreFieldTtlOutcome,
-    FirestoreFieldTtlState, FirestoreGeoIndexConfig, FirestoreIndexField, FirestoreIndexFieldMode,
-    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexQueryScope, FirestoreIndexState,
-    FirestoreListedCompositeIndex, FirestoreListedField, FirestoreQueryDirection, FirestoreResult,
-    FirestoreSearchIndexOptions, FirestoreUnrecognisedIndexItem, FirestoreVectorIndexConfig,
+    FirestoreFieldTtlState, FirestoreGeoIndexConfig, FirestoreIndexDensity, FirestoreIndexField,
+    FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexQueryScope,
+    FirestoreIndexState, FirestoreListedCompositeIndex, FirestoreListedField,
+    FirestoreQueryDirection, FirestoreResult, FirestoreSearchIndexOptions,
+    FirestoreUnrecognisedIndexItem, FirestoreVectorIndexConfig,
 };
+use gcloud_sdk::google::firestore::admin::v1::database::DatabaseEdition;
 use gcloud_sdk::google::firestore::admin::v1::index::index_field::search_config::{
     SearchGeoSpec, SearchTextIndexSpec, SearchTextSpec, TextIndexType, TextMatchType,
 };
@@ -23,8 +28,8 @@ use gcloud_sdk::google::firestore::admin::v1::index::index_field::{
     SearchConfig as ProtoSearchConfig, ValueMode, VectorConfig as ProtoVectorConfig,
 };
 use gcloud_sdk::google::firestore::admin::v1::index::{
-    ApiScope, IndexField as ProtoIndexField, QueryScope as ProtoQueryScope, SearchIndexOptions,
-    State as ProtoState,
+    ApiScope, Density as ProtoDensity, IndexField as ProtoIndexField,
+    QueryScope as ProtoQueryScope, SearchIndexOptions, State as ProtoState,
 };
 use gcloud_sdk::google::firestore::admin::v1::{field, Field as ProtoField, Index as ProtoIndex};
 use std::collections::HashSet;
@@ -104,6 +109,29 @@ impl FirestoreIndexListing {
 
     pub(crate) fn ttl_fields(&self) -> impl Iterator<Item = &FirestoreListedField> {
         self.fields.iter().filter(|f| f.ttl.is_some())
+    }
+}
+
+/// The admin API documents Standard as the edition of a database that specifies none, so
+/// `Unspecified` reads as Standard.
+impl From<DatabaseEdition> for FirestoreDatabaseEdition {
+    fn from(edition: DatabaseEdition) -> Self {
+        match edition {
+            DatabaseEdition::Enterprise => FirestoreDatabaseEdition::Enterprise,
+            DatabaseEdition::Standard | DatabaseEdition::Unspecified => {
+                FirestoreDatabaseEdition::Standard
+            }
+        }
+    }
+}
+
+impl From<FirestoreIndexDensity> for ProtoDensity {
+    fn from(density: FirestoreIndexDensity) -> Self {
+        match density {
+            FirestoreIndexDensity::SparseAll => ProtoDensity::SparseAll,
+            FirestoreIndexDensity::SparseAny => ProtoDensity::SparseAny,
+            FirestoreIndexDensity::Dense => ProtoDensity::Dense,
+        }
     }
 }
 
@@ -299,7 +327,8 @@ impl TryFrom<ProtoIndexField> for FirestoreIndexField {
 }
 
 /// Converts a declared composite index to the proto shape `CreateIndex` sends. The result never
-/// carries a `__name__` field - the server appends it on creation with the implied direction.
+/// carries a `__name__` field the declaration does not state: a Standard edition database appends
+/// it on creation with the implied direction.
 impl TryFrom<FirestoreCompositeIndex> for ProtoIndex {
     type Error = FirestoreError;
 
@@ -313,6 +342,11 @@ impl TryFrom<FirestoreCompositeIndex> for ProtoIndex {
                 .map(ProtoIndexField::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
             search_index_options: index.search_options.map(Into::into),
+            unique: index.unique,
+            density: index
+                .density
+                .map_or(ProtoDensity::Unspecified, ProtoDensity::from)
+                .into(),
             ..Default::default()
         })
     }
@@ -367,7 +401,33 @@ impl TryFrom<ProtoIndex> for FirestoreCompositeIndex {
                 ))
             }
         }
+        if index.multikey {
+            return Err(FirestoreError::invalid_parameters(
+                "multikey",
+                "a multikey index is not supported",
+            ));
+        }
+        if index.shard_count != 0 {
+            return Err(FirestoreError::invalid_parameters(
+                "shard_count",
+                format!("an index of {} shards is not supported", index.shard_count),
+            ));
+        }
         let query_scope = FirestoreIndexQueryScope::try_from(index.query_scope)?;
+        // The proto marks `Unspecified` input only, so a listing that carries it left the density
+        // to the database's default, the same as a declaration without one.
+        let density = match ProtoDensity::try_from(index.density) {
+            Ok(ProtoDensity::Unspecified) => None,
+            Ok(ProtoDensity::SparseAll) => Some(FirestoreIndexDensity::SparseAll),
+            Ok(ProtoDensity::SparseAny) => Some(FirestoreIndexDensity::SparseAny),
+            Ok(ProtoDensity::Dense) => Some(FirestoreIndexDensity::Dense),
+            Err(_) => {
+                return Err(FirestoreError::invalid_parameters(
+                    "density",
+                    format!("{} is not a known index density", index.density),
+                ))
+            }
+        };
         let fields = index
             .fields
             .into_iter()
@@ -377,6 +437,8 @@ impl TryFrom<ProtoIndex> for FirestoreCompositeIndex {
             fields,
             query_scope,
             search_options: index.search_index_options.map(Into::into),
+            unique: index.unique,
+            density,
         })
     }
 }
@@ -608,6 +670,18 @@ impl FirestoreCompositeIndex {
         }
     }
 
+    /// The density Firestore builds this index with on a database of `edition`: the declared one,
+    /// or the edition's default when none is declared.
+    fn density_on(&self, edition: FirestoreDatabaseEdition) -> FirestoreIndexDensity {
+        self.density.unwrap_or(match edition {
+            FirestoreDatabaseEdition::Standard => FirestoreIndexDensity::SparseAll,
+            FirestoreDatabaseEdition::Enterprise if self.is_search_index() => {
+                FirestoreIndexDensity::SparseAny
+            }
+            FirestoreDatabaseEdition::Enterprise => FirestoreIndexDensity::Dense,
+        })
+    }
+
     /// This index with every field path spelled canonically (see [`CanonicalFieldPath`]), the
     /// spelling a listed index already carries, so the two compare field by field.
     fn with_canonical_field_paths(&self) -> Self {
@@ -700,14 +774,19 @@ fn strip_implied_name_at_expected_position(
     Some(without_name)
 }
 
-/// Whether `declared` and `listed` are the same index.
+/// Whether `declared` and `listed` are the same index on a database of `edition`.
 ///
-/// A declaration that does not mention `__name__` matches a listed index with an implicit
-/// `__name__` removed only from the one position Firestore is known to place it at (see
-/// [`strip_implied_name_at_expected_position`]); a `__name__` field anywhere else makes `listed` a
-/// different index. A declaration that mentions `__name__` explicitly is compared field-for-field,
-/// position included, since the caller is then asserting a specific shape rather than leaving it
-/// to Firestore.
+/// Two indexes over the same fields are different indexes when one is unique and the other is
+/// not, or when Firestore builds them with different densities, a density left unset being the
+/// edition's default.
+///
+/// An Enterprise edition database appends no `__name__` field, so there the fields compare as
+/// they are. On Standard, a declaration that does not mention `__name__` matches a listed index
+/// with an implicit `__name__` removed only from the one position Firestore is known to place it
+/// at (see [`strip_implied_name_at_expected_position`]); a `__name__` field anywhere else makes
+/// `listed` a different index. A declaration that mentions `__name__` explicitly is compared
+/// field-for-field, position included, since the caller is then asserting a specific shape rather
+/// than leaving it to Firestore.
 ///
 /// Field paths compare in their canonical spelling (see [`CanonicalFieldPath`]).
 ///
@@ -717,18 +796,22 @@ fn strip_implied_name_at_expected_position(
 pub(crate) fn composite_index_matches(
     declared: &FirestoreCompositeIndex,
     listed: &FirestoreCompositeIndex,
+    edition: FirestoreDatabaseEdition,
 ) -> bool {
     if declared.query_scope != listed.query_scope
+        || declared.unique != listed.unique
+        || declared.density_on(edition) != listed.density_on(edition)
         || declared.listed_search_options() != listed.listed_search_options()
     {
         return false;
     }
     let declared = declared.with_canonical_field_paths();
     let listed = listed.with_canonical_field_paths();
-    if declared
-        .fields
-        .iter()
-        .any(|field| field.field_path == IMPLIED_NAME_FIELD)
+    if edition == FirestoreDatabaseEdition::Enterprise
+        || declared
+            .fields
+            .iter()
+            .any(|field| field.field_path == IMPLIED_NAME_FIELD)
     {
         return declared.fields == listed.fields;
     }
@@ -782,21 +865,27 @@ impl FirestoreError {
 /// terminals already run before calling in, so every caller gets it - including a
 /// `FirestoreIndexSupport` implementation that reaches this function some other way.
 ///
+/// It also checks the rules that depend on the database's `edition`. On an Enterprise edition
+/// database, which has no single-field indexes, a declared exemption is already satisfied and is
+/// never planned, and a pruning plan that would revert a listed override is refused.
+///
 /// A listed index or field this crate's domain model cannot represent - a search config other
 /// than one text or geo spec, a MongoDB-compat or Datastore-mode API scope, `COLLECTION_RECURSIVE`,
-/// an unspecified or unknown order, array config, index state or TTL state - is reported in the
-/// returned plan's `unrecognised` list. It is never matched against a declaration and never
-/// planned for deletion or revert, even when pruning: this crate cannot know that removing it is
-/// what the declaration intends.
+/// a multikey or sharded index, an unspecified or unknown order, array config, index state or TTL
+/// state - is reported in the returned plan's `unrecognised` list. It is never matched against a
+/// declaration and never planned for deletion or revert, even when pruning: this crate cannot know
+/// that removing it is what the declaration intends.
 ///
 /// `prune` decides where every other undeclared item goes: into the lists `.sync()` acts on
 /// (`delete_indexes`, `revert_fields`, `disable_ttl`), or into the `kept_undeclared_*` lists.
 pub(crate) fn plan_index_changes(
     params: &FirestoreIndexParams,
     listing: &FirestoreIndexListing,
+    edition: FirestoreDatabaseEdition,
     prune: bool,
 ) -> FirestoreResult<FirestoreIndexPlan> {
     crate::validate_index_params(params)?;
+    validate_index_params_for_edition(params, edition)?;
 
     let mut plan = FirestoreIndexPlan {
         unrecognised: listing.unrecognised.clone(),
@@ -826,7 +915,8 @@ pub(crate) fn plan_index_changes(
             .iter()
             .enumerate()
             .filter(|(position, listed)| {
-                !matched_listed_index[*position] && composite_index_matches(declared, &listed.index)
+                !matched_listed_index[*position]
+                    && composite_index_matches(declared, &listed.index, edition)
             })
             .map(|(position, _)| position)
             .collect();
@@ -907,6 +997,12 @@ pub(crate) fn plan_index_changes(
                     plan.update_fields.push(declared.clone());
                 }
             }
+            // An Enterprise edition database has no single-field indexes to exempt a field from,
+            // and it stores nothing for an exemption it accepts, so one can never read back as
+            // written.
+            None | Some((_, FirestoreFieldOverrideOutcome::Inherited))
+                if edition == FirestoreDatabaseEdition::Enterprise
+                    && declared.indexes.is_empty() => {}
             None | Some((_, FirestoreFieldOverrideOutcome::Inherited)) => {
                 plan.update_fields.push(declared.clone());
             }
@@ -922,6 +1018,16 @@ pub(crate) fn plan_index_changes(
             && !declared_override_paths
                 .contains(&CanonicalFieldPath::from(listed.field_path.as_str()))
         {
+            if prune && edition == FirestoreDatabaseEdition::Enterprise {
+                return Err(FirestoreError::invalid_parameters(
+                    "field_overrides",
+                    format!(
+                        "pruning would revert the override listed on {}, and an Enterprise \
+                         edition database refuses single-field index changes",
+                        listed.field_path
+                    ),
+                ));
+            }
             if prune {
                 plan.revert_fields.push(listed.clone());
             } else {
@@ -976,6 +1082,7 @@ pub(crate) fn plan_index_changes(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::db::admin::index_models::FirestoreDatabaseEdition::Standard;
     use crate::{FirestoreCollectionId, FirestoreFieldOverrideTarget};
 
     /// The `users` group's resource path on [`FakeFirestore`](crate::db::fake_firestore), so a
@@ -1086,7 +1193,7 @@ pub(crate) mod tests {
     fn empty_declaration_against_no_listed_state_plans_nothing() {
         let params = users_params();
         let existing = FirestoreIndexExistingState::default();
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan, FirestoreIndexPlan::default());
     }
 
@@ -1097,7 +1204,8 @@ pub(crate) mod tests {
                 asc_field("country"),
                 desc_field("created_at"),
             ])]);
-        let plan = plan_index_changes(&params, &FirestoreIndexListing::default(), false).unwrap();
+        let plan = plan_index_changes(&params, &FirestoreIndexListing::default(), Standard, false)
+            .unwrap();
         assert_eq!(plan.create_indexes, params.composite_indexes);
         assert!(plan.unchanged.is_empty());
     }
@@ -1122,7 +1230,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.create_indexes.is_empty());
         assert!(plan.kept_undeclared_indexes.is_empty());
@@ -1179,7 +1287,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.create_indexes.is_empty());
         assert!(
@@ -1220,7 +1328,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(
             plan.kept_undeclared_indexes.is_empty(),
@@ -1248,7 +1356,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(plan.kept_undeclared_indexes.len(), 1);
     }
@@ -1281,7 +1389,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(plan.kept_undeclared_indexes.len(), 1);
     }
@@ -1303,7 +1411,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.pending, vec![declared]);
         assert!(plan.unchanged.is_empty());
     }
@@ -1325,7 +1433,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.needs_repair, vec![declared]);
         assert!(plan.kept_undeclared_indexes.is_empty());
     }
@@ -1418,7 +1526,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert!(plan.update_fields.is_empty());
         assert!(plan.kept_undeclared_fields.is_empty());
     }
@@ -1431,7 +1539,7 @@ pub(crate) mod tests {
         };
         let params = users_params().with_field_overrides(vec![declared.clone()]);
         let existing = FirestoreIndexExistingState::default();
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.update_fields, vec![declared]);
     }
 
@@ -1454,7 +1562,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, false).unwrap();
         assert_eq!(
             plan.kept_undeclared_fields,
             vec![FirestoreListedField::try_from(listed_field).unwrap()]
@@ -1488,7 +1596,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert!(plan.update_fields.is_empty());
     }
 
@@ -1522,7 +1630,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert!(
             plan.update_fields.is_empty(),
             "a write must never be planned over configuration this crate cannot read"
@@ -1561,7 +1669,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert!(
             plan.update_fields.is_empty(),
             "a write must never be planned over an in-flight revert"
@@ -1575,7 +1683,8 @@ pub(crate) mod tests {
     #[test]
     fn ttl_field_with_no_listed_config_is_enabled() {
         let params = users_params().with_ttl_fields(vec!["expires_at".to_string()]);
-        let plan = plan_index_changes(&params, &FirestoreIndexListing::default(), false).unwrap();
+        let plan = plan_index_changes(&params, &FirestoreIndexListing::default(), Standard, false)
+            .unwrap();
         assert_eq!(plan.enable_ttl, vec!["expires_at".to_string()]);
     }
 
@@ -1596,7 +1705,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert!(
             plan.enable_ttl.is_empty(),
             "an unrecognised listed TTL state must never be planned for enabling"
@@ -1615,7 +1724,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert!(plan.enable_ttl.is_empty());
     }
 
@@ -1627,7 +1736,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unchanged_ttl, vec!["expires_at".to_string()]);
     }
 
@@ -1638,7 +1747,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, false).unwrap();
         assert_eq!(
             plan.kept_undeclared_ttl,
             vec![FirestoreListedField::try_from(listed_field).unwrap()]
@@ -1683,7 +1792,7 @@ pub(crate) mod tests {
             indexes: vec![listed.clone()],
             fields: vec![],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unrecognised.len(), 1);
         assert_eq!(plan.unrecognised[0].name, listed.name);
         assert!(plan.kept_undeclared_indexes.is_empty());
@@ -1709,7 +1818,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field.clone()],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unrecognised.len(), 1);
         assert_eq!(plan.unrecognised[0].name, listed_field.name);
         assert!(plan.kept_undeclared_ttl.is_empty());
@@ -1743,7 +1852,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(
             plan.kept_undeclared_indexes.is_empty(),
@@ -1771,7 +1880,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(
             plan.kept_undeclared_indexes.len(),
@@ -1811,7 +1920,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.kept_undeclared_indexes.is_empty());
     }
@@ -1835,7 +1944,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.create_indexes, vec![declared]);
         assert_eq!(
             plan.kept_undeclared_indexes.len(),
@@ -1893,7 +2002,7 @@ pub(crate) mod tests {
             indexes: vec![non_default_duplicate.clone(), default_shaped.clone()],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.create_indexes.is_empty());
         assert_eq!(plan.kept_undeclared_indexes.len(), 1);
@@ -1924,7 +2033,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, false).unwrap();
         assert!(
             plan.kept_undeclared_fields.is_empty(),
             "an inherited index config is not an explicit override to prune"
@@ -1955,7 +2064,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, false).unwrap();
         assert!(
             plan.kept_undeclared_fields.is_empty(),
             "a field already reverting must not be planned for another revert"
@@ -1976,7 +2085,7 @@ pub(crate) mod tests {
             indexes: vec![listed.clone()],
             fields: vec![],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unrecognised.len(), 1);
         assert_eq!(plan.unrecognised[0].name, listed.name);
         assert!(plan.kept_undeclared_indexes.is_empty());
@@ -1997,7 +2106,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.unrecognised.len(), 1);
     }
 
@@ -2045,7 +2154,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert!(
             plan.update_fields.is_empty(),
             "the valid override half must still be matched"
@@ -2077,7 +2186,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert!(
             plan.enable_ttl.is_empty(),
             "the valid TTL half must still be matched"
@@ -2104,7 +2213,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.pending_ttl, vec!["expires_at".to_string()]);
         assert!(plan.enable_ttl.is_empty());
     }
@@ -2124,7 +2233,7 @@ pub(crate) mod tests {
             indexes: vec![],
             fields: vec![listed_field],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.needs_repair_ttl, vec!["expires_at".to_string()]);
         assert!(plan.enable_ttl.is_empty());
     }
@@ -2146,7 +2255,7 @@ pub(crate) mod tests {
             indexes: vec![listed.clone()],
             fields: vec![],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), false).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, false).unwrap();
         assert_eq!(plan.kept_undeclared_indexes.len(), 1);
         assert_eq!(plan.kept_undeclared_indexes[0].name, listed.name);
     }
@@ -2158,9 +2267,16 @@ pub(crate) mod tests {
         // already.
         let params = users_params()
             .with_composite_indexes(vec![FirestoreCompositeIndex::new(vec![asc_field("a")])]);
-        let err =
-            plan_index_changes(&params, &FirestoreIndexListing::default(), false).unwrap_err();
-        assert!(err.to_string().contains("at least two fields"));
+        let err = plan_index_changes(&params, &FirestoreIndexListing::default(), Standard, false)
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                FirestoreError::InvalidParametersError(invalid)
+                    if invalid.public.field == "composite_indexes"
+            ),
+            "{err:?}"
+        );
     }
 
     fn exempt_listed_config() -> field::IndexConfig {
@@ -2187,7 +2303,7 @@ pub(crate) mod tests {
                 indexes: vec![],
                 fields: vec![field_resource(listed, Some(exempt_listed_config()), None)],
             };
-            let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+            let plan = plan_index_changes(&params, &existing.into(), Standard, true).unwrap();
             assert!(
                 plan.update_fields.is_empty(),
                 "declared {declared} against listed {listed}: {plan}"
@@ -2210,7 +2326,7 @@ pub(crate) mod tests {
                 indexes: vec![],
                 fields: vec![field_resource(listed, None, Some(active_ttl_config()))],
             };
-            let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+            let plan = plan_index_changes(&params, &existing.into(), Standard, true).unwrap();
             assert_eq!(plan.unchanged_ttl, vec![declared.to_string()], "{plan}");
             assert!(plan.enable_ttl.is_empty(), "{plan}");
             assert!(plan.disable_ttl.is_empty(), "{plan}");
@@ -2234,7 +2350,7 @@ pub(crate) mod tests {
             indexes: vec![listed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+        let plan = plan_index_changes(&params, &existing.into(), Standard, true).unwrap();
         assert_eq!(plan.unchanged, vec![declared], "{plan}");
         assert!(plan.create_indexes.is_empty(), "{plan}");
         assert!(plan.delete_indexes.is_empty(), "{plan}");
@@ -2250,7 +2366,7 @@ pub(crate) mod tests {
                 ttl_config: None,
             }],
         };
-        let plan = plan_index_changes(&users_params(), &existing.into(), true).unwrap();
+        let plan = plan_index_changes(&users_params(), &existing.into(), Standard, true).unwrap();
         assert_eq!(plan.unrecognised.len(), 1, "{plan}");
         assert!(plan.revert_fields.is_empty(), "{plan}");
     }
