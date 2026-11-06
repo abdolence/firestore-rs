@@ -83,7 +83,7 @@ same chain set, so call each at most once. On a Standard edition database a comp
 at least two fields, unless it is a single vector field on its own; an Enterprise edition database
 takes an index of one field (see [Enterprise edition](#enterprise-edition)). An index holds at
 most one `.array_contains()` field, and a field override or a TTL path may not repeat. These, and
-the vector and field-count limits Firestore itself enforces, are checked at `.plan()`/`.sync()`
+the vector, field-count and density limits Firestore itself enforces, are checked at `.plan()`/`.sync()`
 before anything is written, and return `InvalidParametersError` naming what is wrong.
 
 ## plan() versus sync()
@@ -245,8 +245,8 @@ the database's edition once per call and follow its rules:
 - a composite index of one field is how a single field is indexed. Firestore accepts one there,
   ordered, `.array_contains()` or `__name__`, while a Standard edition database refuses it;
 - `.field_overrides()` has nothing to override. An `.exempt()` is already satisfied and is never
-  written. An override that lists indexes, or a pruning sync that would revert one, fails with
-  `InvalidParametersError` before anything is written, since Firestore refuses both;
+  written. An override that lists indexes fails with `InvalidParametersError` before anything is
+  written, since Firestore refuses it;
 - `.ttl()` enables a TTL field as on Standard, and `.prune_undeclared()` disables an undeclared
   one the same way;
 - Firestore appends no `__name__` field to an index, so `[a, b]` and `[a, b, __name__]` are two
@@ -286,9 +286,11 @@ every document, with a missing field stored as unset; a sparse index leaves out 
 that lack the indexed fields. Enterprise builds an index dense by default, and a text or geo
 search index always as `FirestoreIndexDensity::SparseAny`, an entry for each document that has at
 least one of the fields. Standard builds every index as `SparseAll`, an entry only for a document
-that has all of them, and accepts no other density, while Enterprise refuses `SparseAll`. Two
-indexes over the same fields are different indexes when their densities differ, or when one is
-unique and the other is not, and a declaration matches only the one it describes.
+that has all of them, and accepts no other density, while Enterprise refuses `SparseAll`, and a
+search index there takes only `SparseAny`. A declaration with a density the edition refuses fails
+with `InvalidParametersError` before anything is written. Two indexes over the same fields are
+different indexes when their densities differ, or when one is unique and the other is not, and a
+declaration matches only the one it describes.
 
 On an empty collection, `.wait_until_ready(..)` waited 62 to 68 seconds for one index of each kind
 on an Enterprise edition database: ordered, array, vector, text, geo, and text with geo. On a
@@ -335,8 +337,8 @@ everything else.
 When the fresh listing shows no matching index, the sync returns the `ALREADY_EXISTS` error
 instead of reporting the index as unchanged. Firestore keeps answering `ALREADY_EXISTS` for a
 while after an index with the same fields is deleted, while the listing no longer shows it: 40 to
-60 seconds on an Enterprise edition database, and about 5 minutes on a Standard one. Run the sync
-again once the answer changes.
+60 seconds on an Enterprise edition database, measured once. Run the sync again once the answer
+changes.
 
 In both cases `withheld_deletes` on the report lists the indexes left in place and the reason.
 Reverts and TTL disables do not wait for new indexes.
@@ -474,7 +476,9 @@ current state either, so it can still fail.
 - deletes undeclared composite indexes, once the new ones have finished building.
 
 Every TTL disable finishes before any TTL enable is sent, since Firestore allows only one TTL
-field per collection group.
+field per collection group. Declaring a `.ttl()` field while the group lists a different TTL field
+fails `.plan()` and `.sync()` with `InvalidParametersError` before anything is written, unless
+`.prune_undeclared()` disables the listed field.
 
 ## Waiting for changes to finish
 
@@ -624,6 +628,9 @@ The plan event's fields split undeclared items the same way pruning does: `delet
 `kept_undeclared_indexes`, `kept_undeclared_fields` and `kept_undeclared_ttl` are what it would
 leave alone. This run has none of either, since the group carries nothing undeclared to begin
 with.
+
+Each call reads the database's edition first, in a `Firestore Index Edition` span, ahead of the
+listing. Its time counts in the report's `total` and in no phase.
 
 `.sync()` also logs a `Firestore Index Apply` span with one child span per applied action, and a
 `Firestore Index Wait` span when waiting is requested, with one child span per operation polled.
