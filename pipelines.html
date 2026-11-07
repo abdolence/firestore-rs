@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -182,9 +182,10 @@
 source, such as a collection; every later stage takes the documents of the stage before it and
 passes its own output on: <code>filter</code>, <code>sort</code>, <code>fields</code>, <code>limit</code>, and so on. The library sends it
 through Firestore’s <code>ExecutePipeline</code> call.</p>
-<p>Pipelines need a database of the Firestore <em>Enterprise edition</em>, the edition that runs them. A
-pipeline sent to a Standard edition database fails at once with <code>FAILED_PRECONDITION</code>, and the
-library does not retry it.</p>
+<p>Pipelines need a database of the Firestore <em>Enterprise edition</em>, the edition that runs them, see
+<a href="./editions.html">Standard and Enterprise editions</a>. A pipeline sent to a Standard edition database
+fails at once with <code>FAILED_PRECONDITION</code>, and the library does not retry it, unless a cache session
+answers it, see <a href="./caching.html#pipelines">Caching pipelines</a>.</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::Deserialize;
 </span><span class="boring">#[derive(Debug, Clone, Deserialize)]
@@ -212,29 +213,15 @@ library does not retry it.</p>
 <p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/pipeline-query.rs">here</a>.</p>
 <h2 id="when-to-use-a-pipeline"><a class="header" href="#when-to-use-a-pipeline">When to use a pipeline</a></h2>
 <p>The Core query API (<code>db.fluent().select()</code>) stays the choice for a Standard edition database, and
-for what it covers. A pipeline adds:</p>
-<ul>
-<li>grouped aggregations, computed fields, <code>distinct</code>, <code>unnest</code> and <code>union</code>;</li>
-<li><a href="./pipeline-aggregations-and-joins.html">joins</a> through subqueries;</li>
-<li><a href="./pipeline-search.html">text and geo search</a>;</li>
-<li><a href="./pipeline-writes.html">writes by query</a>: update, delete, insert and upsert of the documents a
-pipeline selects;</li>
-<li>Query Explain on Enterprise, where the Core <code>.explain()</code> is rejected with <code>INVALID_ARGUMENT</code>.</li>
-</ul>
-<p>Indexes are optional for a pipeline. A pipeline without an index that covers its filter still
-runs, as a <em>table scan</em>: Firestore reads every document of the collection from primary storage
-instead of reading an index. The cost of a pipeline follows the amount of data it scans, so a
-table scan over a large collection costs in proportion to the collection. See
-<a href="#recognising-a-full-scan">Recognising a full scan</a>.</p>
-<p>Three behaviours differ from a Core query with the same filter and order:</p>
-<ul>
-<li><code>not_equal</code> is true for a document that lacks the field, while a Core <code>!=</code> leaves the document
-out;</li>
-<li><code>sort</code> keeps the documents that lack the sorted field and orders them as null, while Core
-leaves them out;</li>
-<li><code>sort</code> adds no tie-break on the document name; list a unique field last to fix the order of
-documents with equal values.</li>
-</ul>
+for what it covers. A pipeline adds grouped aggregations, computed fields, joins, search, writes by
+query and Query Explain on Enterprise, see
+<a href="./editions/choosing-an-api.html">Choosing Core queries, pipelines or SQL</a>.</p>
+<p>Indexes are optional for a pipeline, except for a search. A pipeline without an index that covers
+its filter runs as a table scan, and costs by the data it scans, see
+<a href="./editions/query-plans.html">Query plans and cost</a>.</p>
+<p>A pipeline with the same filter and order as a Core query can return other documents: <code>not_equal</code>
+matches a document that lacks the field, <code>sort</code> keeps such documents, and <code>sort</code> adds no
+tie-break on the document name. See <a href="./editions/semantics.html">Query and write semantics</a>.</p>
 <h2 id="sources"><a class="header" href="#sources">Sources</a></h2>
 <p><code>db.fluent().pipeline().select()</code> starts a pipeline that reads documents, and the next call picks
 the source, in the words of Core’s <code>select().from(..)</code>:</p>
@@ -405,84 +392,17 @@ for a Core query.</p>
 <p>A session created with <code>read_through_cache</code> or <code>read_cached_only</code> answers a pipeline from the
 cache when it only filters, sorts and pages cached documents, see
 <a href="./caching.html#pipelines">Caching pipelines</a>.</p>
-<h2 id="explaining-a-pipeline"><a class="header" href="#explaining-a-pipeline">Explaining a pipeline</a></h2>
-<p>Query Explain returns the plan Firestore chose for a pipeline. <code>.explain()</code> runs the pipeline for
-its plan only: no document is read or returned. <code>.explain_with_options(..)</code> with <code>analyze</code> set
-also returns the documents, and adds the execution profile to the plan. The plan arrives as text
-in the metadata of the last item:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">use futures::TryStreamExt;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let items: Vec&lt;_&gt; = db
-    .fluent()
-    .pipeline()
-    .select()
-    .from("books")
-    .filter(|q| q.field("genre").eq("Dystopian"))
-    .explain()
-    .stream_query_with_metadata()
-    .await?
-    .try_collect()
-    .await?;
-
-for item in items {
-    if let Some(stats) = item.metadata.explain_stats {
-        println!("{}", stats.text);
-    }
-}
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p>The text is Firestore’s own format. The library does not parse it, since Firestore can change it
-at any time.</p>
-<h3 id="recognising-a-full-scan"><a class="header" href="#recognising-a-full-scan">Recognising a full scan</a></h3>
-<p>The plan names how the pipeline reads its documents:</p>
-<ul>
-<li>a plan that ends in a <code>TableScan</code> node reads every document of the collection from primary
-storage;</li>
-<li>a plan that ends in a <code>SequentialScan</code> node with an <code>index:</code> line reads through that index,
-such as <code>index: /books (genre ASC, rating DESC)@[id = CICAgJim14AK]</code>;</li>
-<li>a search ends in a <code>StIndexSearch</code> node.</li>
-</ul>
-<p>Run <code>.explain()</code> on a pipeline before it reaches production data, and add an index when it shows a
-<code>TableScan</code> over a large collection. Firestore has no setting that rejects a table scan, and the
-library adds no check of its own.</p>
-<h3 id="choosing-an-index"><a class="header" href="#choosing-an-index">Choosing an index</a></h3>
-<p><code>.force_index(..)</code> on a <code>from(..)</code> source makes the pipeline read through the index with a given
-ID, the one Firestore assigned to it. It is available on a collection source and on a
-collection-group source, and nowhere else:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let by_genre = db
-    .fluent()
-    .pipeline()
-    .select()
-    .from("books")
-    .force_index(FirestoreIndexHint::Index("CICAgJim14AK".parse()?))
-    .filter(|q| q.field("genre").eq("Dystopian"))
-    .query()
-    .await?;
-
-let scanned = db
-    .fluent()
-    .pipeline()
-    .select()
-    .from("books")
-    .force_index(FirestoreIndexHint::TableScan)
-    .filter(|q| q.field("genre").eq("Dystopian"))
-    .query()
-    .await?;
-<span class="boring">let _ = (by_genre, scanned);
-</span><span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p><code>FirestoreIndexHint::TableScan</code> forces a table scan. An ID that names no index of that collection
-fails the request at once with <code>INVALID_ARGUMENT</code>. An index that cannot serve the filter is still
-used, and the pipeline then reads all of it. A vector index cannot be forced.</p>
+<h2 id="query-plans-and-indexes"><a class="header" href="#query-plans-and-indexes">Query plans and indexes</a></h2>
+<p><code>.explain()</code> and <code>.explain_with_options(..)</code> return the plan Firestore chose for a pipeline, and
+<code>.force_index(..)</code> on a <code>from(..)</code> source picks the index it reads through. Both are described in
+<a href="./editions/query-plans.html#explaining-a-pipeline">Query plans and cost</a>, with how to recognise a
+table scan in the plan.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="explain-query.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="preconditions.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -496,7 +416,7 @@ used, and the pipeline then reads all of it. A vector index cannot be forced.</p
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="explain-query.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="preconditions.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -217,7 +217,7 @@ document or collection ID or name, with no conversion:</p>
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>Store the validated type in your own structs instead of a bare <code>String</code> to carry the proof along
-with the value; it deserializes through the same validation, so a <code>CreateSession</code> built from an
+with the value; it deserialises through the same validation, so a <code>CreateSession</code> built from an
 untrusted request body rejects a bad ID before it reaches Firestore:</p>
 <pre><code class="language-rust"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::{Deserialize, Serialize};

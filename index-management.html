@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -182,6 +182,15 @@
 outside your Rust code: through the console, <code>gcloud</code> or the Firebase CLI’s
 <code>firestore.indexes.json</code>. The library supports declaring them in Rust instead, next to the
 structs and queries that need them, and reconciling Firestore with one explicit call.</p>
+<p>This page covers the statement, its runs and its reports. The kinds of index have pages of their
+own:</p>
+<ul>
+<li><a href="./index-management/composite.html">Composite and vector indexes</a>, with the single-field overrides
+of the Standard edition;</li>
+<li><a href="./index-management/search.html">Search indexes</a>, on the Enterprise edition;</li>
+<li><a href="./index-management/ttl-and-enterprise.html">TTL and the Enterprise edition</a>: the TTL policy, and
+the index rules of an Enterprise edition database, unique indexes and density.</li>
+</ul>
 <h2 id="enabling-the-admin-feature"><a class="header" href="#enabling-the-admin-feature">Enabling the <code>admin</code> feature</a></h2>
 <p>Index management, and the other administrative operations under <code>db.fluent()</code> that need the
 Firestore Admin API, are behind the <code>admin</code> cargo feature, off by default:</p>
@@ -234,21 +243,19 @@ declarations ending in <code>.plan()</code> or <code>.sync()</code>:</p>
 println!("{report}");
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p><code>.composite()</code> builds the group’s composite indexes: order a field with <code>.asc()</code>/<code>.desc()</code>, or
-mark it <code>.array_contains()</code>, and chain <code>.all_descendants()</code> onto the whole index for a
-collection-group index rather than a single collection. A <code>.vector(dimension)</code> field must be the
-last field of the index it belongs to.</p>
-<p><code>.field_overrides()</code> builds single-field overrides: <code>.exempt()</code> removes a field from automatic
-single-field indexing entirely, and <code>.indexes([...])</code> replaces it with exactly the indexes listed.
-See <a href="#a-field-override-replaces-the-whole-automatic-set">below</a> for what that replacement means.</p>
-<p><code>.ttl()</code> names the one field per collection group whose timestamp value enables document TTL.</p>
+<ul>
+<li><code>.composite()</code> builds the group’s composite and vector indexes, see
+<a href="./index-management/composite.html">Composite and vector indexes</a>;</li>
+<li><code>.field_overrides()</code> builds the single-field overrides of a Standard edition database, see
+<a href="./index-management/composite.html#single-field-overrides-standard-edition">Single-field overrides</a>;</li>
+<li><code>.ttl()</code> names the one field per collection group whose timestamp value enables document TTL, see
+<a href="./index-management/ttl-and-enterprise.html#ttl-policy">TTL policy</a>.</li>
+</ul>
 <p>Each of <code>.composite()</code>, <code>.field_overrides()</code> and <code>.ttl()</code> replaces whatever an earlier call in the
-same chain set, so call each at most once. On a Standard edition database a composite index needs
-at least two fields, unless it is a single vector field on its own; an Enterprise edition database
-takes an index of one field (see <a href="#enterprise-edition">Enterprise edition</a>). An index holds at
-most one <code>.array_contains()</code> field, and a field override or a TTL path may not repeat. These, and
-the vector, field-count and density limits Firestore itself enforces, are checked at <code>.plan()</code>/<code>.sync()</code>
-before anything is written, and return <code>InvalidParametersError</code> naming what is wrong.</p>
+same chain set, so call each at most once. A field override or a TTL path may not repeat. These
+rules, the rules of the database’s edition, and the vector, field-count and density limits
+Firestore itself enforces, are checked at <code>.plan()</code>/<code>.sync()</code> before anything is written, and
+return <code>InvalidParametersError</code> naming what is wrong.</p>
 <h2 id="plan-versus-sync"><a class="header" href="#plan-versus-sync">plan() versus sync()</a></h2>
 <p><code>.plan()</code> is read-only: it lists what Firestore already has for the owned group and reports what
 <code>.sync()</code> would change, without writing anything.</p>
@@ -337,101 +344,6 @@ let tagged_rust: Vec&lt;Post&gt; = db
 <p>The ID is shared across the whole database, including subcollections your own code never writes
 to. A statement owns the collection group, so <code>.prune_undeclared()</code> on <code>collection_group("posts")</code>
 reaches the indexes of every <code>posts</code> collection in the database.</p>
-<h2 id="text-and-geo-search-indexes"><a class="header" href="#text-and-geo-search-indexes">Text and geo search indexes</a></h2>
-<p>The pipeline <a href="./pipeline-search.html">search stage</a> runs against search indexes, which only a
-database of the Firestore Enterprise edition has. A text index covers one or more string fields,
-and a geo index covers a geo point field. Declare them as composite indexes with <code>.text()</code> and
-<code>.geo()</code> on a field:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>db.fluent()
-    .indexes()
-    .collection_group("restaurants")
-    .composite(|i| {
-        i.indexes([
-            i.index([i.field("menu").text(), i.field("description").text()])
-                .search_options(
-                    FirestoreSearchIndexOptions::new().with_text_language("en".to_string()),
-                ),
-            i.index([i.field("location").geo()]),
-        ])
-    })
-    .sync()
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<ul>
-<li>A search index holds text and geo fields only. An index that mixes them with ordered, array or
-vector fields is rejected with <code>InvalidParametersError</code> at <code>.plan()</code>/<code>.sync()</code>;</li>
-<li>A text search covers all the text fields of the index it uses, and Firestore offers no index
-that matches one field by name;</li>
-<li><code>.search_options(..)</code> sets the options of a text index. <code>text_language</code> is the BCP 47 language
-tag the fields are indexed in, such as <code>en</code>; when it is left unset, Firestore detects each
-document’s language and lists the option as <code>und</code>, the code for an undetermined language.
-<code>text_language_override_field_path</code> names the field that holds a document’s own language, and
-Firestore reads <code>language</code> when it is unset. An index declared without options matches the
-index Firestore lists with those defaults;</li>
-<li><code>.geo_with(config)</code> takes a <code>FirestoreGeoIndexConfig</code> that can leave GeoJSON points out of a geo
-index, which Firestore indexes by default;</li>
-<li><code>.all_descendants()</code> on the index scopes it to a collection group, which a collection-group
-search needs;</li>
-<li>on a Standard edition database <code>.plan()</code> and <code>.sync()</code> refuse a search index with
-<code>InvalidParametersError</code> before anything is written.</li>
-</ul>
-<h2 id="enterprise-edition"><a class="header" href="#enterprise-edition">Enterprise edition</a></h2>
-<p>An Enterprise edition database builds no index on its own: there are no automatic single-field
-indexes, so every index a query needs is one the statement declares. <code>.plan()</code> and <code>.sync()</code> read
-the database’s edition once per call and follow its rules:</p>
-<ul>
-<li>a composite index of one field is how a single field is indexed. Firestore accepts one there,
-ordered, <code>.array_contains()</code> or <code>__name__</code>, while a Standard edition database refuses it;</li>
-<li><code>.field_overrides()</code> has nothing to override. An <code>.exempt()</code> is already satisfied and is never
-written. An override that lists indexes fails with <code>InvalidParametersError</code> before anything is
-written, since Firestore refuses it;</li>
-<li><code>.ttl()</code> enables a TTL field as on Standard, and <code>.prune_undeclared()</code> disables an undeclared
-one the same way;</li>
-<li>Firestore appends no <code>__name__</code> field to an index, so <code>[a, b]</code> and <code>[a, b, __name__]</code> are two
-different indexes, and a statement can declare both;</li>
-<li>an index can be unique, refusing a write that would give two documents the same entry, and
-dense or sparse, holding an entry for every document or only for the ones that have the indexed
-fields. <code>.unique()</code> and <code>.density(..)</code> set these, as the paragraphs after the example describe.</li>
-</ul>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>db.fluent()
-    .indexes()
-    .collection_group("users")
-    .composite(|i| {
-        i.indexes([
-            i.index([i.field("email").asc()]).unique(),
-            i.index([i.field("country").asc()]),
-            i.index([i.field("country").asc(), i.field("nickname").asc()])
-                .density(FirestoreIndexDensity::SparseAny),
-        ])
-    })
-    .ttl(["expires_at"])
-    .sync()
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p>A unique index refuses a write that would give two documents the same entry in it. Firestore
-answers a create, an update and a commit alike with <code>ALREADY_EXISTS</code> (“Duplicate values are found
-for unique index.”), and the write returns <code>DataConflictError</code>. A unique index of one field is how
-a value such as an email address is kept unique across a collection.</p>
-<p>The density of an index says which documents it holds an entry for. A dense index holds one for
-every document, with a missing field stored as unset; a sparse index leaves out the documents
-that lack the indexed fields. Enterprise builds an index dense by default, and a text or geo
-search index always as <code>FirestoreIndexDensity::SparseAny</code>, an entry for each document that has at
-least one of the fields. Standard builds every index as <code>SparseAll</code>, an entry only for a document
-that has all of them, and accepts no other density, while Enterprise refuses <code>SparseAll</code>, and a
-search index there takes only <code>SparseAny</code>. A declaration with a density the edition refuses fails
-with <code>InvalidParametersError</code> before anything is written. Two indexes over the same fields are
-different indexes when their densities differ, or when one is unique and the other is not, and a
-declaration matches only the one it describes.</p>
-<p>On an empty collection, <code>.wait_until_ready(..)</code> waited 62 to 68 seconds for one index of each kind
-on an Enterprise edition database: ordered, array, vector, text, geo, and text with geo. On a
-Standard edition database, a lone vector index took 355 seconds, and three composite indexes with
-two field overrides and a TTL field 414 seconds.</p>
 <h2 id="removing-what-you-no-longer-declare"><a class="header" href="#removing-what-you-no-longer-declare">Removing what you no longer declare</a></h2>
 <p>By default, an index, override or TTL field Firestore lists for the owned group but this
 statement does not declare is only reported, never touched. Add <code>.prune_undeclared()</code> to also
@@ -600,9 +512,12 @@ is up:</p>
     .await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p><code>.wait_until_ready_with_options(...)</code> also sets the poll interval, 5 seconds by default. A
-composite or vector index build is not instant even on an empty collection, so budget minutes
-for it.</p>
+<p><code>.wait_until_ready_with_options(...)</code> also sets the poll interval, 5 seconds by default.</p>
+<p>An index build is not instant even on an empty collection. On an empty collection,
+<code>.wait_until_ready(..)</code> waited 62 to 68 seconds for one index of each kind on an Enterprise
+edition database: ordered, array, vector, text, geo, and text with geo. On a Standard edition
+database, a lone vector index took 355 seconds, and three composite indexes with two field
+overrides and a TTL field 414 seconds.</p>
 <p>The timeout covers the whole sync, from the start of the call, and every wait inside it ends by
 the same deadline. The last round of polls goes out at the deadline itself. One poll may take up
 to 10 seconds to answer (or the whole timeout, if that is shorter), so an error can arrive that
@@ -626,47 +541,7 @@ otherwise, which is long enough for a field override’s own single-field index 
 separate way to configure that default today.</p>
 <p>A revert can wait the same way for a different sync’s write, not this one’s own: see
 <a href="#running-from-several-instances">Running from several instances</a>.</p>
-<h2 id="indexing-only-chosen-fields"><a class="header" href="#indexing-only-chosen-fields">Indexing only chosen fields</a></h2>
-<p><code>f.all_fields()</code> targets Firestore’s special <code>*</code> field path, scoped to the owned collection group.
-Combined with <code>.exempt()</code>, it excludes every field in the group from automatic single-field
-indexing; list the fields you do want indexed by name alongside it:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>db.fluent()
-    .indexes()
-    .collection_group("orders")
-    .field_overrides(|f| {
-        f.fields([
-            f.all_fields().exempt(),
-            f.field("customer_id").indexes([f.ascending()]),
-            f.field("status").indexes([f.ascending(), f.descending()]),
-        ])
-    })
-    .sync()
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p>A named field declared alongside <code>all_fields()</code> wins for that field, since it is more specific:
-this is how “everything except these fields” is expressed. Composite indexes are unaffected by
-<code>all_fields()</code>.</p>
-<p>There is no database-wide equivalent. A collection-group statement never reaches the
-<code>__default__</code> group’s own <code>*</code> field, so a default applied across every collection group at once is
-deliberately out of reach from this API.</p>
-<h2 id="a-field-override-replaces-the-whole-automatic-set"><a class="header" href="#a-field-override-replaces-the-whole-automatic-set">A field override replaces the whole automatic set</a></h2>
-<p>Declaring only <code>.array_contains()</code> on a field Firestore would otherwise also index for equality
-and ordering removes that automatic support: Firestore does not merge an override with its
-defaults, and neither does <code>firestore.indexes.json</code>. <code>.indexes([...])</code> always takes the whole set
-to maintain for a field, never one index to add to what is already there. An empty list, or
-<code>.exempt()</code> (the same thing), excludes the field from single-field indexing entirely.</p>
-<h2 id="__name__-handling"><a class="header" href="#__name__-handling"><code>__name__</code> handling</a></h2>
-<p>On a Standard edition database, a composite index declared without <code>__name__</code> matches a listed
-index that has it where Firestore puts it: last in an ordinary index, or directly before the
-vector field in a vector index. The direction of that <code>__name__</code> does not matter for the match. A
-<code>__name__</code> anywhere else makes the listed index a different one. Declare <code>__name__</code> yourself only
-when a query needs a specific direction; an explicit declaration then matches only a listed index
-with exactly the same fields, <code>__name__</code> included.</p>
-<p>An Enterprise edition database appends no <code>__name__</code>, so there a declaration matches only a
-listed index with exactly its fields.</p>
+<h2 id="field-paths"><a class="header" href="#field-paths">Field paths</a></h2>
 <p>Field paths compare in one spelling, so <code>`expires_at`</code> and <code>expires_at</code>, or <code>a.`b`</code> and
 <code>`a`.b</code>, are the same field. A segment needs backticks only when it is not a plain identifier
 (letters, digits and <code>_</code>, not starting with a digit).</p>
@@ -730,8 +605,9 @@ default:</p>
 <pre><code class="language-bash">GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin -- --nocapture
 </code></pre>
 <p>Every other test in that file creates, updates or deletes real indexes, overrides or TTL policy,
-and a composite or vector index build can take 10-15 minutes even on an empty collection, so those
-carry <code>#[ignore]</code> and only run explicitly:</p>
+and waits for builds that take minutes even on an empty collection, see
+<a href="#waiting-for-changes-to-finish">Waiting for changes to finish</a>, so those carry <code>#[ignore]</code> and
+only run explicitly:</p>
 <pre><code class="language-bash">GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture
 </code></pre>
 <p>Full examples available
@@ -747,7 +623,7 @@ carry <code>#[ignore]</code> and only run explicitly:</p>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="bulk-delete.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="index-management/composite.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -761,7 +637,7 @@ carry <code>#[ignore]</code> and only run explicitly:</p>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="bulk-delete.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="index-management/composite.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

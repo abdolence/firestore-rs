@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,12 +177,12 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="firestore-database-client-instance-and-lifecycle"><a class="header" href="#firestore-database-client-instance-and-lifecycle">Firestore database client instance and lifecycle</a></h1>
+                        <h1 id="client-instance-and-lifecycle"><a class="header" href="#client-instance-and-lifecycle">Client instance and lifecycle</a></h1>
 <p>To create a new instance of Firestore client you need to provide at least a GCP project ID.
 It is not recommended creating a new client for each request, so it is recommended to create a client once and reuse it
 whenever possible.
 Cloning instances is much cheaper than creating a new one.</p>
-<p>The client is created using the <code>Firestore::new</code> method:</p>
+<p>The client is created using the <code>FirestoreDb::new</code> method:</p>
 <pre><code class="language-rust no_run"><span class="boring">fn config_env_var(name: &amp;str) -&gt; Result&lt;String, String&gt; {
 </span><span class="boring">    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 </span><span class="boring">}
@@ -239,7 +239,8 @@ user credentials, impersonation, workload identity federation, the metadata serv
 <p>These types come from gcloud-sdk, which the library re-exports as <code>firestore::gcloud_sdk</code>,
 so your project needs no gcloud-sdk dependency of its own.</p>
 <p>Full example with a custom <code>CredentialsProvider</code> available <a href="https://github.com/abdolence/firestore-rs/tree/master/examples/token_auth.rs">here</a>.</p>
-<p>Firebase supports <a href="https://cloud.google.com/firestore/docs/manage-databases">multiple databases per project now</a>,
+<h2 id="multiple-databases"><a class="header" href="#multiple-databases">Multiple databases</a></h2>
+<p>Firestore supports <a href="https://cloud.google.com/firestore/docs/manage-databases">multiple databases per project</a>,
 so you can specify the database ID in the options:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
@@ -251,6 +252,9 @@ so you can specify the database ID in the options:</p>
 <span class="boring">;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<p>The <em>edition</em>, Standard or Enterprise, belongs to a database, so the database ID chooses it too. A
+project can hold databases of both editions, and a client per database ID reaches each. See
+<a href="./editions.html">Standard and Enterprise editions</a> for what each edition runs.</p>
 
                     </main>
 
@@ -260,7 +264,7 @@ so you can specify the database ID in the options:</p>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="fluent-api.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="editions.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -274,7 +278,7 @@ so you can specify the database ID in the options:</p>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="fluent-api.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="editions.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

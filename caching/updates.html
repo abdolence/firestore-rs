@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "../searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-3b510eae.js"></script>
+        <script src="../toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,7 +186,8 @@ your application or from elsewhere;</li>
 <li>Preloading at startup.</li>
 </ul>
 <p>Cached results are eventually consistent: they reflect the last state the listener delivered, so a
-write may take a moment to show up. Do not cache data that must be read at strong consistency.</p>
+write may take a moment to show up. Do not cache data that must be read at strong consistency.
+This holds for pipeline and SQL reads that the cache answers too.</p>
 <p>Firestore also reports how many documents a target matches. When that disagrees with what a
 preloaded collection holds - which means changes were missed, typically deletes that happened while
 the listener was disconnected - the cache drops the collection and has Firestore replay it. The
@@ -197,6 +198,9 @@ token has expired - the cache drops what it holds for that collection and Firest
 While that replay is in progress the collection stops answering <code>list</code> and <code>query</code> from the cache:
 <code>read_through_cache</code> falls back to Firestore, and <code>read_cached_only</code> returns a <code>CacheError</code> rather
 than a listing that looks complete but is not.</p>
+<h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
+<p>The listener that updates the cache needs real-time updates on an Enterprise edition database, a
+setting chosen when the database is created, see <a href="../caching.html#on-the-enterprise-edition">Caching</a>.</p>
 <p>Full examples are available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/caching_memory_collections.rs">here</a>
 and <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/caching_persistent_collections.rs">here</a>.</p>
 

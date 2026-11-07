@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -226,12 +226,12 @@ at the <a href="https://firebase.google.com/docs/emulator-suite">Firestore emula
 </code></pre>
 <p>No credentials are needed in that mode. This is how the caching and transaction behaviour of this
 library itself is verified, and it catches things a hand-written fake cannot.</p>
-<blockquote>
-<p><strong>Changed in 0.52</strong>: the low level <code>*Support</code> traits are no longer public, so code written to be
-generic over them no longer compiles. Note that they could never be used with the Fluent API
-from outside the crate anyway, since the builders’ constructors are crate private. See the
-<a href="https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md">migration guide</a>.</p>
-</blockquote>
+<p>Code that runs pipelines or SQL needs an emulator started in the Enterprise edition, see
+<a href="./emulator.html#on-the-enterprise-edition">Firestore emulator</a>.</p>
+<p>The low level <code>*Support</code> traits are not public, and the builders’ constructors are crate private,
+so code cannot be generic over them. The
+<a href="https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md">migration guide</a> lists the
+fluent replacement of every removed method.</p>
 
                     </main>
 

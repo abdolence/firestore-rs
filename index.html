@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Intro and motivation - Firestore for Rust</title>
+        <title>Firestore for Rust - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,22 +186,27 @@
 <ul>
 <li>Querying/streaming docs/objects;</li>
 <li>Listing documents/objects (<code>stream_all</code> follows the page tokens for you);</li>
-<li>Listening changes from Firestore, with targets added and removed on a running listener and an opt-in idle reset for silent streams;</li>
-<li>Transactions;</li>
-<li>Aggregated queries: count, sum, avg;</li>
-<li>Streaming batch writes with automatic throttling to stay under the Firestore write rate limits;</li>
-<li>K-nearest neighbor (KNN) vector search with Euclidean, Cosine and Dot Product measures;</li>
+<li><a href="./listening-changes.html">Listening changes</a> from Firestore, with targets added and removed on a running listener and an opt-in idle reset for silent streams;</li>
+<li><a href="./transactions.html">Transactions</a>;</li>
+<li><a href="./aggregations.html">Aggregated queries</a>: count, sum, avg;</li>
+<li>Streaming <a href="./batch-writes.html">batch writes</a> with automatic throttling to stay under the Firestore write rate limits;</li>
+<li>K-nearest neighbour (KNN) <a href="./vector-search.html">vector search</a> with Euclidean, Cosine and Dot Product measures;</li>
 <li>Query cursors and partition queries;</li>
 <li>Collection group queries and listing collection IDs;</li>
-<li>Server side document transforms: increment, array append/remove, server timestamp;</li>
-<li>Update/delete preconditions;</li>
+<li>Server side <a href="./document-transformations.html">document transforms</a>: increment, array append/remove, server timestamp;</li>
+<li><a href="./preconditions.html">Update/delete preconditions</a>;</li>
 <li>Consistency selectors to read at a given time or inside a transaction;</li>
-<li>Explaining queries;</li>
-<li>Firestore Enterprise edition <a href="./pipelines.html">pipelines</a>: filters, projections, <a href="./pipeline-aggregations-and-joins.html">aggregations, joins and subqueries</a>, unions, nearest neighbours and <a href="./pipeline-writes.html">writes</a>;</li>
+<li><a href="./editions/query-plans.html">Explaining queries</a>: Core queries on the Standard edition, pipelines and SQL on the Enterprise edition;</li>
+<li><a href="./request-tags.html">Request tags</a> to attribute Firestore usage;</li>
+<li><a href="./request-timeouts.html">Opt-in request timeouts</a>;</li>
+</ul>
+</li>
+<li><a href="./editions.html">On the Enterprise edition</a> of Firestore:
+<ul>
+<li><a href="./pipelines.html">Pipelines</a>: filters, projections, <a href="./pipeline-aggregations-and-joins.html">aggregations, joins and subqueries</a>, unions, nearest neighbours and <a href="./pipeline-writes.html">writes</a>;</li>
 <li>Full-text and geospatial <a href="./pipeline-search.html">search in pipelines</a>;</li>
 <li><a href="./sql.html">SQL statements</a> in the BigQuery dialect, translated into pipelines, behind an opt-in <code>sql</code> feature;</li>
-<li>Request tags to attribute Firestore usage;</li>
-<li><a href="./request-timeouts.html">Opt-in request timeouts</a>;</li>
+<li>Unique, dense and one-field indexes, and text and geo <a href="./index-management/search.html">search indexes</a>, through index management;</li>
 </ul>
 </li>
 <li>Full async based on Tokio runtime;</li>
@@ -213,10 +218,10 @@
 <li>Firestore timestamp as a <code>FirestoreTimestamp</code> type or with <code>#[serde(with)]</code> attributes (based on <a href="https://github.com/BurntSushi/jiff">jiff</a>);</li>
 <li>Lat/Lng;</li>
 <li>References;</li>
-<li>Explicit nulls;</li>
+<li><a href="./null-serialization.html">Explicit nulls</a>;</li>
 </ul>
 </li>
-<li>Caching support for collections and documents:
+<li><a href="./caching.html">Caching support</a> for collections and documents, for Core reads and for pipeline and SQL reads:
 <ul>
 <li>In-memory cache;</li>
 <li>Persistent cache;</li>
@@ -228,7 +233,7 @@ search indexes, single-field overrides and TTL policy, planned and synced with o
 following the edition of the database;</li>
 <li><a href="./bulk-delete.html">Bulk delete</a> behind the same <code>admin</code> feature: removes every document in named
 collection groups, at any depth across the whole database, in the background;</li>
-<li>Works with the Firestore emulator through <code>FIRESTORE_EMULATOR_HOST</code>, no credentials needed;</li>
+<li>Works with the <a href="./emulator.html">Firestore emulator</a> through <code>FIRESTORE_EMULATOR_HOST</code>, no credentials needed;</li>
 <li>Google client based on <a href="https://github.com/abdolence/gcloud-sdk-rs">gcloud-sdk library</a>
 that automatically detects GCE environment or application default accounts for local development;</li>
 </ul>

@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Explicit null value serialization - Firestore for Rust</title>
+        <title>Explicit null value serialisation - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,9 +177,14 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="explicit-null-value-serialization"><a class="header" href="#explicit-null-value-serialization">Explicit null value serialization</a></h1>
-<p>By default, all Option&lt;&gt; serialized as absent fields, which is convenient for many cases.
-However sometimes you need to have explicit nulls.</p>
+                        <h1 id="explicit-null-value-serialisation"><a class="header" href="#explicit-null-value-serialisation">Explicit null value serialisation</a></h1>
+<p>By default, every <code>Option</code> serialises as an absent field, which is convenient for many cases.
+Some cases need explicit nulls instead.</p>
+<p>Null and absent are not the same to a query. A Core filter or <code>order_by</code> never returns a document
+that lacks the field, and <code>is_null()</code> matches only a stored null. A pipeline or SQL statement tells
+them apart too: <code>not_equal</code> and <code>sort</code> keep a document that lacks the field, and SQL <code>IS NULL</code>
+matches a stored null only. <a href="./editions/semantics.html#null-and-absent">Query and write semantics</a>
+lists every case.</p>
 <p>To help with that there are additional attributes implemented for <code>serde(with)</code>:</p>
 <ul>
 <li>For any type:</li>

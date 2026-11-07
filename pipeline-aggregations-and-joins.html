@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -368,11 +368,10 @@ output each document’s distance under.</p>
 <span class="boring">let _ = nearest;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p>The stage does not use a vector index. Its plan is a <code>TableScan</code> followed by a sort by distance,
-even when a vector index exists on the field, so its cost follows the size of the collection. A
-Core vector query (<code>select().find_nearest(..)</code>) needs the index and uses it on a Standard edition
-database. On Enterprise it answered with and without one, and Query Explain is refused there, so
-its plan cannot show whether it used the index.</p>
+<p>The stage does not use a vector index, so its cost follows the size of the collection, see
+<a href="./editions/query-plans.html#known-table-scans">Known table scans</a>. A Core vector query,
+<code>select().find_nearest(..)</code>, has a distance threshold and uses a vector index on a Standard edition
+database, see <a href="./vector-search.html">Vector search</a>.</p>
 <h2 id="joins"><a class="header" href="#joins">Joins</a></h2>
 <p>Joins are in Preview: Firestore announced them without a launch stage, so treat their behaviour
 as subject to change.</p>

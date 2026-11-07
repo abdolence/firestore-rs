@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -294,6 +294,10 @@ ID. Use <code>update()</code> with an explicit <code>document_id</code> to creat
 <code>update_object</code>, <code>delete_by_id</code> and <code>transform</code>, plus <code>_at</code> variants for an explicit parent path.
 Each takes an optional <a href="./preconditions.html">write precondition</a>. On the simple writer a failed
 precondition fails just that one write; on the streaming writer it fails the whole stream.</p>
+<h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
+<p>An Enterprise edition database can hold unique indexes, which refuse a write that would give two
+documents the same entry. Such a write returns <code>DataConflictError</code>, see
+<a href="./index-management/ttl-and-enterprise.html#unique-indexes">Unique indexes</a>.</p>
 
                     </main>
 

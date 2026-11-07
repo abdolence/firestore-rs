@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Changing cached collections at runtime - Firestore for Rust</title>
+        <title>Changing the cached collections at runtime - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "../searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-3b510eae.js"></script>
+        <script src="../toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -194,7 +194,9 @@ written during the download is missed. <code>remove_collection</code> does the r
 collection’s resume token so its listener target ID cannot be reused against a different query.
 Use <code>remove_collection_at</code> for a sub-collection, whose absolute path a bare name cannot address.
 A collection whose target Firestore ends, for example on <code>PERMISSION_DENIED</code>, stays configured and
-suspended, so <code>add_collection</code> reports it as already cached until <code>remove_collection</code> is called.</p>
+suspended, so <code>add_collection</code> reports it as already cached until <code>remove_collection</code> is called.
+On an Enterprise edition database the listener needs real-time updates, see
+<a href="../caching.html#on-the-enterprise-edition">Caching</a>.</p>
 <p><code>FirestoreDb</code> handles created earlier with <code>read_through_cache</code> or <code>read_cached_only</code> pick both up
 immediately: they share the cache’s backend rather than a copy of it. A cache can also be built
 with no collections at all and populated entirely at runtime.</p>

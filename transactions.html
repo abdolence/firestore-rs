@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -296,14 +296,41 @@ db.run_transaction_with_options(
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>See the complete example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/read-write-transactions.rs">here</a>.</p>
-<p>Please note that Firestore doesn’t support creating documents in the transactions (generating
-document IDs automatically), so you need to use <code>update()</code> to implicitly create documents and specifying your own IDs.</p>
+<p>A Core write in a transaction cannot create a document with an ID that Firestore generates. To
+create a document in a transaction, use <code>update()</code> with an ID of your own, which creates the
+document when it does not exist. A pipeline <code>insert</code> without <code>.document_id(..)</code> is the exception on
+the Enterprise edition: it gets an ID from Firestore and runs in a transaction, see
+<a href="./pipeline-writes.html#writes-in-a-transaction">Pipeline writes</a>.</p>
+<h2 id="transactions-and-the-cache"><a class="header" href="#transactions-and-the-cache">Transactions and the cache</a></h2>
+<p>A read in a transaction never uses the <a href="./caching.html">cache</a>. The same holds for a handle from
+<code>clone_with_consistency_selector</code>, which reads at a read time:</p>
+<ul>
+<li>under <code>read_through_cache</code>, <code>get</code>, batch get, <code>query</code> and <code>list</code> are answered by Firestore, so the
+transaction reads and locks the documents. A document read this way is not written to the cache;</li>
+<li>under <code>read_cached_only</code>, the same reads return <code>FirestoreError::CacheError</code> with the code
+<code>CacheConsistencySelectorUnsupported</code>, because that mode never contacts Firestore. A transaction
+needs a <code>read_through_cache</code> handle instead.</li>
+</ul>
+<p>Inside <code>run_transaction</code>, a <code>?</code> on that error makes it transient, so the transaction is retried 4
+times, with a few seconds of backoff, before the error is returned wrapped in
+<code>FirestoreError::ErrorInTransaction</code>. Return <code>BackoffError::permanent</code> from the closure to fail on
+the first attempt.</p>
+<h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
+<p>Core aggregations and transactions behave the same on both editions; under contention an
+Enterprise database, which is optimistic by default, aborts and retries transactions more often
+than a Standard one. The concurrency mode is a setting of the database, shown as <code>concurrencyMode</code>
+by <code>gcloud firestore databases describe</code>, see
+<a href="./editions.html#telling-which-edition-a-database-is">Telling which edition a database is</a>.</p>
+<p>A transaction on Enterprise can also hold <a href="./pipeline-writes.html#writes-in-a-transaction">pipeline and SQL writes</a>.
+They are sent when they run, where Core writes are buffered and sent with the commit. A transaction
+takes pipeline writes or buffered writes: Firestore rejects a commit that mixes them with
+<code>INVALID_ARGUMENT</code>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="nested-collections.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="dynamic-documents.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -317,7 +344,7 @@ document IDs automatically), so you need to use <code>update()</code> to implici
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="nested-collections.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="dynamic-documents.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

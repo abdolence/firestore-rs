@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Explaining the query - Firestore for Rust</title>
+        <title>Standard and Enterprise editions - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,31 +177,122 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="explaining-the-query"><a class="header" href="#explaining-the-query">Explaining the query</a></h1>
-<p>The library supports the query explanation:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>db.fluent()
-    .select()
-    .from(TEST_COLLECTION_NAME)
-    .explain()
-    // or use explain_with_options if you want to provide additional options like analyze which run query to gather additional statistics
-    // .explain_with_options(FirestoreExplainOptions::new().with_analyze(true))
-    .stream_query_with_metadata()
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
+                        <h1 id="standard-and-enterprise-editions"><a class="header" href="#standard-and-enterprise-editions">Standard and Enterprise editions</a></h1>
+<p>Firestore databases come in two editions, Standard and Enterprise. The library supports both, and
+some features need Enterprise. Every page of this book applies to both editions, unless its title,
+or the part of the book it sits in, names one edition, or a section “On the Enterprise edition”
+lists what differs.</p>
+<p>The edition belongs to a database, not to the project: one project can hold databases of both
+editions, and the client picks one by its ID, see
+<a href="./client.html#multiple-databases">Client instance and lifecycle</a>.</p>
+<h2 id="what-each-edition-runs"><a class="header" href="#what-each-edition-runs">What each edition runs</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Feature</th><th>Standard</th><th>Enterprise</th></tr>
+</thead>
+<tbody>
+<tr><td>Core reads, queries, writes and batch writes</td><td>yes</td><td>yes</td></tr>
+<tr><td>A Core query that no index covers</td><td>fails with <code>FAILED_PRECONDITION</code>, “The query requires an index”</td><td>runs as a <em>table scan</em>, reading every document of the collection; without <code>order_by</code> the order of its results is unspecified</td></tr>
+<tr><td>Core aggregations: count, sum, avg</td><td>yes</td><td>yes, with the same results</td></tr>
+<tr><td><a href="./transactions.html">Transactions</a></td><td>yes</td><td>yes; optimistic by default, so under contention more attempts abort and are retried</td></tr>
+<tr><td>Core <code>.explain()</code></td><td>yes</td><td>rejected with <code>INVALID_ARGUMENT</code></td></tr>
+<tr><td>Core <a href="./vector-search.html">vector search</a></td><td>needs a vector index, and fails with <code>FAILED_PRECONDITION</code> without one</td><td>runs without a vector index</td></tr>
+<tr><td><a href="./pipelines.html">Pipelines</a> and <a href="./sql.html">SQL</a></td><td>fail with <code>FAILED_PRECONDITION</code>, unless a cache session answers them</td><td>yes</td></tr>
+<tr><td><a href="./pipeline-writes.html">Pipeline writes</a> and SQL writes</td><td>no</td><td>yes</td></tr>
+<tr><td><a href="./pipeline-search.html">Text and geo search</a></td><td>no</td><td>yes, with a search index</td></tr>
+<tr><td><a href="./listening-changes.html">Listeners</a></td><td>yes</td><td>yes, on a database with real-time updates enabled</td></tr>
+<tr><td><a href="./caching.html">Caching</a></td><td>Core reads; pipeline and SQL reads only when the cache answers them in full</td><td>Core reads, pipeline and SQL reads; the cache’s listener needs real-time updates</td></tr>
+<tr><td>Automatic single-field indexes</td><td>yes</td><td>none</td></tr>
+<tr><td>Single-field overrides</td><td>yes</td><td>none; an <code>.exempt()</code> is already satisfied</td></tr>
+<tr><td>Composite index of one field</td><td>a vector field only</td><td>yes</td></tr>
+<tr><td>Unique indexes</td><td>no</td><td>yes</td></tr>
+<tr><td>Index <em>density</em>: which documents an index holds an entry for</td><td><code>SparseAll</code> only</td><td><code>Dense</code> by default, or <code>SparseAny</code>; a search index <code>SparseAny</code></td></tr>
+<tr><td><code>__name__</code> appended to an index</td><td>yes</td><td>no</td></tr>
+<tr><td>TTL policy</td><td>yes</td><td>yes</td></tr>
+<tr><td><a href="./bulk-delete.html">Bulk delete</a></td><td>yes</td><td>yes</td></tr>
+<tr><td><a href="./emulator.html">Firestore emulator</a></td><td>the default emulator</td><td>an emulator started with <code>--edition=enterprise</code></td></tr>
+<tr><td>Billing</td><td>per document read, written and deleted</td><td>read units and write units, with real-time updates billed separately</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="telling-which-edition-a-database-is"><a class="header" href="#telling-which-edition-a-database-is">Telling which edition a database is</a></h2>
+<p><code>gcloud firestore databases describe</code> prints the settings of a database, among them its edition,
+its real-time updates mode and its concurrency mode:</p>
+<pre><code class="language-sh">gcloud firestore databases describe --database=my-database
+</code></pre>
+<p>These lines of its output name the three settings:</p>
+<pre><code class="language-text">concurrencyMode: OPTIMISTIC
+databaseEdition: ENTERPRISE
+realtimeUpdatesMode: REALTIME_UPDATES_MODE_ENABLED
+</code></pre>
+<p>The Firestore page of the Google Cloud console lists the databases of a project with the edition
+of each.</p>
+<p>Two errors also tell the editions apart: a pipeline sent to a Standard edition database fails with
+<code>FAILED_PRECONDITION</code>, and a Core <code>.explain()</code> sent to an Enterprise edition database fails with
+<code>INVALID_ARGUMENT</code>, “Explain options are not supported in RunQuery API for Enterprise edition”.</p>
+<p><a href="./index-management.html">Index management</a> reads the edition itself, through <code>GetDatabase</code>, on
+every <code>.plan()</code> and <code>.sync()</code>, and follows the rules of that edition.</p>
+<h2 id="settings-fixed-at-creation"><a class="header" href="#settings-fixed-at-creation">Settings fixed at creation</a></h2>
+<p>The edition and the real-time updates setting are immutable: to change either, create a new
+database with the wanted settings and move the data. Both are chosen when the database is created:</p>
+<pre><code class="language-sh">gcloud firestore databases create --database=my-database --edition=enterprise \
+  --location=nam5 --enable-firestore-data-access --enable-realtime-updates
+</code></pre>
+<p>Google’s documentation does not agree on the default of real-time updates for an Enterprise
+edition database, so set <code>--enable-realtime-updates</code> explicitly when the database needs
+<a href="./listening-changes.html#on-the-enterprise-edition">listeners</a> or a
+<a href="./caching.html#on-the-enterprise-edition">cache</a>.</p>
+<h2 id="limits"><a class="header" href="#limits">Limits</a></h2>
+<ul>
+<li>a pipeline or SQL statement sent to a Standard edition database fails at once with
+<code>FAILED_PRECONDITION</code>, and the library does not retry it;</li>
+<li>a search without a search index that covers it fails with <code>FAILED_PRECONDITION</code>, see
+<a href="./pipeline-search.html">Pipeline search</a>;</li>
+<li>joins and subqueries are in Preview, see
+<a href="./pipeline-aggregations-and-joins.html#joins">Pipeline aggregations and joins</a>;</li>
+<li>Firestore rejects an atomic pipeline or SQL write that is too big, see
+<a href="./pipeline-writes.html#write-limits">Write limits</a>;</li>
+<li>Firestore has no setting that rejects a table scan, see
+<a href="./editions/query-plans.html#recognising-a-full-scan">Query plans and cost</a>;</li>
+<li>a Core <code>.explain()</code> is rejected on Enterprise, where only a pipeline returns a plan.</li>
+</ul>
+<h2 id="query-and-write-semantics"><a class="header" href="#query-and-write-semantics">Query and write semantics</a></h2>
+<p>A pipeline and a SQL statement keep Firestore’s pipeline semantics, which differ from a Core query
+in a few places: <code>not_equal</code> matches a document that lacks the field, <code>sort</code> keeps such documents,
+and the stages run in the order they are written.
+<a href="./editions/semantics.html">Query and write semantics</a> lists every difference, with the SQL spelling
+of each.</p>
+<h2 id="indexes"><a class="header" href="#indexes">Indexes</a></h2>
+<p>An Enterprise edition database builds no index on its own, takes indexes of one field, unique and
+dense indexes, and search indexes. A Standard edition database indexes every field automatically,
+and takes single-field overrides. See
+<a href="./index-management/composite.html">Composite and vector indexes</a>,
+<a href="./index-management/search.html">Search indexes</a> and
+<a href="./index-management/ttl-and-enterprise.html">TTL and the Enterprise edition</a> for the rules, and
+<a href="./index-management.html#waiting-for-changes-to-finish">Waiting for changes to finish</a> for the build
+times measured on each edition.</p>
+<h2 id="cost"><a class="header" href="#cost">Cost</a></h2>
+<p>Standard bills each document read, written and deleted; Enterprise bills read units (4 KiB) and
+write units (1 KiB, one more per indexed field) instead, and real-time updates as a separate
+charge. A <em>read unit</em> is 4 KiB of data, documents or index entries, that a read processes, so an
+Enterprise read costs by the data it scans. The rates are on Google’s pricing pages, for
+<a href="https://cloud.google.com/firestore/pricing">Standard</a> and
+<a href="https://firebase.google.com/docs/firestore/enterprise/pricing">Enterprise</a>.
+<a href="./editions/query-plans.html">Query plans and cost</a> shows how to read what a query costs.</p>
+<h2 id="which-api-to-use"><a class="header" href="#which-api-to-use">Which API to use</a></h2>
+<p><a href="./editions/choosing-an-api.html">Choosing Core queries, pipelines or SQL</a> lists when each API fits,
+on each edition.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="preconditions.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="client.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="pipelines.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="editions/semantics.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -211,11 +302,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="preconditions.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="client.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="pipelines.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="editions/semantics.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

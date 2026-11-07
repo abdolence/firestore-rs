@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Listening the document changes - Firestore for Rust</title>
+        <title>Listening to document changes - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,7 +177,7 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="listening-the-document-changes-on-firestore"><a class="header" href="#listening-the-document-changes-on-firestore">Listening the document changes on Firestore</a></h1>
+                        <h1 id="listening-to-document-changes"><a class="header" href="#listening-to-document-changes">Listening to document changes</a></h1>
 <p>To help to work with asynchronous event listener the library supports high level API for
 listening the events from Firestore on a separate thread:</p>
 <p>The listener implementation needs to be provided with a storage for the last received token for specified targets to be
@@ -306,13 +306,22 @@ reconnect.</li>
 <p>120 seconds is the recommended value, and the one Google’s Node.js client uses. Firestore documents
 no interval for the updates it sends on a quiet stream, so a much shorter value can reset healthy
 streams.</p>
-<p>See complete example in examples directory.</p>
+<p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/listen-changes.rs">here</a>.</p>
+<p>A listener takes Core targets only: a query or documents by ID. Pipelines and SQL statements
+cannot be listened to, and their writes reach a listener as any other change, see
+<a href="./pipeline-writes.html#retries-and-listeners">Retries and listeners</a>.</p>
+<h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
+<p>A listener the application opens receives changes on an Enterprise database that has real-time
+updates enabled; Google ties listener support (<code>onSnapshot</code>) to that setting, which is fixed when
+the database is created, see <a href="./editions.html#settings-fixed-at-creation">Settings fixed at creation</a>.
+Real-time updates are billed separately on Enterprise, see
+<a href="./editions/query-plans.html#cost-per-edition">Cost per edition</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="sql.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="vector-search.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -326,7 +335,7 @@ streams.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="sql.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="vector-search.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

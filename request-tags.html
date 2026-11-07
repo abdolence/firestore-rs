@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,7 +181,9 @@
 <p>Firestore supports attaching request tags to requests. They are reported by Firestore
 in its monitoring and billing breakdowns, which makes them useful to attribute reads
 and writes to a specific feature, tenant or background job.</p>
-<p>Tags can be set per operation for queries, aggregations, listings and listeners:</p>
+<p>Tags can be set per operation for queries, aggregations, listings, listeners, and
+<a href="./pipelines.html#typed-results-and-metadata">pipelines</a> and <a href="./sql.html#setup">SQL statements</a> on the
+Enterprise edition:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::{Deserialize, Serialize};
 </span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]

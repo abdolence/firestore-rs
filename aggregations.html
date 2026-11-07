@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Select aggregate functions - Firestore for Rust</title>
+        <title>Aggregations - Firestore for Rust</title>
 
 
         <!-- Custom HTML head -->
@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,8 +177,10 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="select-aggregate-functions"><a class="header" href="#select-aggregate-functions">Select aggregate functions</a></h1>
-<p>The library supports the aggregation functions for the queries:</p>
+                        <h1 id="aggregations"><a class="header" href="#aggregations">Aggregations</a></h1>
+<p>The library supports the Core aggregation functions <code>count</code>, <code>sum</code> and <code>avg</code> over the documents a
+query matches. Each result field is named by <code>a.field(alias)</code>, and its operator is chosen with
+<code>.count()</code>, <code>.count_up_to(limit)</code>, <code>.sum(field)</code> or <code>.avg(field)</code>:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::{Deserialize, Serialize};
 </span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
@@ -196,16 +198,48 @@
 <span class="boring">let _ = objs;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<p>Several aggregations run in one query, each under its own alias:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct Totals { count: usize, total: i64, average: f64 }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let totals: Vec&lt;Totals&gt; = db
+    .fluent()
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .aggregate(|a| {
+        a.fields([
+            a.field(path!(Totals::count)).count(),
+            a.field(path!(Totals::total)).sum("n"),
+            a.field(path!(Totals::average)).avg("n"),
+        ])
+    })
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = totals;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>An aggregation result is not a stored document, so it has no document name, see
+<a href="./editions/semantics.html#results-without-a-document-name">Query and write semantics</a>. Grouped
+aggregations, by a field, are a pipeline feature on the Enterprise edition, see
+<a href="./pipeline-aggregations-and-joins.html">Pipeline aggregations and joins</a>.</p>
+<h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
+<p>Core aggregations and transactions behave the same on both editions. An aggregation whose filter
+needs a composite index fails on Standard with <code>FAILED_PRECONDITION</code>, and runs as a scan on
+Enterprise, see <a href="./querying.html#on-the-enterprise-edition">Querying</a>.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="document-transformations.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="nested-collections.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="preconditions.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="vector-search.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -215,11 +249,11 @@
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="document-transformations.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="nested-collections.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="preconditions.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="vector-search.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

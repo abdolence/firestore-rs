@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -177,15 +177,20 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="reading-firestore-document-metadata-as-struct-fields"><a class="header" href="#reading-firestore-document-metadata-as-struct-fields">Reading Firestore document metadata as struct fields</a></h1>
-<p>Firestore provides additional generated fields for each of document you create:</p>
+                        <h1 id="document-metadata-as-struct-fields"><a class="header" href="#document-metadata-as-struct-fields">Document metadata as struct fields</a></h1>
+<p>Firestore provides additional fields for each document:</p>
 <ul>
-<li><code>_firestore_id</code>: Generated document ID (when it is not specified from the client);</li>
-<li><code>_firestore_created</code>: The time at which the document was created;</li>
-<li><code>_firestore_updated</code>: The time at which the document was last changed;</li>
+<li><code>_firestore_id</code>: the document ID, whether the client chose it or Firestore generated it;</li>
+<li><code>_firestore_full_id</code>: the full document name, such as
+<code>projects/my-project/databases/(default)/documents/my-collection/my-id</code>;</li>
+<li><code>_firestore_created</code>: the time at which the document was created;</li>
+<li><code>_firestore_updated</code>: the time at which the document was last changed.</li>
 </ul>
-<p>An aggregation result and the result of a pipeline <code>select</code> have no document name, and so neither
-<code>_firestore_id</code> nor <code>_firestore_full_id</code>. Make a field that reads either of them an <code>Option</code>.</p>
+<p>A stored document carries its name in Core and pipeline results. A Core aggregation result, and
+the result of a pipeline stage that builds new documents, such as <code>.fields()</code> or <code>.aggregate()</code>,
+has no document name, and so neither <code>_firestore_id</code> nor <code>_firestore_full_id</code>. A SQL row has no
+name unless the statement selects <code>__name__</code>. Make a field that reads either of them an <code>Option</code>,
+see <a href="./editions/semantics.html#results-without-a-document-name">Query and write semantics</a>.</p>
 <p>To be able to read them the library makes them available
 as system fields for the Serde deserializer with reserved names,
 so you can specify them in your structures as:</p>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -302,7 +302,7 @@ with <code>Aborted</code>.</p>
 after the one before. The numbers are measurements on tiny documents.</p>
 <p>A TTL (time-to-live) policy suits retention better than a scheduled <code>delete</code>: Firestore deletes
 the documents itself once the timestamp in the policy’s field has passed, see
-<a href="./index-management.html">Index management</a>. The
+<a href="./index-management/ttl-and-enterprise.html#ttl-policy">TTL and the Enterprise edition</a>. The
 <a href="./bulk-delete.html">bulk delete</a> of the <code>admin</code> feature empties a whole collection.</p>
 <h2 id="writes-in-a-transaction"><a class="header" href="#writes-in-a-transaction">Writes in a transaction</a></h2>
 <p><code>execute_in_transaction(&amp;mut transaction)</code> runs the write in an open transaction, whether it comes
@@ -351,7 +351,7 @@ write reports a retry as a failed commit does: only <code>ABORTED</code>, which 
 is <code>retry_possible</code>.</p>
 <p>The changes of a pipeline write reach listeners. A Core listener on the collection receives a
 change for each inserted, updated or upserted document, and a delete for each deleted one. See
-<a href="./listening-changes.html">Listening the document changes</a>.</p>
+<a href="./listening-changes.html">Listening to document changes</a>.</p>
 
                     </main>
 

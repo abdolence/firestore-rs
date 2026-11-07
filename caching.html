@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -191,6 +191,9 @@ latency noticeably.</p>
 <li><code>caching-persistent</code> for a persistent, disk backed cache, implemented with
 <a href="https://github.com/cberner/redb">redb</a> and protobuf.</li>
 </ul>
+<p>The cache serves Core reads, and pipeline and SQL reads, on both editions. Which reads it answers
+is listed in <a href="./caching/modes.html">Choosing a cache mode</a>, and the Core query rules in
+<a href="./caching/modes.html#what-the-cache-answers">What the cache answers</a>.</p>
 <h2 id="pipelines"><a class="header" href="#pipelines">Pipelines</a></h2>
 <p><a href="./pipelines.html">Pipelines</a> and <a href="./sql.html">SQL</a> reads use the cache in the same sessions,
 <code>read_through_cache</code> and <code>read_cached_only</code>. The cache answers a pipeline on its own when every
@@ -276,12 +279,18 @@ collection or <code>documents(..)</code>:</p>
 <p><code>GROUP BY</code>, aggregates, <code>DISTINCT</code>, <code>UNION</code>, joins and subqueries, <code>collection_group(..)</code>,
 <code>database()</code>, <code>+ - * / %</code>, <code>||</code>, <code>LOWER</code>, <code>UPPER</code>, <code>CHAR_LENGTH</code>, <code>LIKE</code>, <code>ILIKE</code>, <code>CASE</code>,
 <code>COALESCE</code>, <code>IFNULL</code>, <code>SUBSTR</code> and search run on Firestore.</p>
-<h3 id="enterprise-databases"><a class="header" href="#enterprise-databases">Enterprise databases</a></h3>
+<h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
 <p>The listener that keeps a cache current needs real-time updates on a database of the Enterprise
 edition. They are enabled when the database is created:</p>
 <pre><code class="language-sh">gcloud firestore databases create --database=my-database --edition=enterprise \
   --location=nam5 --enable-firestore-data-access --enable-realtime-updates
 </code></pre>
+<p>The setting is immutable, and Google’s documentation does not agree on its default for an
+Enterprise edition database, so set the flag explicitly, see
+<a href="./editions.html#settings-fixed-at-creation">Settings fixed at creation</a>.</p>
+<p>A cached Core query follows the order of the Standard edition, and documents with equal values can
+come back in another order from an Enterprise edition database, see
+<a href="./caching/modes.html#on-the-enterprise-edition">What the cache answers</a>.</p>
 
                     </main>
 

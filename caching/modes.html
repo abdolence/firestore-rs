@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "../searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-3b510eae.js"></script>
+        <script src="../toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -193,13 +193,80 @@ requests the cache cannot answer completely return an error.</li>
 <tbody>
 <tr><td>Read by ID, batch read by IDs</td><td>yes, for any cached collection</td></tr>
 <tr><td>Listing all documents in a collection</td><td>only for <strong>preloaded</strong> collections</td></tr>
-<tr><td>Querying a collection (filtering, ordering, cursors)</td><td>only for <strong>preloaded</strong> collections, and only for supported queries</td></tr>
-<tr><td>Reads in a transaction or at a read time</td><td>never: <code>read_through_cache</code> reads from Firestore, <code>read_cached_only</code> returns an error</td></tr>
+<tr><td>Querying a collection (filtering, ordering, cursors)</td><td>only for <strong>preloaded</strong> collections, and only for the queries in <a href="#what-the-cache-answers">What the cache answers</a></td></tr>
+<tr><td>Reads in a transaction or at a read time</td><td>never: <code>read_through_cache</code> reads from Firestore, <code>read_cached_only</code> returns an error, see <a href="../transactions.html#transactions-and-the-cache">Transactions</a></td></tr>
 <tr><td>Pipeline and SQL reads</td><td>for <strong>preloaded</strong> collections, and by ID for any cached collection, with the stages and functions in <a href="../caching.html#pipelines">Pipelines</a></td></tr>
 <tr><td>Paged listing, queries with metadata, aggregations, writes</td><td>never</td></tr>
 </tbody>
 </table>
 </div>
+<h2 id="what-the-cache-answers"><a class="header" href="#what-the-cache-answers">What the cache answers</a></h2>
+<p>A Core query on a preloaded collection runs in the library’s cached query engine. The engine
+returns the documents Firestore returns, in the order Firestore returns them:</p>
+<ul>
+<li>
+<p><strong>timestamps and numbers.</strong> Timestamps compare by seconds and then by the fraction of a second,
+at the precision Firestore uses:</p>
+<ul>
+<li><code>==</code>, the range operators and <code>array-contains</code> compare a timestamp on its own at the
+nanosecond;</li>
+<li><code>in</code>, <code>not-in</code> and <code>array-contains-any</code> compare at the microsecond that Firestore stores;</li>
+<li>a timestamp inside an array or a map compares at the microsecond, whichever operator is used.</li>
+</ul>
+<p>An integer and a double compare by value, so a filter on <code>1</code> matches the double <code>1.0</code>, and
+<code>order_by</code> sorts them together;</p>
+</li>
+<li>
+<p><strong>order and range filters on every type.</strong> <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>order_by</code> and cursors follow
+Firestore’s order of types (null, booleans, numbers, timestamps, strings, bytes, references, geo
+points, arrays, vectors, maps) and its order within each type. A range filter matches values of
+its own type only, and never NaN;</p>
+</li>
+<li>
+<p><strong>several <code>order_by</code> fields.</strong> The first field that differs decides. Ties end on the document
+name, in the direction of the last field. A document that lacks an <code>order_by</code> field is not
+returned, as in Firestore;</p>
+</li>
+<li>
+<p><strong>no <code>order_by</code>.</strong> Results come in the order of the fields compared with <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>,
+<code>!=</code> or <code>not-in</code>, and then by document name;</p>
+</li>
+<li>
+<p><strong>cursors, <code>offset</code> and <code>limit</code>.</strong> The cursors apply first, then <code>offset</code>, then <code>limit</code>, so
+<code>limit(10).offset(5)</code> skips 5 documents and returns up to 10. A cursor is one position in the
+order of its fields;</p>
+</li>
+<li>
+<p><strong><code>in</code>, <code>not-in</code> and <code>array-contains</code>.</strong> <code>in</code> matches a scalar field equal to any listed value,
+<code>not-in</code> one equal to none of them, leaving out documents where the field is null or absent, and
+<code>array-contains</code> an array field holding the value;</p>
+</li>
+<li>
+<p><strong>equality on arrays, maps, bytes, references and geo points.</strong> <code>==</code>, <code>!=</code>, <code>in</code>, <code>not-in</code>,
+<code>array-contains</code> and <code>array-contains-any</code> match these values. Arrays are equal when their
+elements are equal in order, and maps when their fields are equal by key; inside both, an
+integer equals the double of the same value, and null and NaN equal themselves. <code>!=</code> also matches
+a field of another type;</p>
+</li>
+<li>
+<p><strong>null and NaN in a filter.</strong> A null in a filter value matches nothing: <code>== null</code>, <code>!= null</code> and
+<code>array-contains</code> null return no documents, a null in an <code>in</code> or <code>array-contains-any</code> list is
+ignored, and a <code>not-in</code> list that holds a null returns no documents. NaN equals nothing, itself
+included, and is in no range; <code>!=</code> and <code>not-in</code> match it. Use <code>is_null</code> to find null fields:
+<code>is_null</code> does not match a document without the field, and <code>is_not_nan</code> does not match a
+document where the field is null or absent.</p>
+</li>
+</ul>
+<p>The engine applies none of <code>find_nearest</code>, <code>return_only_fields</code> and <code>explain_options</code>. A query that
+sets one is answered by Firestore under <code>read_through_cache</code>, and fails with
+<code>CacheIncompleteCollection</code> under <code>read_cached_only</code>. A <code>get</code> or batch get with <code>.fields(..)</code>
+follows the same rule, and fails with <code>CacheFieldMaskUnsupported</code> under <code>read_cached_only</code>.</p>
+<p>A query answered from the cache is eventually consistent, see
+<a href="./updates.html">How the cache is updated</a>.</p>
+<h3 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h3>
+<p>The cached order is that of the Standard edition. Documents with equal values can come back in
+another order from an Enterprise edition database than from the cache, see
+<a href="../editions/semantics.html#cached-results">Query and write semantics</a>.</p>
 
                     </main>
 

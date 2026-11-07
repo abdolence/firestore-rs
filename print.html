@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-204a04a7.js";
+            window.path_to_searchindex_js = "searchindex-234764b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3b510eae.js"></script>
+        <script src="toc-edc99909.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -187,22 +187,27 @@
 <ul>
 <li>Querying/streaming docs/objects;</li>
 <li>Listing documents/objects (<code>stream_all</code> follows the page tokens for you);</li>
-<li>Listening changes from Firestore, with targets added and removed on a running listener and an opt-in idle reset for silent streams;</li>
-<li>Transactions;</li>
-<li>Aggregated queries: count, sum, avg;</li>
-<li>Streaming batch writes with automatic throttling to stay under the Firestore write rate limits;</li>
-<li>K-nearest neighbor (KNN) vector search with Euclidean, Cosine and Dot Product measures;</li>
+<li><a href="#listening-to-document-changes">Listening changes</a> from Firestore, with targets added and removed on a running listener and an opt-in idle reset for silent streams;</li>
+<li><a href="#transactions">Transactions</a>;</li>
+<li><a href="#aggregations">Aggregated queries</a>: count, sum, avg;</li>
+<li>Streaming <a href="#batch-writes">batch writes</a> with automatic throttling to stay under the Firestore write rate limits;</li>
+<li>K-nearest neighbour (KNN) <a href="#vector-search-1">vector search</a> with Euclidean, Cosine and Dot Product measures;</li>
 <li>Query cursors and partition queries;</li>
 <li>Collection group queries and listing collection IDs;</li>
-<li>Server side document transforms: increment, array append/remove, server timestamp;</li>
-<li>Update/delete preconditions;</li>
+<li>Server side <a href="#document-transformations">document transforms</a>: increment, array append/remove, server timestamp;</li>
+<li><a href="#updatedelete-preconditions">Update/delete preconditions</a>;</li>
 <li>Consistency selectors to read at a given time or inside a transaction;</li>
-<li>Explaining queries;</li>
-<li>Firestore Enterprise edition <a href="#pipelines">pipelines</a>: filters, projections, <a href="#pipeline-aggregations-and-joins">aggregations, joins and subqueries</a>, unions, nearest neighbours and <a href="#pipeline-writes">writes</a>;</li>
+<li><a href="#query-plans-and-cost">Explaining queries</a>: Core queries on the Standard edition, pipelines and SQL on the Enterprise edition;</li>
+<li><a href="#request-tags">Request tags</a> to attribute Firestore usage;</li>
+<li><a href="#request-timeouts">Opt-in request timeouts</a>;</li>
+</ul>
+</li>
+<li><a href="#standard-and-enterprise-editions">On the Enterprise edition</a> of Firestore:
+<ul>
+<li><a href="#pipelines">Pipelines</a>: filters, projections, <a href="#pipeline-aggregations-and-joins">aggregations, joins and subqueries</a>, unions, nearest neighbours and <a href="#pipeline-writes">writes</a>;</li>
 <li>Full-text and geospatial <a href="#pipeline-search">search in pipelines</a>;</li>
 <li><a href="#sql">SQL statements</a> in the BigQuery dialect, translated into pipelines, behind an opt-in <code>sql</code> feature;</li>
-<li>Request tags to attribute Firestore usage;</li>
-<li><a href="#request-timeouts">Opt-in request timeouts</a>;</li>
+<li>Unique, dense and one-field indexes, and text and geo <a href="#search-indexes-enterprise-edition">search indexes</a>, through index management;</li>
 </ul>
 </li>
 <li>Full async based on Tokio runtime;</li>
@@ -214,10 +219,10 @@
 <li>Firestore timestamp as a <code>FirestoreTimestamp</code> type or with <code>#[serde(with)]</code> attributes (based on <a href="https://github.com/BurntSushi/jiff">jiff</a>);</li>
 <li>Lat/Lng;</li>
 <li>References;</li>
-<li>Explicit nulls;</li>
+<li><a href="#explicit-null-value-serialisation">Explicit nulls</a>;</li>
 </ul>
 </li>
-<li>Caching support for collections and documents:
+<li><a href="#caching">Caching support</a> for collections and documents, for Core reads and for pipeline and SQL reads:
 <ul>
 <li>In-memory cache;</li>
 <li>Persistent cache;</li>
@@ -229,7 +234,7 @@ search indexes, single-field overrides and TTL policy, planned and synced with o
 following the edition of the database;</li>
 <li><a href="#bulk-delete">Bulk delete</a> behind the same <code>admin</code> feature: removes every document in named
 collection groups, at any depth across the whole database, in the background;</li>
-<li>Works with the Firestore emulator through <code>FIRESTORE_EMULATOR_HOST</code>, no credentials needed;</li>
+<li>Works with the <a href="#firestore-emulator">Firestore emulator</a> through <code>FIRESTORE_EMULATOR_HOST</code>, no credentials needed;</li>
 <li>Google client based on <a href="https://github.com/abdolence/gcloud-sdk-rs">gcloud-sdk library</a>
 that automatically detects GCE environment or application default accounts for local development;</li>
 </ul>
@@ -239,6 +244,8 @@ that automatically detects GCE environment or application default accounts for l
 <pre><code class="language-toml">[dependencies]
 firestore = "0.63"
 </code></pre>
+<p>Pipelines and SQL need a database of the Enterprise edition, see
+<a href="#standard-and-enterprise-editions">Standard and Enterprise editions</a>.</p>
 <h2 id="crypto-provider-error"><a class="header" href="#crypto-provider-error">Crypto provider error</a></h2>
 <p>Depends on your other dependencies you may see the error like:</p>
 <pre><code class="language-text">no process-level CryptoProvider available -- call CryptoProvider::install_default() before this point
@@ -256,12 +263,12 @@ rustls = "0.23"
 <pre><code class="language-bash">PROJECT_ID=&lt;your-google-project-id&gt; cargo run --example crud
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="firestore-database-client-instance-and-lifecycle"><a class="header" href="#firestore-database-client-instance-and-lifecycle">Firestore database client instance and lifecycle</a></h1>
+<h1 id="client-instance-and-lifecycle"><a class="header" href="#client-instance-and-lifecycle">Client instance and lifecycle</a></h1>
 <p>To create a new instance of Firestore client you need to provide at least a GCP project ID.
 It is not recommended creating a new client for each request, so it is recommended to create a client once and reuse it
 whenever possible.
 Cloning instances is much cheaper than creating a new one.</p>
-<p>The client is created using the <code>Firestore::new</code> method:</p>
+<p>The client is created using the <code>FirestoreDb::new</code> method:</p>
 <pre><code class="language-rust no_run"><span class="boring">fn config_env_var(name: &amp;str) -&gt; Result&lt;String, String&gt; {
 </span><span class="boring">    std::env::var(name).map_err(|e| format!("{name}: {e}"))
 </span><span class="boring">}
@@ -318,7 +325,8 @@ user credentials, impersonation, workload identity federation, the metadata serv
 <p>These types come from gcloud-sdk, which the library re-exports as <code>firestore::gcloud_sdk</code>,
 so your project needs no gcloud-sdk dependency of its own.</p>
 <p>Full example with a custom <code>CredentialsProvider</code> available <a href="https://github.com/abdolence/firestore-rs/tree/master/examples/token_auth.rs">here</a>.</p>
-<p>Firebase supports <a href="https://cloud.google.com/firestore/docs/manage-databases">multiple databases per project now</a>,
+<h2 id="multiple-databases"><a class="header" href="#multiple-databases">Multiple databases</a></h2>
+<p>Firestore supports <a href="https://cloud.google.com/firestore/docs/manage-databases">multiple databases per project</a>,
 so you can specify the database ID in the options:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
@@ -330,6 +338,522 @@ so you can specify the database ID in the options:</p>
 <span class="boring">;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<p>The <em>edition</em>, Standard or Enterprise, belongs to a database, so the database ID chooses it too. A
+project can hold databases of both editions, and a client per database ID reaches each. See
+<a href="#standard-and-enterprise-editions">Standard and Enterprise editions</a> for what each edition runs.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="standard-and-enterprise-editions"><a class="header" href="#standard-and-enterprise-editions">Standard and Enterprise editions</a></h1>
+<p>Firestore databases come in two editions, Standard and Enterprise. The library supports both, and
+some features need Enterprise. Every page of this book applies to both editions, unless its title,
+or the part of the book it sits in, names one edition, or a section “On the Enterprise edition”
+lists what differs.</p>
+<p>The edition belongs to a database, not to the project: one project can hold databases of both
+editions, and the client picks one by its ID, see
+<a href="#multiple-databases">Client instance and lifecycle</a>.</p>
+<h2 id="what-each-edition-runs"><a class="header" href="#what-each-edition-runs">What each edition runs</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Feature</th><th>Standard</th><th>Enterprise</th></tr>
+</thead>
+<tbody>
+<tr><td>Core reads, queries, writes and batch writes</td><td>yes</td><td>yes</td></tr>
+<tr><td>A Core query that no index covers</td><td>fails with <code>FAILED_PRECONDITION</code>, “The query requires an index”</td><td>runs as a <em>table scan</em>, reading every document of the collection; without <code>order_by</code> the order of its results is unspecified</td></tr>
+<tr><td>Core aggregations: count, sum, avg</td><td>yes</td><td>yes, with the same results</td></tr>
+<tr><td><a href="#transactions">Transactions</a></td><td>yes</td><td>yes; optimistic by default, so under contention more attempts abort and are retried</td></tr>
+<tr><td>Core <code>.explain()</code></td><td>yes</td><td>rejected with <code>INVALID_ARGUMENT</code></td></tr>
+<tr><td>Core <a href="#vector-search-1">vector search</a></td><td>needs a vector index, and fails with <code>FAILED_PRECONDITION</code> without one</td><td>runs without a vector index</td></tr>
+<tr><td><a href="#pipelines">Pipelines</a> and <a href="#sql">SQL</a></td><td>fail with <code>FAILED_PRECONDITION</code>, unless a cache session answers them</td><td>yes</td></tr>
+<tr><td><a href="#pipeline-writes">Pipeline writes</a> and SQL writes</td><td>no</td><td>yes</td></tr>
+<tr><td><a href="#pipeline-search">Text and geo search</a></td><td>no</td><td>yes, with a search index</td></tr>
+<tr><td><a href="#listening-to-document-changes">Listeners</a></td><td>yes</td><td>yes, on a database with real-time updates enabled</td></tr>
+<tr><td><a href="#caching">Caching</a></td><td>Core reads; pipeline and SQL reads only when the cache answers them in full</td><td>Core reads, pipeline and SQL reads; the cache’s listener needs real-time updates</td></tr>
+<tr><td>Automatic single-field indexes</td><td>yes</td><td>none</td></tr>
+<tr><td>Single-field overrides</td><td>yes</td><td>none; an <code>.exempt()</code> is already satisfied</td></tr>
+<tr><td>Composite index of one field</td><td>a vector field only</td><td>yes</td></tr>
+<tr><td>Unique indexes</td><td>no</td><td>yes</td></tr>
+<tr><td>Index <em>density</em>: which documents an index holds an entry for</td><td><code>SparseAll</code> only</td><td><code>Dense</code> by default, or <code>SparseAny</code>; a search index <code>SparseAny</code></td></tr>
+<tr><td><code>__name__</code> appended to an index</td><td>yes</td><td>no</td></tr>
+<tr><td>TTL policy</td><td>yes</td><td>yes</td></tr>
+<tr><td><a href="#bulk-delete">Bulk delete</a></td><td>yes</td><td>yes</td></tr>
+<tr><td><a href="#firestore-emulator">Firestore emulator</a></td><td>the default emulator</td><td>an emulator started with <code>--edition=enterprise</code></td></tr>
+<tr><td>Billing</td><td>per document read, written and deleted</td><td>read units and write units, with real-time updates billed separately</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="telling-which-edition-a-database-is"><a class="header" href="#telling-which-edition-a-database-is">Telling which edition a database is</a></h2>
+<p><code>gcloud firestore databases describe</code> prints the settings of a database, among them its edition,
+its real-time updates mode and its concurrency mode:</p>
+<pre><code class="language-sh">gcloud firestore databases describe --database=my-database
+</code></pre>
+<p>These lines of its output name the three settings:</p>
+<pre><code class="language-text">concurrencyMode: OPTIMISTIC
+databaseEdition: ENTERPRISE
+realtimeUpdatesMode: REALTIME_UPDATES_MODE_ENABLED
+</code></pre>
+<p>The Firestore page of the Google Cloud console lists the databases of a project with the edition
+of each.</p>
+<p>Two errors also tell the editions apart: a pipeline sent to a Standard edition database fails with
+<code>FAILED_PRECONDITION</code>, and a Core <code>.explain()</code> sent to an Enterprise edition database fails with
+<code>INVALID_ARGUMENT</code>, “Explain options are not supported in RunQuery API for Enterprise edition”.</p>
+<p><a href="#index-management">Index management</a> reads the edition itself, through <code>GetDatabase</code>, on
+every <code>.plan()</code> and <code>.sync()</code>, and follows the rules of that edition.</p>
+<h2 id="settings-fixed-at-creation"><a class="header" href="#settings-fixed-at-creation">Settings fixed at creation</a></h2>
+<p>The edition and the real-time updates setting are immutable: to change either, create a new
+database with the wanted settings and move the data. Both are chosen when the database is created:</p>
+<pre><code class="language-sh">gcloud firestore databases create --database=my-database --edition=enterprise \
+  --location=nam5 --enable-firestore-data-access --enable-realtime-updates
+</code></pre>
+<p>Google’s documentation does not agree on the default of real-time updates for an Enterprise
+edition database, so set <code>--enable-realtime-updates</code> explicitly when the database needs
+<a href="#on-the-enterprise-edition-3">listeners</a> or a
+<a href="#on-the-enterprise-edition-6">cache</a>.</p>
+<h2 id="limits"><a class="header" href="#limits">Limits</a></h2>
+<ul>
+<li>a pipeline or SQL statement sent to a Standard edition database fails at once with
+<code>FAILED_PRECONDITION</code>, and the library does not retry it;</li>
+<li>a search without a search index that covers it fails with <code>FAILED_PRECONDITION</code>, see
+<a href="#pipeline-search">Pipeline search</a>;</li>
+<li>joins and subqueries are in Preview, see
+<a href="#joins">Pipeline aggregations and joins</a>;</li>
+<li>Firestore rejects an atomic pipeline or SQL write that is too big, see
+<a href="#write-limits">Write limits</a>;</li>
+<li>Firestore has no setting that rejects a table scan, see
+<a href="#recognising-a-full-scan">Query plans and cost</a>;</li>
+<li>a Core <code>.explain()</code> is rejected on Enterprise, where only a pipeline returns a plan.</li>
+</ul>
+<h2 id="query-and-write-semantics"><a class="header" href="#query-and-write-semantics">Query and write semantics</a></h2>
+<p>A pipeline and a SQL statement keep Firestore’s pipeline semantics, which differ from a Core query
+in a few places: <code>not_equal</code> matches a document that lacks the field, <code>sort</code> keeps such documents,
+and the stages run in the order they are written.
+<a href="#query-and-write-semantics-1">Query and write semantics</a> lists every difference, with the SQL spelling
+of each.</p>
+<h2 id="indexes"><a class="header" href="#indexes">Indexes</a></h2>
+<p>An Enterprise edition database builds no index on its own, takes indexes of one field, unique and
+dense indexes, and search indexes. A Standard edition database indexes every field automatically,
+and takes single-field overrides. See
+<a href="#composite-and-vector-indexes">Composite and vector indexes</a>,
+<a href="#search-indexes-enterprise-edition">Search indexes</a> and
+<a href="#ttl-and-the-enterprise-edition">TTL and the Enterprise edition</a> for the rules, and
+<a href="#waiting-for-changes-to-finish">Waiting for changes to finish</a> for the build
+times measured on each edition.</p>
+<h2 id="cost"><a class="header" href="#cost">Cost</a></h2>
+<p>Standard bills each document read, written and deleted; Enterprise bills read units (4 KiB) and
+write units (1 KiB, one more per indexed field) instead, and real-time updates as a separate
+charge. A <em>read unit</em> is 4 KiB of data, documents or index entries, that a read processes, so an
+Enterprise read costs by the data it scans. The rates are on Google’s pricing pages, for
+<a href="https://cloud.google.com/firestore/pricing">Standard</a> and
+<a href="https://firebase.google.com/docs/firestore/enterprise/pricing">Enterprise</a>.
+<a href="#query-plans-and-cost">Query plans and cost</a> shows how to read what a query costs.</p>
+<h2 id="which-api-to-use"><a class="header" href="#which-api-to-use">Which API to use</a></h2>
+<p><a href="#choosing-core-queries-pipelines-or-sql">Choosing Core queries, pipelines or SQL</a> lists when each API fits,
+on each edition.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="query-and-write-semantics-1"><a class="header" href="#query-and-write-semantics-1">Query and write semantics</a></h1>
+<p>A <a href="#pipelines">pipeline</a> runs with Firestore’s pipeline semantics, and a <a href="#sql">SQL</a>
+statement runs as a pipeline, so it keeps them too. A Core query has semantics of its own. This
+page lists where the two differ, and where the pipeline semantics differ from what a SQL database
+does. Each pipeline and SQL row was run against a collection of documents with an integer, a
+double, strings, a boolean, a null, a NaN and a document without the field.</p>
+<h2 id="null-and-absent"><a class="header" href="#null-and-absent">Null and absent</a></h2>
+<p>A document either has a field, holding a value that can be null, or lacks it. SQL has no absent
+field: the column holds <code>NULL</code>. A Core filter or <code>order_by</code> on a field never returns a document
+that lacks the field.</p>
+<p>The pipeline column names Firestore’s pipeline functions, with the name of the filter builder
+method in brackets where it differs:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Pipeline</th><th>SQL</th><th>Pipelines and SQL</th><th>Core query</th><th>A SQL database</th></tr>
+</thead>
+<tbody>
+<tr><td><code>equal</code> (<code>eq</code>) to null</td><td><code>v = NULL</code></td><td>matches the documents where <code>v</code> is null</td><td>matches nothing; <code>is_null()</code> finds null fields</td><td>matches nothing</td></tr>
+<tr><td><code>is_null</code></td><td><code>v IS NULL</code></td><td>matches null only; a document that lacks <code>v</code> does not match</td><td>the same</td><td>matches null and absent</td></tr>
+<tr><td><code>is_not_null</code></td><td><code>v IS NOT NULL</code></td><td>matches every document with a value that is not null</td><td>the same</td><td>the same</td></tr>
+<tr><td><code>not_equal</code> (<code>neq</code>)</td><td><code>v != 1</code>, <code>NOT (v = 1)</code></td><td>matches null and absent too</td><td>leaves out a document that lacks <code>v</code></td><td>excludes null and absent</td></tr>
+<tr><td>no function of its own</td><td><code>v IS DISTINCT FROM 1</code></td><td>matches null and absent too</td><td>no counterpart</td><td>the same</td></tr>
+<tr><td><code>exists</code>, <code>is_absent</code></td><td><code>is_absent(v)</code></td><td>tests whether the document has <code>v</code></td><td>no counterpart</td><td>no counterpart</td></tr>
+<tr><td>a join on a key that is null on both sides</td><td><code>ON a.k = b.k</code></td><td>the two match each other</td><td>no joins</td><td>do not match</td></tr>
+<tr><td>concatenation with <code>v</code> null or absent</td><td><code>v || 'x'</code></td><td>null</td><td>no counterpart</td><td><code>NULL</code></td></tr>
+<tr><td>a selected field that the document lacks</td><td><code>SELECT v</code></td><td>the key is missing from the row</td><td>the field is missing from the document</td><td>the key holds <code>NULL</code></td></tr>
+<tr><td>the columns of an unmatched left join</td><td><code>LEFT JOIN</code></td><td>the keys are missing from the row</td><td>no joins</td><td>the keys hold <code>NULL</code></td></tr>
+<tr><td><code>sort</code> ascending</td><td><code>ORDER BY v</code></td><td>keeps the documents that lack <code>v</code>, and orders absent and null first</td><td><code>order_by</code> leaves out the documents that lack <code>v</code></td><td>depends on the database</td></tr>
+<tr><td>documents with equal sort values</td><td><code>ORDER BY v</code></td><td>no tie-break on the document name; list a unique field last to fix their order</td><td>ties end on the document name, in the direction of the last field</td><td>depends on the database</td></tr>
+</tbody>
+</table>
+</div>
+<p>A row that lacks a key deserialises into an <code>Option</code> field as <code>None</code>.</p>
+<p><code>COUNT(x)</code> counts documents where <code>x</code> has a value that is not null. Over 11 documents, one holding
+null and one lacking the field, <code>COUNT(*)</code> was 11, <code>COUNT(v)</code> was 9 and <code>COUNT(DISTINCT v)</code> was 8.</p>
+<p>The SQL results are written in SQL, using the pipeline function <code>is_absent</code>, which passes through:</p>
+<ul>
+<li><code>v IS NULL OR is_absent(v)</code> matches null and absent;</li>
+<li><code>v != 1 AND v IS NOT NULL</code> leaves them out;</li>
+<li><code>if_absent(v, NULL)</code> selects an absent field as null.</li>
+</ul>
+<p>The filters differ in cost. <code>rating != 4.2 AND rating IS NOT NULL</code> kept the index ranges of
+<code>rating != 4.2</code>, and <code>genre IS NULL OR is_absent(genre)</code> lost the range: it scanned all 11 index
+entries, where <code>genre IS NULL</code> scanned 1. See <a href="#query-plans-and-cost">Query plans and cost</a>.</p>
+<p>Whether a field is stored as null or left absent is decided when it is written, see
+<a href="#explicit-null-value-serialisation">Explicit null value serialisation</a>.</p>
+<h2 id="types"><a class="header" href="#types">Types</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>SQL</th><th>Pipelines and SQL</th></tr>
+</thead>
+<tbody>
+<tr><td><code>v &gt; 0</code>, <code>v &gt; 'a'</code>, <code>v IN (1, 'b')</code></td><td>a comparison matches values of its own type, and raises no error for the other types</td></tr>
+<tr><td><code>v LIKE '100%'</code> over documents where <code>v</code> is a number</td><td>the whole request fails: <code>INVALID_ARGUMENT</code>, “The function like(…) requires <code>String</code> but got <code>LONG</code>.”</td></tr>
+<tr><td><code>v + 1</code> over a document where <code>v</code> is a string</td><td>the whole request fails: “The function add(…) requires <code>Number</code> but got <code>STRING</code>.”</td></tr>
+<tr><td><code>WHERE title</code> with a string field</td><td>matches nothing, with no error</td></tr>
+<tr><td><code>ORDER BY v</code> over mixed types</td><td>absent, null, booleans, NaN, numbers, then strings</td></tr>
+</tbody>
+</table>
+</div>
+<p>A condition earlier in the same <code>AND</code> that excludes the other types avoids the failure: with
+<code>k IN ('pct', 'pcx') AND v LIKE '100%'</code>, the <code>LIKE</code> ran only on strings.</p>
+<p>A Core range filter matches values of its own type only, and never NaN. A Core <code>order_by</code> over
+mixed types follows Firestore’s order of types: null, booleans, numbers, timestamps, strings,
+bytes, references, geo points, arrays, vectors and maps.</p>
+<h2 id="numbers"><a class="header" href="#numbers">Numbers</a></h2>
+<ul>
+<li><code>v = 1</code> and <code>v = 1.0</code> match the same documents, and <code>DISTINCT</code> and <code>GROUP BY</code> collapse an integer
+and a double of the same value. They collapse null and absent into one group too;</li>
+<li>two integers divide as integers: <code>7 / 2</code> is 3, <code>-7 / 2</code> is -3 and <code>7 % 3</code> is 1, where
+<code>7.0 / 2</code> is 3.5. A SQL dialect whose <code>/</code> returns a float differs from this;</li>
+<li>a Core query compares an integer and a double by value too, so a filter on <code>1</code> matches the double
+<code>1.0</code>, and <code>order_by</code> sorts them together.</li>
+</ul>
+<h2 id="names-and-patterns"><a class="header" href="#names-and-patterns">Names and patterns</a></h2>
+<ul>
+<li>field names are case-sensitive. <code>SELECT Title</code> for a field <code>title</code> returns rows without a
+title, and <code>WHERE Genre = 'Dystopian'</code> matches nothing. A misspelled field is an absent field,
+with no error;</li>
+<li><code>LIKE</code> is case-sensitive, <code>%</code> and <code>_</code> are wildcards, and <code>.</code> and <code>(</code> are literal. A backslash
+escapes a wildcard, written <code>'100\\%'</code> in the statement since a backslash escapes in a string
+literal too;</li>
+<li><code>__name__</code> compared with a string is read as a document name, and the translator makes it a
+reference. <code>__name__</code> in <code>INSERT</code> takes an ID or a path, see
+<a href="#writes-and-on-conflict">Writes and ON CONFLICT</a>.</li>
+</ul>
+<h2 id="stage-order"><a class="header" href="#stage-order">Stage order</a></h2>
+<p>The stages of a pipeline run in the order they are written. A <code>limit</code> before a <code>sort</code> limits the
+documents first and sorts what is left, which is not what the same two calls mean in a Core query,
+where <code>limit</code> always applies to the ordered results.</p>
+<h2 id="order-without-a-sort"><a class="header" href="#order-without-a-sort">Order without a sort</a></h2>
+<ul>
+<li>a pipeline without a <code>sort</code> returns its documents in an order of its own;</li>
+<li>on a Standard edition database, a Core query without <code>order_by</code> returns its documents in the
+order of the fields it compares with <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>!=</code> or <code>not-in</code>, and then by
+document name;</li>
+<li>on an Enterprise edition database the order of a Core query without <code>order_by</code> is unspecified.</li>
+</ul>
+<h2 id="results-without-a-document-name"><a class="header" href="#results-without-a-document-name">Results without a document name</a></h2>
+<p>A stored document carries its name, so <code>_firestore_id</code> is filled for it in Core and pipeline
+results. A Core aggregation result, and the result of a pipeline stage that builds new documents,
+such as <code>.fields()</code> or <code>.aggregate()</code>, has no name. A SQL row holds only the columns the statement
+selects, so it has no name unless the statement selects <code>__name__</code>. A field of the result type
+that reads <code>_firestore_id</code> must be an <code>Option</code>, see
+<a href="#typed-results-and-metadata">Typed results and metadata</a> and
+<a href="#document-metadata-as-struct-fields">Document metadata as struct fields</a>.</p>
+<h2 id="cached-results"><a class="header" href="#cached-results">Cached results</a></h2>
+<p>A read that a <a href="#caching">cache</a> session answers follows the same semantics, with these
+differences:</p>
+<ul>
+<li>a cached Core query follows the order of the Standard edition, and on an Enterprise edition
+database documents with equal values can come back in another order, see
+<a href="#what-the-cache-answers">What the cache answers</a>;</li>
+<li>a cached pipeline returns documents that tie on every sort key in document-name order, where
+Firestore’s order of them is unspecified, see <a href="#pipelines-1">Caching pipelines</a>;</li>
+<li>both are eventually consistent, see <a href="#how-the-cache-is-updated">How the cache is updated</a>.</li>
+</ul>
+<h2 id="writes"><a class="header" href="#writes">Writes</a></h2>
+<ul>
+<li>a Core write in a transaction is buffered in the library and sent with the commit. A pipeline or
+SQL write is sent when it runs, and its documents change at the commit. A transaction takes
+pipeline writes or buffered writes: Firestore rejects a commit that mixes them with
+<code>INVALID_ARGUMENT</code>, see <a href="#writes-in-a-transaction">Writes in a transaction</a>;</li>
+<li>a pipeline or SQL write is sent once and never retried. Simple batch writes and transactions
+retry, see <a href="#retry-limits">Request timeouts</a>;</li>
+<li>a pipeline <code>upsert</code> and SQL <code>INSERT OR REPLACE</code> replace the stored document, so its fields that
+the write does not set are gone;</li>
+<li>a write that a unique index refuses returns <code>DataConflictError</code>, see
+<a href="#unique-indexes">TTL and the Enterprise edition</a>;</li>
+<li>Core transactions behave the same on both editions; under contention an Enterprise database,
+which is optimistic by default, aborts and retries transactions more often than a Standard one,
+see <a href="#on-the-enterprise-edition-4">Transactions</a>.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="query-plans-and-cost"><a class="header" href="#query-plans-and-cost">Query plans and cost</a></h1>
+<p>What a read costs depends on the edition of the database and on whether an index serves it. This
+page holds the billing model of each edition, how to read the plan Firestore chose for a query, and
+the reads that are known to scan.</p>
+<p>Two terms are used throughout:</p>
+<ul>
+<li>a <em>table scan</em> reads every document of the collection from primary storage, instead of reading
+an index;</li>
+<li>a <em>read unit</em> is the billing unit of reads on the Enterprise edition: 4 KiB of data, documents or
+index entries, that a read processes.</li>
+</ul>
+<h2 id="cost-per-edition"><a class="header" href="#cost-per-edition">Cost per edition</a></h2>
+<p>Standard bills each document read, written and deleted; Enterprise bills read units (4 KiB) and
+write units (1 KiB, one more per indexed field) instead, and real-time updates as a separate
+charge. The rates differ per region, and are on Google’s pricing pages for
+<a href="https://cloud.google.com/firestore/pricing">Standard</a> and
+<a href="https://firebase.google.com/docs/firestore/enterprise/pricing">Enterprise</a>.</p>
+<h3 id="standard-edition"><a class="header" href="#standard-edition">Standard edition</a></h3>
+<p>Google’s <a href="https://firebase.google.com/docs/firestore/pricing">pricing page</a> bills:</p>
+<ul>
+<li>each document read, written and deleted, the index entries a query reads, storage and network
+bandwidth;</li>
+<li>at least one document read for each query, even one that returns nothing;</li>
+<li>one read for each batch of up to 1000 index entries a query reads; a query with at most one range
+field is not charged for index entries;</li>
+<li>an aggregation (count, sum, avg) by the index entries it reads, and at least one document read;</li>
+<li>a listener one read each time a document is added to its results or updated in them, and when a
+document leaves them. A deleted document is not charged as a read.</li>
+</ul>
+<h3 id="enterprise-edition"><a class="header" href="#enterprise-edition">Enterprise edition</a></h3>
+<p>Google’s <a href="https://firebase.google.com/docs/firestore/enterprise/pricing">pricing page</a> bills:</p>
+<ul>
+<li>read units for the data a read processes, documents or index entries, counted in 4 KiB. Its
+example: a collection scan over 20 documents of 1 KiB each costs 5 read units, and an indexed
+scan of the same data costs 21, one for each document and one for the index read;</li>
+<li>write units counted in 1 KiB, and one more for each indexed field, so a 5 KiB document with 5
+single-field indexes costs 10 write units. A delete is billed as write units;</li>
+<li>real-time updates as a charge of their own: one unit per 4 KiB of an updated document, plus one
+when a document leaves the results.</li>
+</ul>
+<p>A Core query that no index covers runs as a table scan on Enterprise, and is billed by the data it
+reads: a scan of the whole collection reads every 4 KiB of it. On Standard the same query is either
+refused or answered from an index, and billed per returned document.</p>
+<p>Query Explain with <code>analyze</code> on a database of the Enterprise edition reported 1 read unit for each
+document a SQL statement read by ID, for <code>=</code> and for <code>IN</code>, with or without a further condition such
+as <code>stock &gt;= 0</code>. Firestore’s published pricing charges a point read of the Core <code>get</code> in 4 KiB
+tranches, rounded up, so a document of up to 4 KiB costs 1 read unit through <code>get</code>, as it does
+through SQL. See <a href="#reads-by-id">Reads by ID</a>.</p>
+<h3 id="both-editions"><a class="header" href="#both-editions">Both editions</a></h3>
+<p>A read that a <a href="#caching">cache</a> session answers sends no request, so Firestore charges
+nothing for it. Query Explain is never answered from the cache.</p>
+<h2 id="explaining-a-core-query-standard-edition"><a class="header" href="#explaining-a-core-query-standard-edition">Explaining a Core query (Standard edition)</a></h2>
+<p>Query Explain returns the plan Firestore chose for a Core query, in the metadata of the results:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .explain()
+    // or explain_with_options for options such as analyze, which runs the query to gather
+    // additional statistics:
+    // .explain_with_options(FirestoreExplainOptions::new().with_analyze(true))
+    .stream_query_with_metadata()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/explain-query.rs">here</a>.</p>
+<p>On a Standard edition database, a Core <code>.explain()</code> of a query that needs a missing index fails
+with <code>FAILED_PRECONDITION</code> and the message “no matching index found.”</p>
+<p>An Enterprise edition database rejects a Core <code>.explain()</code> with <code>INVALID_ARGUMENT</code>, “Explain
+options are not supported in RunQuery API for Enterprise edition. Please use the ExecutePipeline
+API instead.” There, write the query as a pipeline to see its plan.</p>
+<h2 id="explaining-a-pipeline"><a class="header" href="#explaining-a-pipeline">Explaining a pipeline</a></h2>
+<p>Query Explain returns the plan Firestore chose for a pipeline. <code>.explain()</code> runs the pipeline for
+its plan only: no document is read or returned. <code>.explain_with_options(..)</code> with <code>analyze</code> set
+also returns the documents, and adds the execution profile to the plan. The plan arrives as text
+in the metadata of the last item:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use futures::TryStreamExt;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let items: Vec&lt;_&gt; = db
+    .fluent()
+    .pipeline()
+    .select()
+    .from("books")
+    .filter(|q| q.field("genre").eq("Dystopian"))
+    .explain()
+    .stream_query_with_metadata()
+    .await?
+    .try_collect()
+    .await?;
+
+for item in items {
+    if let Some(stats) = item.metadata.explain_stats {
+        println!("{}", stats.text);
+    }
+}
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>The text is Firestore’s own format. The library does not parse it, since Firestore can change it
+at any time.</p>
+<p>A SQL <code>SELECT</code> returns its plan the same way, through <code>explain()</code> and <code>explain_with_options(..)</code> of
+the <a href="#setup">SQL builder</a>.</p>
+<h3 id="recognising-a-full-scan"><a class="header" href="#recognising-a-full-scan">Recognising a full scan</a></h3>
+<p>The plan names how the pipeline reads its documents:</p>
+<ul>
+<li>a plan that ends in a <code>TableScan</code> node reads every document of the collection from primary
+storage;</li>
+<li>a plan that ends in a <code>SequentialScan</code> node with an <code>index:</code> line reads through that index,
+such as <code>index: /books (genre ASC, rating DESC)@[id = CICAgJim14AK]</code>;</li>
+<li>a search ends in a <code>StIndexSearch</code> node.</li>
+</ul>
+<p>Run <code>.explain()</code> on a pipeline before it reaches production data, and add an index when it shows a
+<code>TableScan</code> over a large collection. Firestore has no setting that rejects a table scan, and the
+library adds no check of its own.</p>
+<h3 id="choosing-an-index"><a class="header" href="#choosing-an-index">Choosing an index</a></h3>
+<p><code>.force_index(..)</code> on a <code>from(..)</code> source makes the pipeline read through the index with a given
+ID, the one Firestore assigned to it. It is available on a collection source and on a
+collection-group source, and nowhere else:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let by_genre = db
+    .fluent()
+    .pipeline()
+    .select()
+    .from("books")
+    .force_index(FirestoreIndexHint::Index("CICAgJim14AK".parse()?))
+    .filter(|q| q.field("genre").eq("Dystopian"))
+    .query()
+    .await?;
+
+let scanned = db
+    .fluent()
+    .pipeline()
+    .select()
+    .from("books")
+    .force_index(FirestoreIndexHint::TableScan)
+    .filter(|q| q.field("genre").eq("Dystopian"))
+    .query()
+    .await?;
+<span class="boring">let _ = (by_genre, scanned);
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p><code>FirestoreIndexHint::TableScan</code> forces a table scan. An ID that names no index of that collection
+fails the request at once with <code>INVALID_ARGUMENT</code>. An index that cannot serve the filter is still
+used, and the pipeline then reads all of it. A vector index cannot be forced.</p>
+<h2 id="known-table-scans"><a class="header" href="#known-table-scans">Known table scans</a></h2>
+<ul>
+<li><strong>A pipeline without an index.</strong> Indexes are optional for a pipeline. A pipeline without an index
+that covers its filter still runs, as a table scan. The cost of a pipeline follows the amount of
+data it scans, so a table scan over a large collection costs in proportion to the collection. A
+search is the exception: it needs a search index, and fails without one, see
+<a href="#search-indexes">Pipeline search</a>;</li>
+<li><strong>A SQL statement without an index.</strong> A statement that filters on an unindexed field scans the
+collection, as a pipeline does. Firestore has no setting that rejects a table scan, and the
+<a href="#read-only-options">read-only options</a> do not check for one;</li>
+<li><strong>A Core query on Enterprise.</strong> On Enterprise a Core query runs as a scan when no index covers
+it, where Standard fails with <code>FAILED_PRECONDITION</code>, and without <code>order_by</code> the order of its
+results is unspecified. Its plan cannot be shown, since Core <code>.explain()</code> is rejected there;</li>
+<li><strong>Pipeline <code>find_nearest</code>.</strong> The stage does not use a vector index. Its plan is a <code>TableScan</code>
+followed by a sort by distance, even when a vector index exists on the field, so its cost follows
+the size of the collection. A Core <a href="#vector-search-1">vector search</a> uses the index on
+Standard;</li>
+<li><strong>Joins and subqueries.</strong> A subquery runs once for each row of the query it is in, whether or not
+it is <em>correlated</em>, that is, whether or not it reads a value of the row it runs for. An
+unindexed join scans the joined collection once for each left row, see
+<a href="#join-cost">Join cost</a>;</li>
+<li><strong>Null or absent in one filter.</strong> <code>genre IS NULL OR is_absent(genre)</code> loses the index range of
+<code>genre IS NULL</code>, see <a href="#null-and-absent">Query and write semantics</a>.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="choosing-core-queries-pipelines-or-sql"><a class="header" href="#choosing-core-queries-pipelines-or-sql">Choosing Core queries, pipelines or SQL</a></h1>
+<p>The library reads Firestore through three APIs: Core queries (<code>db.fluent().select()</code>),
+<a href="#pipelines">pipelines</a> (<code>db.fluent().pipeline()</code>) and <a href="#sql">SQL</a>
+(<code>db.fluent().sql(..)</code>), which runs as a pipeline. Which one fits depends on the edition of the
+database first, and on what the query needs.</p>
+<h2 id="on-a-standard-edition-database"><a class="header" href="#on-a-standard-edition-database">On a Standard edition database</a></h2>
+<p>The Core API is the only one. Pipelines and SQL fail with <code>FAILED_PRECONDITION</code>, and the library
+does not retry them. In a <a href="#caching">cache</a> session, a pipeline that the cache answers on its
+own succeeds on Standard too, and one it does not answer fails as on Firestore. Be aware not to
+rely on that: a pipeline that works from the cache fails once it reaches Firestore.</p>
+<h2 id="on-an-enterprise-edition-database"><a class="header" href="#on-an-enterprise-edition-database">On an Enterprise edition database</a></h2>
+<p>The Core query API stays the choice for what it covers. Reasons to stay on Core there:</p>
+<ul>
+<li>listeners take Core targets only, see <a href="#listening-to-document-changes">Listening to document changes</a>;</li>
+<li>the cache answers every supported Core query, and only the pipelines and SQL statements that
+filter, sort, page and project plain fields, see <a href="#pipelines-1">Caching pipelines</a>.
+Anything else runs on Firestore, or fails under <code>read_cached_only</code>;</li>
+<li>existing code keeps the Core semantics of null and absent fields, see
+<a href="#null-and-absent">Query and write semantics</a>;</li>
+<li>Core writes in a transaction are buffered and sent with the commit, see
+<a href="#transactions">Transactions</a>.</li>
+</ul>
+<p>A pipeline adds:</p>
+<ul>
+<li>grouped aggregations, computed fields, <code>distinct</code>, <code>unnest</code> and <code>union</code>;</li>
+<li><a href="#pipeline-aggregations-and-joins">joins</a> through subqueries;</li>
+<li><a href="#pipeline-search">text and geo search</a>;</li>
+<li><a href="#pipeline-writes">writes by query</a>: update, delete, insert and upsert of the documents a
+pipeline selects;</li>
+<li>Query Explain on Enterprise, where the Core <code>.explain()</code> is rejected with <code>INVALID_ARGUMENT</code>.</li>
+</ul>
+<h2 id="when-to-use-sql"><a class="header" href="#when-to-use-sql">When to use SQL</a></h2>
+<p>Application code keeps the fluent API. A field name in <code>path!(Book::rating)</code> is checked when the
+program compiles, where a misspelled field in SQL text reads as an absent field and matches
+nothing, without an error.</p>
+<p>SQL is for text that the program does not write:</p>
+<ul>
+<li>statements typed by a person or a script, such as an admin command line;</li>
+<li>statements kept in configuration or in files;</li>
+<li>statements an LLM agent writes, which run with the
+<a href="#read-only-options">read-only options</a>;</li>
+<li>queries ported from a SQL database, where <code>JOIN</code> and <code>GROUP BY</code> read faster than the builder.</li>
+</ul>
+<h2 id="checking-the-plan-before-production"><a class="header" href="#checking-the-plan-before-production">Checking the plan before production</a></h2>
+<ul>
+<li>a pipeline without an index that covers its filter runs as a table scan, and costs in proportion
+to the collection;</li>
+<li>on Enterprise a Core query runs as a scan when no index covers it, where Standard fails with
+<code>FAILED_PRECONDITION</code>, and without <code>order_by</code> the order of its results is unspecified;</li>
+<li>Core <code>.explain()</code> is rejected on Enterprise, so the plan of a query there comes from the same
+query written as a pipeline.</li>
+</ul>
+<p>See <a href="#query-plans-and-cost">Query plans and cost</a>.</p>
+<h2 id="vector-search"><a class="header" href="#vector-search">Vector search</a></h2>
+<p>A Core <a href="#vector-search-1">vector search</a> needs a vector index on Standard, and runs without one
+on Enterprise. The pipeline <a href="#nearest-neighbours"><code>find_nearest</code></a>
+stage never uses the index, so its cost follows the size of the collection.</p>
+<h2 id="moving-a-core-query-to-a-pipeline"><a class="header" href="#moving-a-core-query-to-a-pipeline">Moving a Core query to a pipeline</a></h2>
+<p>The same filter can return other documents. Check these:</p>
+<ul>
+<li><code>neq</code> matches the documents that lack the field;</li>
+<li><code>sort</code> keeps the documents that lack the field, and needs a unique field last for a stable order;</li>
+<li>the stages run in the order they are written, so <code>limit</code> before <code>sort</code> limits first;</li>
+<li><code>_firestore_id</code> is an <code>Option</code> after a projection, since the result has no document name.</li>
+</ul>
+<p>The query below runs both ways. On a book without a <code>genre</code> field, the Core query leaves the book
+out, and the pipeline returns it:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::Deserialize;
+</span><span class="boring">#[derive(Debug, Clone, Deserialize)]
+</span><span class="boring">struct Book { title: String, genre: Option&lt;String&gt; }
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>// Leaves out the books without a genre
+let core: Vec&lt;Book&gt; = db
+    .fluent()
+    .select()
+    .from("books")
+    .filter(|q| q.field(path!(Book::genre)).neq("Horror"))
+    .obj()
+    .query()
+    .await?;
+
+// Returns the books without a genre too
+let pipeline: Vec&lt;Book&gt; = db
+    .fluent()
+    .pipeline()
+    .select()
+    .from("books")
+    .filter(|q| q.field(path!(Book::genre)).neq("Horror"))
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = (core, pipeline);
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>To keep the Core result in the pipeline, add <code>q.field(path!(Book::genre)).exists()</code> to a <code>for_all</code>
+with the <code>neq</code>. <a href="#query-and-write-semantics-1">Query and write semantics</a> lists every difference.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="fluent-api"><a class="header" href="#fluent-api">Fluent API</a></h1>
 <p>The Fluent API is the only public API of this library. Everything starts from <code>db.fluent()</code>:</p>
@@ -398,8 +922,15 @@ db.fluent()
     .await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p>The low level “support” traits were made crate private in v0.52.0. If you used them, see the
-<a href="https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md">migration guide</a> for the fluent replacement of every removed method.</p>
+<p>The low level “support” traits are crate private. The
+<a href="https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md">migration guide</a> lists the fluent replacement of every removed method.</p>
+<p>On a database of the Enterprise edition, <code>db.fluent()</code> has two more entry points next to the Core
+ones:</p>
+<ul>
+<li><a href="#pipelines"><code>db.fluent().pipeline()</code></a> for pipeline reads and writes;</li>
+<li><a href="#sql"><code>db.fluent().sql(..)</code></a> for SQL statements, behind the <code>sql</code> feature.</li>
+</ul>
+<p><a href="#choosing-core-queries-pipelines-or-sql">Choosing Core queries, pipelines or SQL</a> compares the three.</p>
 <p>Alongside it, the library provides core functionality that is public API in its own right:</p>
 <ul>
 <li><a href="#batch-writes">Batch writes</a>: <code>db.create_simple_batch_writer()</code>,
@@ -414,6 +945,38 @@ backends</li>
 <li>Dynamic documents: <code>FirestoreDb::serialize_map_to_doc()</code>, <code>FirestoreDb::serialize_to_doc()</code> and
 <code>FirestoreDb::deserialize_doc_to()</code>, used together with the fluent <code>.document(...)</code> builders</li>
 </ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="get-and-batch-get"><a class="header" href="#get-and-batch-get">Get and batch get</a></h1>
+<p><code>.one(id)</code> reads one document by its ID, and returns <code>None</code> when it does not exist. <code>.batch(ids)</code>
+reads several documents in one request, and streams each ID with its document or <code>None</code>:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use futures::stream::BoxStream;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure {
+</span><span class="boring">    some_id: String,
+</span><span class="boring">}
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb, my_struct: MyTestStructure) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let find_it_again: Option&lt;MyTestStructure&gt; = db
+    .fluent()
+    .select()
+    .by_id_in(TEST_COLLECTION_NAME)
+    .obj()
+    .one(&amp;my_struct.some_id)
+    .await?;
+
+let object_stream: BoxStream&lt;(String, Option&lt;MyTestStructure&gt;)&gt; = db
+    .fluent()
+    .select()
+    .by_id_in(TEST_COLLECTION_NAME)
+    .obj()
+    .batch(vec!["test-0", "test-5"])
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>What a read by ID costs on each edition is in
+<a href="#cost-per-edition">Query plans and cost</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="querying"><a class="header" href="#querying">Querying</a></h1>
 <p>The library supports rich querying API with filters, ordering, pagination, etc.</p>
@@ -464,8 +1027,8 @@ println!("{:?}", as_vec);
 dropped, as <code>one_more_string</code> in the example above.</p>
 <p>Use:</p>
 <ul>
-<li><code>q.for_all</code> for AND conditions</li>
-<li><code>q.for_any</code> for OR conditions (Firestore has just recently added support for OR conditions)</li>
+<li><code>q.for_all</code> for AND conditions;</li>
+<li><code>q.for_any</code> for OR conditions.</li>
 </ul>
 <p>You can nest <code>q.for_all</code>/<code>q.for_any</code>.</p>
 <h2 id="ordering"><a class="header" href="#ordering">Ordering</a></h2>
@@ -526,35 +1089,16 @@ empty result (every entry conditional and every condition false) clears the orde
 ordered fields - this is not enforced by the library, so a mismatch is a runtime error from
 Firestore rather than a compile-time one.</p>
 <p><code>.order_by([(path!(..), FirestoreQueryDirection::Descending)])</code> still works but is deprecated in
-favor of <code>.order()</code>.</p>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="get-and-batch-get-support"><a class="header" href="#get-and-batch-get-support">Get and batch get support</a></h1>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">use futures::stream::BoxStream;
-</span><span class="boring">use serde::{Deserialize, Serialize};
-</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
-</span><span class="boring">struct MyTestStructure {
-</span><span class="boring">    some_id: String,
-</span><span class="boring">}
-</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
-</span><span class="boring">async fn example(db: FirestoreDb, my_struct: MyTestStructure) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let find_it_again: Option&lt;MyTestStructure&gt; = db
-    .fluent()
-    .select()
-    .by_id_in(TEST_COLLECTION_NAME)
-    .obj()
-    .one(&amp;my_struct.some_id)
-    .await?;
-
-let object_stream: BoxStream&lt;(String, Option&lt;MyTestStructure&gt;)&gt; = db
-    .fluent()
-    .select()
-    .by_id_in(TEST_COLLECTION_NAME)
-    .obj()
-    .batch(vec!["test-0", "test-5"])
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
+favour of <code>.order()</code>.</p>
+<h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
+<p>On Enterprise a Core query runs as a scan when no index covers it, where Standard fails with
+<code>FAILED_PRECONDITION</code>, and without <code>order_by</code> the order of its results is unspecified. An
+Enterprise edition database builds no single-field index on its own, so a query reads through an
+index only when one is declared, see <a href="#the-enterprise-edition">TTL and the Enterprise edition</a>.
+<code>order_by</code> still leaves out the documents that lack the field, on both editions.</p>
+<p>A Core <code>.explain()</code> is rejected there with <code>INVALID_ARGUMENT</code>; the plan of a query comes from the
+same query written as a pipeline, see <a href="#query-plans-and-cost">Query plans and cost</a>. A scan is
+billed by the data it reads, see <a href="#cost-per-edition">Cost per edition</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="nested-collections"><a class="header" href="#nested-collections">Nested collections</a></h1>
 <p>You can work with nested collections specifying path/location to a parent for documents.
@@ -583,7 +1127,7 @@ db.fluent()
     .execute::&lt;()&gt;()
     .await?;
 
-// The doc path where we store our children
+// The doc path where the children are stored
 let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id)?;
 
 // Create a child doc
@@ -624,6 +1168,344 @@ let objs_stream: BoxStream&lt;MyChildStructure&gt; = db
 <span class="boring">let _ = parent_path;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="aggregations"><a class="header" href="#aggregations">Aggregations</a></h1>
+<p>The library supports the Core aggregation functions <code>count</code>, <code>sum</code> and <code>avg</code> over the documents a
+query matches. Each result field is named by <code>a.field(alias)</code>, and its operator is chosen with
+<code>.count()</code>, <code>.count_up_to(limit)</code>, <code>.sum(field)</code> or <code>.avg(field)</code>:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyAggTestStructure { counter: usize }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let objs: Vec&lt;MyAggTestStructure&gt; = db
+    .fluent()
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .aggregate(|a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = objs;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Several aggregations run in one query, each under its own alias:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct Totals { count: usize, total: i64, average: f64 }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let totals: Vec&lt;Totals&gt; = db
+    .fluent()
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .aggregate(|a| {
+        a.fields([
+            a.field(path!(Totals::count)).count(),
+            a.field(path!(Totals::total)).sum("n"),
+            a.field(path!(Totals::average)).avg("n"),
+        ])
+    })
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = totals;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>An aggregation result is not a stored document, so it has no document name, see
+<a href="#results-without-a-document-name">Query and write semantics</a>. Grouped
+aggregations, by a field, are a pipeline feature on the Enterprise edition, see
+<a href="#pipeline-aggregations-and-joins">Pipeline aggregations and joins</a>.</p>
+<h2 id="on-the-enterprise-edition-1"><a class="header" href="#on-the-enterprise-edition-1">On the Enterprise edition</a></h2>
+<p>Core aggregations and transactions behave the same on both editions. An aggregation whose filter
+needs a composite index fails on Standard with <code>FAILED_PRECONDITION</code>, and runs as a scan on
+Enterprise, see <a href="#on-the-enterprise-edition">Querying</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="vector-search-1"><a class="header" href="#vector-search-1">Vector search</a></h1>
+<p>The library supports K-nearest neighbour (KNN) vector search in Core queries: <code>find_nearest</code> keeps
+the documents whose vector field is nearest to a query vector.</p>
+<p>A vector is stored in a field of type <code>FirestoreVector</code>, which serialises to a Firestore vector
+value:</p>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span>#[derive(Debug, Clone, Deserialize, Serialize)]
+struct Article {
+    title: String,
+    embedding: FirestoreVector,
+}
+
+let article = Article {
+    title: "Firestore editions".to_string(),
+    embedding: FirestoreVector::new(vec![0.1, 0.9, 0.3]),
+};
+<span class="boring">let _ = article;</span></code></pre>
+<p><code>vec![..].into()</code> builds a <code>FirestoreVector</code> too, from any iterator of <code>f64</code>.</p>
+<h2 id="the-vector-index"><a class="header" href="#the-vector-index">The vector index</a></h2>
+<p>On a Standard edition database a vector query needs a vector index on the field, and uses it. The
+index declares the dimension every indexed vector in the field must have. Without one the query
+fails with <code>FAILED_PRECONDITION</code>, “Missing vector index configuration”, and the message carries the
+<code>gcloud</code> command that creates the index.
+<a href="#vector-indexes">Index management</a> declares one with
+<code>.vector(dimension)</code>, and the console or <code>gcloud</code> create one too.</p>
+<h2 id="finding-the-nearest-documents"><a class="header" href="#finding-the-nearest-documents">Finding the nearest documents</a></h2>
+<p><code>find_nearest(field, vector, measure, limit)</code> after the source and filters keeps the <code>limit</code>
+documents nearest to <code>vector</code>, nearest first:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct Article { title: String, embedding: FirestoreVector }
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let nearest: Vec&lt;Article&gt; = db
+    .fluent()
+    .select()
+    .from("articles")
+    .find_nearest(
+        path!(Article::embedding),
+        FirestoreVector::new(vec![0.1, 0.8, 0.2]),
+        FirestoreFindNearestDistanceMeasure::Cosine,
+        5,
+    )
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = nearest;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p><code>FirestoreFindNearestDistanceMeasure</code> has three measures:</p>
+<ul>
+<li><code>Euclidean</code>, the straight-line distance between the two vectors;</li>
+<li><code>Cosine</code>, which compares the angle between the vectors and ignores their length;</li>
+<li><code>DotProduct</code>, which is like cosine, and takes the length into account too.</li>
+</ul>
+<p>Documents at the same distance come back in no fixed order. A <code>Cosine</code> query fails with
+<code>FAILED_PRECONDITION</code>, “Cannot compute cosine distance against a vector with a magnitude of zero”,
+when the collection holds a vector of zeros.</p>
+<h2 id="distance-and-threshold"><a class="header" href="#distance-and-threshold">Distance and threshold</a></h2>
+<p><code>find_nearest_with_options(..)</code> takes a <code>FirestoreFindNearestOptions</code>, with two more settings:</p>
+<ul>
+<li><code>.with_distance_result_field(name)</code> outputs the distance of each document under that field, so
+the result type can read it. It holds the straight-line distance for <code>Euclidean</code>, the cosine
+distance for <code>Cosine</code> (0 for the same direction), and the dot product itself for <code>DotProduct</code>;</li>
+<li><code>.with_distance_threshold(value)</code> returns only the documents within that distance. For
+<code>Euclidean</code> and <code>Cosine</code> it is the largest distance, and a document at exactly that distance is
+kept. For <code>DotProduct</code>, where a larger value means a nearer vector, it is the smallest one.</li>
+</ul>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct Article {
+</span><span class="boring">    title: String,
+</span><span class="boring">    embedding: FirestoreVector,
+</span><span class="boring">    distance: Option&lt;f64&gt;,
+</span><span class="boring">}
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let nearest: Vec&lt;Article&gt; = db
+    .fluent()
+    .select()
+    .from("articles")
+    .find_nearest_with_options(
+        FirestoreFindNearestOptions::new(
+            path!(Article::embedding),
+            FirestoreVector::new(vec![0.1, 0.8, 0.2]),
+            FirestoreFindNearestDistanceMeasure::Euclidean,
+            10,
+        )
+        .with_distance_result_field(path!(Article::distance))
+        .with_distance_threshold(0.5),
+    )
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = nearest;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/nearest-vector-query.rs">here</a>.</p>
+<p>A vector query is never answered from a <a href="#what-the-cache-answers">cache</a>: under
+<code>read_through_cache</code> it goes to Firestore, and under <code>read_cached_only</code> it fails with
+<code>CacheIncompleteCollection</code>.</p>
+<h2 id="on-the-enterprise-edition-2"><a class="header" href="#on-the-enterprise-edition-2">On the Enterprise edition</a></h2>
+<p>A Core vector query runs on an Enterprise edition database without a vector index. Query Explain is refused there, so its plan cannot show
+what the query reads.</p>
+<p>The pipeline <a href="#nearest-neighbours"><code>find_nearest</code></a> stage takes
+the same vector and measures, and has no distance threshold. It does not use a vector index: its
+plan is a table scan, so its cost follows the size of the collection, see
+<a href="#known-table-scans">Query plans and cost</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="listening-to-document-changes"><a class="header" href="#listening-to-document-changes">Listening to document changes</a></h1>
+<p>To help to work with asynchronous event listener the library supports high level API for
+listening the events from Firestore on a separate thread:</p>
+<p>The listener implementation needs to be provided with a storage for the last received token for specified targets to be
+able to resume listening the changes from the last handled token and to avoid receiving all previous changes.</p>
+<p>The library provides basic implementations for storing the tokens but you can implement your own more sophisticated
+storage if needed:</p>
+<ul>
+<li><code>FirestoreTempFilesListenStateStorage</code> - resume tokens stored as temporary files on local FS;</li>
+<li><code>FirestoreMemListenStateStorage</code> - in memory storage backed by HashMap (with this implementation if you restart your
+app, you will receive all notifications again);</li>
+</ul>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::{Deserialize, Serialize};
+</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
+</span><span class="boring">struct MyTestStructure { some_id: String }
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test-listen";
+</span><span class="boring">const TEST_TARGET_ID_BY_QUERY: FirestoreListenerTarget = FirestoreListenerTarget::new(42_u32);
+</span><span class="boring">const TEST_TARGET_ID_BY_DOC_IDS: FirestoreListenerTarget = FirestoreListenerTarget::new(17_u32);
+</span><span class="boring">async fn example(db: FirestoreDb, doc_id1: String, doc_id2: String) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let mut listener = db
+    .create_listener(
+        FirestoreTempFilesListenStateStorage::new(), // or FirestoreMemListenStateStorage or your own implementation
+    )
+    .await?;
+
+// Adding query listener
+db.fluent()
+    .select()
+    .from(TEST_COLLECTION_NAME)
+    .listen()
+    .add_target(TEST_TARGET_ID_BY_QUERY, &amp;mut listener)?;
+
+// Adding docs listener by IDs
+db.fluent()
+    .select()
+    .by_id_in(TEST_COLLECTION_NAME)
+    .batch_listen([doc_id1, doc_id2])
+    .add_target(TEST_TARGET_ID_BY_DOC_IDS, &amp;mut listener)?;
+
+listener
+    .start(|event| async move {
+        match event {
+            FirestoreListenEvent::DocumentChange(ref doc_change) =&gt; {
+                println!("Doc changed: {:?}", doc_change);
+
+                if let Some(doc) = &amp;doc_change.document {
+                    let obj: MyTestStructure =
+                        FirestoreDb::deserialize_doc_to::&lt;MyTestStructure&gt;(doc)
+                            .expect("Deserialized object");
+                    println!("As object: {:?}", obj);
+                }
+            }
+            _ =&gt; {
+                println!("Received a listen response event to handle: {:?}", event);
+            }
+        }
+
+        Ok(())
+    })
+    .await?;
+
+// Wait some events like Ctrl-C, signals, etc
+// &lt;put-your-implementation-for-wait-here&gt;
+
+// and then shutdown
+listener.shutdown().await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p><code>shutdown()</code> finishes the current callback and resume-state writes before returning.
+Use <code>shutdown_with_timeout(Duration::from_secs(5))</code> to allow five seconds for graceful shutdown,
+then abort and join the task. Aborting can interrupt callbacks and token writes, so changes may
+be replayed.</p>
+<p>Targets can also be added and removed on a running listener with <code>add_target</code> and
+<code>remove_target</code>. The listener changes them on its open stream, so the other targets keep
+listening as they were. <code>add_target</code> returns an error for a target that cannot be turned into
+a listen request, so a bad target never reaches the running listener.</p>
+<p>Target changes with the <code>Remove</code> type reach the callback in two forms:</p>
+<ul>
+<li>with no <code>cause</code>, Firestore acknowledges a <code>remove_target</code> call, or ends a target added with
+<code>add_target_once</code>. Events for a removed target can still arrive until this acknowledgement;</li>
+<li>with a <code>cause</code>, Firestore removed the target on its own. For <code>PERMISSION_DENIED</code>,
+<code>NOT_FOUND</code>, <code>FAILED_PRECONDITION</code>, <code>UNIMPLEMENTED</code>, and <code>INVALID_ARGUMENT</code> on a target added
+without a resume token or read time, the listener stops listening on that target only and
+unregisters it. For any other cause it adds the target back from scratch after the retry
+delay. An ended target is unregistered before the callback receives the change, so
+<code>has_target</code> called from the callback already tells whether the target comes back.</li>
+</ul>
+<p>When Firestore removes a target on its own while a <code>remove_target</code> call for it is on its way,
+Firestore does not acknowledge the removal. It closes the whole stream with <code>NOT_FOUND</code> instead.
+The listener then reconnects, and the other targets are added back at once.</p>
+<p>The listener reconnects by itself after network errors, closed streams and every other error,
+after the retry delay. It stops only on an error a retry cannot fix:</p>
+<ul>
+<li>Firestore rejects the listen request as invalid again after every resume token was discarded;</li>
+<li>the listen request fails with <code>InvalidParametersError</code>;</li>
+<li>the <code>AddTarget</code> or <code>RemoveTarget</code> request for a target cannot be built;</li>
+<li>the callback or the token storage panics.</li>
+</ul>
+<p>A stopped listener rejects <code>add_target</code> with a <code>SystemError</code>, and <code>shutdown()</code> returns the error
+it stopped with.</p>
+<p>A listen stream can also stay open and stop delivering anything, which HTTP/2 keep-alive does not
+detect while the connection itself still answers. To reset such a stream, set <code>idle_timeout</code> in the
+listener params:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::Duration;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let listener = db
+    .create_listener_with_params(
+        FirestoreMemListenStateStorage::new(),
+        FirestoreListenerParams::new().with_idle_timeout(Duration::from_secs(120)),
+    )
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>It is off by default. When set:</p>
+<ul>
+<li>any <code>ListenResponse</code> counts as activity, <code>NO_CHANGE</code> target changes included;</li>
+<li>the time counts from when the stream is open, so a connect that never gets that far is not
+covered, and only while at least one target on the stream waits for an answer from Firestore, not
+while every target waits to be added back after the retry delay;</li>
+<li>the time starts again once the callback and the token storage have handled each response;</li>
+<li>on expiry the listener waits the retry delay and reconnects, adding every target back with its
+stored resume token. Changes after the last stored token may be delivered again, as after any
+reconnect.</li>
+</ul>
+<p>120 seconds is the recommended value, and the one Google’s Node.js client uses. Firestore documents
+no interval for the updates it sends on a quiet stream, so a much shorter value can reset healthy
+streams.</p>
+<p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/listen-changes.rs">here</a>.</p>
+<p>A listener takes Core targets only: a query or documents by ID. Pipelines and SQL statements
+cannot be listened to, and their writes reach a listener as any other change, see
+<a href="#retries-and-listeners">Retries and listeners</a>.</p>
+<h2 id="on-the-enterprise-edition-3"><a class="header" href="#on-the-enterprise-edition-3">On the Enterprise edition</a></h2>
+<p>A listener the application opens receives changes on an Enterprise database that has real-time
+updates enabled; Google ties listener support (<code>onSnapshot</code>) to that setting, which is fixed when
+the database is created, see <a href="#settings-fixed-at-creation">Settings fixed at creation</a>.
+Real-time updates are billed separately on Enterprise, see
+<a href="#cost-per-edition">Cost per edition</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="working-on-dynamicdocument-level"><a class="header" href="#working-on-dynamicdocument-level">Working on dynamic/document level</a></h1>
+<p>Sometimes having static structure may restrict you from working with dynamic data,
+so there is a way to use Fluent API to work with documents without introducing structures at all.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let object_returned = db
+    .fluent()
+    .insert()
+    .into(TEST_COLLECTION_NAME)
+    .document_id("test-1")
+    .document(FirestoreDb::serialize_map_to_doc(
+        "",
+        [
+            ("some_id", "test-id".into()),
+            ("some_string", "test-value".into()),
+            ("some_num", 42.into()),
+            (
+                "embedded_obj",
+                FirestoreValue::from_map([
+                    ("inner_some_id", "inner-id-value".into()),
+                    ("inner_some_string", "inner-some-value".into()),
+                ]),
+            ),
+            ("created_at", FirestoreTimestamp::now().into()),
+        ],
+    )?)
+    .execute()
+    .await?;
+<span class="boring">let _ = object_returned;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/dynamic_doc_level_crud.rs">here</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="transactions"><a class="header" href="#transactions">Transactions</a></h1>
 <p>To manage transactions manually you can use <code>db.begin_transaction()</code>, and
@@ -744,8 +1626,35 @@ db.run_transaction_with_options(
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>See the complete example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/read-write-transactions.rs">here</a>.</p>
-<p>Please note that Firestore doesn’t support creating documents in the transactions (generating
-document IDs automatically), so you need to use <code>update()</code> to implicitly create documents and specifying your own IDs.</p>
+<p>A Core write in a transaction cannot create a document with an ID that Firestore generates. To
+create a document in a transaction, use <code>update()</code> with an ID of your own, which creates the
+document when it does not exist. A pipeline <code>insert</code> without <code>.document_id(..)</code> is the exception on
+the Enterprise edition: it gets an ID from Firestore and runs in a transaction, see
+<a href="#writes-in-a-transaction">Pipeline writes</a>.</p>
+<h2 id="transactions-and-the-cache"><a class="header" href="#transactions-and-the-cache">Transactions and the cache</a></h2>
+<p>A read in a transaction never uses the <a href="#caching">cache</a>. The same holds for a handle from
+<code>clone_with_consistency_selector</code>, which reads at a read time:</p>
+<ul>
+<li>under <code>read_through_cache</code>, <code>get</code>, batch get, <code>query</code> and <code>list</code> are answered by Firestore, so the
+transaction reads and locks the documents. A document read this way is not written to the cache;</li>
+<li>under <code>read_cached_only</code>, the same reads return <code>FirestoreError::CacheError</code> with the code
+<code>CacheConsistencySelectorUnsupported</code>, because that mode never contacts Firestore. A transaction
+needs a <code>read_through_cache</code> handle instead.</li>
+</ul>
+<p>Inside <code>run_transaction</code>, a <code>?</code> on that error makes it transient, so the transaction is retried 4
+times, with a few seconds of backoff, before the error is returned wrapped in
+<code>FirestoreError::ErrorInTransaction</code>. Return <code>BackoffError::permanent</code> from the closure to fail on
+the first attempt.</p>
+<h2 id="on-the-enterprise-edition-4"><a class="header" href="#on-the-enterprise-edition-4">On the Enterprise edition</a></h2>
+<p>Core aggregations and transactions behave the same on both editions; under contention an
+Enterprise database, which is optimistic by default, aborts and retries transactions more often
+than a Standard one. The concurrency mode is a setting of the database, shown as <code>concurrencyMode</code>
+by <code>gcloud firestore databases describe</code>, see
+<a href="#telling-which-edition-a-database-is">Telling which edition a database is</a>.</p>
+<p>A transaction on Enterprise can also hold <a href="#writes-in-a-transaction">pipeline and SQL writes</a>.
+They are sent when they run, where Core writes are buffered and sent with the commit. A transaction
+takes pipeline writes or buffered writes: Firestore rejects a commit that mixes them with
+<code>INVALID_ARGUMENT</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="batch-writes"><a class="header" href="#batch-writes">Batch writes</a></h1>
 <p>The library supports batch writes as an alternative to <a href="#transactions">transactions</a> for bulk
@@ -864,6 +1773,10 @@ ID. Use <code>update()</code> with an explicit <code>document_id</code> to creat
 <code>update_object</code>, <code>delete_by_id</code> and <code>transform</code>, plus <code>_at</code> variants for an explicit parent path.
 Each takes an optional <a href="#updatedelete-preconditions">write precondition</a>. On the simple writer a failed
 precondition fails just that one write; on the streaming writer it fails the whole stream.</p>
+<h2 id="on-the-enterprise-edition-5"><a class="header" href="#on-the-enterprise-edition-5">On the Enterprise edition</a></h2>
+<p>An Enterprise edition database can hold unique indexes, which refuse a write that would give two
+documents the same entry. Such a write returns <code>DataConflictError</code>, see
+<a href="#unique-indexes">Unique indexes</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="document-transformations"><a class="header" href="#document-transformations">Document transformations</a></h1>
 <p>The library supports server side document transformations in <a href="#transactions">transactions</a> and
@@ -907,26 +1820,6 @@ db.fluent()
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="select-aggregate-functions"><a class="header" href="#select-aggregate-functions">Select aggregate functions</a></h1>
-<p>The library supports the aggregation functions for the queries:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">use serde::{Deserialize, Serialize};
-</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
-</span><span class="boring">struct MyAggTestStructure { counter: usize }
-</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let objs: Vec&lt;MyAggTestStructure&gt; = db
-    .fluent()
-    .select()
-    .from(TEST_COLLECTION_NAME)
-    .aggregate(|a| a.fields([a.field(path!(MyAggTestStructure::counter)).count()]))
-    .obj()
-    .query()
-    .await?;
-<span class="boring">let _ = objs;
-</span><span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="updatedelete-preconditions"><a class="header" href="#updatedelete-preconditions">Update/delete preconditions</a></h1>
 <p>The library supports the preconditions:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
@@ -951,30 +1844,15 @@ db.fluent()
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="explaining-the-query"><a class="header" href="#explaining-the-query">Explaining the query</a></h1>
-<p>The library supports the query explanation:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>db.fluent()
-    .select()
-    .from(TEST_COLLECTION_NAME)
-    .explain()
-    // or use explain_with_options if you want to provide additional options like analyze which run query to gather additional statistics
-    // .explain_with_options(FirestoreExplainOptions::new().with_analyze(true))
-    .stream_query_with_metadata()
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="pipelines"><a class="header" href="#pipelines">Pipelines</a></h1>
 <p>A <em>pipeline</em> is a query that Firestore runs as an ordered list of <em>stages</em>. The first stage is a
 source, such as a collection; every later stage takes the documents of the stage before it and
 passes its own output on: <code>filter</code>, <code>sort</code>, <code>fields</code>, <code>limit</code>, and so on. The library sends it
 through Firestore’s <code>ExecutePipeline</code> call.</p>
-<p>Pipelines need a database of the Firestore <em>Enterprise edition</em>, the edition that runs them. A
-pipeline sent to a Standard edition database fails at once with <code>FAILED_PRECONDITION</code>, and the
-library does not retry it.</p>
+<p>Pipelines need a database of the Firestore <em>Enterprise edition</em>, the edition that runs them, see
+<a href="#standard-and-enterprise-editions">Standard and Enterprise editions</a>. A pipeline sent to a Standard edition database
+fails at once with <code>FAILED_PRECONDITION</code>, and the library does not retry it, unless a cache session
+answers it, see <a href="#pipelines-1">Caching pipelines</a>.</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::Deserialize;
 </span><span class="boring">#[derive(Debug, Clone, Deserialize)]
@@ -1002,29 +1880,15 @@ library does not retry it.</p>
 <p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/pipeline-query.rs">here</a>.</p>
 <h2 id="when-to-use-a-pipeline"><a class="header" href="#when-to-use-a-pipeline">When to use a pipeline</a></h2>
 <p>The Core query API (<code>db.fluent().select()</code>) stays the choice for a Standard edition database, and
-for what it covers. A pipeline adds:</p>
-<ul>
-<li>grouped aggregations, computed fields, <code>distinct</code>, <code>unnest</code> and <code>union</code>;</li>
-<li><a href="#pipeline-aggregations-and-joins">joins</a> through subqueries;</li>
-<li><a href="#pipeline-search">text and geo search</a>;</li>
-<li><a href="#pipeline-writes">writes by query</a>: update, delete, insert and upsert of the documents a
-pipeline selects;</li>
-<li>Query Explain on Enterprise, where the Core <code>.explain()</code> is rejected with <code>INVALID_ARGUMENT</code>.</li>
-</ul>
-<p>Indexes are optional for a pipeline. A pipeline without an index that covers its filter still
-runs, as a <em>table scan</em>: Firestore reads every document of the collection from primary storage
-instead of reading an index. The cost of a pipeline follows the amount of data it scans, so a
-table scan over a large collection costs in proportion to the collection. See
-<a href="#recognising-a-full-scan">Recognising a full scan</a>.</p>
-<p>Three behaviours differ from a Core query with the same filter and order:</p>
-<ul>
-<li><code>not_equal</code> is true for a document that lacks the field, while a Core <code>!=</code> leaves the document
-out;</li>
-<li><code>sort</code> keeps the documents that lack the sorted field and orders them as null, while Core
-leaves them out;</li>
-<li><code>sort</code> adds no tie-break on the document name; list a unique field last to fix the order of
-documents with equal values.</li>
-</ul>
+for what it covers. A pipeline adds grouped aggregations, computed fields, joins, search, writes by
+query and Query Explain on Enterprise, see
+<a href="#choosing-core-queries-pipelines-or-sql">Choosing Core queries, pipelines or SQL</a>.</p>
+<p>Indexes are optional for a pipeline, except for a search. A pipeline without an index that covers
+its filter runs as a table scan, and costs by the data it scans, see
+<a href="#query-plans-and-cost">Query plans and cost</a>.</p>
+<p>A pipeline with the same filter and order as a Core query can return other documents: <code>not_equal</code>
+matches a document that lacks the field, <code>sort</code> keeps such documents, and <code>sort</code> adds no
+tie-break on the document name. See <a href="#query-and-write-semantics-1">Query and write semantics</a>.</p>
 <h2 id="sources"><a class="header" href="#sources">Sources</a></h2>
 <p><code>db.fluent().pipeline().select()</code> starts a pipeline that reads documents, and the next call picks
 the source, in the words of Core’s <code>select().from(..)</code>:</p>
@@ -1195,84 +2059,17 @@ for a Core query.</p>
 <p>A session created with <code>read_through_cache</code> or <code>read_cached_only</code> answers a pipeline from the
 cache when it only filters, sorts and pages cached documents, see
 <a href="#pipelines-1">Caching pipelines</a>.</p>
-<h2 id="explaining-a-pipeline"><a class="header" href="#explaining-a-pipeline">Explaining a pipeline</a></h2>
-<p>Query Explain returns the plan Firestore chose for a pipeline. <code>.explain()</code> runs the pipeline for
-its plan only: no document is read or returned. <code>.explain_with_options(..)</code> with <code>analyze</code> set
-also returns the documents, and adds the execution profile to the plan. The plan arrives as text
-in the metadata of the last item:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">use futures::TryStreamExt;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let items: Vec&lt;_&gt; = db
-    .fluent()
-    .pipeline()
-    .select()
-    .from("books")
-    .filter(|q| q.field("genre").eq("Dystopian"))
-    .explain()
-    .stream_query_with_metadata()
-    .await?
-    .try_collect()
-    .await?;
-
-for item in items {
-    if let Some(stats) = item.metadata.explain_stats {
-        println!("{}", stats.text);
-    }
-}
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p>The text is Firestore’s own format. The library does not parse it, since Firestore can change it
-at any time.</p>
-<h3 id="recognising-a-full-scan"><a class="header" href="#recognising-a-full-scan">Recognising a full scan</a></h3>
-<p>The plan names how the pipeline reads its documents:</p>
-<ul>
-<li>a plan that ends in a <code>TableScan</code> node reads every document of the collection from primary
-storage;</li>
-<li>a plan that ends in a <code>SequentialScan</code> node with an <code>index:</code> line reads through that index,
-such as <code>index: /books (genre ASC, rating DESC)@[id = CICAgJim14AK]</code>;</li>
-<li>a search ends in a <code>StIndexSearch</code> node.</li>
-</ul>
-<p>Run <code>.explain()</code> on a pipeline before it reaches production data, and add an index when it shows a
-<code>TableScan</code> over a large collection. Firestore has no setting that rejects a table scan, and the
-library adds no check of its own.</p>
-<h3 id="choosing-an-index"><a class="header" href="#choosing-an-index">Choosing an index</a></h3>
-<p><code>.force_index(..)</code> on a <code>from(..)</code> source makes the pipeline read through the index with a given
-ID, the one Firestore assigned to it. It is available on a collection source and on a
-collection-group source, and nowhere else:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let by_genre = db
-    .fluent()
-    .pipeline()
-    .select()
-    .from("books")
-    .force_index(FirestoreIndexHint::Index("CICAgJim14AK".parse()?))
-    .filter(|q| q.field("genre").eq("Dystopian"))
-    .query()
-    .await?;
-
-let scanned = db
-    .fluent()
-    .pipeline()
-    .select()
-    .from("books")
-    .force_index(FirestoreIndexHint::TableScan)
-    .filter(|q| q.field("genre").eq("Dystopian"))
-    .query()
-    .await?;
-<span class="boring">let _ = (by_genre, scanned);
-</span><span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p><code>FirestoreIndexHint::TableScan</code> forces a table scan. An ID that names no index of that collection
-fails the request at once with <code>INVALID_ARGUMENT</code>. An index that cannot serve the filter is still
-used, and the pipeline then reads all of it. A vector index cannot be forced.</p>
+<h2 id="query-plans-and-indexes"><a class="header" href="#query-plans-and-indexes">Query plans and indexes</a></h2>
+<p><code>.explain()</code> and <code>.explain_with_options(..)</code> return the plan Firestore chose for a pipeline, and
+<code>.force_index(..)</code> on a <code>from(..)</code> source picks the index it reads through. Both are described in
+<a href="#explaining-a-pipeline">Query plans and cost</a>, with how to recognise a
+table scan in the plan.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="pipeline-aggregations-and-joins"><a class="header" href="#pipeline-aggregations-and-joins">Pipeline aggregations and joins</a></h1>
 <p>The stages in this chapter build new documents from the ones before them, so their results have
 no document name. A field of the result type for <code>_firestore_id</code> must be an <code>Option</code>, as
 described in <a href="#typed-results-and-metadata">Pipelines</a>.</p>
-<h2 id="aggregations"><a class="header" href="#aggregations">Aggregations</a></h2>
+<h2 id="aggregations-1"><a class="header" href="#aggregations-1">Aggregations</a></h2>
 <p><code>.aggregate()</code> computes accumulators over all documents and outputs one document that holds them.
 Each accumulator needs an alias, which names its field in the result:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
@@ -1459,11 +2256,10 @@ output each document’s distance under.</p>
 <span class="boring">let _ = nearest;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p>The stage does not use a vector index. Its plan is a <code>TableScan</code> followed by a sort by distance,
-even when a vector index exists on the field, so its cost follows the size of the collection. A
-Core vector query (<code>select().find_nearest(..)</code>) needs the index and uses it on a Standard edition
-database. On Enterprise it answered with and without one, and Query Explain is refused there, so
-its plan cannot show whether it used the index.</p>
+<p>The stage does not use a vector index, so its cost follows the size of the collection, see
+<a href="#known-table-scans">Known table scans</a>. A Core vector query,
+<code>select().find_nearest(..)</code>, has a distance threshold and uses a vector index on a Standard edition
+database, see <a href="#vector-search-1">Vector search</a>.</p>
 <h2 id="joins"><a class="header" href="#joins">Joins</a></h2>
 <p>Joins are in Preview: Firestore announced them without a launch stage, so treat their behaviour
 as subject to change.</p>
@@ -1709,7 +2505,7 @@ indexed text fields of the collection, never one by name;</li>
 ones is rejected;</li>
 <li>a collection-group search needs indexes scoped to the collection group.</li>
 </ul>
-<p><a href="#text-and-geo-search-indexes">Index management</a> declares them in Rust,
+<p><a href="#search-indexes-enterprise-edition">Index management</a> declares them in Rust,
 with <code>i.field(..).text()</code> and <code>i.field(..).geo()</code>, and creates them with <code>.sync()</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="pipeline-writes"><a class="header" href="#pipeline-writes">Pipeline writes</a></h1>
@@ -1837,7 +2633,7 @@ with <code>Aborted</code>.</p>
 after the one before. The numbers are measurements on tiny documents.</p>
 <p>A TTL (time-to-live) policy suits retention better than a scheduled <code>delete</code>: Firestore deletes
 the documents itself once the timestamp in the policy’s field has passed, see
-<a href="#index-management">Index management</a>. The
+<a href="#ttl-policy">TTL and the Enterprise edition</a>. The
 <a href="#bulk-delete">bulk delete</a> of the <code>admin</code> feature empties a whole collection.</p>
 <h2 id="writes-in-a-transaction"><a class="header" href="#writes-in-a-transaction">Writes in a transaction</a></h2>
 <p><code>execute_in_transaction(&amp;mut transaction)</code> runs the write in an open transaction, whether it comes
@@ -1886,7 +2682,7 @@ write reports a retry as a failed commit does: only <code>ABORTED</code>, which 
 is <code>retry_possible</code>.</p>
 <p>The changes of a pipeline write reach listeners. A Core listener on the collection receives a
 change for each inserted, updated or upserted document, and a delete for each deleted one. See
-<a href="#listening-the-document-changes-on-firestore">Listening the document changes</a>.</p>
+<a href="#listening-to-document-changes">Listening to document changes</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="sql"><a class="header" href="#sql">SQL</a></h1>
 <p>The library translates a SQL statement into a <a href="#pipelines">pipeline</a> and runs it. It is meant
@@ -1909,23 +2705,18 @@ documents of a pipeline, and <code>INSERT</code>, <code>UPDATE</code> and <code>
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/sql.rs">here</a>.</p>
-<p>SQL needs a database of the Firestore <em>Enterprise edition</em>, as pipelines do. A statement means what
-the same pipeline means in the fluent API: Firestore’s semantics, listed in
+<p>SQL needs a database of the Firestore <em>Enterprise edition</em>, as pipelines do: a statement sent to a
+Standard edition database fails with <code>FAILED_PRECONDITION</code>, unless a cache session answers it. A
+statement means what the same pipeline means in the fluent API: Firestore’s semantics, listed in
 <a href="#semantics">Semantics</a>, where a few results differ from those of a SQL database.</p>
 <p>A read through a cache session is answered from the cache when the pipeline it translates to only
 filters, sorts and pages cached documents, see <a href="#sql-1">Caching pipelines</a> for the cached
 shapes.</p>
-<h2 id="when-to-use-sql"><a class="header" href="#when-to-use-sql">When to use SQL</a></h2>
-<p>Application code keeps the fluent API. A field name in <code>path!(Book::rating)</code> is checked when the
-program compiles, where a misspelled field in SQL text reads as an absent field and matches
-nothing, without an error.</p>
-<p>SQL is for text that the program does not write:</p>
-<ul>
-<li>statements typed by a person or a script, such as an admin command line;</li>
-<li>statements kept in configuration or in files;</li>
-<li>statements an LLM agent writes, which run with the <a href="#read-only-options">read-only options</a>;</li>
-<li>queries ported from a SQL database, where <code>JOIN</code> and <code>GROUP BY</code> read faster than the builder.</li>
-</ul>
+<h2 id="when-to-use-sql-1"><a class="header" href="#when-to-use-sql-1">When to use SQL</a></h2>
+<p>Application code keeps the fluent API, whose field paths are checked when the program compiles. SQL
+is for text that the program does not write: an admin command line, statements kept in
+configuration, statements an LLM agent writes, and queries ported from a SQL database. See
+<a href="#when-to-use-sql">Choosing Core queries, pipelines or SQL</a>.</p>
 <h2 id="setup"><a class="header" href="#setup">Setup</a></h2>
 <p>SQL is behind the <code>sql</code> cargo feature, off by default:</p>
 <pre><code class="language-toml">[dependencies]
@@ -1940,10 +2731,12 @@ firestore = { version = "...", features = ["sql"] }
 <li><code>query()</code> returns every row, and <code>stream_query()</code>, <code>stream_query_with_errors()</code> and
 <code>stream_query_with_metadata()</code> stream them;</li>
 <li><code>execute()</code> and <code>execute_in_transaction(&amp;mut transaction)</code> run an <code>INSERT</code>, <code>UPDATE</code> or
-<code>DELETE</code>, see <a href="#writes">Writes</a>;</li>
+<code>DELETE</code>, see <a href="#writes-1">Writes</a>;</li>
 <li><code>explain()</code> and <code>explain_with_options(..)</code> return the plan of a <code>SELECT</code> in the metadata of the
 last item of <code>stream_query_with_metadata()</code>, see
-<a href="#explaining-a-pipeline">Explaining a pipeline</a>.</li>
+<a href="#explaining-a-pipeline">Explaining a pipeline</a>;</li>
+<li><code>.request_tags(..)</code> and <code>.request_options(..)</code> attach request options to one statement, as they
+do for a pipeline.</li>
 </ul>
 <p>A row holds the columns the statement selects, so it has no document name unless the statement
 selects <code>__name__</code>. An <code>_firestore_id</code> field of the result type must be an <code>Option</code>, as described in
@@ -2079,7 +2872,75 @@ Security Rules. A client that runs text from outside the program needs credentia
 write.</p>
 <p>Firestore has no setting that rejects a table scan, and the options do not check for one. A
 statement that filters on an unindexed field scans the collection, as a pipeline does, see
-<a href="#recognising-a-full-scan">Recognising a full scan</a>.</p>
+<a href="#known-table-scans">Known table scans</a>.</p>
+<h2 id="reads-joins-and-subqueries"><a class="header" href="#reads-joins-and-subqueries">Reads, joins and subqueries</a></h2>
+<p><a href="#reads-joins-and-subqueries-1">Reads, joins and subqueries</a> lists the sources a <code>FROM</code> clause names, reads by
+ID, the supported and refused constructs, search, and joins and subqueries with their cost.</p>
+<h2 id="semantics"><a class="header" href="#semantics">Semantics</a></h2>
+<p>A SQL statement keeps Firestore’s semantics, because it runs as a pipeline. Where that differs
+from what a SQL database does, and from a Core query, is listed in one table for pipelines and SQL:
+<a href="#query-and-write-semantics-1">Query and write semantics</a>. The main cases:</p>
+<ul>
+<li><code>v IS NULL</code> matches null only, and a document that lacks <code>v</code> does not match;</li>
+<li><code>v != 1</code> matches null and absent too;</li>
+<li>a selected field that a document lacks is missing from its row, where a SQL database holds
+<code>NULL</code>;</li>
+<li>a comparison matches values of its own type, and a misspelled field is an absent field, with no
+error.</li>
+</ul>
+<h2 id="writes-1"><a class="header" href="#writes-1">Writes</a></h2>
+<p><code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> run with <code>execute()</code>, which returns the count of documents
+written in <code>documents_modified</code>, or with <code>execute_in_transaction(&amp;mut transaction)</code> in a
+transaction, which behaves as in <a href="#writes-in-a-transaction">Pipeline writes</a>.</p>
+<p>Every SQL write is atomic: it applies in full or not at all, as a SQL statement does. It is sent
+once and never retried, and a failed write has <code>retry_possible</code> set only for <code>ABORTED</code>, which means
+nothing was applied. A write has no <code>explain</code>, and <code>.explain()</code> on one fails with
+<code>InvalidParametersError</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Statement</th><th>Runs as</th></tr>
+</thead>
+<tbody>
+<tr><td><code>INSERT INTO books (title, stock) VALUES ('A', 1), ('B', 2)</code></td><td>an insert of the rows</td></tr>
+<tr><td><code>INSERT INTO archive SELECT * FROM books WHERE stock = 0</code></td><td>an insert of the rows of a <code>SELECT</code></td></tr>
+<tr><td><code>INSERT OR REPLACE INTO books (__name__, title) VALUES ('b1', 'A')</code></td><td>an upsert: it creates the document or replaces the stored one, and fields not listed are gone</td></tr>
+<tr><td><code>INSERT .. ON CONFLICT (__name__) DO NOTHING</code></td><td>an insert of the rows that have no stored document</td></tr>
+<tr><td><code>INSERT .. ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock</code></td><td>an upsert that sets the listed fields of a stored document</td></tr>
+<tr><td><code>UPDATE books SET stock = 0, dims.w = 2 WHERE ..</code></td><td>an update of the selected documents; a dotted target sets a nested field</td></tr>
+<tr><td><code>DELETE FROM books WHERE ..</code></td><td>a delete of the selected documents</td></tr>
+</tbody>
+</table>
+</div>
+<p>The rules of each statement, <code>ON CONFLICT</code> in detail, concurrent writes and the size limit of a
+write are in <a href="#writes-and-on-conflict">Writes and ON CONFLICT</a>.</p>
+<h2 id="errors"><a class="header" href="#errors">Errors</a></h2>
+<p>A text that does not parse, a construct that is refused, a parameter bound on one side only, and a
+statement that the options refuse all fail with <code>InvalidParametersError</code>, before any request. Its
+<code>field</code> names the construct: the keyword or function, the <code>@name</code> of a parameter, or <code>sql</code> for text
+that does not parse. <code>error</code> says why, and <code>location</code> holds the <code>line</code> and <code>column</code> where the
+construct starts, counting from 1, when the position is known.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use firestore::errors::FirestoreError;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let result = db
+    .fluent()
+    .sql("SELECT * FROM books TABLESAMPLE SYSTEM (10 PERCENT)")
+    .query()
+    .await;
+
+if let Err(FirestoreError::InvalidParametersError(error)) = result {
+    println!("{} at {:?}: {}", error.public.field, error.public.location, error.public.error);
+}
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Errors from Firestore itself arrive as the other <code>FirestoreError</code> variants, as they do for any
+pipeline. An unknown function, a type mismatch and a write that is too big are among them.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="reads-joins-and-subqueries-1"><a class="header" href="#reads-joins-and-subqueries-1">Reads, joins and subqueries</a></h1>
+<p>This page lists what a SQL <code>SELECT</code> can read and how, from the <code>FROM</code> clause to joins and their
+cost. Setup, parameters and the read-only options are in <a href="#sql">SQL</a>, and the results that
+differ from a SQL database in <a href="#query-and-write-semantics-1">Query and write semantics</a>.</p>
 <h2 id="sources-1"><a class="header" href="#sources-1">Sources</a></h2>
 <p>The <code>FROM</code> clause names where the documents come from:</p>
 <div class="table-wrapper">
@@ -2117,11 +2978,8 @@ documents. A bare ID is a document of the <code>FROM</code> collection, and a pa
 <span class="boring">let _ = rows;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p>Query Explain with <code>analyze</code> on a database of the Enterprise edition reported 1 read unit for each
-document read by ID, for <code>=</code> and for <code>IN</code>, with or without a further condition such as
-<code>stock &gt;= 0</code>. Firestore’s published pricing charges a point read of the Core <code>get</code> in 4 KiB
-tranches, rounded up, so a document of up to 4 KiB costs 1 read unit through <code>get</code>, as it does
-through SQL.</p>
+<p>A read by ID costs 1 read unit for each document of up to 4 KiB, as a Core <code>get</code> does, see
+<a href="#enterprise-edition">Query plans and cost</a>.</p>
 <p>A name compared with a column, such as the <code>__name__</code> of a joined table, is described in
 <a href="#join-cost">Join cost</a>.</p>
 <h2 id="supported-constructs"><a class="header" href="#supported-constructs">Supported constructs</a></h2>
@@ -2142,7 +3000,7 @@ through SQL.</p>
 <tr><td>Subqueries</td><td>scalar <code>(SELECT ..)</code>, <code>[NOT] EXISTS</code>, <code>[NOT] IN (SELECT ..)</code> and <code>ARRAY(SELECT ..)</code>, see <a href="#joins-and-subqueries">Joins and subqueries</a></td></tr>
 <tr><td>Derived tables, <code>WITH</code></td><td>non-recursive CTEs</td></tr>
 <tr><td>Joins</td><td><code>[INNER] JOIN</code>, <code>LEFT JOIN</code>, <code>CROSS JOIN</code>, a comma in <code>FROM</code>, and <code>UNNEST(array) AS x [WITH OFFSET AS pos]</code></td></tr>
-<tr><td>Writes</td><td><code>INSERT .. VALUES</code>, <code>INSERT .. SELECT</code>, <code>INSERT OR REPLACE</code>, <code>INSERT .. ON CONFLICT</code>, <code>UPDATE</code>, <code>DELETE</code>, see <a href="#writes">Writes</a></td></tr>
+<tr><td>Writes</td><td><code>INSERT .. VALUES</code>, <code>INSERT .. SELECT</code>, <code>INSERT OR REPLACE</code>, <code>INSERT .. ON CONFLICT</code>, <code>UPDATE</code>, <code>DELETE</code>, see <a href="#writes-1">Writes</a></td></tr>
 <tr><td>Operators</td><td><code>+ - * / %</code>, `</td></tr>
 <tr><td>Functions</td><td>any other call passes to the pipeline function of that name, such as <code>starts_with(title, @text)</code> or <code>char_length(title)</code>; Firestore rejects a name it does not have with <code>INVALID_ARGUMENT</code></td></tr>
 </tbody>
@@ -2193,79 +3051,6 @@ dropped, so a statement does not run with a clause missing.</p>
 </tbody>
 </table>
 </div>
-<h2 id="semantics"><a class="header" href="#semantics">Semantics</a></h2>
-<p>A SQL statement keeps Firestore’s semantics, because it runs as a pipeline. The table lists where
-that differs from what a SQL database does. Each row was run against a collection of documents
-with an integer, a double, strings, a boolean, a null, a NaN and a document without the field.</p>
-<h3 id="null-and-absent"><a class="header" href="#null-and-absent">Null and absent</a></h3>
-<p>A document either has a field, holding a value that can be null, or lacks it. SQL has no absent
-field: the column holds <code>NULL</code>.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Statement</th><th>Firestore</th><th>A SQL database</th></tr>
-</thead>
-<tbody>
-<tr><td><code>v = NULL</code></td><td>matches the documents where <code>v</code> is null</td><td>matches nothing</td></tr>
-<tr><td><code>v IS NULL</code></td><td>matches null only; a document that lacks <code>v</code> does not match</td><td>matches both</td></tr>
-<tr><td><code>v IS NOT NULL</code></td><td>matches every document with a value that is not null</td><td>the same</td></tr>
-<tr><td><code>v != 1</code>, <code>NOT (v = 1)</code></td><td>match null and absent too</td><td>exclude both</td></tr>
-<tr><td><code>v IS DISTINCT FROM 1</code></td><td>matches null and absent too</td><td>the same</td></tr>
-<tr><td>two null join keys</td><td>match each other</td><td>do not match</td></tr>
-<tr><td><code>v || 'x'</code> with <code>v</code> null or absent</td><td>null</td><td><code>NULL</code></td></tr>
-<tr><td>a selected field that the document lacks</td><td>the key is missing from the row</td><td>the key holds <code>NULL</code></td></tr>
-<tr><td>the columns of an unmatched <code>LEFT JOIN</code></td><td>the key is missing from the row</td><td>the keys hold <code>NULL</code></td></tr>
-<tr><td><code>ORDER BY v</code> ascending</td><td>absent and null first</td><td>depends on the database</td></tr>
-</tbody>
-</table>
-</div>
-<p>A row that lacks a key deserialises into an <code>Option</code> field as <code>None</code>.</p>
-<p><code>COUNT(x)</code> counts documents where <code>x</code> has a value that is not null. Over 11 documents, one holding
-null and one lacking the field, <code>COUNT(*)</code> was 11, <code>COUNT(v)</code> was 9 and <code>COUNT(DISTINCT v)</code> was 8.</p>
-<p>The SQL results are written in SQL, using the pipeline function <code>is_absent</code>, which passes through:</p>
-<ul>
-<li><code>v IS NULL OR is_absent(v)</code> matches null and absent;</li>
-<li><code>v != 1 AND v IS NOT NULL</code> leaves them out;</li>
-<li><code>if_absent(v, NULL)</code> selects an absent field as null.</li>
-</ul>
-<p>The filters differ in cost. <code>rating != 4.2 AND rating IS NOT NULL</code> kept the index ranges of
-<code>rating != 4.2</code>, and <code>genre IS NULL OR is_absent(genre)</code> lost the range: it scanned all 11 index
-entries, where <code>genre IS NULL</code> scanned 1.</p>
-<h3 id="types"><a class="header" href="#types">Types</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Statement</th><th>Firestore</th></tr>
-</thead>
-<tbody>
-<tr><td><code>v &gt; 0</code>, <code>v &gt; 'a'</code>, <code>v IN (1, 'b')</code></td><td>a comparison matches values of its own type, and raises no error for the other types</td></tr>
-<tr><td><code>v LIKE '100%'</code> over documents where <code>v</code> is a number</td><td>the whole request fails: <code>INVALID_ARGUMENT</code>, “The function like(…) requires <code>String</code> but got <code>LONG</code>.”</td></tr>
-<tr><td><code>v + 1</code> over a document where <code>v</code> is a string</td><td>the whole request fails: “The function add(…) requires <code>Number</code> but got <code>STRING</code>.”</td></tr>
-<tr><td><code>WHERE title</code> with a string field</td><td>matches nothing, with no error</td></tr>
-<tr><td><code>ORDER BY v</code> over mixed types</td><td>absent, null, booleans, NaN, numbers, then strings</td></tr>
-</tbody>
-</table>
-</div>
-<p>A condition earlier in the same <code>AND</code> that excludes the other types avoids the failure: with
-<code>k IN ('pct', 'pcx') AND v LIKE '100%'</code>, the <code>LIKE</code> ran only on strings.</p>
-<h3 id="numbers"><a class="header" href="#numbers">Numbers</a></h3>
-<ul>
-<li><code>v = 1</code> and <code>v = 1.0</code> match the same documents, and <code>DISTINCT</code> and <code>GROUP BY</code> collapse an integer
-and a double of the same value. They collapse null and absent into one group too;</li>
-<li>two integers divide as integers: <code>7 / 2</code> is 3, <code>-7 / 2</code> is -3 and <code>7 % 3</code> is 1, where
-<code>7.0 / 2</code> is 3.5. A SQL dialect whose <code>/</code> returns a float differs from this.</li>
-</ul>
-<h3 id="names-and-patterns"><a class="header" href="#names-and-patterns">Names and patterns</a></h3>
-<ul>
-<li>field names are case-sensitive. <code>SELECT Title</code> for a field <code>title</code> returns rows without a
-title, and <code>WHERE Genre = 'Dystopian'</code> matches nothing. A misspelled field is an absent field,
-with no error;</li>
-<li><code>LIKE</code> is case-sensitive, <code>%</code> and <code>_</code> are wildcards, and <code>.</code> and <code>(</code> are literal. A backslash
-escapes a wildcard, written <code>'100\\%'</code> in the statement since a backslash escapes in a string
-literal too;</li>
-<li><code>__name__</code> compared with a string is read as a document name, and the translator makes it a
-reference. <code>__name__</code> in <code>INSERT</code> takes an ID or a path, see <a href="#writes">Writes</a>.</li>
-</ul>
 <h2 id="joins-and-subqueries"><a class="header" href="#joins-and-subqueries">Joins and subqueries</a></h2>
 <p>Joins and subqueries are in Preview in Firestore, see
 <a href="#joins">Pipeline aggregations and joins</a>. Firestore plans a
@@ -2292,7 +3077,8 @@ collection and 300 in the inner one:</p>
 uncorrelated <code>COUNT(*)</code> ran 11 times too.</p>
 <p>The cost depends on the index. Without one on the join key, each run reads the whole joined
 collection. A join or subquery is therefore refused unless the options say <code>.allow_subqueries()</code>,
-and the error says it runs one subquery per row. These need no opt-in:</p>
+and the error says it runs one subquery per row, see
+<a href="#read-only-options">Read-only options</a>. These need no opt-in:</p>
 <ul>
 <li>a join or subquery into <code>subcollection(..)</code>, which reads only the children of each parent;</li>
 <li>a derived table or a CTE in the <code>FROM</code> of a query, which is the query’s own source and does not
@@ -2332,8 +3118,9 @@ that has the name of an alias. Name the columns;</li>
 <li>the anti-join, the left rows that have no match, is <code>WHERE v IS NULL</code> on the alias.
 <code>WHERE v.rating IS NULL</code> matches nothing, since the field of an unmatched row is absent and not
 null;</li>
-<li>a correlated subquery cannot sit in a query that groups, or in a clause with no stage before it
-to carry the column, such as the <code>SET</code> of an <code>UPDATE</code>;</li>
+<li>a <em>correlated</em> subquery, one that reads a column of the row it runs for, cannot sit in a query
+that groups, or in a clause with no stage before it to carry the column, such as the <code>SET</code> of an
+<code>UPDATE</code>;</li>
 <li><code>EXISTS (SELECT 1 ..)</code> ignores the select list, so an aggregate, <code>GROUP BY</code> or <code>HAVING</code> inside
 <code>EXISTS</code> is refused: it would change which rows exist, and the select list that holds it is not
 evaluated.</li>
@@ -2365,7 +3152,8 @@ it.</p>
 <p>Rules that follow from it:</p>
 <ul>
 <li>index the join key, and run <code>.explain()</code> before the join reaches production data. A plan with a
-<code>TableScan</code> under the join is the unindexed case;</li>
+<code>TableScan</code> under the join is the unindexed case, see
+<a href="#recognising-a-full-scan">Query plans and cost</a>;</li>
 <li>a join that compares the joined table’s <code>__name__</code> with a column of the left row becomes a lookup
 by name for each left row. In a per-row subquery over a collection of 60 documents, run for 3 rows,
 a plain <code>=</code> of <code>__name__</code> with a variable scanned the collection: 132 to 180 rows and 4 to 5
@@ -2373,31 +3161,12 @@ read units, where the lookup by name read 2 rows for 3 read units;</li>
 <li>a join over a large collection that is run for analysis belongs in BigQuery. Firestore joins fit
 a left side that a filter has narrowed to a few documents.</li>
 </ul>
-<h2 id="writes"><a class="header" href="#writes">Writes</a></h2>
-<p><code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> run with <code>execute()</code>, which returns the count of documents
-written in <code>documents_modified</code>, or with <code>execute_in_transaction(&amp;mut transaction)</code> in a
-transaction, which behaves as in <a href="#writes-in-a-transaction">Pipeline writes</a>.</p>
-<p>Every SQL write is atomic: it applies in full or not at all, as a SQL statement does. It is sent
-once and never retried, and a failed write has <code>retry_possible</code> set only for <code>ABORTED</code>, which means
-nothing was applied. A write has no <code>explain</code>, and <code>.explain()</code> on one fails with
-<code>InvalidParametersError</code>.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Statement</th><th>Runs as</th></tr>
-</thead>
-<tbody>
-<tr><td><code>INSERT INTO books (title, stock) VALUES ('A', 1), ('B', 2)</code></td><td>an insert of the rows</td></tr>
-<tr><td><code>INSERT INTO archive SELECT * FROM books WHERE stock = 0</code></td><td>an insert of the rows of a <code>SELECT</code></td></tr>
-<tr><td><code>INSERT OR REPLACE INTO books (__name__, title) VALUES ('b1', 'A')</code></td><td>an upsert: it creates the document or replaces the stored one, and fields not listed are gone</td></tr>
-<tr><td><code>INSERT .. ON CONFLICT (__name__) DO NOTHING</code></td><td>an insert of the rows that have no stored document</td></tr>
-<tr><td><code>INSERT .. ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock</code></td><td>an upsert that sets the listed fields of a stored document</td></tr>
-<tr><td><code>UPDATE books SET stock = 0, dims.w = 2 WHERE ..</code></td><td>an update of the selected documents; a dotted target sets a nested field</td></tr>
-<tr><td><code>DELETE FROM books WHERE ..</code></td><td>a delete of the selected documents</td></tr>
-</tbody>
-</table>
-</div>
-<p>Rules per statement:</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="writes-and-on-conflict"><a class="header" href="#writes-and-on-conflict">Writes and ON CONFLICT</a></h1>
+<p><code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> run as <a href="#pipeline-writes">pipeline writes</a>, with <code>execute()</code>
+or <code>execute_in_transaction(..)</code>. <a href="#writes-1">Writes</a> in the SQL overview lists the
+statements and what each runs as. This page holds the rules of each statement.</p>
+<h2 id="rules-per-statement"><a class="header" href="#rules-per-statement">Rules per statement</a></h2>
 <ul>
 <li><code>INSERT .. VALUES</code> needs a column list. Each value is a literal or a bound parameter, and each
 column a top-level field name. An <code>INSERT</code> fails with <code>ALREADY_EXISTS</code> when a document of that
@@ -2408,219 +3177,54 @@ they were read from. A row without <code>__name__</code> gets an ID from Firesto
 <code>SELECT</code> renames its columns by position, and is refused over <code>*</code>;</li>
 <li><code>UPDATE</code> and <code>DELETE</code> require a <code>WHERE</code>, as in BigQuery, and <code>WHERE TRUE</code> selects every
 document. The target is one collection. <code>UPDATE .. SET __name__</code> is refused;</li>
+<li>the same ID twice in one statement fails with <code>INVALID_ARGUMENT</code>, “Multiple mutations per key
+are not allowed”, and nothing is written.</li>
+</ul>
+<h2 id="on-conflict"><a class="header" href="#on-conflict">ON CONFLICT</a></h2>
+<ul>
 <li><code>ON CONFLICT</code> takes only the target <code>(__name__)</code>, since Firestore has no other unique
-constraint, and <code>DO NOTHING</code> also accepts no target. In <code>DO UPDATE</code>, <code>excluded.col</code> is a field of
-the new row, and a bare column is a field of the stored document. A <code>WHERE</code> on <code>DO UPDATE</code> leaves
-the stored document unchanged, and does not count it, when it is false for it. The lookup of the
-stored document by its name is bounded by the rows written. In <code>ON CONFLICT</code>, rows of a <code>SELECT</code>
-from another collection are matched by their ID, which scans the target collection once per row,
-and so need <code>.allow_subqueries()</code>. The <code>__name__</code> of such a row must be the name of a document
-that the translation can see: <code>SELECT __name__, ..</code>, or <code>*</code> of a collection. A string or another
-field renamed to <code>__name__</code>, <code>*</code> of a derived table, and <code>* EXCEPT (__name__)</code> are refused before
-any request, since a row without a document reference cannot be matched;</li>
+constraint, and <code>DO NOTHING</code> also accepts no target;</li>
+<li>in <code>DO UPDATE</code>, <code>excluded.col</code> is a field of the new row, and a bare column is a field of the
+stored document. A <code>WHERE</code> on <code>DO UPDATE</code> leaves the stored document unchanged, and does not
+count it, when it is false for it;</li>
+<li>the lookup of the stored document by its name is bounded by the rows written. In <code>ON CONFLICT</code>,
+rows of a <code>SELECT</code> from another collection are matched by their ID, which scans the target
+collection once per row, and so need <code>.allow_subqueries()</code>;</li>
+<li>the <code>__name__</code> of such a row must be the name of a document that the translation can see:
+<code>SELECT __name__, ..</code>, or <code>*</code> of a collection. A string or another field renamed to <code>__name__</code>,
+<code>*</code> of a derived table, and <code>* EXCEPT (__name__)</code> are refused before any request, since a row
+without a document reference cannot be matched;</li>
 <li><code>ON CONFLICT</code> keeps the stored document of each row in a field named <code>_conflict_stored</code>. A column
 of that name is refused, and a field of that name in the rows of a <code>SELECT *</code> is dropped from
-them;</li>
-<li>the same ID twice in one statement fails with <code>INVALID_ARGUMENT</code>, “Multiple mutations per key
-are not allowed”, and nothing is written;</li>
-<li>8 concurrent <code>INSERT .. ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock</code>
-statements on one document committed 4 times and failed 4 times with <code>ABORTED</code>, “Optimistic
-transaction was aborted due to a conflict”, and the stored <code>stock</code> was 4. A write that returns
-<code>ABORTED</code> can be sent again.</li>
+them.</li>
 </ul>
-<p>Firestore refuses an atomic write that is too big. <a href="#write-limits">Write limits</a>
-lists the sizes that were measured.</p>
-<h2 id="errors"><a class="header" href="#errors">Errors</a></h2>
-<p>A text that does not parse, a construct that is refused, a parameter bound on one side only, and a
-statement that the options refuse all fail with <code>InvalidParametersError</code>, before any request. Its
-<code>field</code> names the construct: the keyword or function, the <code>@name</code> of a parameter, or <code>sql</code> for text
-that does not parse. <code>error</code> says why, and <code>location</code> holds the <code>line</code> and <code>column</code> where the
-construct starts, counting from 1, when the position is known.</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">use firestore::errors::FirestoreError;
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let result = db
+</span>let written = db
     .fluent()
-    .sql("SELECT * FROM books TABLESAMPLE SYSTEM (10 PERCENT)")
-    .query()
-    .await;
-
-if let Err(FirestoreError::InvalidParametersError(error)) = result {
-    println!("{} at {:?}: {}", error.public.field, error.public.location, error.public.error);
-}
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p>Errors from Firestore itself arrive as the other <code>FirestoreError</code> variants, as they do for any
-pipeline. An unknown function, a type mismatch and a write that is too big are among them.</p>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="listening-the-document-changes-on-firestore"><a class="header" href="#listening-the-document-changes-on-firestore">Listening the document changes on Firestore</a></h1>
-<p>To help to work with asynchronous event listener the library supports high level API for
-listening the events from Firestore on a separate thread:</p>
-<p>The listener implementation needs to be provided with a storage for the last received token for specified targets to be
-able to resume listening the changes from the last handled token and to avoid receiving all previous changes.</p>
-<p>The library provides basic implementations for storing the tokens but you can implement your own more sophisticated
-storage if needed:</p>
-<ul>
-<li><code>FirestoreTempFilesListenStateStorage</code> - resume tokens stored as temporary files on local FS;</li>
-<li><code>FirestoreMemListenStateStorage</code> - in memory storage backed by HashMap (with this implementation if you restart your
-app, you will receive all notifications again);</li>
-</ul>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">use serde::{Deserialize, Serialize};
-</span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
-</span><span class="boring">struct MyTestStructure { some_id: String }
-</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test-listen";
-</span><span class="boring">const TEST_TARGET_ID_BY_QUERY: FirestoreListenerTarget = FirestoreListenerTarget::new(42_u32);
-</span><span class="boring">const TEST_TARGET_ID_BY_DOC_IDS: FirestoreListenerTarget = FirestoreListenerTarget::new(17_u32);
-</span><span class="boring">async fn example(db: FirestoreDb, doc_id1: String, doc_id2: String) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let mut listener = db
-    .create_listener(
-        FirestoreTempFilesListenStateStorage::new(), // or FirestoreMemListenStateStorage or your own implementation
+    .sql(
+        "INSERT INTO items (__name__, stock) VALUES (@id, @stock) \
+         ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock",
     )
-    .await?;
-
-// Adding query listener
-db.fluent()
-    .select()
-    .from(TEST_COLLECTION_NAME)
-    .listen()
-    .add_target(TEST_TARGET_ID_BY_QUERY, &amp;mut listener)?;
-
-// Adding docs listener by IDs
-db.fluent()
-    .select()
-    .by_id_in(TEST_COLLECTION_NAME)
-    .batch_listen([doc_id1, doc_id2])
-    .add_target(TEST_TARGET_ID_BY_DOC_IDS, &amp;mut listener)?;
-
-listener
-    .start(|event| async move {
-        match event {
-            FirestoreListenEvent::DocumentChange(ref doc_change) =&gt; {
-                println!("Doc changed: {:?}", doc_change);
-
-                if let Some(doc) = &amp;doc_change.document {
-                    let obj: MyTestStructure =
-                        FirestoreDb::deserialize_doc_to::&lt;MyTestStructure&gt;(doc)
-                            .expect("Deserialized object");
-                    println!("As object: {:?}", obj);
-                }
-            }
-            _ =&gt; {
-                println!("Received a listen response event to handle: {:?}", event);
-            }
-        }
-
-        Ok(())
-    })
-    .await?;
-
-// Wait some events like Ctrl-C, signals, etc
-// &lt;put-your-implementation-for-wait-here&gt;
-
-// and then shutdown
-listener.shutdown().await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p><code>shutdown()</code> finishes the current callback and resume-state writes before returning.
-Use <code>shutdown_with_timeout(Duration::from_secs(5))</code> to allow five seconds for graceful shutdown,
-then abort and join the task. Aborting can interrupt callbacks and token writes, so changes may
-be replayed.</p>
-<p>Targets can also be added and removed on a running listener with <code>add_target</code> and
-<code>remove_target</code>. The listener changes them on its open stream, so the other targets keep
-listening as they were. <code>add_target</code> returns an error for a target that cannot be turned into
-a listen request, so a bad target never reaches the running listener.</p>
-<p>Target changes with the <code>Remove</code> type reach the callback in two forms:</p>
-<ul>
-<li>with no <code>cause</code>, Firestore acknowledges a <code>remove_target</code> call, or ends a target added with
-<code>add_target_once</code>. Events for a removed target can still arrive until this acknowledgement;</li>
-<li>with a <code>cause</code>, Firestore removed the target on its own. For <code>PERMISSION_DENIED</code>,
-<code>NOT_FOUND</code>, <code>FAILED_PRECONDITION</code>, <code>UNIMPLEMENTED</code>, and <code>INVALID_ARGUMENT</code> on a target added
-without a resume token or read time, the listener stops listening on that target only and
-unregisters it. For any other cause it adds the target back from scratch after the retry
-delay. An ended target is unregistered before the callback receives the change, so
-<code>has_target</code> called from the callback already tells whether the target comes back.</li>
-</ul>
-<p>When Firestore removes a target on its own while a <code>remove_target</code> call for it is on its way,
-Firestore does not acknowledge the removal. It closes the whole stream with <code>NOT_FOUND</code> instead.
-The listener then reconnects, and the other targets are added back at once.</p>
-<p>The listener reconnects by itself after network errors, closed streams and every other error,
-after the retry delay. It stops only on an error a retry cannot fix:</p>
-<ul>
-<li>Firestore rejects the listen request as invalid again after every resume token was discarded;</li>
-<li>the listen request fails with <code>InvalidParametersError</code>;</li>
-<li>the <code>AddTarget</code> or <code>RemoveTarget</code> request for a target cannot be built;</li>
-<li>the callback or the token storage panics.</li>
-</ul>
-<p>A stopped listener rejects <code>add_target</code> with a <code>SystemError</code>, and <code>shutdown()</code> returns the error
-it stopped with.</p>
-<p>A listen stream can also stay open and stop delivering anything, which HTTP/2 keep-alive does not
-detect while the connection itself still answers. To reset such a stream, set <code>idle_timeout</code> in the
-listener params:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">use std::time::Duration;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let listener = db
-    .create_listener_with_params(
-        FirestoreMemListenStateStorage::new(),
-        FirestoreListenerParams::new().with_idle_timeout(Duration::from_secs(120)),
-    )
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p>It is off by default. When set:</p>
-<ul>
-<li>any <code>ListenResponse</code> counts as activity, <code>NO_CHANGE</code> target changes included;</li>
-<li>the time counts from when the stream is open, so a connect that never gets that far is not
-covered, and only while at least one target on the stream waits for an answer from Firestore, not
-while every target waits to be added back after the retry delay;</li>
-<li>the time starts again once the callback and the token storage have handled each response;</li>
-<li>on expiry the listener waits the retry delay and reconnects, adding every target back with its
-stored resume token. Changes after the last stored token may be delivered again, as after any
-reconnect.</li>
-</ul>
-<p>120 seconds is the recommended value, and the one Google’s Node.js client uses. Firestore documents
-no interval for the updates it sends on a quiet stream, so a much shorter value can reset healthy
-streams.</p>
-<p>See complete example in examples directory.</p>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="working-on-dynamicdocument-level"><a class="header" href="#working-on-dynamicdocument-level">Working on dynamic/document level</a></h1>
-<p>Sometimes having static structure may restrict you from working with dynamic data,
-so there is a way to use Fluent API to work with documents without introducing structures at all.</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">const TEST_COLLECTION_NAME: &amp;str = "test";
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>let object_returned = db
-    .fluent()
-    .insert()
-    .into(TEST_COLLECTION_NAME)
-    .document_id("test-1")
-    .document(FirestoreDb::serialize_map_to_doc(
-        "",
-        [
-            ("some_id", "test-id".into()),
-            ("some_string", "test-value".into()),
-            ("some_num", 42.into()),
-            (
-                "embedded_obj",
-                FirestoreValue::from_map([
-                    ("inner_some_id", "inner-id-value".into()),
-                    ("inner_some_string", "inner-some-value".into()),
-                ]),
-            ),
-            ("created_at", FirestoreTimestamp::now().into()),
-        ],
-    )?)
+    .param("id", "a-1")
+    .param("stock", 5)
     .execute()
     .await?;
-<span class="boring">let _ = object_returned;
-</span><span class="boring">Ok(())
+println!("Wrote {} documents", written.documents_modified);
+<span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/dynamic_doc_level_crud.rs">here</a>.</p>
+<h2 id="concurrent-writes"><a class="header" href="#concurrent-writes">Concurrent writes</a></h2>
+<p>8 concurrent <code>INSERT .. ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock</code>
+statements on one document committed 4 times and failed 4 times with <code>ABORTED</code>, “Optimistic
+transaction was aborted due to a conflict”, and the stored <code>stock</code> was 4. A write that returns
+<code>ABORTED</code> can be sent again.</p>
+<h2 id="write-limits-1"><a class="header" href="#write-limits-1">Write limits</a></h2>
+<p>Firestore refuses an atomic write that is too big. <a href="#write-limits">Write limits</a>
+lists the sizes that were measured.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="timestamps-support"><a class="header" href="#timestamps-support">Timestamps support</a></h1>
-<p>By default, date/time values serialize as a string to Firestore (while
-deserialization works from Timestamps and Strings). To store them as native
+<p>By default, date/time values serialise as a string to Firestore (while
+deserialisation works from Timestamps and Strings). To store them as native
 Firestore timestamps there are three options.</p>
 <ul>
 <li>Using <code>std::time::SystemTime</code> directly, with no attribute and no wrapping type,
@@ -2702,20 +3306,25 @@ nanoseconds on write. <code>FirestoreTimestamp</code> truncates to that precisio
 its constructors and conversions, so its values survive a round trip unchanged.
 A <code>FirestoreInstant</code> or a <code>SystemTime</code> carrying nanoseconds does not, since those
 are the standard types this library cannot change.</p>
-<p>All of them change the representation only for Firestore serialization.
-<code>FirestoreTimestamp</code> and <code>FirestoreInstant</code> still serialize as a string to JSON,
+<p>All of them change the representation only for Firestore serialisation.
+<code>FirestoreTimestamp</code> and <code>FirestoreInstant</code> still serialise as a string to JSON,
 so the same model can be reused for JSON and Firestore, while a plain <code>SystemTime</code>
 keeps the default serde representation.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="reading-firestore-document-metadata-as-struct-fields"><a class="header" href="#reading-firestore-document-metadata-as-struct-fields">Reading Firestore document metadata as struct fields</a></h1>
-<p>Firestore provides additional generated fields for each of document you create:</p>
+<h1 id="document-metadata-as-struct-fields"><a class="header" href="#document-metadata-as-struct-fields">Document metadata as struct fields</a></h1>
+<p>Firestore provides additional fields for each document:</p>
 <ul>
-<li><code>_firestore_id</code>: Generated document ID (when it is not specified from the client);</li>
-<li><code>_firestore_created</code>: The time at which the document was created;</li>
-<li><code>_firestore_updated</code>: The time at which the document was last changed;</li>
+<li><code>_firestore_id</code>: the document ID, whether the client chose it or Firestore generated it;</li>
+<li><code>_firestore_full_id</code>: the full document name, such as
+<code>projects/my-project/databases/(default)/documents/my-collection/my-id</code>;</li>
+<li><code>_firestore_created</code>: the time at which the document was created;</li>
+<li><code>_firestore_updated</code>: the time at which the document was last changed.</li>
 </ul>
-<p>An aggregation result and the result of a pipeline <code>select</code> have no document name, and so neither
-<code>_firestore_id</code> nor <code>_firestore_full_id</code>. Make a field that reads either of them an <code>Option</code>.</p>
+<p>A stored document carries its name in Core and pipeline results. A Core aggregation result, and
+the result of a pipeline stage that builds new documents, such as <code>.fields()</code> or <code>.aggregate()</code>,
+has no document name, and so neither <code>_firestore_id</code> nor <code>_firestore_full_id</code>. A SQL row has no
+name unless the statement selects <code>__name__</code>. Make a field that reads either of them an <code>Option</code>,
+see <a href="#results-without-a-document-name">Query and write semantics</a>.</p>
 <p>To be able to read them the library makes them available
 as system fields for the Serde deserializer with reserved names,
 so you can specify them in your structures as:</p>
@@ -2735,9 +3344,14 @@ struct MyTestStructure {
 }</code></pre>
 <p>Complete example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/generated-document-id.rs">here</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="explicit-null-value-serialization"><a class="header" href="#explicit-null-value-serialization">Explicit null value serialization</a></h1>
-<p>By default, all Option&lt;&gt; serialized as absent fields, which is convenient for many cases.
-However sometimes you need to have explicit nulls.</p>
+<h1 id="explicit-null-value-serialisation"><a class="header" href="#explicit-null-value-serialisation">Explicit null value serialisation</a></h1>
+<p>By default, every <code>Option</code> serialises as an absent field, which is convenient for many cases.
+Some cases need explicit nulls instead.</p>
+<p>Null and absent are not the same to a query. A Core filter or <code>order_by</code> never returns a document
+that lacks the field, and <code>is_null()</code> matches only a stored null. A pipeline or SQL statement tells
+them apart too: <code>not_equal</code> and <code>sort</code> keep a document that lacks the field, and SQL <code>IS NULL</code>
+matches a stored null only. <a href="#null-and-absent">Query and write semantics</a>
+lists every case.</p>
 <p>To help with that there are additional attributes implemented for <code>serde(with)</code>:</p>
 <ul>
 <li>For any type:</li>
@@ -2801,7 +3415,7 @@ document or collection ID or name, with no conversion:</p>
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p>Store the validated type in your own structs instead of a bare <code>String</code> to carry the proof along
-with the value; it deserializes through the same validation, so a <code>CreateSession</code> built from an
+with the value; it deserialises through the same validation, so a <code>CreateSession</code> built from an
 untrusted request body rejects a bad ID before it reaches Firestore:</p>
 <pre><code class="language-rust"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::{Deserialize, Serialize};
@@ -2827,6 +3441,9 @@ latency noticeably.</p>
 <li><code>caching-persistent</code> for a persistent, disk backed cache, implemented with
 <a href="https://github.com/cberner/redb">redb</a> and protobuf.</li>
 </ul>
+<p>The cache serves Core reads, and pipeline and SQL reads, on both editions. Which reads it answers
+is listed in <a href="#choosing-a-cache-mode">Choosing a cache mode</a>, and the Core query rules in
+<a href="#what-the-cache-answers">What the cache answers</a>.</p>
 <h2 id="pipelines-1"><a class="header" href="#pipelines-1">Pipelines</a></h2>
 <p><a href="#pipelines">Pipelines</a> and <a href="#sql">SQL</a> reads use the cache in the same sessions,
 <code>read_through_cache</code> and <code>read_cached_only</code>. The cache answers a pipeline on its own when every
@@ -2912,12 +3529,18 @@ collection or <code>documents(..)</code>:</p>
 <p><code>GROUP BY</code>, aggregates, <code>DISTINCT</code>, <code>UNION</code>, joins and subqueries, <code>collection_group(..)</code>,
 <code>database()</code>, <code>+ - * / %</code>, <code>||</code>, <code>LOWER</code>, <code>UPPER</code>, <code>CHAR_LENGTH</code>, <code>LIKE</code>, <code>ILIKE</code>, <code>CASE</code>,
 <code>COALESCE</code>, <code>IFNULL</code>, <code>SUBSTR</code> and search run on Firestore.</p>
-<h3 id="enterprise-databases"><a class="header" href="#enterprise-databases">Enterprise databases</a></h3>
+<h2 id="on-the-enterprise-edition-6"><a class="header" href="#on-the-enterprise-edition-6">On the Enterprise edition</a></h2>
 <p>The listener that keeps a cache current needs real-time updates on a database of the Enterprise
 edition. They are enabled when the database is created:</p>
 <pre><code class="language-sh">gcloud firestore databases create --database=my-database --edition=enterprise \
   --location=nam5 --enable-firestore-data-access --enable-realtime-updates
 </code></pre>
+<p>The setting is immutable, and Google’s documentation does not agree on its default for an
+Enterprise edition database, so set the flag explicitly, see
+<a href="#settings-fixed-at-creation">Settings fixed at creation</a>.</p>
+<p>A cached Core query follows the order of the Standard edition, and documents with equal values can
+come back in another order from an Enterprise edition database, see
+<a href="#on-the-enterprise-edition-7">What the cache answers</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="usage"><a class="header" href="#usage">Usage</a></h1>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
@@ -3013,7 +3636,9 @@ written during the download is missed. <code>remove_collection</code> does the r
 collection’s resume token so its listener target ID cannot be reused against a different query.
 Use <code>remove_collection_at</code> for a sub-collection, whose absolute path a bare name cannot address.
 A collection whose target Firestore ends, for example on <code>PERMISSION_DENIED</code>, stays configured and
-suspended, so <code>add_collection</code> reports it as already cached until <code>remove_collection</code> is called.</p>
+suspended, so <code>add_collection</code> reports it as already cached until <code>remove_collection</code> is called.
+On an Enterprise edition database the listener needs real-time updates, see
+<a href="#on-the-enterprise-edition-6">Caching</a>.</p>
 <p><code>FirestoreDb</code> handles created earlier with <code>read_through_cache</code> or <code>read_cached_only</code> pick both up
 immediately: they share the cache’s backend rather than a copy of it. A cache can also be built
 with no collections at all and populated entirely at runtime.</p>
@@ -3034,13 +3659,80 @@ requests the cache cannot answer completely return an error.</li>
 <tbody>
 <tr><td>Read by ID, batch read by IDs</td><td>yes, for any cached collection</td></tr>
 <tr><td>Listing all documents in a collection</td><td>only for <strong>preloaded</strong> collections</td></tr>
-<tr><td>Querying a collection (filtering, ordering, cursors)</td><td>only for <strong>preloaded</strong> collections, and only for supported queries</td></tr>
-<tr><td>Reads in a transaction or at a read time</td><td>never: <code>read_through_cache</code> reads from Firestore, <code>read_cached_only</code> returns an error</td></tr>
+<tr><td>Querying a collection (filtering, ordering, cursors)</td><td>only for <strong>preloaded</strong> collections, and only for the queries in <a href="#what-the-cache-answers">What the cache answers</a></td></tr>
+<tr><td>Reads in a transaction or at a read time</td><td>never: <code>read_through_cache</code> reads from Firestore, <code>read_cached_only</code> returns an error, see <a href="#transactions-and-the-cache">Transactions</a></td></tr>
 <tr><td>Pipeline and SQL reads</td><td>for <strong>preloaded</strong> collections, and by ID for any cached collection, with the stages and functions in <a href="#pipelines-1">Pipelines</a></td></tr>
 <tr><td>Paged listing, queries with metadata, aggregations, writes</td><td>never</td></tr>
 </tbody>
 </table>
 </div>
+<h2 id="what-the-cache-answers"><a class="header" href="#what-the-cache-answers">What the cache answers</a></h2>
+<p>A Core query on a preloaded collection runs in the library’s cached query engine. The engine
+returns the documents Firestore returns, in the order Firestore returns them:</p>
+<ul>
+<li>
+<p><strong>timestamps and numbers.</strong> Timestamps compare by seconds and then by the fraction of a second,
+at the precision Firestore uses:</p>
+<ul>
+<li><code>==</code>, the range operators and <code>array-contains</code> compare a timestamp on its own at the
+nanosecond;</li>
+<li><code>in</code>, <code>not-in</code> and <code>array-contains-any</code> compare at the microsecond that Firestore stores;</li>
+<li>a timestamp inside an array or a map compares at the microsecond, whichever operator is used.</li>
+</ul>
+<p>An integer and a double compare by value, so a filter on <code>1</code> matches the double <code>1.0</code>, and
+<code>order_by</code> sorts them together;</p>
+</li>
+<li>
+<p><strong>order and range filters on every type.</strong> <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>order_by</code> and cursors follow
+Firestore’s order of types (null, booleans, numbers, timestamps, strings, bytes, references, geo
+points, arrays, vectors, maps) and its order within each type. A range filter matches values of
+its own type only, and never NaN;</p>
+</li>
+<li>
+<p><strong>several <code>order_by</code> fields.</strong> The first field that differs decides. Ties end on the document
+name, in the direction of the last field. A document that lacks an <code>order_by</code> field is not
+returned, as in Firestore;</p>
+</li>
+<li>
+<p><strong>no <code>order_by</code>.</strong> Results come in the order of the fields compared with <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>,
+<code>!=</code> or <code>not-in</code>, and then by document name;</p>
+</li>
+<li>
+<p><strong>cursors, <code>offset</code> and <code>limit</code>.</strong> The cursors apply first, then <code>offset</code>, then <code>limit</code>, so
+<code>limit(10).offset(5)</code> skips 5 documents and returns up to 10. A cursor is one position in the
+order of its fields;</p>
+</li>
+<li>
+<p><strong><code>in</code>, <code>not-in</code> and <code>array-contains</code>.</strong> <code>in</code> matches a scalar field equal to any listed value,
+<code>not-in</code> one equal to none of them, leaving out documents where the field is null or absent, and
+<code>array-contains</code> an array field holding the value;</p>
+</li>
+<li>
+<p><strong>equality on arrays, maps, bytes, references and geo points.</strong> <code>==</code>, <code>!=</code>, <code>in</code>, <code>not-in</code>,
+<code>array-contains</code> and <code>array-contains-any</code> match these values. Arrays are equal when their
+elements are equal in order, and maps when their fields are equal by key; inside both, an
+integer equals the double of the same value, and null and NaN equal themselves. <code>!=</code> also matches
+a field of another type;</p>
+</li>
+<li>
+<p><strong>null and NaN in a filter.</strong> A null in a filter value matches nothing: <code>== null</code>, <code>!= null</code> and
+<code>array-contains</code> null return no documents, a null in an <code>in</code> or <code>array-contains-any</code> list is
+ignored, and a <code>not-in</code> list that holds a null returns no documents. NaN equals nothing, itself
+included, and is in no range; <code>!=</code> and <code>not-in</code> match it. Use <code>is_null</code> to find null fields:
+<code>is_null</code> does not match a document without the field, and <code>is_not_nan</code> does not match a
+document where the field is null or absent.</p>
+</li>
+</ul>
+<p>The engine applies none of <code>find_nearest</code>, <code>return_only_fields</code> and <code>explain_options</code>. A query that
+sets one is answered by Firestore under <code>read_through_cache</code>, and fails with
+<code>CacheIncompleteCollection</code> under <code>read_cached_only</code>. A <code>get</code> or batch get with <code>.fields(..)</code>
+follows the same rule, and fails with <code>CacheFieldMaskUnsupported</code> under <code>read_cached_only</code>.</p>
+<p>A query answered from the cache is eventually consistent, see
+<a href="#how-the-cache-is-updated">How the cache is updated</a>.</p>
+<h3 id="on-the-enterprise-edition-7"><a class="header" href="#on-the-enterprise-edition-7">On the Enterprise edition</a></h3>
+<p>The cached order is that of the Standard edition. Documents with equal values can come back in
+another order from an Enterprise edition database than from the cache, see
+<a href="#cached-results">Query and write semantics</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="load-modes-and-why-listings-need-preloading"><a class="header" href="#load-modes-and-why-listings-need-preloading">Load modes, and why listings need preloading</a></h1>
 <ul>
@@ -3068,7 +3760,8 @@ your application or from elsewhere;</li>
 <li>Preloading at startup.</li>
 </ul>
 <p>Cached results are eventually consistent: they reflect the last state the listener delivered, so a
-write may take a moment to show up. Do not cache data that must be read at strong consistency.</p>
+write may take a moment to show up. Do not cache data that must be read at strong consistency.
+This holds for pipeline and SQL reads that the cache answers too.</p>
 <p>Firestore also reports how many documents a target matches. When that disagrees with what a
 preloaded collection holds - which means changes were missed, typically deletes that happened while
 the listener was disconnected - the cache drops the collection and has Firestore replay it. The
@@ -3079,6 +3772,9 @@ token has expired - the cache drops what it holds for that collection and Firest
 While that replay is in progress the collection stops answering <code>list</code> and <code>query</code> from the cache:
 <code>read_through_cache</code> falls back to Firestore, and <code>read_cached_only</code> returns a <code>CacheError</code> rather
 than a listing that looks complete but is not.</p>
+<h2 id="on-the-enterprise-edition-8"><a class="header" href="#on-the-enterprise-edition-8">On the Enterprise edition</a></h2>
+<p>The listener that updates the cache needs real-time updates on an Enterprise edition database, a
+setting chosen when the database is created, see <a href="#on-the-enterprise-edition-6">Caching</a>.</p>
 <p>Full examples are available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/caching_memory_collections.rs">here</a>
 and <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/caching_persistent_collections.rs">here</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -3087,6 +3783,15 @@ and <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/cach
 outside your Rust code: through the console, <code>gcloud</code> or the Firebase CLI’s
 <code>firestore.indexes.json</code>. The library supports declaring them in Rust instead, next to the
 structs and queries that need them, and reconciling Firestore with one explicit call.</p>
+<p>This page covers the statement, its runs and its reports. The kinds of index have pages of their
+own:</p>
+<ul>
+<li><a href="#composite-and-vector-indexes">Composite and vector indexes</a>, with the single-field overrides
+of the Standard edition;</li>
+<li><a href="#search-indexes-enterprise-edition">Search indexes</a>, on the Enterprise edition;</li>
+<li><a href="#ttl-and-the-enterprise-edition">TTL and the Enterprise edition</a>: the TTL policy, and
+the index rules of an Enterprise edition database, unique indexes and density.</li>
+</ul>
 <h2 id="enabling-the-admin-feature"><a class="header" href="#enabling-the-admin-feature">Enabling the <code>admin</code> feature</a></h2>
 <p>Index management, and the other administrative operations under <code>db.fluent()</code> that need the
 Firestore Admin API, are behind the <code>admin</code> cargo feature, off by default:</p>
@@ -3139,21 +3844,19 @@ declarations ending in <code>.plan()</code> or <code>.sync()</code>:</p>
 println!("{report}");
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p><code>.composite()</code> builds the group’s composite indexes: order a field with <code>.asc()</code>/<code>.desc()</code>, or
-mark it <code>.array_contains()</code>, and chain <code>.all_descendants()</code> onto the whole index for a
-collection-group index rather than a single collection. A <code>.vector(dimension)</code> field must be the
-last field of the index it belongs to.</p>
-<p><code>.field_overrides()</code> builds single-field overrides: <code>.exempt()</code> removes a field from automatic
-single-field indexing entirely, and <code>.indexes([...])</code> replaces it with exactly the indexes listed.
-See <a href="#a-field-override-replaces-the-whole-automatic-set">below</a> for what that replacement means.</p>
-<p><code>.ttl()</code> names the one field per collection group whose timestamp value enables document TTL.</p>
+<ul>
+<li><code>.composite()</code> builds the group’s composite and vector indexes, see
+<a href="#composite-and-vector-indexes">Composite and vector indexes</a>;</li>
+<li><code>.field_overrides()</code> builds the single-field overrides of a Standard edition database, see
+<a href="#single-field-overrides-standard-edition">Single-field overrides</a>;</li>
+<li><code>.ttl()</code> names the one field per collection group whose timestamp value enables document TTL, see
+<a href="#ttl-policy">TTL policy</a>.</li>
+</ul>
 <p>Each of <code>.composite()</code>, <code>.field_overrides()</code> and <code>.ttl()</code> replaces whatever an earlier call in the
-same chain set, so call each at most once. On a Standard edition database a composite index needs
-at least two fields, unless it is a single vector field on its own; an Enterprise edition database
-takes an index of one field (see <a href="#enterprise-edition">Enterprise edition</a>). An index holds at
-most one <code>.array_contains()</code> field, and a field override or a TTL path may not repeat. These, and
-the vector, field-count and density limits Firestore itself enforces, are checked at <code>.plan()</code>/<code>.sync()</code>
-before anything is written, and return <code>InvalidParametersError</code> naming what is wrong.</p>
+same chain set, so call each at most once. A field override or a TTL path may not repeat. These
+rules, the rules of the database’s edition, and the vector, field-count and density limits
+Firestore itself enforces, are checked at <code>.plan()</code>/<code>.sync()</code> before anything is written, and
+return <code>InvalidParametersError</code> naming what is wrong.</p>
 <h2 id="plan-versus-sync"><a class="header" href="#plan-versus-sync">plan() versus sync()</a></h2>
 <p><code>.plan()</code> is read-only: it lists what Firestore already has for the owned group and reports what
 <code>.sync()</code> would change, without writing anything.</p>
@@ -3242,101 +3945,6 @@ let tagged_rust: Vec&lt;Post&gt; = db
 <p>The ID is shared across the whole database, including subcollections your own code never writes
 to. A statement owns the collection group, so <code>.prune_undeclared()</code> on <code>collection_group("posts")</code>
 reaches the indexes of every <code>posts</code> collection in the database.</p>
-<h2 id="text-and-geo-search-indexes"><a class="header" href="#text-and-geo-search-indexes">Text and geo search indexes</a></h2>
-<p>The pipeline <a href="#pipeline-search">search stage</a> runs against search indexes, which only a
-database of the Firestore Enterprise edition has. A text index covers one or more string fields,
-and a geo index covers a geo point field. Declare them as composite indexes with <code>.text()</code> and
-<code>.geo()</code> on a field:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>db.fluent()
-    .indexes()
-    .collection_group("restaurants")
-    .composite(|i| {
-        i.indexes([
-            i.index([i.field("menu").text(), i.field("description").text()])
-                .search_options(
-                    FirestoreSearchIndexOptions::new().with_text_language("en".to_string()),
-                ),
-            i.index([i.field("location").geo()]),
-        ])
-    })
-    .sync()
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<ul>
-<li>A search index holds text and geo fields only. An index that mixes them with ordered, array or
-vector fields is rejected with <code>InvalidParametersError</code> at <code>.plan()</code>/<code>.sync()</code>;</li>
-<li>A text search covers all the text fields of the index it uses, and Firestore offers no index
-that matches one field by name;</li>
-<li><code>.search_options(..)</code> sets the options of a text index. <code>text_language</code> is the BCP 47 language
-tag the fields are indexed in, such as <code>en</code>; when it is left unset, Firestore detects each
-document’s language and lists the option as <code>und</code>, the code for an undetermined language.
-<code>text_language_override_field_path</code> names the field that holds a document’s own language, and
-Firestore reads <code>language</code> when it is unset. An index declared without options matches the
-index Firestore lists with those defaults;</li>
-<li><code>.geo_with(config)</code> takes a <code>FirestoreGeoIndexConfig</code> that can leave GeoJSON points out of a geo
-index, which Firestore indexes by default;</li>
-<li><code>.all_descendants()</code> on the index scopes it to a collection group, which a collection-group
-search needs;</li>
-<li>on a Standard edition database <code>.plan()</code> and <code>.sync()</code> refuse a search index with
-<code>InvalidParametersError</code> before anything is written.</li>
-</ul>
-<h2 id="enterprise-edition"><a class="header" href="#enterprise-edition">Enterprise edition</a></h2>
-<p>An Enterprise edition database builds no index on its own: there are no automatic single-field
-indexes, so every index a query needs is one the statement declares. <code>.plan()</code> and <code>.sync()</code> read
-the database’s edition once per call and follow its rules:</p>
-<ul>
-<li>a composite index of one field is how a single field is indexed. Firestore accepts one there,
-ordered, <code>.array_contains()</code> or <code>__name__</code>, while a Standard edition database refuses it;</li>
-<li><code>.field_overrides()</code> has nothing to override. An <code>.exempt()</code> is already satisfied and is never
-written. An override that lists indexes fails with <code>InvalidParametersError</code> before anything is
-written, since Firestore refuses it;</li>
-<li><code>.ttl()</code> enables a TTL field as on Standard, and <code>.prune_undeclared()</code> disables an undeclared
-one the same way;</li>
-<li>Firestore appends no <code>__name__</code> field to an index, so <code>[a, b]</code> and <code>[a, b, __name__]</code> are two
-different indexes, and a statement can declare both;</li>
-<li>an index can be unique, refusing a write that would give two documents the same entry, and
-dense or sparse, holding an entry for every document or only for the ones that have the indexed
-fields. <code>.unique()</code> and <code>.density(..)</code> set these, as the paragraphs after the example describe.</li>
-</ul>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>db.fluent()
-    .indexes()
-    .collection_group("users")
-    .composite(|i| {
-        i.indexes([
-            i.index([i.field("email").asc()]).unique(),
-            i.index([i.field("country").asc()]),
-            i.index([i.field("country").asc(), i.field("nickname").asc()])
-                .density(FirestoreIndexDensity::SparseAny),
-        ])
-    })
-    .ttl(["expires_at"])
-    .sync()
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p>A unique index refuses a write that would give two documents the same entry in it. Firestore
-answers a create, an update and a commit alike with <code>ALREADY_EXISTS</code> (“Duplicate values are found
-for unique index.”), and the write returns <code>DataConflictError</code>. A unique index of one field is how
-a value such as an email address is kept unique across a collection.</p>
-<p>The density of an index says which documents it holds an entry for. A dense index holds one for
-every document, with a missing field stored as unset; a sparse index leaves out the documents
-that lack the indexed fields. Enterprise builds an index dense by default, and a text or geo
-search index always as <code>FirestoreIndexDensity::SparseAny</code>, an entry for each document that has at
-least one of the fields. Standard builds every index as <code>SparseAll</code>, an entry only for a document
-that has all of them, and accepts no other density, while Enterprise refuses <code>SparseAll</code>, and a
-search index there takes only <code>SparseAny</code>. A declaration with a density the edition refuses fails
-with <code>InvalidParametersError</code> before anything is written. Two indexes over the same fields are
-different indexes when their densities differ, or when one is unique and the other is not, and a
-declaration matches only the one it describes.</p>
-<p>On an empty collection, <code>.wait_until_ready(..)</code> waited 62 to 68 seconds for one index of each kind
-on an Enterprise edition database: ordered, array, vector, text, geo, and text with geo. On a
-Standard edition database, a lone vector index took 355 seconds, and three composite indexes with
-two field overrides and a TTL field 414 seconds.</p>
 <h2 id="removing-what-you-no-longer-declare"><a class="header" href="#removing-what-you-no-longer-declare">Removing what you no longer declare</a></h2>
 <p>By default, an index, override or TTL field Firestore lists for the owned group but this
 statement does not declare is only reported, never touched. Add <code>.prune_undeclared()</code> to also
@@ -3505,9 +4113,12 @@ is up:</p>
     .await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p><code>.wait_until_ready_with_options(...)</code> also sets the poll interval, 5 seconds by default. A
-composite or vector index build is not instant even on an empty collection, so budget minutes
-for it.</p>
+<p><code>.wait_until_ready_with_options(...)</code> also sets the poll interval, 5 seconds by default.</p>
+<p>An index build is not instant even on an empty collection. On an empty collection,
+<code>.wait_until_ready(..)</code> waited 62 to 68 seconds for one index of each kind on an Enterprise
+edition database: ordered, array, vector, text, geo, and text with geo. On a Standard edition
+database, a lone vector index took 355 seconds, and three composite indexes with two field
+overrides and a TTL field 414 seconds.</p>
 <p>The timeout covers the whole sync, from the start of the call, and every wait inside it ends by
 the same deadline. The last round of polls goes out at the deadline itself. One poll may take up
 to 10 seconds to answer (or the whole timeout, if that is shorter), so an error can arrive that
@@ -3531,47 +4142,7 @@ otherwise, which is long enough for a field override’s own single-field index 
 separate way to configure that default today.</p>
 <p>A revert can wait the same way for a different sync’s write, not this one’s own: see
 <a href="#running-from-several-instances">Running from several instances</a>.</p>
-<h2 id="indexing-only-chosen-fields"><a class="header" href="#indexing-only-chosen-fields">Indexing only chosen fields</a></h2>
-<p><code>f.all_fields()</code> targets Firestore’s special <code>*</code> field path, scoped to the owned collection group.
-Combined with <code>.exempt()</code>, it excludes every field in the group from automatic single-field
-indexing; list the fields you do want indexed by name alongside it:</p>
-<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
-</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
-</span>db.fluent()
-    .indexes()
-    .collection_group("orders")
-    .field_overrides(|f| {
-        f.fields([
-            f.all_fields().exempt(),
-            f.field("customer_id").indexes([f.ascending()]),
-            f.field("status").indexes([f.ascending(), f.descending()]),
-        ])
-    })
-    .sync()
-    .await?;
-<span class="boring">Ok(())
-</span><span class="boring">}</span></code></pre>
-<p>A named field declared alongside <code>all_fields()</code> wins for that field, since it is more specific:
-this is how “everything except these fields” is expressed. Composite indexes are unaffected by
-<code>all_fields()</code>.</p>
-<p>There is no database-wide equivalent. A collection-group statement never reaches the
-<code>__default__</code> group’s own <code>*</code> field, so a default applied across every collection group at once is
-deliberately out of reach from this API.</p>
-<h2 id="a-field-override-replaces-the-whole-automatic-set"><a class="header" href="#a-field-override-replaces-the-whole-automatic-set">A field override replaces the whole automatic set</a></h2>
-<p>Declaring only <code>.array_contains()</code> on a field Firestore would otherwise also index for equality
-and ordering removes that automatic support: Firestore does not merge an override with its
-defaults, and neither does <code>firestore.indexes.json</code>. <code>.indexes([...])</code> always takes the whole set
-to maintain for a field, never one index to add to what is already there. An empty list, or
-<code>.exempt()</code> (the same thing), excludes the field from single-field indexing entirely.</p>
-<h2 id="__name__-handling"><a class="header" href="#__name__-handling"><code>__name__</code> handling</a></h2>
-<p>On a Standard edition database, a composite index declared without <code>__name__</code> matches a listed
-index that has it where Firestore puts it: last in an ordinary index, or directly before the
-vector field in a vector index. The direction of that <code>__name__</code> does not matter for the match. A
-<code>__name__</code> anywhere else makes the listed index a different one. Declare <code>__name__</code> yourself only
-when a query needs a specific direction; an explicit declaration then matches only a listed index
-with exactly the same fields, <code>__name__</code> included.</p>
-<p>An Enterprise edition database appends no <code>__name__</code>, so there a declaration matches only a
-listed index with exactly its fields.</p>
+<h2 id="field-paths"><a class="header" href="#field-paths">Field paths</a></h2>
 <p>Field paths compare in one spelling, so <code>`expires_at`</code> and <code>expires_at</code>, or <code>a.`b`</code> and
 <code>`a`.b</code>, are the same field. A segment needs backticks only when it is not a plain identifier
 (letters, digits and <code>_</code>, not starting with a digit).</p>
@@ -3635,14 +4206,247 @@ default:</p>
 <pre><code class="language-bash">GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin -- --nocapture
 </code></pre>
 <p>Every other test in that file creates, updates or deletes real indexes, overrides or TTL policy,
-and a composite or vector index build can take 10-15 minutes even on an empty collection, so those
-carry <code>#[ignore]</code> and only run explicitly:</p>
+and waits for builds that take minutes even on an empty collection, see
+<a href="#waiting-for-changes-to-finish">Waiting for changes to finish</a>, so those carry <code>#[ignore]</code> and
+only run explicitly:</p>
 <pre><code class="language-bash">GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture
 </code></pre>
 <p>Full examples available
 <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-management.rs">here</a>,
 <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-whitelist.rs">here</a> and
 <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-subcollection.rs">here</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="composite-and-vector-indexes"><a class="header" href="#composite-and-vector-indexes">Composite and vector indexes</a></h1>
+<p><code>.composite()</code> builds the composite indexes of the collection group a statement owns, see
+<a href="#index-management">Index management</a> for the statement itself. Order a field with
+<code>.asc()</code>/<code>.desc()</code>, or mark it <code>.array_contains()</code>, and chain <code>.all_descendants()</code> onto the whole
+index for a collection-group index rather than a single collection.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+</span><span class="boring">struct Order {
+</span><span class="boring">    customer_id: String,
+</span><span class="boring">    placed_at: FirestoreTimestamp,
+</span><span class="boring">    tags: Vec&lt;String&gt;,
+</span><span class="boring">}
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .indexes()
+    .collection_group("orders")
+    .composite(|i| {
+        i.indexes([
+            i.index([
+                i.field(path!(Order::customer_id)).asc(),
+                i.field(path!(Order::placed_at)).desc(),
+            ]),
+            i.index([
+                i.field(path!(Order::tags)).array_contains(),
+                i.field(path!(Order::placed_at)).desc(),
+            ])
+            .all_descendants(),
+        ])
+    })
+    .sync()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>On a Standard edition database a composite index needs at least two fields, unless it is a single
+vector field on its own; an Enterprise edition database takes an index of one field, see
+<a href="#the-enterprise-edition">TTL and the Enterprise edition</a>. An index holds at
+most one <code>.array_contains()</code> field. <code>.plan()</code> and <code>.sync()</code> check these rules before anything is
+written, see <a href="#declaring-a-collection-groups-indexes">Declaring a collection group’s indexes</a>.</p>
+<h2 id="vector-indexes"><a class="header" href="#vector-indexes">Vector indexes</a></h2>
+<p>A <code>.vector(dimension)</code> field makes a vector index, which a Core
+<a href="#vector-search-1">vector search</a> needs on a Standard edition database. The dimension is the one
+every indexed vector in the field must have. A vector field must be the last field of the index it
+belongs to, and ordered fields can come before it:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .indexes()
+    .collection_group("articles")
+    .composite(|i| {
+        i.indexes([
+            i.index([i.field("embedding").vector(768)]),
+            i.index([i.field("category").asc(), i.field("embedding").vector(768)]),
+        ])
+    })
+    .sync()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>A vector index cannot be forced on a pipeline, and the pipeline <code>find_nearest</code> stage does not use
+it, see <a href="#known-table-scans">Query plans and cost</a>.</p>
+<h2 id="__name__-handling"><a class="header" href="#__name__-handling"><code>__name__</code> handling</a></h2>
+<p>On a Standard edition database, a composite index declared without <code>__name__</code> matches a listed
+index that has it where Firestore puts it: last in an ordinary index, or directly before the
+vector field in a vector index. The direction of that <code>__name__</code> does not matter for the match. A
+<code>__name__</code> anywhere else makes the listed index a different one. Declare <code>__name__</code> yourself only
+when a query needs a specific direction; an explicit declaration then matches only a listed index
+with exactly the same fields, <code>__name__</code> included.</p>
+<p>An Enterprise edition database appends no <code>__name__</code>, so there a declaration matches only a
+listed index with exactly its fields.</p>
+<h2 id="single-field-overrides-standard-edition"><a class="header" href="#single-field-overrides-standard-edition">Single-field overrides (Standard edition)</a></h2>
+<p>A Standard edition database indexes every field on its own automatically. <code>.field_overrides()</code>
+builds single-field overrides of that: <code>.exempt()</code> removes a field from automatic single-field
+indexing entirely, and <code>.indexes([...])</code> replaces it with exactly the indexes listed. An
+Enterprise edition database has no automatic indexes to override, see
+<a href="#the-enterprise-edition">TTL and the Enterprise edition</a>.</p>
+<h3 id="indexing-only-chosen-fields"><a class="header" href="#indexing-only-chosen-fields">Indexing only chosen fields</a></h3>
+<p><code>f.all_fields()</code> targets Firestore’s special <code>*</code> field path, scoped to the owned collection group.
+Combined with <code>.exempt()</code>, it excludes every field in the group from automatic single-field
+indexing; list the fields you do want indexed by name alongside it:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .indexes()
+    .collection_group("orders")
+    .field_overrides(|f| {
+        f.fields([
+            f.all_fields().exempt(),
+            f.field("customer_id").indexes([f.ascending()]),
+            f.field("status").indexes([f.ascending(), f.descending()]),
+        ])
+    })
+    .sync()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>A named field declared alongside <code>all_fields()</code> wins for that field, since it is more specific:
+this is how “everything except these fields” is expressed. Composite indexes are unaffected by
+<code>all_fields()</code>.</p>
+<p>There is no database-wide equivalent. A collection-group statement never reaches the
+<code>__default__</code> group’s own <code>*</code> field, so a default applied across every collection group at once is
+deliberately out of reach from this API.</p>
+<h3 id="a-field-override-replaces-the-whole-automatic-set"><a class="header" href="#a-field-override-replaces-the-whole-automatic-set">A field override replaces the whole automatic set</a></h3>
+<p>Declaring only <code>.array_contains()</code> on a field Firestore would otherwise also index for equality
+and ordering removes that automatic support: Firestore does not merge an override with its
+defaults, and neither does <code>firestore.indexes.json</code>. <code>.indexes([...])</code> always takes the whole set
+to maintain for a field, never one index to add to what is already there. An empty list, or
+<code>.exempt()</code> (the same thing), excludes the field from single-field indexing entirely.</p>
+<p>Full examples available
+<a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-management.rs">here</a> and
+<a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-whitelist.rs">here</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="search-indexes-enterprise-edition"><a class="header" href="#search-indexes-enterprise-edition">Search indexes (Enterprise edition)</a></h1>
+<p>The pipeline <a href="#pipeline-search">search stage</a> runs against search indexes, which only a
+database of the Firestore Enterprise edition has. A text index covers one or more string fields,
+and a geo index covers a geo point field. Declare them as composite indexes with <code>.text()</code> and
+<code>.geo()</code> on a field:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .indexes()
+    .collection_group("restaurants")
+    .composite(|i| {
+        i.indexes([
+            i.index([i.field("menu").text(), i.field("description").text()])
+                .search_options(
+                    FirestoreSearchIndexOptions::new().with_text_language("en".to_string()),
+                ),
+            i.index([i.field("location").geo()]),
+        ])
+    })
+    .sync()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<ul>
+<li>A search index holds text and geo fields only. An index that mixes them with ordered, array or
+vector fields is rejected with <code>InvalidParametersError</code> at <code>.plan()</code>/<code>.sync()</code>;</li>
+<li>A text search covers all the text fields of the index it uses, and Firestore offers no index
+that matches one field by name;</li>
+<li><code>.search_options(..)</code> sets the options of a text index. <code>text_language</code> is the BCP 47 language
+tag the fields are indexed in, such as <code>en</code>; when it is left unset, Firestore detects each
+document’s language and lists the option as <code>und</code>, the code for an undetermined language.
+<code>text_language_override_field_path</code> names the field that holds a document’s own language, and
+Firestore reads <code>language</code> when it is unset. An index declared without options matches the
+index Firestore lists with those defaults;</li>
+<li><code>.geo_with(config)</code> takes a <code>FirestoreGeoIndexConfig</code> that can leave GeoJSON points out of a geo
+index, which Firestore indexes by default;</li>
+<li><code>.all_descendants()</code> on the index scopes it to a collection group, which a collection-group
+search needs;</li>
+<li>a search index is always built as <code>FirestoreIndexDensity::SparseAny</code>, see
+<a href="#density">Density</a>;</li>
+<li>on a Standard edition database <code>.plan()</code> and <code>.sync()</code> refuse a search index with
+<code>InvalidParametersError</code> before anything is written.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="ttl-and-the-enterprise-edition"><a class="header" href="#ttl-and-the-enterprise-edition">TTL and the Enterprise edition</a></h1>
+<h2 id="ttl-policy"><a class="header" href="#ttl-policy">TTL policy</a></h2>
+<p><code>.ttl()</code> names the one field per collection group whose timestamp value enables document TTL
+(time-to-live): Firestore deletes a document itself once the timestamp in that field has passed. It
+works the same on both editions:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+</span><span class="boring">struct Session { expires_at: FirestoreTimestamp }
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .indexes()
+    .collection_group("sessions")
+    .ttl([path!(Session::expires_at)])
+    .sync()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p><code>.sync()</code> enables a declared TTL field that is not yet configured, and <code>.prune_undeclared()</code>
+disables an undeclared one. Firestore allows only one TTL field per collection group. To move the
+TTL to another field, declare the new field and set <code>.prune_undeclared()</code>;
+<a href="#the-order-sync-writes-changes-in">The order <code>.sync()</code> writes changes in</a>
+describes how the move is applied, and when a second TTL field is refused.</p>
+<h2 id="the-enterprise-edition"><a class="header" href="#the-enterprise-edition">The Enterprise edition</a></h2>
+<p>An Enterprise edition database builds no index on its own: there are no automatic single-field
+indexes, so every index a query needs is one the statement declares. <code>.plan()</code> and <code>.sync()</code> read
+the database’s edition once per call and follow its rules:</p>
+<ul>
+<li>a composite index of one field is how a single field is indexed. Firestore accepts one there,
+ordered, <code>.array_contains()</code> or <code>__name__</code>, while a Standard edition database refuses it;</li>
+<li><code>.field_overrides()</code> has nothing to override. An <code>.exempt()</code> is already satisfied and is never
+written. An override that lists indexes fails with <code>InvalidParametersError</code> before anything is
+written, since Firestore refuses it;</li>
+<li><code>.ttl()</code> enables a TTL field as on Standard, and <code>.prune_undeclared()</code> disables an undeclared
+one the same way;</li>
+<li>Firestore appends no <code>__name__</code> field to an index, so <code>[a, b]</code> and <code>[a, b, __name__]</code> are two
+different indexes, and a statement can declare both;</li>
+<li>an index can be unique, refusing a write that would give two documents the same entry, and
+dense or sparse, holding an entry for every document or only for the ones that have the indexed
+fields. <code>.unique()</code> and <code>.density(..)</code> set these, as the sections after the example describe.</li>
+</ul>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .indexes()
+    .collection_group("users")
+    .composite(|i| {
+        i.indexes([
+            i.index([i.field("email").asc()]).unique(),
+            i.index([i.field("country").asc()]),
+            i.index([i.field("country").asc(), i.field("nickname").asc()])
+                .density(FirestoreIndexDensity::SparseAny),
+        ])
+    })
+    .ttl(["expires_at"])
+    .sync()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Without an index that covers it, a Core query on Enterprise runs as a table scan, where Standard
+fails with <code>FAILED_PRECONDITION</code>, see <a href="#known-table-scans">Query plans and cost</a>.</p>
+<h2 id="unique-indexes"><a class="header" href="#unique-indexes">Unique indexes</a></h2>
+<p>A unique index refuses a write that would give two documents the same entry in it. Firestore
+answers a create, an update and a commit alike with <code>ALREADY_EXISTS</code> (“Duplicate values are found
+for unique index.”), and the write returns <code>DataConflictError</code>. A unique index of one field is how
+a value such as an email address is kept unique across a collection.</p>
+<h2 id="density"><a class="header" href="#density">Density</a></h2>
+<p>The <em>density</em> of an index says which documents it holds an entry for. A dense index holds one for
+every document, with a missing field stored as unset; a sparse index leaves out the documents
+that lack the indexed fields. Enterprise builds an index dense by default, and a text or geo
+search index always as <code>FirestoreIndexDensity::SparseAny</code>, an entry for each document that has at
+least one of the fields. Standard builds every index as <code>SparseAll</code>, an entry only for a document
+that has all of them, and accepts no other density, while Enterprise refuses <code>SparseAll</code>, and a
+search index there takes only <code>SparseAny</code>. A declaration with a density the edition refuses fails
+with <code>InvalidParametersError</code> before anything is written. Two indexes over the same fields are
+different indexes when their densities differ, or when one is unique and the other is not, and a
+declaration matches only the one it describes.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="bulk-delete"><a class="header" href="#bulk-delete">Bulk delete</a></h1>
 <p>Firestore’s <code>BulkDeleteDocuments</code> operation removes every document in one or more collection
@@ -3732,6 +4536,10 @@ Operation reached a terminal state. action="bulk_delete" polls=3
 sync included, which is why it names the operation generically rather than as a bulk delete.</p>
 <p>That run took about 11 seconds end to end, for 5 documents; budget for it running longer against
 more data.</p>
+<p>Bulk delete works on both editions, and removes the named collection group at every depth. A run
+over 8 documents in two levels of one collection group returned from <code>wait_until_done</code> after 56
+seconds on a Standard edition database and 65 seconds on an Enterprise edition one. The two
+databases were in different regions, so the times do not compare.</p>
 <h2 id="the-firestore-emulator-1"><a class="header" href="#the-firestore-emulator-1">The Firestore emulator</a></h2>
 <p>The emulator answers <code>BulkDeleteDocuments</code> with <code>UNIMPLEMENTED</code>. Unlike index management, which
 skips silently against the emulator, a bulk delete returns an explicit error instead: there is no
@@ -3787,6 +4595,19 @@ credentials and uses a stub token instead, since the emulator does not
 authenticate the requests. This means you do not need any credentials
 configured to develop against it. Specifying credentials explicitly, with
 <code>FirestoreDb::with_options_auth()</code> for example, still takes precedence.</p>
+<p>The emulator implements neither <a href="#bulk-delete">bulk delete</a>, which fails with
+<code>BULK_DELETE_UNAVAILABLE_ON_EMULATOR</code>, nor <a href="#the-firestore-emulator">index management</a>,
+which skips its run.</p>
+<h2 id="on-the-enterprise-edition-9"><a class="header" href="#on-the-enterprise-edition-9">On the Enterprise edition</a></h2>
+<p>The emulator acts as one edition, Standard by default. <code>gcloud</code> starts it, and needs a Java runtime
+(a JDK) for it:</p>
+<pre><code class="language-bash">gcloud emulators firestore start --host-port=127.0.0.1:8080 --edition=enterprise
+</code></pre>
+<p>The emulator prints <code>Database Edition: STANDARD</code> or <code>Database Edition: ENTERPRISE</code> as it starts.</p>
+<p>Start the emulator with <code>--edition=enterprise</code> to run pipelines and SQL against it; the default
+Standard emulator answers them with <code>INVALID_ARGUMENT</code>, and neither edition of the emulator
+supports bulk delete. Core inserts and queries run on an emulator of either edition, and Core
+aggregations, transactions and listeners run on the Enterprise one as on a live database.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="docker-images-and-tls"><a class="header" href="#docker-images-and-tls">Docker images and TLS</a></h1>
 <p>When you design your Dockerfile make sure you either installed Root CA certificates or use base images that already
@@ -3797,8 +4618,8 @@ If you don’t have certs installed you usually observe the errors such as:</p>
 <p>For example for Debian based images, this usually can be fixed using this package:</p>
 <pre><code class="language-text">RUN apt-get install -y ca-certificates
 </code></pre>
-<p>Also, I recommend considering using <a href="https://github.com/GoogleContainerTools/distroless">Google Distroless images</a> since
-they are secure, already include Root CA certs, and are optimised for size.</p>
+<p><a href="https://github.com/GoogleContainerTools/distroless">Google Distroless images</a> are a good choice of
+base image, since they are secure, already include Root CA certs, and are optimised for size.</p>
 <h2 id="tls-features"><a class="header" href="#tls-features">TLS features</a></h2>
 <p>Cargo provides support for different TLS features for dependencies:</p>
 <ul>
@@ -3810,7 +4631,9 @@ they are secure, already include Root CA certs, and are optimised for size.</p>
 <p>Firestore supports attaching request tags to requests. They are reported by Firestore
 in its monitoring and billing breakdowns, which makes them useful to attribute reads
 and writes to a specific feature, tenant or background job.</p>
-<p>Tags can be set per operation for queries, aggregations, listings and listeners:</p>
+<p>Tags can be set per operation for queries, aggregations, listings, listeners, and
+<a href="#typed-results-and-metadata">pipelines</a> and <a href="#setup">SQL statements</a> on the
+Enterprise edition:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::{Deserialize, Serialize};
 </span><span class="boring">#[derive(Debug, Clone, Deserialize, Serialize)]
@@ -3901,25 +4724,12 @@ lives, and a connection to a server that stopped answering is closed only by HTT
 the whole call. The limit is also sent to Firestore as the request deadline;</li>
 <li>streamed reads (queries, aggregations and batch gets): the wait for the stream to start and for each next document,
 counted only while you are waiting for one, so a slow consumer of a long query is not cut;</li>
+<li>pipeline and SQL reads, on the Enterprise edition: the wait for each response, as for a streamed read;</li>
+<li>pipeline and SQL writes: the wait for each response, for a write that is sent once;</li>
 <li>listeners and the streaming batch writer are not limited, since their streams stay quiet for as long as nothing changes.
 A listener resets a stream that sent nothing for its own <code>idle_timeout</code>, see
-<a href="#listening-the-document-changes-on-firestore">Listening the document changes</a>.</li>
+<a href="#listening-to-document-changes">Listening to document changes</a>.</li>
 </ul>
-<p>The limit applies to each attempt. A request that runs out of it fails with a <code>DatabaseError</code> with the code
-<code>DeadlineExceeded</code> and <code>retry_possible</code> set, and it is retried wherever a dropped connection is:</p>
-<ul>
-<li>gets, lists, list collection IDs and the start of queries and aggregations, up to <code>max_retries</code> times;</li>
-<li>simple batch writes, until <code>retry_max_elapsed_time</code>. A retried batch may apply twice, for example an <code>increment</code>,
-as it can after a dropped connection.</li>
-</ul>
-<p>Batch gets, partition queries, a query or aggregation stream that has already started and transaction commits return
-the error without a retry. A commit is never retried, because its writes may already be applied.</p>
-<p>The reads in the first item also retry a <code>DEADLINE_EXCEEDED</code> that Firestore itself answers with, up to <code>max_retries</code>
-times, with or without a request timeout set. Writes, batch gets, partition queries and streams that have already
-started return it with <code>retry_possible</code> unset.</p>
-<p>Be aware not to set <code>retry_max_elapsed_time</code> to <code>None</code> on a simple batch writer when you set a request timeout: against
-a Firestore that stopped answering, it then retries forever, one timeout per attempt. The 60 second default is checked
-between attempts, so the last attempt can still run for a whole timeout past it.</p>
 <p>To use another limit for a part of your code, or none at all, clone the client with <code>clone_with_request_timeout</code>.
 Batch writers and transactions created from the clone keep it:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
@@ -3929,7 +4739,28 @@ Batch writers and transactions created from the clone keep it:</p>
 let unlimited_db = db.clone_with_request_timeout(None);
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<h2 id="retry-limits"><a class="header" href="#retry-limits">Retry limits</a></h2>
+<h2 id="retries"><a class="header" href="#retries">Retries</a></h2>
+<p>The limit applies to each attempt. A request that runs out of it fails with a <code>DatabaseError</code> with the code
+<code>DeadlineExceeded</code> and <code>retry_possible</code> set, and it is retried wherever a dropped connection is:</p>
+<ul>
+<li>gets, lists, list collection IDs and the start of queries, aggregations, pipelines and SQL reads, up to <code>max_retries</code>
+times;</li>
+<li>simple batch writes, until <code>retry_max_elapsed_time</code>. A retried batch may apply twice, for example an <code>increment</code>,
+as it can after a dropped connection.</li>
+</ul>
+<p>A read makes <code>max_retries + 1</code> attempts, and the error that comes back after the last one still has <code>retry_possible</code> set.
+A pipeline or SQL write makes one attempt and clears the flag, see
+<a href="#retries-and-listeners">Retries and listeners</a>. A pipeline that a cache session answers sends no
+request, so no timeout or retry applies to it.</p>
+<p>Batch gets, partition queries, a query or aggregation stream that has already started and transaction commits return
+the error without a retry. A commit is never retried, because its writes may already be applied.</p>
+<p>The reads in the first item also retry a <code>DEADLINE_EXCEEDED</code> that Firestore itself answers with, up to <code>max_retries</code>
+times, with or without a request timeout set. Writes, batch gets, partition queries and streams that have already
+started return it with <code>retry_possible</code> unset.</p>
+<p>Be aware not to set <code>retry_max_elapsed_time</code> to <code>None</code> on a simple batch writer when you set a request timeout: against
+a Firestore that stopped answering, it then retries forever, one timeout per attempt. The 60 second default is checked
+between attempts, so the last attempt can still run for a whole timeout past it.</p>
+<h3 id="retry-limits"><a class="header" href="#retry-limits">Retry limits</a></h3>
 <p>Reads, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
 next retry, each delay randomised by up to 50% either way. They differ in when they stop:</p>
 <ul>
@@ -3989,12 +4820,12 @@ at the <a href="https://firebase.google.com/docs/emulator-suite">Firestore emula
 </code></pre>
 <p>No credentials are needed in that mode. This is how the caching and transaction behaviour of this
 library itself is verified, and it catches things a hand-written fake cannot.</p>
-<blockquote>
-<p><strong>Changed in 0.52</strong>: the low level <code>*Support</code> traits are no longer public, so code written to be
-generic over them no longer compiles. Note that they could never be used with the Fluent API
-from outside the crate anyway, since the builders’ constructors are crate private. See the
-<a href="https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md">migration guide</a>.</p>
-</blockquote>
+<p>Code that runs pipelines or SQL needs an emulator started in the Enterprise edition, see
+<a href="#on-the-enterprise-edition-9">Firestore emulator</a>.</p>
+<p>The low level <code>*Support</code> traits are not public, and the builders’ constructors are crate private,
+so code cannot be generic over them. The
+<a href="https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md">migration guide</a> lists the
+fluent replacement of every removed method.</p>
 
                     </main>
 
