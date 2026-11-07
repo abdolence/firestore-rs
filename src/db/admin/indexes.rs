@@ -24,9 +24,9 @@ use crate::{
 use gcloud_sdk::google::firestore::admin::v1::field as proto_field;
 use gcloud_sdk::google::firestore::admin::v1::firestore_admin_client::FirestoreAdminClient;
 use gcloud_sdk::google::firestore::admin::v1::{
-    CreateIndexRequest, DeleteIndexRequest, Field as ProtoField, GetDatabaseRequest,
-    GetFieldRequest, Index as ProtoIndex, ListFieldsRequest, ListIndexesRequest,
-    UpdateFieldRequest,
+    database::DatabaseEdition, CreateIndexRequest, DeleteIndexRequest, Field as ProtoField,
+    GetDatabaseRequest, GetFieldRequest, Index as ProtoIndex, ListFieldsRequest,
+    ListIndexesRequest, UpdateFieldRequest,
 };
 use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
 use gcloud_sdk::google::longrunning::Operation;
@@ -372,15 +372,19 @@ impl FirestoreDb {
         format!("{}/collectionGroups/{group}", self.inner.database_path)
     }
 
-    /// The group a statement naming `group` owns, with the database's edition read once, so every
-    /// step of a call validates, matches and writes under the same edition.
-    pub(super) async fn read_owned_group<'a>(
-        &self,
-        group: &'a FirestoreCollectionId,
-    ) -> FirestoreResult<OwnedGroup<'a>> {
+    /// Reads the edition of this database with one `GetDatabase` call of the Admin API.
+    ///
+    /// An edition the Admin API reports as unspecified reads as
+    /// [`Standard`](FirestoreDatabaseEdition::Standard); one this crate does not know reads as
+    /// [`Unknown`](FirestoreDatabaseEdition::Unknown) with the raw value.
+    ///
+    /// The Firestore emulator does not serve the Admin API, so on it this fails with the
+    /// emulator's `UNIMPLEMENTED`; unlike `.plan()` and `.sync()`, it makes no emulator check of
+    /// its own.
+    pub async fn read_database_edition(&self) -> FirestoreResult<FirestoreDatabaseEdition> {
         let span = span!(
             Level::INFO,
-            "Firestore Index Edition",
+            "Firestore Database Edition",
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
@@ -396,10 +400,21 @@ impl FirestoreDb {
             .into_inner();
         let elapsed = FirestoreInstant::now().duration_since(began);
         span.record("/firestore/response_time", elapsed.as_millis());
+        let reported = database.database_edition;
+        Ok(DatabaseEdition::try_from(reported)
+            .map_or(FirestoreDatabaseEdition::Unknown(reported), Into::into))
+    }
+
+    /// The group a statement naming `group` owns, with the database's edition read once, so every
+    /// step of a call validates, matches and writes under the same edition.
+    pub(super) async fn read_owned_group<'a>(
+        &self,
+        group: &'a FirestoreCollectionId,
+    ) -> FirestoreResult<OwnedGroup<'a>> {
         Ok(OwnedGroup {
             id: group,
             path: self.collection_group_path(group.as_str()),
-            edition: database.database_edition().into(),
+            edition: self.read_database_edition().await?.require_known()?,
         })
     }
 
@@ -1390,16 +1405,18 @@ pub(crate) mod tests {
         start_on(DatabaseEdition::Standard, handler).await
     }
 
-    /// [`FakeFirestore::start`] on a database of `edition`: `GetDatabase` is answered with it,
-    /// and every other call goes to `handler`.
-    pub(crate) async fn start_on<F>(edition: DatabaseEdition, handler: F) -> FakeFirestore
+    /// [`FakeFirestore::start`] on a database of `edition`, given as a [`DatabaseEdition`] or as the
+    /// raw value of the proto field: `GetDatabase` is answered with it, and every other call goes
+    /// to `handler`.
+    pub(crate) async fn start_on<F>(edition: impl Into<i32>, handler: F) -> FakeFirestore
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
+        let edition = edition.into();
         FakeFirestore::start(move |method, bytes| match method {
             GET_DATABASE => {
                 let database = Database {
-                    database_edition: edition.into(),
+                    database_edition: edition,
                     ..Default::default()
                 };
                 (
@@ -1421,6 +1438,49 @@ pub(crate) mod tests {
     /// this module's tests assert on. No test here is slow enough for the lost parallelism to
     /// matter.
     static MODULE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    const UNKNOWN_EDITION: i32 = 99;
+
+    #[tokio::test]
+    async fn the_database_edition_is_read_from_the_admin_api() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        for (reported, expected) in [
+            (
+                DatabaseEdition::Unspecified.into(),
+                FirestoreDatabaseEdition::Standard,
+            ),
+            (
+                UNKNOWN_EDITION,
+                FirestoreDatabaseEdition::Unknown(UNKNOWN_EDITION),
+            ),
+        ] {
+            let fake = start_on(reported, |method, _| panic!("unexpected RPC: {method}")).await;
+
+            let edition = fake.db.read_database_edition().await.unwrap();
+
+            assert_eq!(edition, expected, "reported {reported}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_sync_on_an_unknown_edition_is_refused_before_any_write() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = start_on(UNKNOWN_EDITION, |method, bytes| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => recording_writes(other, bytes),
+        })
+        .await;
+
+        let err = fake
+            .db
+            .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap_err();
+
+        assert!(is_invalid_parameter(&err, "database_edition"), "{err:?}");
+        assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
+    }
 
     #[tokio::test]
     async fn missing_index_is_created() {

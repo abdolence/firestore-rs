@@ -3,8 +3,9 @@
 //! caller's own data depends on, and prunes both groups to an empty declaration at the end even
 //! when an earlier assertion fails.
 //!
-//! `plan_is_read_only_and_scoped_to_the_owned_group` makes no writes and runs in seconds, so it
-//! runs by default. Every other test here creates, updates or deletes real indexes, overrides or
+//! `plan_is_read_only_and_scoped_to_the_owned_group` and
+//! `database_edition_is_read_from_both_databases` make no writes and run in seconds, so they run
+//! by default. Every other test here creates, updates or deletes real indexes, overrides or
 //! TTL policy in `GCP_PROJECT` and takes most of an hour: each index or field operation it waits
 //! on can take minutes, even on an empty collection. So each carries `#[ignore]` and only runs on
 //! `cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture`.
@@ -33,9 +34,7 @@ use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 mod common;
-#[cfg(feature = "sql")]
-use common::setup_enterprise_unseeded;
-use common::{setup, setup_enterprise};
+use common::{setup, setup_enterprise, setup_enterprise_unseeded};
 
 const SYNC_GROUP: &str = "firestore-rs-index-sync-test";
 const PROBE_GROUP: &str = "firestore-rs-index-probe";
@@ -487,6 +486,22 @@ async fn plan_is_read_only_and_scoped_to_the_owned_group(
         plan.unrecognised
     );
 
+    Ok(())
+}
+
+/// `GCP_PROJECT`'s `(default)` database is Standard edition and `GCP_ENTERPRISE_DATABASE_ID` is
+/// Enterprise edition.
+#[tokio::test]
+async fn database_edition_is_read_from_both_databases(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let standard = setup().await?.read_database_edition().await?;
+    let enterprise = setup_enterprise_unseeded()
+        .await?
+        .read_database_edition()
+        .await?;
+
+    assert_eq!(standard, FirestoreDatabaseEdition::Standard);
+    assert_eq!(enterprise, FirestoreDatabaseEdition::Enterprise);
     Ok(())
 }
 

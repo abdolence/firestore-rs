@@ -89,12 +89,31 @@ realtimeUpdatesMode: REALTIME_UPDATES_MODE_ENABLED
 The Firestore page of the Google Cloud console lists the databases of a project with the edition
 of each.
 
+With the `admin` feature, `FirestoreDb::read_database_edition()` returns the edition of the
+database the client is connected to. A database that reports no edition reads as `Standard`, the
+edition Firestore applies at creation. An edition this version of the crate does not know reads as
+`Unknown`, with the value Firestore reported, and index statements refuse a database of that
+edition. Firestore may add editions, so `FirestoreDatabaseEdition` is non-exhaustive. The emulator
+does not serve the Admin API, so the call fails there with `UNIMPLEMENTED`.
+
+```rust,no_run
+# use firestore::*;
+# async fn example(db: FirestoreDb) -> FirestoreResult<()> {
+match db.read_database_edition().await? {
+    FirestoreDatabaseEdition::Standard => println!("Standard edition"),
+    FirestoreDatabaseEdition::Enterprise => println!("Enterprise edition"),
+    other => println!("an edition this version does not know: {other:?}"),
+}
+# Ok(())
+# }
+```
+
 Two errors also tell the editions apart: a pipeline sent to a Standard edition database fails with
 `FAILED_PRECONDITION`, and a Core `.explain()` sent to an Enterprise edition database fails with
 `INVALID_ARGUMENT`, "Explain options are not supported in RunQuery API for Enterprise edition".
 
-[Index management](./index-management.md) reads the edition itself, through `GetDatabase`, on
-every `.plan()` and `.sync()`, and follows the rules of that edition.
+[Index management](./index-management.md) reads the edition itself, the same way, on every
+`.plan()` and `.sync()`, and follows the rules of that edition.
 
 ## Settings fixed at creation
 

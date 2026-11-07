@@ -60,6 +60,11 @@ let listed = FirestoreListedField {
 };
 ```
 
+### The edition read span is renamed
+
+The span that reads the database edition before each index call is now `Firestore Database Edition`, where it was
+`Firestore Index Edition`. A log or metrics filter that matches the old name needs the new one.
+
 ### SQL index statements need an opt-in
 
 `CREATE INDEX`, `DROP INDEX` and `ALTER COLLECTION` run only when the options say `.allow_index_statements()`.

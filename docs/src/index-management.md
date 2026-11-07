@@ -572,7 +572,7 @@ The plan event's fields split undeclared items the same way pruning does: `delet
 `kept_undeclared_indexes`, `kept_undeclared_fields` and `kept_undeclared_ttl` are what it would
 leave alone. Both are zero here, since the group carries nothing undeclared.
 
-Each call reads the database's edition first, in a `Firestore Index Edition` span, ahead of the
+Each call reads the database's edition first, in a `Firestore Database Edition` span, ahead of the
 listing. Its time counts in the report's `total` and in no phase.
 
 `.sync()` also logs a `Firestore Index Apply` span with one child span per applied action, and a

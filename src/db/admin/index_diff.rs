@@ -99,8 +99,6 @@ impl FirestoreIndexListing {
     }
 }
 
-/// The admin API documents Standard as the edition of a database that specifies none, so
-/// `Unspecified` reads as Standard.
 impl From<DatabaseEdition> for FirestoreDatabaseEdition {
     fn from(edition: DatabaseEdition) -> Self {
         match edition {
@@ -690,7 +688,9 @@ impl FirestoreCompositeIndex {
     /// or the edition's default when none is declared.
     fn density_on(&self, edition: FirestoreDatabaseEdition) -> FirestoreIndexDensity {
         self.density.unwrap_or(match edition {
-            FirestoreDatabaseEdition::Standard => FirestoreIndexDensity::SparseAll,
+            FirestoreDatabaseEdition::Standard | FirestoreDatabaseEdition::Unknown(_) => {
+                FirestoreIndexDensity::SparseAll
+            }
             FirestoreDatabaseEdition::Enterprise if self.is_search_index() => {
                 FirestoreIndexDensity::SparseAny
             }

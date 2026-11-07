@@ -48,12 +48,41 @@ pub enum FirestoreIndexDensity {
     Dense,
 }
 
-/// The edition of the database an index statement manages, read once per `.plan()` or `.sync()`
-/// call: it decides which indexes Firestore accepts and how it lists the ones it builds.
+/// The edition of a Firestore database, read with
+/// [`FirestoreDb::read_database_edition`](crate::FirestoreDb::read_database_edition): it
+/// decides which features the database offers and which indexes it accepts. Index statements read
+/// it once per `.plan()` or `.sync()` call.
+///
+/// An edition the Admin API reports as unspecified reads as [`Standard`](Self::Standard), the
+/// edition Firestore applies at creation.
+///
+/// Firestore may add editions, so the enum is non-exhaustive.
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
-pub(crate) enum FirestoreDatabaseEdition {
+#[non_exhaustive]
+pub enum FirestoreDatabaseEdition {
+    /// The edition Firestore applies when none is specified.
     Standard,
+    /// The edition with pipelines, SQL and search indexes.
     Enterprise,
+    /// An edition this version of the crate does not know, with the raw value Firestore reported.
+    /// Index statements refuse a database of this edition rather than apply the rules of another.
+    Unknown(i32),
+}
+
+impl FirestoreDatabaseEdition {
+    /// Fails with [`InvalidParametersError`](FirestoreError::InvalidParametersError) on
+    /// [`Unknown`](Self::Unknown). The edition rules match on [`Standard`](Self::Standard) and
+    /// [`Enterprise`](Self::Enterprise) only, so an edition they do not know must be refused
+    /// before they run, or they would validate and match as Standard.
+    pub(crate) fn require_known(self) -> FirestoreResult<Self> {
+        match self {
+            Self::Unknown(reported) => Err(FirestoreError::invalid_parameters(
+                "database_edition",
+                format!("{reported} is not a database edition this version of the crate knows"),
+            )),
+            known => Ok(known),
+        }
+    }
 }
 
 /// A flat vector index's configuration, for nearest-neighbor search.
@@ -938,7 +967,9 @@ pub(crate) fn validate_index_params_for_edition(
 
         if let Some(density) = index.density {
             let accepted = match edition {
-                FirestoreDatabaseEdition::Standard => density == FirestoreIndexDensity::SparseAll,
+                FirestoreDatabaseEdition::Standard | FirestoreDatabaseEdition::Unknown(_) => {
+                    density == FirestoreIndexDensity::SparseAll
+                }
                 FirestoreDatabaseEdition::Enterprise if index.is_search_index() => {
                     density == FirestoreIndexDensity::SparseAny
                 }
@@ -960,7 +991,7 @@ pub(crate) fn validate_index_params_for_edition(
                 || super::index_diff::composite_index_matches(earlier, index, edition)
             {
                 let ignoring = match edition {
-                    FirestoreDatabaseEdition::Standard => {
+                    FirestoreDatabaseEdition::Standard | FirestoreDatabaseEdition::Unknown(_) => {
                         " once the __name__ field Firestore appends is ignored"
                     }
                     FirestoreDatabaseEdition::Enterprise => "",
