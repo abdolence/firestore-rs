@@ -349,6 +349,7 @@ pub struct FirestoreQueryOrder {
 
 impl FirestoreQueryOrder {
     /// Applies this order's direction to an ordering computed as if it were ascending.
+    #[cfg(feature = "caching")]
     pub(crate) fn directed(&self, ascending: std::cmp::Ordering) -> std::cmp::Ordering {
         match self.direction {
             FirestoreQueryDirection::Ascending => ascending,
