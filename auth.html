@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-920c4098.js";
+            window.path_to_searchindex_js = "searchindex-c5f8c851.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3b510eae.js"></script>
@@ -198,7 +198,7 @@ The <code>auth-default-crypto</code> feature, on by default, brings the aws-lc-r
 Be aware that aws-lc-rs is built from C sources.</p>
 <p>With <code>default-features = false</code>, either enable the feature next to your TLS feature:</p>
 <pre><code class="language-toml">[dependencies]
-firestore = { version = "0.58", default-features = false, features = ["tls-webpki-roots", "auth-default-crypto"] }
+firestore = { version = "0.63", default-features = false, features = ["tls-webpki-roots", "auth-default-crypto"] }
 </code></pre>
 <p>or install a rustls <code>CryptoProvider</code> before creating a client.
 Without a provider <code>FirestoreDb::new</code>, <code>FirestoreDb::with_options</code> and <code>FirestoreDb::with_options_service_account_key_file</code>

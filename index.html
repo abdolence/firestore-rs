@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-920c4098.js";
+            window.path_to_searchindex_js = "searchindex-c5f8c851.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3b510eae.js"></script>
@@ -186,7 +186,7 @@
 <ul>
 <li>Querying/streaming docs/objects;</li>
 <li>Listing documents/objects (<code>stream_all</code> follows the page tokens for you);</li>
-<li>Listening changes from Firestore;</li>
+<li>Listening changes from Firestore, with targets added and removed on a running listener and an opt-in idle reset for silent streams;</li>
 <li>Transactions;</li>
 <li>Aggregated queries: count, sum, avg;</li>
 <li>Streaming batch writes with automatic throttling to stay under the Firestore write rate limits;</li>
@@ -197,7 +197,11 @@
 <li>Update/delete preconditions;</li>
 <li>Consistency selectors to read at a given time or inside a transaction;</li>
 <li>Explaining queries;</li>
+<li>Firestore Enterprise edition <a href="./pipelines.html">pipelines</a>: filters, projections, <a href="./pipeline-aggregations-and-joins.html">aggregations, joins and subqueries</a>, unions, nearest neighbours and <a href="./pipeline-writes.html">writes</a>;</li>
+<li>Full-text and geospatial <a href="./pipeline-search.html">search in pipelines</a>;</li>
+<li><a href="./sql.html">SQL statements</a> in the BigQuery dialect, translated into pipelines, behind an opt-in <code>sql</code> feature;</li>
 <li>Request tags to attribute Firestore usage;</li>
+<li><a href="./request-timeouts.html">Opt-in request timeouts</a>;</li>
 </ul>
 </li>
 <li>Full async based on Tokio runtime;</li>
@@ -219,8 +223,9 @@
 </ul>
 </li>
 <li><a href="./index-management.html">Declarative index management</a> behind an opt-in <code>admin</code> feature:
-composite indexes, vector indexes, single-field overrides and TTL policy, planned and synced
-with one call;</li>
+composite indexes (including one-field, unique and sparse ones), vector indexes, text and geo
+search indexes, single-field overrides and TTL policy, planned and synced with one call,
+following the edition of the database;</li>
 <li><a href="./bulk-delete.html">Bulk delete</a> behind the same <code>admin</code> feature: removes every document in named
 collection groups, at any depth across the whole database, in the background;</li>
 <li>Works with the Firestore emulator through <code>FIRESTORE_EMULATOR_HOST</code>, no credentials needed;</li>

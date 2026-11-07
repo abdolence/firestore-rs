@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-920c4098.js";
+            window.path_to_searchindex_js = "searchindex-c5f8c851.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3b510eae.js"></script>
@@ -187,7 +187,7 @@
 <ul>
 <li>Querying/streaming docs/objects;</li>
 <li>Listing documents/objects (<code>stream_all</code> follows the page tokens for you);</li>
-<li>Listening changes from Firestore;</li>
+<li>Listening changes from Firestore, with targets added and removed on a running listener and an opt-in idle reset for silent streams;</li>
 <li>Transactions;</li>
 <li>Aggregated queries: count, sum, avg;</li>
 <li>Streaming batch writes with automatic throttling to stay under the Firestore write rate limits;</li>
@@ -198,7 +198,11 @@
 <li>Update/delete preconditions;</li>
 <li>Consistency selectors to read at a given time or inside a transaction;</li>
 <li>Explaining queries;</li>
+<li>Firestore Enterprise edition <a href="#pipelines">pipelines</a>: filters, projections, <a href="#pipeline-aggregations-and-joins">aggregations, joins and subqueries</a>, unions, nearest neighbours and <a href="#pipeline-writes">writes</a>;</li>
+<li>Full-text and geospatial <a href="#pipeline-search">search in pipelines</a>;</li>
+<li><a href="#sql">SQL statements</a> in the BigQuery dialect, translated into pipelines, behind an opt-in <code>sql</code> feature;</li>
 <li>Request tags to attribute Firestore usage;</li>
+<li><a href="#request-timeouts">Opt-in request timeouts</a>;</li>
 </ul>
 </li>
 <li>Full async based on Tokio runtime;</li>
@@ -220,8 +224,9 @@
 </ul>
 </li>
 <li><a href="#index-management">Declarative index management</a> behind an opt-in <code>admin</code> feature:
-composite indexes, vector indexes, single-field overrides and TTL policy, planned and synced
-with one call;</li>
+composite indexes (including one-field, unique and sparse ones), vector indexes, text and geo
+search indexes, single-field overrides and TTL policy, planned and synced with one call,
+following the edition of the database;</li>
 <li><a href="#bulk-delete">Bulk delete</a> behind the same <code>admin</code> feature: removes every document in named
 collection groups, at any depth across the whole database, in the background;</li>
 <li>Works with the Firestore emulator through <code>FIRESTORE_EMULATOR_HOST</code>, no credentials needed;</li>
@@ -232,7 +237,7 @@ that automatically detects GCE environment or application default accounts for l
 <h1 id="quick-start"><a class="header" href="#quick-start">Quick start</a></h1>
 <p>Cargo.toml:</p>
 <pre><code class="language-toml">[dependencies]
-firestore = "0.58"
+firestore = "0.63"
 </code></pre>
 <h2 id="crypto-provider-error"><a class="header" href="#crypto-provider-error">Crypto provider error</a></h2>
 <p>Depends on your other dependencies you may see the error like:</p>
@@ -3666,7 +3671,7 @@ The <code>auth-default-crypto</code> feature, on by default, brings the aws-lc-r
 Be aware that aws-lc-rs is built from C sources.</p>
 <p>With <code>default-features = false</code>, either enable the feature next to your TLS feature:</p>
 <pre><code class="language-toml">[dependencies]
-firestore = { version = "0.58", default-features = false, features = ["tls-webpki-roots", "auth-default-crypto"] }
+firestore = { version = "0.63", default-features = false, features = ["tls-webpki-roots", "auth-default-crypto"] }
 </code></pre>
 <p>or install a rustls <code>CryptoProvider</code> before creating a client.
 Without a provider <code>FirestoreDb::new</code>, <code>FirestoreDb::with_options</code> and <code>FirestoreDb::with_options_service_account_key_file</code>
