@@ -1524,12 +1524,12 @@ mod tests {
                 (
                     "reference",
                     "v",
-                    FirestoreReference(format!("{DOCS}/a/target")).into(),
+                    FirestoreReference(doc_path("a", "target")).into(),
                 ),
                 (
                     "other-reference",
                     "v",
-                    FirestoreReference(format!("{DOCS}/a/elsewhere")).into(),
+                    FirestoreReference(doc_path("a", "elsewhere")).into(),
                 ),
                 ("text-reference", "v", doc_path("a", "target").into()),
                 ("geo-point", "v", geo_point(1.0, 2.0)),
@@ -1551,7 +1551,7 @@ mod tests {
                 (
                     matching(FirestoreQueryFilterCompare::Equal(
                         "v".into(),
-                        FirestoreReference(format!("{DOCS}/a/target")).into(),
+                        FirestoreReference(doc_path("a", "target")).into(),
                     )),
                     vec!["reference"],
                 ),
@@ -1653,15 +1653,15 @@ mod tests {
             ("bytes-1", bytes(&[1])),
             (
                 "reference-a",
-                FirestoreReference(format!("{DOCS}/a/one")).into(),
+                FirestoreReference(doc_path("a", "one")).into(),
             ),
             (
                 "reference-a-nested",
-                FirestoreReference(format!("{DOCS}/a/one/sub/two")).into(),
+                FirestoreReference(doc_path("a", "one/sub/two")).into(),
             ),
             (
                 "reference-a-b",
-                FirestoreReference(format!("{DOCS}/a-b/one")).into(),
+                FirestoreReference(doc_path("a-b", "one")).into(),
             ),
             ("geo-point-south", geo_point(0.0, 5.0)),
             ("geo-point-north", geo_point(1.0, 0.0)),
@@ -1726,7 +1726,7 @@ mod tests {
                 (
                     matching(FirestoreQueryFilterCompare::LessThan(
                         "v".into(),
-                        FirestoreReference(format!("{DOCS}/a-b/one")).into(),
+                        FirestoreReference(doc_path("a-b", "one")).into(),
                     )),
                     vec!["reference-a", "reference-a-nested"],
                 ),

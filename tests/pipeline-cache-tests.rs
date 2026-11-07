@@ -69,7 +69,7 @@ fn map(fields: Vec<(&str, Value)>) -> Value {
     }))
 }
 
-fn nested_timestamp(nanos: i32) -> Value {
+fn timestamp(nanos: i32) -> Value {
     value(ValueType::TimestampValue(Timestamp {
         seconds: 1_704_067_200,
         nanos,
@@ -135,7 +135,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("double")),
                 ("value", double(2.5)),
                 ("number", int(0)),
-                ("text", string("ÉCOLE")),
                 ("tags", array(vec![null()])),
             ],
         ),
@@ -145,7 +144,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("nan")),
                 ("value", double(f64::NAN)),
                 ("number", double(f64::NAN)),
-                ("text", string("straße")),
                 ("tags", array(vec![string("a"), int(1)])),
             ],
         ),
@@ -155,7 +153,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("zero")),
                 ("value", double(-0.0)),
                 ("number", double(-0.0)),
-                ("text", string("100%")),
                 ("tags", array(vec![int(1), double(2.0)])),
             ],
         ),
@@ -165,7 +162,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("string")),
                 ("value", string("a")),
                 ("number", null()),
-                ("text", string("a_c")),
                 ("tags", null()),
             ],
         ),
@@ -210,17 +206,10 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
             "d12",
             vec![
                 ("kind", string("timestamp")),
-                (
-                    "value",
-                    value(ValueType::TimestampValue(Timestamp {
-                        seconds: 1_704_067_200,
-                        nanos: 500,
-                    })),
-                ),
+                ("value", timestamp(500)),
                 ("number", int(i64::MIN)),
-                ("text", string("e\u{301}")),
-                ("stamps", array(vec![nested_timestamp(500)])),
-                ("stamped", map(vec![("at", nested_timestamp(500))])),
+                ("stamps", array(vec![timestamp(500)])),
+                ("stamped", map(vec![("at", timestamp(500))])),
             ],
         ),
         (
@@ -229,7 +218,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("reference")),
                 ("value", first),
                 ("number", int(1)),
-                ("text", string("İstanbul")),
             ],
         ),
         (
@@ -238,7 +226,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("array")),
                 ("value", array(vec![int(1), int(2)])),
                 ("number", int(2)),
-                ("text", string("ΣΑΣ")),
             ],
         ),
         (
@@ -247,7 +234,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("map")),
                 ("value", map(vec![("x", int(1))])),
                 ("number", int(3)),
-                ("text", string("  pad  ")),
             ],
         ),
         (
@@ -256,7 +242,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("bool")),
                 ("value", boolean(false)),
                 ("number", int(4)),
-                ("text", string("Hello World")),
             ],
         ),
         (
@@ -265,7 +250,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("bigint")),
                 ("value", int(9_007_199_254_740_993)),
                 ("number", int(5)),
-                ("text", string("Ab")),
             ],
         ),
         (
@@ -274,7 +258,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("bigdouble")),
                 ("value", double(9_007_199_254_740_992.0)),
                 ("number", int(6)),
-                ("text", string("aB")),
             ],
         ),
         (
@@ -283,7 +266,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ("kind", string("bytes")),
                 ("value", value(ValueType::BytesValue(b"ab".to_vec()))),
                 ("number", double(1.5)),
-                ("text", string("x%y")),
             ],
         ),
         (
@@ -300,7 +282,6 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                     )),
                 ),
                 ("number", int(10)),
-                ("text", string("a\\b")),
             ],
         ),
     ]
@@ -662,27 +643,9 @@ fn comparison_constants(db: &FirestoreDb) -> Vec<(&'static str, Value)> {
         ("string B", string("B")),
         ("true", boolean(true)),
         ("null", null()),
-        (
-            "timestamp",
-            value(ValueType::TimestampValue(Timestamp {
-                seconds: 1_704_067_200,
-                nanos: 500,
-            })),
-        ),
-        (
-            "timestamp 999 nanoseconds later",
-            value(ValueType::TimestampValue(Timestamp {
-                seconds: 1_704_067_200,
-                nanos: 999,
-            })),
-        ),
-        (
-            "timestamp a microsecond later",
-            value(ValueType::TimestampValue(Timestamp {
-                seconds: 1_704_067_200,
-                nanos: 1_000,
-            })),
-        ),
+        ("timestamp", timestamp(500)),
+        ("timestamp 999 nanoseconds later", timestamp(999)),
+        ("timestamp a microsecond later", timestamp(1_000)),
         (
             "reference d01",
             document_reference(db, EDGE_CASES_COLLECTION, "d01"),
@@ -776,8 +739,8 @@ async fn comparisons_match_firestore() -> TestResult {
 async fn timestamps_inside_arrays_and_maps_compare_at_the_microsecond() -> TestResult {
     let mut differential = Differential::new().await?;
     for (label, stored, nested) in [
-        ("array", "stamps", array(vec![nested_timestamp(999)])),
-        ("map", "stamped", map(vec![("at", nested_timestamp(999))])),
+        ("array", "stamps", array(vec![timestamp(999)])),
+        ("map", "stamped", map(vec![("at", timestamp(999))])),
     ] {
         let cases = [
             ("equal", field(stored).equal(constant(nested.clone()))),
