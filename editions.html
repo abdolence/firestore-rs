@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-11f14f9d.js";
+            window.path_to_searchindex_js = "searchindex-1047e78b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-edc99909.js"></script>
@@ -186,36 +186,67 @@ lists what differs.</p>
 editions, and the client picks one by its ID, see
 <a href="./client.html#multiple-databases">Client instance and lifecycle</a>.</p>
 <h2 id="what-each-edition-runs"><a class="header" href="#what-each-edition-runs">What each edition runs</a></h2>
+<p>The API column names the API a row is about: Core queries, pipelines, SQL, Admin for index
+management, TTL and bulk delete, or Any for a row that belongs to no one API. “Pipeline, SQL” marks
+a row where both behave the same. A number in brackets points to the notes under the table.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Feature</th><th>Standard</th><th>Enterprise</th></tr>
+<tr><th>Feature</th><th>API</th><th>Standard</th><th>Enterprise</th></tr>
 </thead>
 <tbody>
-<tr><td>Core reads, queries, writes and batch writes</td><td>yes</td><td>yes</td></tr>
-<tr><td>A Core query that no index covers</td><td>fails with <code>FAILED_PRECONDITION</code>, “The query requires an index”</td><td>runs as a <em>table scan</em>, reading every document of the collection; without <code>order_by</code> the order of its results is unspecified</td></tr>
-<tr><td>Core aggregations: count, sum, avg</td><td>yes</td><td>yes, with the same results</td></tr>
-<tr><td><a href="./transactions.html">Transactions</a></td><td>yes</td><td>yes; optimistic by default, so under contention more attempts abort and are retried</td></tr>
-<tr><td>Core <code>.explain()</code></td><td>yes</td><td>rejected with <code>INVALID_ARGUMENT</code></td></tr>
-<tr><td>Core <a href="./vector-search.html">vector search</a></td><td>needs a vector index, and fails with <code>FAILED_PRECONDITION</code> without one</td><td>runs without a vector index</td></tr>
-<tr><td><a href="./pipelines.html">Pipelines</a> and <a href="./sql.html">SQL</a></td><td>fail with <code>FAILED_PRECONDITION</code>, unless a cache session answers them</td><td>yes</td></tr>
-<tr><td><a href="./pipeline-writes.html">Pipeline writes</a> and SQL writes</td><td>no</td><td>yes</td></tr>
-<tr><td><a href="./pipeline-search.html">Text and geo search</a></td><td>no</td><td>yes, with a search index</td></tr>
-<tr><td><a href="./listening-changes.html">Listeners</a></td><td>yes</td><td>yes, on a database with real-time updates enabled</td></tr>
-<tr><td><a href="./caching.html">Caching</a></td><td>Core reads; pipeline and SQL reads only when the cache answers them in full</td><td>Core reads, pipeline and SQL reads; the cache’s listener needs real-time updates</td></tr>
-<tr><td>Automatic single-field indexes</td><td>yes</td><td>none</td></tr>
-<tr><td>Single-field overrides</td><td>yes</td><td>none; an <code>.exempt()</code> is already satisfied</td></tr>
-<tr><td>Composite index of one field</td><td>a vector field only</td><td>yes</td></tr>
-<tr><td>Unique indexes</td><td>no</td><td>yes</td></tr>
-<tr><td>Index <em>density</em>: which documents an index holds an entry for</td><td><code>SparseAll</code> only</td><td><code>Dense</code> by default, or <code>SparseAny</code>; a search index <code>SparseAny</code></td></tr>
-<tr><td><code>__name__</code> appended to an index</td><td>yes</td><td>no</td></tr>
-<tr><td>TTL policy</td><td>yes</td><td>yes</td></tr>
-<tr><td><a href="./bulk-delete.html">Bulk delete</a></td><td>yes</td><td>yes</td></tr>
-<tr><td><a href="./emulator.html">Firestore emulator</a></td><td>the default emulator</td><td>an emulator started with <code>--edition=enterprise</code></td></tr>
-<tr><td>Billing</td><td>per document read, written and deleted</td><td>read units and write units, with real-time updates billed separately</td></tr>
+<tr><td>Reads and queries</td><td>Core</td><td>yes</td><td>yes</td></tr>
+<tr><td>Reads and queries</td><td><a href="./pipelines.html">Pipeline</a>, <a href="./sql.html">SQL</a></td><td>fails (1)</td><td>yes</td></tr>
+<tr><td>Writes and batch writes</td><td>Core</td><td>yes</td><td>yes</td></tr>
+<tr><td><a href="./pipeline-writes.html">Writes</a></td><td>Pipeline, SQL</td><td>no</td><td>yes</td></tr>
+<tr><td>Query that no index covers</td><td>Core</td><td>fails (2)</td><td>table scan (3)</td></tr>
+<tr><td>Query that no index covers</td><td>Pipeline, SQL</td><td>no</td><td>table scan (4)</td></tr>
+<tr><td>Aggregations: count, sum, avg</td><td>Core</td><td>yes</td><td>yes, same results</td></tr>
+<tr><td><a href="./transactions.html">Transactions</a></td><td>Any</td><td>yes</td><td>yes (5)</td></tr>
+<tr><td>Query plans</td><td>Core</td><td><code>.explain()</code></td><td>rejected (6)</td></tr>
+<tr><td>Query plans</td><td>Pipeline, SQL</td><td>no</td><td><code>.explain()</code> (6)</td></tr>
+<tr><td><a href="./vector-search.html">Vector search</a></td><td>Core</td><td>needs a vector index (7)</td><td>no index needed (8)</td></tr>
+<tr><td><a href="./vector-search.html">Vector search</a></td><td>Pipeline</td><td>no</td><td>table scan (9)</td></tr>
+<tr><td><a href="./pipeline-search.html">Text and geo search</a></td><td>Pipeline, SQL</td><td>no</td><td>needs a search index</td></tr>
+<tr><td><a href="./listening-changes.html">Listeners</a></td><td>Core</td><td>yes</td><td>needs real-time updates</td></tr>
+<tr><td><a href="./caching.html">Caching</a></td><td>Core</td><td>yes</td><td>needs real-time updates</td></tr>
+<tr><td><a href="./caching.html">Caching</a></td><td>Pipeline, SQL</td><td>only if the cache answers in full</td><td>needs real-time updates</td></tr>
+<tr><td>Automatic single-field indexes</td><td>Admin</td><td>yes</td><td>none</td></tr>
+<tr><td>Single-field overrides</td><td>Admin</td><td>yes</td><td>none (10)</td></tr>
+<tr><td>Composite index of one field</td><td>Admin</td><td>a vector field only</td><td>yes</td></tr>
+<tr><td>Unique indexes</td><td>Admin</td><td>no</td><td>yes</td></tr>
+<tr><td>Index density (11)</td><td>Admin</td><td><code>SparseAll</code> only</td><td><code>Dense</code> by default, or <code>SparseAny</code> (12)</td></tr>
+<tr><td><code>__name__</code> appended to an index</td><td>Admin</td><td>yes</td><td>no</td></tr>
+<tr><td>TTL policy</td><td>Admin</td><td>yes</td><td>yes</td></tr>
+<tr><td><a href="./bulk-delete.html">Bulk delete</a></td><td>Admin</td><td>yes</td><td>yes</td></tr>
+<tr><td><a href="./emulator.html">Firestore emulator</a></td><td>Any</td><td>the default emulator</td><td>started with <code>--edition=enterprise</code></td></tr>
+<tr><td>Billing</td><td>Any</td><td>per document read, written and deleted</td><td>read units and write units (13)</td></tr>
 </tbody>
 </table>
 </div>
+<ol>
+<li>A pipeline or SQL statement sent to a Standard edition database fails with
+<code>FAILED_PRECONDITION</code>, unless a <a href="./caching.html#pipelines">cache</a> session answers it.</li>
+<li><code>FAILED_PRECONDITION</code>, “The query requires an index”.</li>
+<li>The query reads every document of the collection. Without <code>order_by</code> the order of its results is
+unspecified.</li>
+<li>A pipeline or SQL statement that no index covers runs as a table scan. A search is the
+exception: it needs a search index and fails without one, see
+<a href="./editions/query-plans.html#known-table-scans">Known table scans</a>.</li>
+<li>Optimistic by default, so under contention more attempts abort and are retried.</li>
+<li>An Enterprise edition database rejects a Core <code>.explain()</code> with <code>INVALID_ARGUMENT</code>, so explain
+the same query as a pipeline or SQL, see
+<a href="./editions/query-plans.html#explaining-a-pipeline">Explaining a pipeline</a>.</li>
+<li>Without a vector index the query fails with <code>FAILED_PRECONDITION</code>.</li>
+<li>A vector index can still be created on Enterprise, but whether a Core query uses it cannot be
+seen, since Core <code>.explain()</code> is rejected there.</li>
+<li>The <code>find_nearest</code> stage reads every document with or without a vector index, see
+<a href="./vector-search.html#on-the-enterprise-edition">Vector search</a>.</li>
+<li>An <code>.exempt()</code> is already satisfied.</li>
+<li>The density of an index is which documents it holds an entry for.</li>
+<li>A search index is <code>SparseAny</code>.</li>
+<li>Real-time updates are billed separately.</li>
+</ol>
 <h2 id="telling-which-edition-a-database-is"><a class="header" href="#telling-which-edition-a-database-is">Telling which edition a database is</a></h2>
 <p><code>gcloud firestore databases describe</code> prints the settings of a database, among them its edition,
 its real-time updates mode and its concurrency mode:</p>
@@ -255,7 +286,7 @@ edition database, so set <code>--enable-realtime-updates</code> explicitly when 
 <a href="./pipeline-writes.html#write-limits">Write limits</a>;</li>
 <li>Firestore has no setting that rejects a table scan, see
 <a href="./editions/query-plans.html#recognising-a-full-scan">Query plans and cost</a>;</li>
-<li>a Core <code>.explain()</code> is rejected on Enterprise, where only a pipeline returns a plan.</li>
+<li>a Core <code>.explain()</code> is rejected on Enterprise. The same query written as a pipeline or SQL returns its plan through <code>.explain()</code>, see <a href="./editions/query-plans.html#explaining-a-pipeline">Explaining a pipeline</a>.</li>
 </ul>
 <h2 id="query-and-write-semantics"><a class="header" href="#query-and-write-semantics">Query and write semantics</a></h2>
 <p>A pipeline and a SQL statement keep Firestore’s pipeline semantics, which differ from a Core query
