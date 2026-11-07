@@ -587,21 +587,18 @@ pub trait FirestoreIndexSupport {
 
     /// Starts building `definition`'s index and returns it as Firestore lists it once the build
     /// has started, or, with `wait`, once the build has finished. An index that already exists
-    /// fails with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError).
+    /// fails with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError), unless
+    /// `if_not_exists` is set.
+    ///
+    /// With `if_not_exists`, the one index of the group that `definition` matches is the outcome,
+    /// and an `ALREADY_EXISTS` for an index the listing does not show stays an error. Such an
+    /// index is returned as listed, or, with `wait`, once it has left `CREATING`, polled under the
+    /// same deadline as a build this call started. Any other error stays an error.
     async fn create_index(
         &self,
         definition: FirestoreIndexDefinition,
         wait: Option<FirestoreOperationWaitOptions>,
-    ) -> FirestoreResult<FirestoreListedCompositeIndex>;
-
-    /// Like [`create_index`](Self::create_index), except that an index that already exists is the
-    /// outcome: the one the group lists that `definition` matches is returned as listed, and `wait`
-    /// does not apply to it. Any other error, and an `ALREADY_EXISTS` for an index the listing does
-    /// not show, stay errors.
-    async fn create_index_if_not_exists(
-        &self,
-        definition: FirestoreIndexDefinition,
-        wait: Option<FirestoreOperationWaitOptions>,
+        if_not_exists: bool,
     ) -> FirestoreResult<FirestoreListedCompositeIndex>;
 
     /// Deletes the one index `target` names and returns it as it was listed just before.
@@ -610,17 +607,14 @@ pub trait FirestoreIndexSupport {
     /// matches or the index belongs to another group than the target names, and with
     /// [`DataConflictError`](crate::errors::FirestoreError::DataConflictError) when a definition
     /// matches more than one.
+    ///
+    /// With `if_exists`, an ID nothing has and a definition nothing matches delete nothing and
+    /// return `None`; an index in another group than the target names, several matches and every
+    /// other error stay errors. Without it the result is always `Some`.
     async fn delete_index(
         &self,
         target: FirestoreIndexDeleteTarget,
-    ) -> FirestoreResult<FirestoreListedCompositeIndex>;
-
-    /// Like [`delete_index`](Self::delete_index), except that an ID nothing has, and a definition
-    /// nothing matches, delete nothing and return `None`. An index in another group than the target
-    /// names, several matches and every other error stay errors.
-    async fn delete_index_if_exists(
-        &self,
-        target: FirestoreIndexDeleteTarget,
+        if_exists: bool,
     ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>>;
 
     /// Sends `update` as one `UpdateField` write and returns the field as Firestore reads it right

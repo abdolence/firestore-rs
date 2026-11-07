@@ -19,7 +19,9 @@ use super::query::string_literal;
 use super::translator::{expr_start, is_parameter};
 #[cfg(feature = "admin")]
 use crate::{
-    FirestoreCollectionId, FirestoreIndexQueryScope, FirestoreSqlCreateIndex, FirestoreSqlDropIndex,
+    FirestoreCollectionId, FirestoreFieldOverrideIndex, FirestoreFieldOverrideUpdate,
+    FirestoreFieldTtlUpdate, FirestoreIndexFieldMode, FirestoreIndexQueryScope,
+    FirestoreQueryDirection, FirestoreSqlCreateIndex, FirestoreSqlDropIndex,
 };
 #[cfg(feature = "admin")]
 use sqlparser::ast::{Expr, SqlOption, Value as SqlValue};
@@ -125,6 +127,78 @@ pub(super) struct FirestoreSqlOption {
     pub(super) key: String,
     pub(super) value: Expr,
     pub(super) start: Option<FirestoreSqlLocation>,
+}
+
+/// The word that scopes an entry of `indexes` to collection-group queries.
+#[cfg(feature = "admin")]
+const COLLECTION_GROUP_WORD: &str = "COLLECTION_GROUP";
+
+#[cfg(feature = "admin")]
+impl FirestoreSqlOption {
+    pub(super) fn ttl_update(&self) -> FirestoreResult<FirestoreFieldTtlUpdate> {
+        match &self.value {
+            Expr::Value(value) => match value.value {
+                SqlValue::Boolean(true) => Some(FirestoreFieldTtlUpdate::Enable),
+                SqlValue::Boolean(false) => Some(FirestoreFieldTtlUpdate::Disable),
+                _ => None,
+            },
+            _ => None,
+        }
+        .ok_or_else(|| {
+            FirestoreError::invalid_sql("ttl", "ttl is TRUE or FALSE", expr_start(&self.value))
+        })
+    }
+
+    pub(super) fn override_update(&self) -> FirestoreResult<FirestoreFieldOverrideUpdate> {
+        match &self.value {
+            Expr::Value(value) if value.value == SqlValue::Null => {
+                Ok(FirestoreFieldOverrideUpdate::Revert)
+            }
+            Expr::Array(array) => array
+                .elem
+                .iter()
+                .map(|entry| self.override_index(entry))
+                .collect::<FirestoreResult<_>>()
+                .map(FirestoreFieldOverrideUpdate::Set),
+            value => Err(FirestoreError::invalid_sql(
+                "indexes",
+                "indexes is a list of strings, or NULL",
+                expr_start(value),
+            )),
+        }
+    }
+
+    /// One entry of `indexes`: `ASC`, `DESC` or `CONTAINS`, optionally after `COLLECTION_GROUP`.
+    fn override_index(&self, entry: &Expr) -> FirestoreResult<FirestoreFieldOverrideIndex> {
+        let text = option_string(&self.key, entry)?;
+        let start = expr_start(entry);
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let (query_scope, mode) = match words.as_slice() {
+            [mode] => (FirestoreIndexQueryScope::Collection, *mode),
+            [scope, mode] if scope.eq_ignore_ascii_case(COLLECTION_GROUP_WORD) => {
+                (FirestoreIndexQueryScope::AllDescendants, *mode)
+            }
+            _ => return Err(Self::unknown_index_entry(&text, start)),
+        };
+        let mode = match mode.to_ascii_uppercase().as_str() {
+            "ASC" => FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending),
+            "DESC" => FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending),
+            "CONTAINS" => FirestoreIndexFieldMode::ArrayContains,
+            _ => return Err(Self::unknown_index_entry(&text, start)),
+        };
+        Ok(FirestoreFieldOverrideIndex { query_scope, mode })
+    }
+
+    fn unknown_index_entry(entry: &str, start: Option<FirestoreSqlLocation>) -> FirestoreError {
+        FirestoreError::invalid_sql(
+            "indexes",
+            format!(
+                "`{entry}` is not an index; an entry is ASC, DESC or CONTAINS, optionally after \
+                 {COLLECTION_GROUP_WORD}"
+            ),
+            start,
+        )
+    }
 }
 
 /// The string literal of the option `key`'s `value`. A parameter is refused: an option is a

@@ -236,8 +236,9 @@ where
     }
 
     /// Makes an index that already exists the outcome rather than an error: `.execute()` returns
-    /// the one the group lists that the definition matches, as listed, and a wait does not apply
-    /// to it. Any other error stays one.
+    /// the one the group lists that the definition matches. Without a wait it is returned as
+    /// listed. With one, an index another caller is still building is polled until it is `READY`,
+    /// under the same timeout. Any other error stays one.
     #[inline]
     pub fn if_not_exists(self) -> Self {
         Self {
@@ -252,13 +253,9 @@ where
     /// [`if_not_exists`](Self::if_not_exists) is set.
     pub async fn execute(self) -> FirestoreResult<FirestoreListedCompositeIndex> {
         let definition = self.definition?;
-        if self.if_not_exists {
-            self.db
-                .create_index_if_not_exists(definition, self.wait)
-                .await
-        } else {
-            self.db.create_index(definition, self.wait).await
-        }
+        self.db
+            .create_index(definition, self.wait, self.if_not_exists)
+            .await
     }
 }
 
@@ -386,7 +383,11 @@ where
     /// matches, and with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError)
     /// when a definition matches more than one.
     pub async fn execute(self) -> FirestoreResult<FirestoreListedCompositeIndex> {
-        self.db.delete_index(self.target?).await
+        let target = self.target?;
+        self.db
+            .delete_index(target.clone(), false)
+            .await?
+            .ok_or_else(|| target.not_found())
     }
 }
 
@@ -409,7 +410,7 @@ where
     /// Deletes the index and returns it as it was listed just before, or returns `None` and
     /// deletes nothing when no index has the ID or matches the definition.
     pub async fn execute(self) -> FirestoreResult<Option<FirestoreListedCompositeIndex>> {
-        self.db.delete_index_if_exists(self.target?).await
+        self.db.delete_index(self.target?, true).await
     }
 }
 

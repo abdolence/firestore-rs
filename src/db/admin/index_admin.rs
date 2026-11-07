@@ -16,10 +16,10 @@ use crate::{
     FirestoreCollectionId, FirestoreDb, FirestoreFieldOverride, FirestoreFieldOverrideUpdate,
     FirestoreFieldTtlUpdate, FirestoreFieldUpdate, FirestoreIndexDefinition,
     FirestoreIndexDeleteTarget, FirestoreIndexIdTarget, FirestoreIndexListing,
-    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSyncOptions, FirestoreIndexSyncReport,
-    FirestoreIndexSyncSkipReason, FirestoreIndexSyncTimings, FirestoreInstant,
-    FirestoreListedCompositeIndex, FirestoreListedField, FirestoreOperationWaitOptions,
-    FirestoreResult,
+    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexState, FirestoreIndexSyncOptions,
+    FirestoreIndexSyncReport, FirestoreIndexSyncSkipReason, FirestoreIndexSyncTimings,
+    FirestoreInstant, FirestoreListedCompositeIndex, FirestoreListedField,
+    FirestoreOperationWaitOptions, FirestoreResult,
 };
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field::{IndexConfig, TtlConfig};
@@ -170,6 +170,24 @@ impl FirestoreDb {
         Ok(())
     }
 
+    /// Reads `index` again until it has left `CREATING`, then returns it in whatever state it
+    /// reached. No operation exists for a build another caller started, so the index itself is
+    /// polled. Fails once `deadline` has passed with the index still building.
+    async fn wait_while_creating(
+        &self,
+        mut index: FirestoreListedCompositeIndex,
+        deadline: &OperationDeadline,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        while index.state == FirestoreIndexState::Creating {
+            if deadline.has_passed() {
+                return Err(deadline.timed_out(&format!("index {} to finish building", index.id)));
+            }
+            deadline.sleep_until_next_round().await;
+            index = FirestoreListedCompositeIndex::try_from(self.get_index(&index.name).await?)?;
+        }
+        Ok(index)
+    }
+
     /// The index `target` names, as listed, or `None` when nothing has the ID or no listed index
     /// matches the definition.
     async fn index_to_delete(
@@ -272,7 +290,7 @@ impl FirestoreDb {
 
 impl FirestoreIndexDeleteTarget {
     /// The error of a delete that found no index to delete.
-    fn not_found(&self) -> FirestoreError {
+    pub(crate) fn not_found(&self) -> FirestoreError {
         match self {
             Self::Id(target) => FirestoreError::data_not_found(
                 NO_MATCHING_INDEX,
@@ -467,10 +485,27 @@ impl FirestoreIndexSupport for FirestoreDb {
         &self,
         definition: FirestoreIndexDefinition,
         wait: Option<FirestoreOperationWaitOptions>,
+        if_not_exists: bool,
     ) -> FirestoreResult<FirestoreListedCompositeIndex> {
         validate_collection_group(&definition.collection_group)?;
         let deadline = wait.as_ref().map(OperationDeadline::from_now);
-        let (operation, index_name) = self.start_create_index(definition).await?;
+        let (operation, index_name) = match self.start_create_index(definition.clone()).await {
+            Ok(started) => started,
+            // `ALREADY_EXISTS` is the one status that maps to a conflict. Firestore keeps
+            // answering it for an index deleted minutes ago, so the answer counts only when the
+            // listing shows the index too.
+            Err(FirestoreError::DataConflictError(conflict)) if if_not_exists => {
+                let existing = self
+                    .matching_index(&definition)
+                    .await?
+                    .ok_or(FirestoreError::DataConflictError(conflict))?;
+                return match &deadline {
+                    Some(deadline) => self.wait_while_creating(existing, deadline).await,
+                    None => Ok(existing),
+                };
+            }
+            Err(err) => return Err(err),
+        };
         if let Some(deadline) = &deadline {
             self.wait_for_operations(&[&operation], deadline, |_, _| {})
                 .await?;
@@ -478,40 +513,17 @@ impl FirestoreIndexSupport for FirestoreDb {
         FirestoreListedCompositeIndex::try_from(self.get_index(&index_name).await?)
     }
 
-    async fn create_index_if_not_exists(
-        &self,
-        definition: FirestoreIndexDefinition,
-        wait: Option<FirestoreOperationWaitOptions>,
-    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
-        match self.create_index(definition.clone(), wait).await {
-            // `ALREADY_EXISTS` is the one status that maps to a conflict. Firestore keeps
-            // answering it for an index deleted minutes ago, so the answer counts only when the
-            // listing shows the index too.
-            Err(FirestoreError::DataConflictError(conflict)) => {
-                match self.matching_index(&definition).await? {
-                    Some(existing) => Ok(existing),
-                    None => Err(FirestoreError::DataConflictError(conflict)),
-                }
-            }
-            created => created,
-        }
-    }
-
     async fn delete_index(
         &self,
         target: FirestoreIndexDeleteTarget,
-    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
-        self.delete_index_if_exists(target.clone())
-            .await?
-            .ok_or_else(|| target.not_found())
-    }
-
-    async fn delete_index_if_exists(
-        &self,
-        target: FirestoreIndexDeleteTarget,
+        if_exists: bool,
     ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>> {
         let Some(listed) = self.index_to_delete(&target).await? else {
-            return Ok(None);
+            return if if_exists {
+                Ok(None)
+            } else {
+                Err(target.not_found())
+            };
         };
         self.send_delete_index(&listed).await?;
         Ok(Some(listed))
@@ -556,7 +568,7 @@ mod tests {
     use crate::{
         FirestoreCompositeIndex, FirestoreFieldOverrideOutcome, FirestoreFieldOverrideTarget,
         FirestoreIndexDensity, FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexId,
-        FirestoreIndexIdTarget, FirestoreIndexState, FirestoreQueryDirection,
+        FirestoreIndexIdTarget, FirestoreQueryDirection,
     };
     use gcloud_sdk::google::firestore::admin::v1::database::DatabaseEdition;
     use gcloud_sdk::google::firestore::admin::v1::ListFieldsRequest;
@@ -657,7 +669,7 @@ mod tests {
 
         let created = fake
             .db
-            .create_index(captured_definition(), None)
+            .create_index(captured_definition(), None, false)
             .await
             .unwrap();
 
@@ -705,7 +717,7 @@ mod tests {
 
         let created = fake
             .db
-            .create_index(captured_definition(), fast_wait())
+            .create_index(captured_definition(), fast_wait(), false)
             .await
             .unwrap();
 
@@ -731,10 +743,13 @@ mod tests {
 
         let refused = fake
             .db
-            .delete_index(FirestoreIndexDeleteTarget::Id(
-                FirestoreIndexIdTarget::new(FirestoreIndexId::new("CICAgOi39IkJ").unwrap())
-                    .with_collection_group(FirestoreCollectionId::from_static("versions")),
-            ))
+            .delete_index(
+                FirestoreIndexDeleteTarget::Id(
+                    FirestoreIndexIdTarget::new(FirestoreIndexId::new("CICAgOi39IkJ").unwrap())
+                        .with_collection_group(FirestoreCollectionId::from_static("versions")),
+                ),
+                false,
+            )
             .await
             .unwrap_err();
 
@@ -757,15 +772,17 @@ mod tests {
 
         let deleted = fake
             .db
-            .delete_index(FirestoreIndexDeleteTarget::Definition(
-                FirestoreIndexDefinition::new(
+            .delete_index(
+                FirestoreIndexDeleteTarget::Definition(FirestoreIndexDefinition::new(
                     capture_group(),
                     email_index()
                         .unique()
                         .density(FirestoreIndexDensity::SparseAny),
-                ),
-            ))
+                )),
+                false,
+            )
             .await
+            .unwrap()
             .unwrap();
 
         assert_eq!(deleted.id, FirestoreIndexId::new("CICAgLjyuogJ").unwrap());
@@ -788,15 +805,16 @@ mod tests {
 
         let refused = fake
             .db
-            .delete_index(FirestoreIndexDeleteTarget::Definition(
-                FirestoreIndexDefinition::new(
+            .delete_index(
+                FirestoreIndexDeleteTarget::Definition(FirestoreIndexDefinition::new(
                     capture_group(),
                     FirestoreCompositeIndex::new(vec![field(
                         "email",
                         FirestoreQueryDirection::Descending,
                     )]),
-                ),
-            ))
+                )),
+                false,
+            )
             .await
             .unwrap_err();
 
@@ -1009,11 +1027,44 @@ mod tests {
 
         let existing = fake
             .db
-            .create_index_if_not_exists(captured_definition(), fast_wait())
+            .create_index(captured_definition(), None, true)
             .await
             .unwrap();
 
         assert_eq!(existing.id, FirestoreIndexId::new("CICAgPj-z4oK").unwrap());
+    }
+
+    #[tokio::test]
+    async fn create_of_an_index_another_caller_is_building_waits_until_it_is_ready() {
+        let creating = include_str!("testdata/standard-get-index-creating.json");
+        let ready: serde_json::Value = serde_json::from_str(include_str!(
+            "testdata/standard-create-index-operation-done.json"
+        ))
+        .unwrap();
+        let ready = decode_captured_index(&ready["response"]);
+        let fake = start_on(DatabaseEdition::Standard, move |method, _| match method {
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                FakeResponse::Status(Code::AlreadyExists),
+            ),
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(vec![captured_index(creating)]),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            GET_INDEX => ("GetIndex".to_string(), encoded(ready.clone())),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let existing = fake
+            .db
+            .create_index(captured_definition(), fast_wait(), true)
+            .await
+            .unwrap();
+
+        assert_eq!(existing.state, FirestoreIndexState::Ready);
+        assert!(fake.calls().contains(&"GetIndex".to_string()));
     }
 
     #[tokio::test]
@@ -1022,7 +1073,7 @@ mod tests {
 
         let refused = fake
             .db
-            .create_index_if_not_exists(captured_definition(), None)
+            .create_index(captured_definition(), None, true)
             .await
             .unwrap_err();
 
@@ -1042,9 +1093,12 @@ mod tests {
 
         let refused = fake
             .db
-            .delete_index(FirestoreIndexDeleteTarget::Id(FirestoreIndexIdTarget::new(
-                FirestoreIndexId::new("CICAgOi39IkJ").unwrap(),
-            )))
+            .delete_index(
+                FirestoreIndexDeleteTarget::Id(FirestoreIndexIdTarget::new(
+                    FirestoreIndexId::new("CICAgOi39IkJ").unwrap(),
+                )),
+                false,
+            )
             .await
             .unwrap_err();
 
@@ -1064,9 +1118,12 @@ mod tests {
 
         let deleted = fake
             .db
-            .delete_index_if_exists(FirestoreIndexDeleteTarget::Id(FirestoreIndexIdTarget::new(
-                FirestoreIndexId::new("CICAgOi39IkJ").unwrap(),
-            )))
+            .delete_index(
+                FirestoreIndexDeleteTarget::Id(FirestoreIndexIdTarget::new(
+                    FirestoreIndexId::new("CICAgOi39IkJ").unwrap(),
+                )),
+                true,
+            )
             .await
             .unwrap();
 
@@ -1080,15 +1137,16 @@ mod tests {
 
         let deleted = fake
             .db
-            .delete_index_if_exists(FirestoreIndexDeleteTarget::Definition(
-                FirestoreIndexDefinition::new(
+            .delete_index(
+                FirestoreIndexDeleteTarget::Definition(FirestoreIndexDefinition::new(
                     capture_group(),
                     FirestoreCompositeIndex::new(vec![field(
                         "email",
                         FirestoreQueryDirection::Descending,
                     )]),
-                ),
-            ))
+                )),
+                true,
+            )
             .await
             .unwrap();
 
@@ -1118,10 +1176,13 @@ mod tests {
 
         let refused = fake
             .db
-            .delete_index_if_exists(FirestoreIndexDeleteTarget::Id(
-                FirestoreIndexIdTarget::new(FirestoreIndexId::new("CICAgOi39IkJ").unwrap())
-                    .with_collection_group(FirestoreCollectionId::from_static("versions")),
-            ))
+            .delete_index(
+                FirestoreIndexDeleteTarget::Id(
+                    FirestoreIndexIdTarget::new(FirestoreIndexId::new("CICAgOi39IkJ").unwrap())
+                        .with_collection_group(FirestoreCollectionId::from_static("versions")),
+                ),
+                true,
+            )
             .await
             .unwrap_err();
 
