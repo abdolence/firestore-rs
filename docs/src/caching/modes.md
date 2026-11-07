@@ -12,4 +12,5 @@ Which operations use the cache:
 | Read by ID, batch read by IDs | yes, for any cached collection |
 | Listing all documents in a collection | only for **preloaded** collections |
 | Querying a collection (filtering, ordering, cursors) | only for **preloaded** collections, and only for supported queries |
+| Pipeline and SQL reads | for **preloaded** collections, and by ID for any cached collection, with the stages and functions in [Pipelines](../caching.md#pipelines) |
 | Paged listing, queries with metadata, aggregations, transactions, writes | never |
