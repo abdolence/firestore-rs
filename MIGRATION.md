@@ -93,8 +93,13 @@ A session with a consistency selector never reads the cache: `get`, batch get, `
 or a preloaded collection the cache held was served from it, so the transaction did not read or lock those documents and
 a read time returned the current cached state. A document read this way is not written to the cache either.
 
-Under `read_cached_only` the same reads return `FirestoreError::CacheError`, because that mode never contacts Firestore.
-Code that read a transaction through a cached-only handle needs `read_through_cache` instead.
+Under `read_cached_only` the same reads return `FirestoreError::CacheError` with the code
+`CacheConsistencySelectorUnsupported`, because that mode never contacts Firestore. Code that read a transaction through
+a cached-only handle needs `read_through_cache` instead.
+
+Inside `run_transaction`, a `?` on that error makes it transient, so the transaction is retried 4 times, with a few
+seconds of backoff, before the error is returned wrapped in `FirestoreError::ErrorInTransaction`. Return
+`BackoffError::permanent` from the closure to fail on the first attempt.
 
 ### A failed cache read fails the batch read by IDs
 
@@ -108,34 +113,43 @@ read of a single document already did. A backend that overrides `get_docs_by_pat
 A batch get with `.fields(..)` under `read_through_cache` no longer offers the masked documents to the cache. Before, a
 cached document could hold only the masked fields, and later reads by ID returned it as the whole document.
 
-### Cached queries compare timestamps and numbers as Firestore does
+### Cached queries return what Firestore returns
 
-The cached query engine, used by `query` on preloaded collections, now orders timestamps by seconds and then nanoseconds,
-where it compared the two parts separately, so `1.9 s < 2.1 s` was false. An integer and a double compare by value, so a
-filter on `1` matches the double `1.0`, and `order_by` sorts them together. Cached queries that filtered or sorted on
-these types returned different documents from Firestore.
+The cached query engine, used by `query` on preloaded collections, now returns the documents Firestore returns, in the
+order Firestore returns them. Before, these queries returned other documents, in an arbitrary order:
 
-### Cached `in`, `not-in` and `array-contains` match like Firestore
+- **Timestamps and numbers.** Timestamps compare by seconds and then nanoseconds; before, the two parts were compared
+  separately, so `1.9 s < 2.1 s` was false. An integer and a double compare by value, so a filter on `1` matches the
+  double `1.0`, and `order_by` sorts them together.
+- **Order and range filters on every type.** `<`, `<=`, `>`, `>=`, `order_by` and cursors follow Firestore's order of
+  types (null, booleans, numbers, timestamps, strings, bytes, references, geo points, arrays, vectors, maps) and its
+  order within each type. Before, only numbers and timestamps had an order: `<` and `>` on a string matched nothing,
+  an `end_at` cursor on one returned nothing, and `order_by` returned an arbitrary order or panicked. A range filter
+  matches values of its own type only, and never NaN.
+- **Several `order_by` fields.** The first field that differs decides. Ties end on the document name, in the direction of
+  the last field. Before, the last field decided. A document that lacks an `order_by` field is not returned, as in
+  Firestore.
+- **No `order_by`.** Results come in the order of the fields compared with `<`, `<=`, `>`, `>=`, `!=` or `not-in`, and
+  then by document name.
+- **Cursors, `offset` and `limit`.** The cursors apply first, then `offset`, then `limit`. Before, `limit` applied first,
+  so `limit(10).offset(5)` returned 5 documents and `start_at` with a `limit` could return none. A cursor is one position
+  in the order of its fields; before, each field was compared on its own.
+- **`in`, `not-in` and `array-contains`.** `in` matches a scalar field equal to any listed value, `not-in` one equal to
+  none of them, leaving out documents where the field is null or absent, and `array-contains` an array field holding
+  the value. Before, `in` and `array-contains` expected the field and the filter value the other way round, so they
+  returned no documents, and `not-in` returned only the documents with an array field.
+- **Equality on arrays, maps, bytes, references and geo points.** `==`, `!=`, `in`, `not-in`, `array-contains` and
+  `array-contains-any` match these values. Arrays are equal when their elements are equal in order, and maps when their
+  fields are equal by key; inside both, an integer equals the double of the same value, and null and NaN equal
+  themselves. `!=` also matches a field of another type.
+- **Null and NaN in a filter.** A null in a filter value matches nothing: `== null`, `!= null` and `array-contains`
+  null return no documents, a null in an `in` or `array-contains-any` list is ignored, and a `not-in` list that holds a
+  null returns no documents. NaN equals nothing, itself included, and is in no range; `!=` and `not-in` match it. Use
+  `is_null` to find null fields. `is_null` no longer matches documents without the field, and `is_not_nan` no longer
+  matches documents where the field is null or absent.
 
-The cached query engine, used by `query` on preloaded collections, now matches `in` and `not-in` against a scalar
-field, and `array-contains` against an array field with a single value. `in` matches a field equal to any listed value,
-and `not-in` matches a field equal to none of them, leaving out documents where the field is null or absent. An integer
-equals the double of the same value in all three. Before, `in` and `array-contains` expected the field and the filter
-value the other way round, so they returned no documents, and `not-in` returned only the documents with an array field.
-`array-contains-any` is unchanged.
-
-### Cached equality matches arrays, maps, bytes, references and null like Firestore
-
-The cached query engine now matches `==`, `!=`, `in`, `not-in`, `array-contains` and `array-contains-any` against array,
-map, bytes, reference and geo point values. Arrays are equal when their elements are equal in order, and maps when their
-fields are equal by key; inside both, an integer equals the double of the same value, and null and NaN equal themselves.
-Before, the cache never found two of these values equal, so such queries returned other documents than Firestore. `!=`
-now also matches a field of another type, as Firestore does.
-
-A null in a filter value matches nothing, as in Firestore: `== null`, `!= null` and `array-contains` null return no
-documents, a null in an `in` or `array-contains-any` list is ignored, and a `not-in` list that holds a null returns no
-documents. Use `is_null` to find null fields. `is_null` no longer matches documents without the field, and `is_not_nan`
-no longer matches documents where the field is null or absent.
+The order is that of the Standard edition. Equal values that tie can come back in another order from an Enterprise
+edition database.
 
 ## 0.62
 
