@@ -15,6 +15,14 @@ use crate::{
     FirestoreWriteCollection,
 };
 
+#[cfg(feature = "admin")]
+use crate::{
+    FirestoreCompositeIndex, FirestoreGeoIndexConfig, FirestoreIndexDefinition,
+    FirestoreIndexDeleteTarget, FirestoreIndexDensity, FirestoreIndexField,
+    FirestoreIndexFieldMode, FirestoreIndexId, FirestoreIndexIdTarget, FirestoreQueryDirection,
+    FirestoreSearchIndexOptions, FirestoreSqlCreateIndex, FirestoreSqlDropIndex,
+    FirestoreVectorIndexConfig,
+};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -2125,34 +2133,243 @@ fn read_only_options_refuse_index_statements() {
 }
 
 #[cfg(feature = "admin")]
+fn translated_create_index(sql: &str) -> FirestoreSqlCreateIndex {
+    match translate_statement(
+        sql,
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::new(),
+    ) {
+        Ok(FirestoreSqlStatement::CreateIndex(create)) => create,
+        other => panic!("{sql}: {other:?}"),
+    }
+}
+
+#[cfg(feature = "admin")]
+fn translated_drop_index(sql: &str) -> FirestoreSqlDropIndex {
+    match translate_statement(
+        sql,
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::new(),
+    ) {
+        Ok(FirestoreSqlStatement::DropIndex(drop)) => drop,
+        other => panic!("{sql}: {other:?}"),
+    }
+}
+
+#[cfg(feature = "admin")]
+fn index_field(path: &str, mode: FirestoreIndexFieldMode) -> FirestoreIndexField {
+    FirestoreIndexField::new(path.to_string(), mode)
+}
+
+#[cfg(feature = "admin")]
+fn ordered(path: &str, direction: FirestoreQueryDirection) -> FirestoreIndexField {
+    index_field(path, FirestoreIndexFieldMode::Order(direction))
+}
+
+#[cfg(feature = "admin")]
+fn index_definition(
+    group: &'static str,
+    index: FirestoreCompositeIndex,
+) -> FirestoreIndexDefinition {
+    FirestoreIndexDefinition::new(FirestoreCollectionId::from_static(group), index)
+}
+
+#[cfg(feature = "admin")]
 #[test]
 fn if_not_exists_and_if_exists_are_read_as_part_of_the_statement() {
-    let statements = [
-        (
-            "CREATE INDEX IF NOT EXISTS ON orders (customer_id)",
-            "CREATE INDEX",
-            location(1, 28),
-        ),
-        (
-            "DROP INDEX IF EXISTS CICAgJim14AK",
-            "DROP INDEX",
-            location(1, 22),
-        ),
-        (
-            "DROP UNIQUE INDEX IF EXISTS ON users (email)",
-            "DROP INDEX",
-            location(1, 29),
-        ),
-    ];
+    let create = translated_create_index("CREATE INDEX IF NOT EXISTS ON orders (customer_id, at)");
+    assert!(create.if_not_exists);
+    assert!(!translated_create_index("CREATE INDEX ON orders (customer_id, at)").if_not_exists);
 
-    for (sql, statement, body) in statements {
-        let refusal = refused(sql);
-        assert_eq!(
-            (refusal.field.as_str(), refusal.location),
-            (statement, body),
-            "{sql}"
-        );
+    for sql in [
+        "DROP INDEX IF EXISTS CICAgJim14AK",
+        "DROP UNIQUE INDEX IF EXISTS ON users (email)",
+    ] {
+        assert!(translated_drop_index(sql).if_exists, "{sql}");
     }
+    assert!(!translated_drop_index("DROP INDEX CICAgJim14AK").if_exists);
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_index_maps_columns_to_field_modes() {
+    let create = translated_create_index(
+        "CREATE INDEX ON collection_group('orders') (tags CONTAINS, placed_at)",
+    );
+
+    assert_eq!(
+        create.definition,
+        index_definition(
+            "orders",
+            FirestoreCompositeIndex::new(vec![
+                index_field("tags", FirestoreIndexFieldMode::ArrayContains),
+                ordered("placed_at", FirestoreQueryDirection::Ascending),
+            ])
+            .all_descendants()
+        )
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_unique_index_carries_unique_and_density() {
+    let create = translated_create_index(
+        "CREATE UNIQUE INDEX ON users (email DESC) OPTIONS (density = 'SPARSE_ANY')",
+    );
+
+    assert_eq!(
+        create.definition,
+        index_definition(
+            "users",
+            FirestoreCompositeIndex::new(vec![ordered(
+                "email",
+                FirestoreQueryDirection::Descending
+            )])
+            .unique()
+            .density(FirestoreIndexDensity::SparseAny)
+        )
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_search_index_reads_bare_columns_as_text_and_geo_columns_as_geo() {
+    let create = translated_create_index(
+        "CREATE SEARCH INDEX ON restaurants (menu, location GEO) \
+         OPTIONS (text_language = 'en', text_language_override_field_path = 'lang')",
+    );
+
+    assert_eq!(
+        create.definition,
+        index_definition(
+            "restaurants",
+            FirestoreCompositeIndex::new(vec![
+                index_field("menu", FirestoreIndexFieldMode::Text),
+                index_field(
+                    "location",
+                    FirestoreIndexFieldMode::Geo(FirestoreGeoIndexConfig::new())
+                ),
+            ])
+            .search_options(
+                FirestoreSearchIndexOptions::new()
+                    .with_text_language("en".to_string())
+                    .with_text_language_override_field_path("lang".to_string())
+            )
+        )
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_vector_index_makes_the_last_column_the_vector_field() {
+    let create = translated_create_index(
+        "CREATE VECTOR INDEX ON books (genre, embedding) OPTIONS (dimension = 768)",
+    );
+
+    assert_eq!(
+        create.definition,
+        index_definition(
+            "books",
+            FirestoreCompositeIndex::new(vec![
+                ordered("genre", FirestoreQueryDirection::Ascending),
+                index_field(
+                    "embedding",
+                    FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(768))
+                ),
+            ])
+        )
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_vector_index_without_a_dimension_is_refused() {
+    assert_eq!(
+        refused("CREATE VECTOR INDEX ON books (genre, embedding)").field,
+        "dimension"
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_index_on_a_collection_path_is_refused() {
+    assert_eq!(
+        refused("CREATE INDEX ON `users/alice/orders` (placed_at DESC, total)").field,
+        "collection_group"
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn drop_index_reads_a_backticked_id() {
+    let drop = translated_drop_index("DROP INDEX `CICAgPj-z4oK`");
+
+    assert_eq!(
+        drop.target,
+        FirestoreIndexDeleteTarget::Id(FirestoreIndexIdTarget::new(
+            FirestoreIndexId::new("CICAgPj-z4oK").unwrap()
+        ))
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn drop_index_by_definition_matches_the_create_definition() {
+    let columns = "ON users (email) OPTIONS (density = 'SPARSE_ANY')";
+
+    let created = translated_create_index(&format!("CREATE UNIQUE INDEX {columns}")).definition;
+    let dropped = translated_drop_index(&format!("DROP UNIQUE INDEX {columns}")).target;
+
+    assert_eq!(dropped, FirestoreIndexDeleteTarget::Definition(created));
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn collection_allowlist_applies_to_index_statements() {
+    let options =
+        FirestoreSqlOptions::new().with_collections([FirestoreCollectionId::from_static("orders")]);
+
+    for sql in [
+        "CREATE INDEX ON secrets (a, b)",
+        "DROP INDEX ON secrets (a, b)",
+        "DROP INDEX CICAgJim14AK ON secrets",
+    ] {
+        let refusal = refused_with(sql, &FirestoreSqlParameters::new(), &options);
+        assert_eq!(refusal.field, "collections", "{sql}");
+    }
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn refused_collection_groups_apply_to_index_definitions() {
+    let options = FirestoreSqlOptions::new().refuse_collection_groups();
+
+    for sql in [
+        "CREATE INDEX ON collection_group('orders') (a, b)",
+        "DROP INDEX ON collection_group('orders') (a, b)",
+    ] {
+        let refusal = refused_with(sql, &FirestoreSqlParameters::new(), &options);
+        assert_eq!(refusal.field, "collection_group", "{sql}");
+    }
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn a_parameter_in_an_index_statement_is_refused() {
+    let density = FirestoreSqlParameters::new().param("density", "DENSE");
+    let id = FirestoreSqlParameters::new().param("id", "CICAgJim14AK");
+
+    let option = refused_with(
+        "CREATE INDEX ON orders (customer_id, at) OPTIONS (density = @density)",
+        &density,
+        &FirestoreSqlOptions::new(),
+    );
+    let index_id = refused_with("DROP INDEX @id", &id, &FirestoreSqlOptions::new());
+
+    assert_eq!(
+        (option.field.as_str(), index_id.field.as_str()),
+        ("@density", "@id")
+    );
 }
 
 #[cfg(feature = "admin")]

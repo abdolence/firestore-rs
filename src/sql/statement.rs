@@ -104,9 +104,10 @@ pub enum FirestoreSqlOutcome<'b> {
     /// The index `CREATE .. INDEX` created, as Firestore lists it.
     #[cfg(feature = "admin")]
     IndexCreated(FirestoreListedCompositeIndex),
-    /// The index `DROP INDEX` deleted, as it was listed just before.
+    /// The index `DROP INDEX` deleted, as it was listed just before, or `None` when the
+    /// statement says `IF EXISTS` and no such index exists.
     #[cfg(feature = "admin")]
-    IndexDropped(FirestoreListedCompositeIndex),
+    IndexDropped(Option<FirestoreListedCompositeIndex>),
     /// The field `ALTER COLLECTION` wrote, as Firestore reads it after the write.
     #[cfg(feature = "admin")]
     FieldUpdated(FirestoreListedField),

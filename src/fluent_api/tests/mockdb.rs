@@ -668,10 +668,25 @@ impl FirestoreIndexSupport for MockIndexDatabase {
         unreachable!()
     }
 
+    async fn create_index_if_not_exists(
+        &self,
+        _definition: FirestoreIndexDefinition,
+        _wait: Option<FirestoreOperationWaitOptions>,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        unreachable!()
+    }
+
     async fn delete_index(
         &self,
         _target: FirestoreIndexDeleteTarget,
     ) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        unreachable!()
+    }
+
+    async fn delete_index_if_exists(
+        &self,
+        _target: FirestoreIndexDeleteTarget,
+    ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>> {
         unreachable!()
     }
 

@@ -113,10 +113,6 @@ impl FirestoreSqlIndexKind {
 /// What an index statement names its index on: a collection ID, for an index of one collection,
 /// or `collection_group('collection_id')`, for an index of every collection with the ID.
 #[cfg(feature = "admin")]
-#[expect(
-    dead_code,
-    reason = "read by the CREATE INDEX and DROP INDEX translations"
-)]
 pub(super) struct FirestoreSqlIndexTarget {
     pub(super) collection_group: FirestoreCollectionId,
     pub(super) query_scope: FirestoreIndexQueryScope,
@@ -335,10 +331,6 @@ impl FirestoreSqlTranslator<'_> {
     /// The target `parser` reads next: a collection group ID, or
     /// `collection_group('collection_id')`, which the options can refuse.
     #[cfg(feature = "admin")]
-    #[expect(
-        dead_code,
-        reason = "read by the CREATE INDEX and DROP INDEX translations"
-    )]
     pub(super) fn index_target(
         &self,
         parser: &mut Parser,

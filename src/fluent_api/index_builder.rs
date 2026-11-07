@@ -196,6 +196,7 @@ where
                 )
             }),
             wait: None,
+            if_not_exists: false,
         }
     }
 }
@@ -211,6 +212,7 @@ where
     db: &'a D,
     definition: FirestoreResult<FirestoreIndexDefinition>,
     wait: Option<FirestoreOperationWaitOptions>,
+    if_not_exists: bool,
 }
 
 impl<'a, D> FirestoreIndexCreateBuilder<'a, D>
@@ -233,11 +235,30 @@ where
         }
     }
 
+    /// Makes an index that already exists the outcome rather than an error: `.execute()` returns
+    /// the one the group lists that the definition matches, as listed, and a wait does not apply
+    /// to it. Any other error stays one.
+    #[inline]
+    pub fn if_not_exists(self) -> Self {
+        Self {
+            if_not_exists: true,
+            ..self
+        }
+    }
+
     /// Starts building the index and returns it as Firestore lists it: `CREATING`, or, after
     /// [`wait_until_ready`](Self::wait_until_ready), `READY`. An index that already exists fails
-    /// with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError).
+    /// with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError), unless
+    /// [`if_not_exists`](Self::if_not_exists) is set.
     pub async fn execute(self) -> FirestoreResult<FirestoreListedCompositeIndex> {
-        self.db.create_index(self.definition?, self.wait).await
+        let definition = self.definition?;
+        if self.if_not_exists {
+            self.db
+                .create_index_if_not_exists(definition, self.wait)
+                .await
+        } else {
+            self.db.create_index(definition, self.wait).await
+        }
     }
 }
 
@@ -349,12 +370,46 @@ impl<'a, D> FirestoreIndexDeleteBuilder<'a, D>
 where
     D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
 {
+    /// Makes a missing index the outcome rather than an error: `.execute()` returns `None` when
+    /// no index has the ID or matches the definition. An index in another group than the one
+    /// named, a definition that matches several indexes and every other error stay errors.
+    #[inline]
+    pub fn if_exists(self) -> FirestoreIndexDeleteIfExistsBuilder<'a, D> {
+        FirestoreIndexDeleteIfExistsBuilder {
+            db: self.db,
+            target: self.target,
+        }
+    }
+
     /// Deletes the index and returns it as it was listed just before. Deletes nothing and fails
     /// with [`DataNotFoundError`](crate::errors::FirestoreError::DataNotFoundError) when no index
     /// matches, and with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError)
     /// when a definition matches more than one.
     pub async fn execute(self) -> FirestoreResult<FirestoreListedCompositeIndex> {
         self.db.delete_index(self.target?).await
+    }
+}
+
+/// Deletes one named composite index, if there is one.
+///
+/// Created by [`FirestoreIndexDeleteBuilder::if_exists`].
+#[derive(Debug)]
+pub struct FirestoreIndexDeleteIfExistsBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+    target: FirestoreResult<FirestoreIndexDeleteTarget>,
+}
+
+impl<'a, D> FirestoreIndexDeleteIfExistsBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Deletes the index and returns it as it was listed just before, or returns `None` and
+    /// deletes nothing when no index has the ID or matches the definition.
+    pub async fn execute(self) -> FirestoreResult<Option<FirestoreListedCompositeIndex>> {
+        self.db.delete_index_if_exists(self.target?).await
     }
 }
 

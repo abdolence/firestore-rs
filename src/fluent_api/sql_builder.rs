@@ -185,12 +185,21 @@ impl<'a> FirestoreSqlBuilder<'a> {
                 FirestoreSqlOutcome::Indexes(db.list_indexes(collection_group).await?)
             }
             #[cfg(feature = "admin")]
-            FirestoreSqlStatement::CreateIndex(create) => FirestoreSqlOutcome::IndexCreated(
-                db.create_index(create.definition, self.wait).await?,
-            ),
+            FirestoreSqlStatement::CreateIndex(create) => {
+                FirestoreSqlOutcome::IndexCreated(if create.if_not_exists {
+                    db.create_index_if_not_exists(create.definition, self.wait)
+                        .await?
+                } else {
+                    db.create_index(create.definition, self.wait).await?
+                })
+            }
             #[cfg(feature = "admin")]
             FirestoreSqlStatement::DropIndex(drop) => {
-                FirestoreSqlOutcome::IndexDropped(db.delete_index(drop.target).await?)
+                FirestoreSqlOutcome::IndexDropped(if drop.if_exists {
+                    db.delete_index_if_exists(drop.target).await?
+                } else {
+                    Some(db.delete_index(drop.target).await?)
+                })
             }
             #[cfg(feature = "admin")]
             FirestoreSqlStatement::AlterCollection(update) => {

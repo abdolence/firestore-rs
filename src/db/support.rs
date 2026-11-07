@@ -594,6 +594,16 @@ pub trait FirestoreIndexSupport {
         wait: Option<FirestoreOperationWaitOptions>,
     ) -> FirestoreResult<FirestoreListedCompositeIndex>;
 
+    /// Like [`create_index`](Self::create_index), except that an index that already exists is the
+    /// outcome: the one the group lists that `definition` matches is returned as listed, and `wait`
+    /// does not apply to it. Any other error, and an `ALREADY_EXISTS` for an index the listing does
+    /// not show, stay errors.
+    async fn create_index_if_not_exists(
+        &self,
+        definition: FirestoreIndexDefinition,
+        wait: Option<FirestoreOperationWaitOptions>,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex>;
+
     /// Deletes the one index `target` names and returns it as it was listed just before.
     /// Deletes nothing and fails with
     /// [`DataNotFoundError`](crate::errors::FirestoreError::DataNotFoundError) when no index
@@ -604,6 +614,14 @@ pub trait FirestoreIndexSupport {
         &self,
         target: FirestoreIndexDeleteTarget,
     ) -> FirestoreResult<FirestoreListedCompositeIndex>;
+
+    /// Like [`delete_index`](Self::delete_index), except that an ID nothing has, and a definition
+    /// nothing matches, delete nothing and return `None`. An index in another group than the target
+    /// names, several matches and every other error stay errors.
+    async fn delete_index_if_exists(
+        &self,
+        target: FirestoreIndexDeleteTarget,
+    ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>>;
 
     /// Sends `update` as one `UpdateField` write and returns the field as Firestore reads it right
     /// after the write, or, with `wait`, once the write has finished. Writes to one field are not

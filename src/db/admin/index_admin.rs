@@ -29,6 +29,7 @@ use gcloud_sdk::google::firestore::admin::v1::{
 };
 use gcloud_sdk::prost::Message as _;
 use gcloud_sdk::prost_types::FieldMask;
+use gcloud_sdk::tonic::{Code, Status};
 use gcloud_sdk::RequestTimeouts;
 use std::time::Instant;
 use tracing::*;
@@ -37,8 +38,8 @@ use tracing::*;
 /// with when the index belongs to another group than the caller named.
 const INDEX_IN_OTHER_GROUP: &str = "INDEX_IN_OTHER_GROUP";
 
-/// The code of the [`DataNotFoundError`](FirestoreError::DataNotFoundError) a delete by
-/// definition fails with when no listed index matches it.
+/// The code of the [`DataNotFoundError`](FirestoreError::DataNotFoundError) a delete fails with
+/// when no index has the ID, or no listed index matches the definition.
 const NO_MATCHING_INDEX: &str = "NO_MATCHING_INDEX";
 
 /// The code of the [`DataConflictError`](FirestoreError::DataConflictError) a delete by
@@ -46,7 +47,7 @@ const NO_MATCHING_INDEX: &str = "NO_MATCHING_INDEX";
 const SEVERAL_MATCHING_INDEXES: &str = "SEVERAL_MATCHING_INDEXES";
 
 impl FirestoreDb {
-    async fn get_index(&self, name: &str) -> FirestoreResult<ProtoIndex> {
+    async fn get_index(&self, name: &str) -> Result<ProtoIndex, Status> {
         let request = GetIndexRequest {
             name: name.to_string(),
         };
@@ -169,19 +170,38 @@ impl FirestoreDb {
         Ok(())
     }
 
-    /// The listed index with the ID `target` names, refused when the domain model cannot
-    /// represent it or when it belongs to another group than `target` names.
+    /// The index `target` names, as listed, or `None` when nothing has the ID or no listed index
+    /// matches the definition.
+    async fn index_to_delete(
+        &self,
+        target: &FirestoreIndexDeleteTarget,
+    ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>> {
+        match target {
+            FirestoreIndexDeleteTarget::Id(target) => self.index_by_id(target).await,
+            FirestoreIndexDeleteTarget::Definition(definition) => {
+                self.matching_index(definition).await
+            }
+        }
+    }
+
+    /// The listed index with the ID `target` names, `None` when Firestore has none, refused when
+    /// the domain model cannot represent it or when it belongs to another group than `target`
+    /// names.
     async fn index_by_id(
         &self,
-        target: FirestoreIndexIdTarget,
-    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        target: &FirestoreIndexIdTarget,
+    ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>> {
         if let Some(group) = &target.collection_group {
             validate_collection_group(group)?;
         }
         // Firestore reads an index by its ID alone and ignores the group of the name, so `-`
         // reads it wherever it is.
         let name = format!("{}/indexes/{}", self.collection_group_path("-"), target.id);
-        let proto = self.get_index(&name).await?;
+        let proto = match self.get_index(&name).await {
+            Ok(proto) => proto,
+            Err(status) if status.code() == Code::NotFound => return Ok(None),
+            Err(status) => return Err(status.into()),
+        };
         let listed_name = proto.name.clone();
         let listed = FirestoreListedCompositeIndex::try_from(proto).map_err(|err| {
             FirestoreError::invalid_parameters(
@@ -194,24 +214,27 @@ impl FirestoreDb {
             )
         })?;
         validate_collection_group(&listed.collection_group)?;
-        match target.collection_group {
-            Some(group) if group != listed.collection_group => Err(FirestoreError::data_not_found(
-                INDEX_IN_OTHER_GROUP,
-                format!(
-                    "index {} belongs to group {}, not {group}; nothing was deleted",
-                    target.id, listed.collection_group
-                ),
-            )),
-            _ => Ok(listed),
+        match &target.collection_group {
+            Some(group) if *group != listed.collection_group => {
+                Err(FirestoreError::data_not_found(
+                    INDEX_IN_OTHER_GROUP,
+                    format!(
+                        "index {} belongs to group {}, not {group}; nothing was deleted",
+                        target.id, listed.collection_group
+                    ),
+                ))
+            }
+            _ => Ok(Some(listed)),
         }
     }
 
     /// The one listed index of its group that `definition` matches, under the database's
-    /// edition.
-    async fn index_by_definition(
+    /// edition, or `None` when it matches none. Fails with
+    /// [`DataConflictError`](FirestoreError::DataConflictError) when it matches several.
+    async fn matching_index(
         &self,
         definition: &FirestoreIndexDefinition,
-    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
+    ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>> {
         let group_id = &definition.collection_group;
         validate_collection_group(group_id)?;
         let group = self.read_owned_group(group_id).await?;
@@ -225,15 +248,7 @@ impl FirestoreDb {
             .collect();
         let listed = match <[_; 1]>::try_from(matching) {
             Ok([listed]) => listed,
-            Err(matching) if matching.is_empty() => {
-                return Err(FirestoreError::data_not_found(
-                    NO_MATCHING_INDEX,
-                    format!(
-                        "no index of group {group_id} matches {}; nothing was deleted",
-                        definition.index
-                    ),
-                ))
-            }
+            Err(matching) if matching.is_empty() => return Ok(None),
             Err(matching) => {
                 let ids: Vec<String> = matching
                     .iter()
@@ -251,7 +266,26 @@ impl FirestoreDb {
             }
         };
         group.ensure_owns("indexes", &listed.name)?;
-        Ok(listed)
+        Ok(Some(listed))
+    }
+}
+
+impl FirestoreIndexDeleteTarget {
+    /// The error of a delete that found no index to delete.
+    fn not_found(&self) -> FirestoreError {
+        match self {
+            Self::Id(target) => FirestoreError::data_not_found(
+                NO_MATCHING_INDEX,
+                format!("no index has the ID {}; nothing was deleted", target.id),
+            ),
+            Self::Definition(definition) => FirestoreError::data_not_found(
+                NO_MATCHING_INDEX,
+                format!(
+                    "no index of group {} matches {}; nothing was deleted",
+                    definition.collection_group, definition.index
+                ),
+            ),
+        }
     }
 }
 
@@ -444,18 +478,43 @@ impl FirestoreIndexSupport for FirestoreDb {
         FirestoreListedCompositeIndex::try_from(self.get_index(&index_name).await?)
     }
 
+    async fn create_index_if_not_exists(
+        &self,
+        definition: FirestoreIndexDefinition,
+        wait: Option<FirestoreOperationWaitOptions>,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        match self.create_index(definition.clone(), wait).await {
+            // `ALREADY_EXISTS` is the one status that maps to a conflict. Firestore keeps
+            // answering it for an index deleted minutes ago, so the answer counts only when the
+            // listing shows the index too.
+            Err(FirestoreError::DataConflictError(conflict)) => {
+                match self.matching_index(&definition).await? {
+                    Some(existing) => Ok(existing),
+                    None => Err(FirestoreError::DataConflictError(conflict)),
+                }
+            }
+            created => created,
+        }
+    }
+
     async fn delete_index(
         &self,
         target: FirestoreIndexDeleteTarget,
     ) -> FirestoreResult<FirestoreListedCompositeIndex> {
-        let listed = match target {
-            FirestoreIndexDeleteTarget::Id(target) => self.index_by_id(target).await?,
-            FirestoreIndexDeleteTarget::Definition(definition) => {
-                self.index_by_definition(&definition).await?
-            }
+        self.delete_index_if_exists(target.clone())
+            .await?
+            .ok_or_else(|| target.not_found())
+    }
+
+    async fn delete_index_if_exists(
+        &self,
+        target: FirestoreIndexDeleteTarget,
+    ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>> {
+        let Some(listed) = self.index_to_delete(&target).await? else {
+            return Ok(None);
         };
         self.send_delete_index(&listed).await?;
-        Ok(listed)
+        Ok(Some(listed))
     }
 
     async fn update_field(
@@ -921,5 +980,156 @@ mod tests {
             fake.calls(),
             vec!["UpdateField", "GetOperation", "GetField"]
         );
+    }
+
+    /// A fake Standard database that answers `CreateIndex` with `ALREADY_EXISTS` and lists
+    /// `listed`.
+    async fn already_exists_on_create(listed: Vec<ProtoIndex>) -> FakeFirestore {
+        start_on(DatabaseEdition::Standard, move |method, _| match method {
+            CREATE_INDEX => (
+                "CreateIndex".to_string(),
+                FakeResponse::Status(Code::AlreadyExists),
+            ),
+            LIST_INDEXES => (
+                "ListIndexes".to_string(),
+                list_indexes_response(listed.clone()),
+            ),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn create_of_an_existing_index_with_if_not_exists_returns_the_listed_index() {
+        let fake = already_exists_on_create(vec![captured_index(include_str!(
+            "testdata/standard-get-index-creating.json"
+        ))])
+        .await;
+
+        let existing = fake
+            .db
+            .create_index_if_not_exists(captured_definition(), fast_wait())
+            .await
+            .unwrap();
+
+        assert_eq!(existing.id, FirestoreIndexId::new("CICAgPj-z4oK").unwrap());
+    }
+
+    #[tokio::test]
+    async fn already_exists_for_an_index_the_listing_does_not_show_stays_an_error() {
+        let fake = already_exists_on_create(vec![]).await;
+
+        let refused = fake
+            .db
+            .create_index_if_not_exists(captured_definition(), None)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(refused, FirestoreError::DataConflictError(_)),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_by_id_of_a_missing_index_fails_with_not_found() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            GET_INDEX => ("GetIndex".to_string(), FakeResponse::Status(Code::NotFound)),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let refused = fake
+            .db
+            .delete_index(FirestoreIndexDeleteTarget::Id(FirestoreIndexIdTarget::new(
+                FirestoreIndexId::new("CICAgOi39IkJ").unwrap(),
+            )))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(refused, FirestoreError::DataNotFoundError(_)),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_of_a_missing_id_with_if_exists_deletes_nothing() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            GET_INDEX => ("GetIndex".to_string(), FakeResponse::Status(Code::NotFound)),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let deleted = fake
+            .db
+            .delete_index_if_exists(FirestoreIndexDeleteTarget::Id(FirestoreIndexIdTarget::new(
+                FirestoreIndexId::new("CICAgOi39IkJ").unwrap(),
+            )))
+            .await
+            .unwrap();
+
+        assert!(deleted.is_none(), "{deleted:?}");
+        assert_eq!(fake.calls(), vec!["GetIndex"]);
+    }
+
+    #[tokio::test]
+    async fn delete_of_an_unmatched_definition_with_if_exists_deletes_nothing() {
+        let fake = enterprise_listing_recording_deletes().await;
+
+        let deleted = fake
+            .db
+            .delete_index_if_exists(FirestoreIndexDeleteTarget::Definition(
+                FirestoreIndexDefinition::new(
+                    capture_group(),
+                    FirestoreCompositeIndex::new(vec![field(
+                        "email",
+                        FirestoreQueryDirection::Descending,
+                    )]),
+                ),
+            ))
+            .await
+            .unwrap();
+
+        assert!(deleted.is_none(), "{deleted:?}");
+        assert!(
+            !fake
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("DeleteIndex")),
+            "{:?}",
+            fake.calls()
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_by_id_with_if_exists_still_refuses_an_index_of_another_group() {
+        let fake = FakeFirestore::start(|method, _| match method {
+            GET_INDEX => (
+                "GetIndex".to_string(),
+                encoded(captured_index(include_str!(
+                    "testdata/standard-get-index-wrong-group.json"
+                ))),
+            ),
+            other => panic!("unexpected RPC: {other}"),
+        })
+        .await;
+
+        let refused = fake
+            .db
+            .delete_index_if_exists(FirestoreIndexDeleteTarget::Id(
+                FirestoreIndexIdTarget::new(FirestoreIndexId::new("CICAgOi39IkJ").unwrap())
+                    .with_collection_group(FirestoreCollectionId::from_static("versions")),
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&refused, FirestoreError::DataNotFoundError(error)
+                if error.public.code == INDEX_IN_OTHER_GROUP),
+            "{refused:?}"
+        );
+        assert_eq!(fake.calls(), vec!["GetIndex"]);
     }
 }
