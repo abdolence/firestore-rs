@@ -93,6 +93,10 @@ mod sql_reads {}
 #[doc = include_str!("../docs/src/sql/writes.md")]
 mod sql_writes {}
 
+#[cfg(all(feature = "sql", feature = "admin"))]
+#[doc = include_str!("../docs/src/sql/indexes.md")]
+mod sql_indexes {}
+
 #[doc = include_str!("../docs/src/request-tags.md")]
 mod request_tags {}
 

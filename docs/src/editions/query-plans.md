@@ -125,7 +125,25 @@ The text is Firestore's own format. The library does not parse it, since Firesto
 at any time.
 
 A SQL `SELECT` returns its plan the same way, through `explain()` and `explain_with_options(..)` of
-the [SQL builder](../sql.md#setup).
+the [SQL builder](../sql.md#setup), or with the `EXPLAIN` and `EXPLAIN ANALYZE` prefix in the text,
+which is the SQL spelling of the same two calls:
+
+```rust,no_run
+# use firestore::*;
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+let items = db
+    .fluent()
+    .sql("EXPLAIN SELECT title FROM books WHERE genre = 'Dystopian'")
+    .stream_query_with_metadata()
+    .await?;
+# let _ = items;
+# Ok(())
+# }
+```
+
+`EXPLAIN` takes a `SELECT` and no other option than `ANALYZE`, and fails together with `.explain()`
+on the builder, since the text and the builder would both set the options. The Enterprise
+emulator answers an `EXPLAIN` with the rows and no plan, see [Firestore emulator](../emulator.md).
 
 ### Recognising a full scan
 
