@@ -790,6 +790,13 @@ mod tests {
     }
 
     #[test]
+    fn the_service_rejects_a_distance_threshold_on_the_find_nearest_stage() {
+        let captured = fixture_case("find-nearest-distance-threshold", None);
+
+        assert_eq!(captured["error"]["status"], "INVALID_ARGUMENT");
+    }
+
+    #[test]
     fn pipelines_that_cannot_be_sent_are_rejected_before_sending() {
         let rejected = [
             builder().literals([1]).into_pipeline(),

@@ -546,6 +546,13 @@ mod tests {
         }
     }
 
+    #[test]
+    fn firestore_refuses_a_commit_that_mixes_pipeline_and_buffered_writes() {
+        let captured = fixture_case("core-rpc/commit-mixing-pipeline-and-classic-writes", None);
+
+        assert_eq!(captured["response"]["error"]["status"], "INVALID_ARGUMENT");
+    }
+
     #[tokio::test]
     async fn a_request_carries_the_session_selector_and_the_pipeline_options() {
         let read_time: FirestoreInstant = "2026-11-04T18:00:00Z".parse().unwrap();
