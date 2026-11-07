@@ -11,7 +11,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 - Support for:
     - Querying/streaming docs/objects;
     - Listing documents/objects (`stream_all` follows the page tokens for you);
-    - Listening changes from Firestore;
+    - Listening changes from Firestore, with targets added and removed on a running listener and an opt-in idle reset for silent streams;
     - Transactions;
     - Aggregated queries: count, sum, avg;
     - Streaming batch writes with automatic throttling to stay under the Firestore write rate limits;
@@ -22,6 +22,9 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
     - Update/delete preconditions;
     - Consistency selectors to read at a given time or inside a transaction;
     - Explaining queries;
+    - Firestore Enterprise edition pipelines: filters, projections, aggregations, joins and subqueries, unions, nearest neighbours and writes;
+    - Full-text and geospatial search in pipelines;
+    - SQL statements in the BigQuery dialect, translated into pipelines, behind an opt-in `sql` feature;
     - Request tags to attribute Firestore usage;
     - Opt-in request timeouts;
 - Full async based on Tokio runtime;
@@ -36,8 +39,9 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 - Caching support for collections and documents:
     - In-memory cache;
     - Persistent cache;
-- Declarative index management behind an opt-in `admin` feature: composite indexes, vector
-  indexes, single-field overrides and TTL policy, planned and synced with one call;
+- Declarative index management behind an opt-in `admin` feature: composite indexes (including
+  one-field, unique and sparse ones), vector indexes, text and geo search indexes, single-field
+  overrides and TTL policy, planned and synced with one call, following the edition of the database;
 - Bulk delete behind the same `admin` feature: removes every document in named collection groups,
   at any depth across the whole database, in the background;
 - Works with the Firestore emulator through `FIRESTORE_EMULATOR_HOST`, no credentials needed;
@@ -56,7 +60,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-firestore = "0.58"
+firestore = "0.62"
 ```
 
 ```rust,no_run
