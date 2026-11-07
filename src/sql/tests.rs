@@ -2154,3 +2154,97 @@ fn if_not_exists_and_if_exists_are_read_as_part_of_the_statement() {
         );
     }
 }
+
+#[cfg(feature = "admin")]
+fn translated_field_update(sql: &str) -> crate::FirestoreFieldUpdate {
+    match translate_statement(
+        sql,
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::new(),
+    ) {
+        Ok(FirestoreSqlStatement::AlterCollection(update)) => update,
+        other => panic!("{sql}: {other:?}"),
+    }
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn alter_column_combines_ttl_and_exemption_in_one_update() {
+    use crate::{
+        FirestoreFieldOverrideTarget, FirestoreFieldOverrideUpdate, FirestoreFieldTtlUpdate,
+        FirestoreFieldUpdate,
+    };
+
+    let update = translated_field_update(
+        "ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = TRUE, indexes = [])",
+    );
+
+    assert_eq!(
+        update,
+        FirestoreFieldUpdate::new(
+            FirestoreCollectionId::new("sessions").unwrap(),
+            FirestoreFieldOverrideTarget::Field("expires_at".to_string()),
+        )
+        .with_index_override(FirestoreFieldOverrideUpdate::Set(Vec::new()))
+        .with_ttl(FirestoreFieldTtlUpdate::Enable)
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn alter_collection_set_options_targets_every_field_with_scoped_indexes() {
+    use crate::{
+        FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreFieldOverrideUpdate,
+        FirestoreFieldUpdate, FirestoreIndexFieldMode, FirestoreIndexQueryScope,
+        FirestoreQueryDirection,
+    };
+
+    let update = translated_field_update(
+        "ALTER COLLECTION orders SET OPTIONS (indexes = ['contains', 'COLLECTION_GROUP DESC'])",
+    );
+
+    assert_eq!(
+        update,
+        FirestoreFieldUpdate::new(
+            FirestoreCollectionId::new("orders").unwrap(),
+            FirestoreFieldOverrideTarget::AllFields,
+        )
+        .with_index_override(FirestoreFieldOverrideUpdate::Set(vec![
+            FirestoreFieldOverrideIndex {
+                query_scope: FirestoreIndexQueryScope::Collection,
+                mode: FirestoreIndexFieldMode::ArrayContains,
+            },
+            FirestoreFieldOverrideIndex {
+                query_scope: FirestoreIndexQueryScope::AllDescendants,
+                mode: FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending),
+            },
+        ]))
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn alter_column_indexes_null_reverts_the_override() {
+    use crate::{FirestoreFieldOverrideTarget, FirestoreFieldOverrideUpdate, FirestoreFieldUpdate};
+
+    let update = translated_field_update(
+        "ALTER COLLECTION orders ALTER address.city SET OPTIONS (indexes = NULL)",
+    );
+
+    assert_eq!(
+        update,
+        FirestoreFieldUpdate::new(
+            FirestoreCollectionId::new("orders").unwrap(),
+            FirestoreFieldOverrideTarget::Field("address.city".to_string()),
+        )
+        .with_index_override(FirestoreFieldOverrideUpdate::Revert)
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn ttl_on_every_field_is_refused() {
+    let refusal = refused("ALTER COLLECTION logs SET OPTIONS (ttl = TRUE)");
+
+    assert_eq!(refusal.field, "ttl");
+}

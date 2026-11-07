@@ -124,10 +124,6 @@ pub(super) struct FirestoreSqlIndexTarget {
 
 /// One `key = value` of an `OPTIONS (..)` list.
 #[cfg(feature = "admin")]
-#[expect(
-    dead_code,
-    reason = "read by the CREATE INDEX, DROP INDEX and ALTER COLLECTION translations"
-)]
 pub(super) struct FirestoreSqlOption {
     /// The key in lower case, since keys match without regard to case.
     pub(super) key: String,
@@ -138,10 +134,6 @@ pub(super) struct FirestoreSqlOption {
 /// The string literal of the option `key`'s `value`. A parameter is refused: an option is a
 /// literal, never a parameter.
 #[cfg(feature = "admin")]
-#[expect(
-    dead_code,
-    reason = "read by the CREATE INDEX, DROP INDEX and ALTER COLLECTION translations"
-)]
 pub(super) fn option_string(key: &str, value: &Expr) -> FirestoreResult<String> {
     let start = expr_start(value);
     let parameter = match value {
@@ -384,10 +376,6 @@ impl FirestoreSqlTranslator<'_> {
     /// The `OPTIONS (key = value, ..)` list `parser` reads next, empty when there is none. A key
     /// given twice and an option not written `key = value` are refused.
     #[cfg(feature = "admin")]
-    #[expect(
-        dead_code,
-        reason = "read by the CREATE INDEX, DROP INDEX and ALTER COLLECTION translations"
-    )]
     pub(super) fn statement_options(
         &self,
         parser: &mut Parser,
