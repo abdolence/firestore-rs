@@ -4047,6 +4047,9 @@ pub(crate) mod tests {
             request_timeout: None,
         };
 
+        assert!(emulator_db.is_emulator());
+        assert!(!fake.db.is_emulator());
+
         let plan = emulator_db
             .plan_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
             .await

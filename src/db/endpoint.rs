@@ -56,7 +56,6 @@ impl FirestoreDbEndpoint {
     /// Whether requests reach the `FIRESTORE_EMULATOR_HOST` emulator: only when that host is
     /// the URL actually used. An explicit `firebase_api_url` pointing elsewhere, production
     /// included, is not the emulator just because the variable is set.
-    #[cfg(feature = "admin")]
     pub(super) fn is_emulator(&self) -> bool {
         self.emulator_host
             .as_ref()
@@ -200,7 +199,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "admin")]
     fn endpoint(
         firebase_api_url: Option<&str>,
         emulator_host: Option<&str>,
@@ -210,7 +208,6 @@ mod tests {
         FirestoreDbEndpoint::new(&options, emulator_host.map(str::to_string))
     }
 
-    #[cfg(feature = "admin")]
     #[test]
     fn the_emulator_host_is_the_emulator_only_when_it_is_the_url_used() {
         assert!(endpoint(None, Some("localhost:8080")).is_emulator());

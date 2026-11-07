@@ -115,11 +115,10 @@ struct FirestoreDbInner {
     options: FirestoreDbOptions,
     client: GoogleApi<FirestoreClient<GoogleAuthMiddleware>>,
     /// Whether this client sends its requests to the `FIRESTORE_EMULATOR_HOST` emulator rather
-    /// than the real service (see [`FirestoreDbEndpoint::is_emulator`]). The emulator does not implement the admin API's index management RPCs,
-    /// so [`FirestoreIndexSupport`](crate::db::support::FirestoreIndexSupport) reads this to skip
-    /// rather than fail every call a caller's startup code makes unconditionally. Only read under
-    /// the `admin` feature, so the field only exists there.
-    #[cfg(feature = "admin")]
+    /// than the real service (see [`FirestoreDbEndpoint::is_emulator`]). The emulator does not
+    /// implement the admin API's index management RPCs, so
+    /// [`FirestoreIndexSupport`](crate::db::support::FirestoreIndexSupport) reads this to skip
+    /// rather than fail every call a caller's startup code makes unconditionally.
     is_emulator: bool,
 }
 
@@ -286,7 +285,6 @@ impl FirestoreDb {
         let request_timeout = options.request_timeout;
         let inner = FirestoreDbInner {
             doc_path: format!("{}/documents", endpoint.database_path),
-            #[cfg(feature = "admin")]
             is_emulator: endpoint.is_emulator(),
             database_path: endpoint.database_path,
             client,
@@ -431,6 +429,16 @@ impl FirestoreDb {
     #[inline]
     pub fn get_options(&self) -> &FirestoreDbOptions {
         &self.inner.options
+    }
+
+    /// Whether this client sends its requests to the `FIRESTORE_EMULATOR_HOST` emulator rather
+    /// than the real service.
+    ///
+    /// An explicit `firebase_api_url` that names another service makes this `false`, even when
+    /// the variable is set.
+    #[inline]
+    pub fn is_emulator(&self) -> bool {
+        self.inner.is_emulator
     }
 
     /// Returns a reference to the current [`FirestoreDbSessionParams`] for this client instance.

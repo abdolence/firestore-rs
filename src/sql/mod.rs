@@ -13,6 +13,9 @@ mod ddl_index;
 
 mod expr;
 
+mod field_name;
+pub use field_name::*;
+
 mod functions;
 
 mod join;
