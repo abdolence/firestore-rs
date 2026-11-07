@@ -117,6 +117,32 @@ Firestore requires an atomic write, or a transaction, for these:
 The library does not set `.atomic()` itself and does not check these rules: Firestore rejects a
 write that breaks one with `INVALID_ARGUMENT`.
 
+## Write limits
+
+Firestore rejects an atomic write that is too big with `InvalidArgument`, "Transaction too big.
+Decrease transaction size." The limit is not one number of documents. It was measured with SQL
+statements, which run as atomic pipeline writes, on documents of two small fields (an integer and
+a short string), from a developer machine:
+
+| Statement | Largest that succeeded | Smallest that failed |
+|---|---|---|
+| `UPDATE .. SET touched = 1 WHERE TRUE` | 55,000 documents, 27.5 s | 60,000 documents, in two runs |
+| `DELETE FROM .. WHERE TRUE` | 5,475 documents | 5,500 documents |
+
+The `DELETE` limit was about a tenth of the `UPDATE` limit. Throughput was 1,000 to 3,000 documents
+per second, and rose with the size of the write. Two runs that came right after inserting the
+documents failed once with `ResourceExhausted` ("This database has exceeded their maximum
+bandwidth for writes") and passed after a pause, and one `UPDATE` of 67,500 documents failed once
+with `Aborted`.
+
+Split a large write by a `filter` on a range, such as the key or a timestamp, and send each part
+after the one before. The numbers are measurements on tiny documents.
+
+A TTL (time-to-live) policy suits retention better than a scheduled `delete`: Firestore deletes
+the documents itself once the timestamp in the policy's field has passed, see
+[Index management](./index-management.md). The
+[bulk delete](./bulk-delete.md) of the `admin` feature empties a whole collection.
+
 ## Writes in a transaction
 
 `execute_in_transaction(&mut transaction)` runs the write in an open transaction, whether it comes
