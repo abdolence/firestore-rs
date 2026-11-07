@@ -20,7 +20,9 @@ use firestore::errors::BackoffError;
 Err(BackoffError::Permanent(err))
 ```
 
-`BackoffError` does not implement `Display`, `Error` or `PartialEq`, which `backoff::Error` did.
+A crate that depended on `backoff` only to name `backoff::Error` can drop that dependency. Until it does, the
+advisories RUSTSEC-2025-0012 (`backoff` is unmaintained) and RUSTSEC-2024-0384 (`instant` is unmaintained) stay in its
+dependency tree.
 
 ### Retry delays are randomised by up to a third
 

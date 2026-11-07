@@ -208,6 +208,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn time_spent_in_attempts_counts_towards_the_elapsed_time_cap() {
+        // The shortest retry delay is 333 ms, so a 700 ms attempt followed by a delay overruns the
+        // 1 s cap, while the delay alone fits in it. The blocking sleep holds the single-threaded
+        // test runtime, which is enough for the clock to run.
+        let server = FakeFirestore::start(|_, _| {
+            std::thread::sleep(Duration::from_millis(700));
+            (
+                "BatchWrite".to_string(),
+                FakeResponse::Status(Code::Unavailable),
+            )
+        })
+        .await;
+        let options = FirestoreSimpleBatchWriteOptions::new()
+            .with_retry_max_elapsed_time(Duration::from_secs(1));
+        let writer = server
+            .db
+            .create_simple_batch_writer_with_options(options)
+            .await
+            .unwrap();
+
+        writer.write(Vec::new()).await.unwrap_err();
+
+        assert_eq!(server.calls(), ["BatchWrite"; 1]);
+    }
+
+    #[tokio::test]
     async fn a_permanent_failure_is_not_retried() {
         let server = FakeFirestore::start(|_, _| {
             (

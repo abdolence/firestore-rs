@@ -154,10 +154,17 @@ impl FirestoreError {
         ))
     }
 
-    /// Whether the failed request may succeed if sent again: a database error marked
-    /// `retry_possible`.
     pub(crate) fn retry_possible(&self) -> bool {
         matches!(self, FirestoreError::DatabaseError(error) if error.retry_possible)
+    }
+
+    /// Transient when the request may succeed if sent again, permanent otherwise.
+    pub(crate) fn into_backoff_error(self) -> BackoffError<FirestoreError> {
+        if self.retry_possible() {
+            BackoffError::transient(self)
+        } else {
+            BackoffError::permanent(self)
+        }
     }
 
     /// Clears `retry_possible`, for the failure of a write that may have left part of its
@@ -750,15 +757,15 @@ impl std::error::Error for FirestoreErrorInTransaction {
 /// `?` inside the closure converts any error into [`BackoffError::Transient`] through the blanket
 /// `From`, so the ordinary error paths retry. Return [`BackoffError::Permanent`] for an error that
 /// must not be retried.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum BackoffError<E> {
     /// An error that is not retried: the transaction is rolled back and the error returned.
     Permanent(E),
     /// An error that retries the transaction, after `retry_after` when it is set and after the
     /// next backoff delay otherwise.
-    ///
-    /// A struct variant because it keeps the shape of the `backoff` crate's `Error::Transient`, so
-    /// that closures written against that type compile unchanged.
+    //
+    // A struct variant, not a named struct, so that closures written against the `backoff` crate's
+    // `Error::Transient` compile unchanged.
     Transient {
         err: E,
         retry_after: Option<Duration>,
@@ -795,11 +802,19 @@ impl<E> From<E> for BackoffError<E> {
     }
 }
 
-pub(crate) fn firestore_err_to_backoff(err: FirestoreError) -> BackoffError<FirestoreError> {
-    if err.retry_possible() {
-        BackoffError::transient(err)
-    } else {
-        BackoffError::permanent(err)
+impl<E: std::fmt::Display> std::fmt::Display for BackoffError<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Permanent(err) | Self::Transient { err, .. } => err.fmt(formatter),
+        }
+    }
+}
+
+impl<E: std::error::Error> std::error::Error for BackoffError<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Permanent(err) | Self::Transient { err, .. } => err.source(),
+        }
     }
 }
 

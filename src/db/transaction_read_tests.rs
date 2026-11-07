@@ -1,6 +1,6 @@
 use super::*;
 use crate::db::fake_firestore::{begin_response, read_transaction_id, FakeFirestore, FakeResponse};
-use crate::errors::{firestore_err_to_backoff, BackoffError};
+use crate::errors::BackoffError;
 use futures::TryStreamExt;
 use gcloud_sdk::prost::Message;
 use gcloud_sdk::tonic::Code;
@@ -92,7 +92,7 @@ async fn check_read_retries(read: Read) {
         };
         assert_eq!(db_error.public.code, format!("{code:?}"));
         assert!(matches!(
-            firestore_err_to_backoff(error),
+            error.into_backoff_error(),
             BackoffError::Transient { .. }
         ));
     }

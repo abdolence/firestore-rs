@@ -538,7 +538,7 @@ impl FirestoreDb {
                 .await
             {
                 Ok(transaction) => self.run_transaction_attempt(transaction, &func).await,
-                Err(err) => Err(firestore_err_to_backoff(err)),
+                Err(err) => Err(err.into_backoff_error()),
             };
         }
     }
@@ -571,7 +571,7 @@ impl FirestoreDb {
                 .commit()
                 .await
                 .map(|_| value)
-                .map_err(firestore_err_to_backoff),
+                .map_err(FirestoreError::into_backoff_error),
             Err(err) => {
                 // Reads can hold locks even without queued writes, so release them now rather
                 // than leaving them until the transaction expires.

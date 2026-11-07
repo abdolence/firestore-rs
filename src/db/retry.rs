@@ -33,7 +33,6 @@ impl RetryDeadline {
         )
     }
 
-    /// Whether a retry that first waits `delay` still starts by the deadline.
     pub(crate) fn allows(self, delay: Duration) -> bool {
         self.0.is_none_or(|deadline| {
             Instant::now()
@@ -112,7 +111,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retry_delays_centre_on_500_ms_growing_by_1_5_times() {
+    fn first_retry_delays_fall_on_both_sides_of_500_ms() {
+        let first_delays: Vec<Duration> = (0..300)
+            .map(|_| {
+                RETRY_BACKOFF
+                    .build()
+                    .next()
+                    .expect("retry delays never run out")
+            })
+            .collect();
+        let centre = Duration::from_millis(500);
+
+        assert!(first_delays.iter().any(|&delay| delay < centre));
+        assert!(first_delays.iter().any(|&delay| delay > centre));
+    }
+
+    #[test]
+    fn retry_delays_grow_by_1_5_times_within_the_jitter_range() {
         // backon computes the delays in f32 seconds.
         let rounding = Duration::from_millis(1);
         let mut delays = RETRY_BACKOFF.build();
