@@ -193,8 +193,10 @@ used, and the pipeline then reads all of it. A vector index cannot be forced.
   results is unspecified. Its plan cannot be shown, since Core `.explain()` is rejected there;
 - **Pipeline `find_nearest`.** The stage does not use a vector index. Its plan is a `TableScan`
   followed by a sort by distance, even when a vector index exists on the field, so its cost follows
-  the size of the collection. A Core [vector search](../vector-search.md) uses the index on
-  Standard;
+  the size of the collection. Google lists this as a known issue of pipelines. A filter before the
+  stage does not narrow what it reads, even with a composite index. A Core
+  [vector search](../vector-search.md#on-the-enterprise-edition) is the query that can use a vector
+  index, and it does on Standard;
 - **Joins and subqueries.** A subquery runs once for each row of the query it is in, whether or not
   it is *correlated*, that is, whether or not it reads a value of the row it runs for. An
   unindexed join scans the joined collection once for each left row, see

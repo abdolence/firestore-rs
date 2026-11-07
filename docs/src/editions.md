@@ -59,7 +59,9 @@ a row where both behave the same. A number in brackets points to the notes under
 7. Without a vector index the query fails with `FAILED_PRECONDITION`.
 8. A vector index can still be created on Enterprise, but whether a Core query uses it cannot be
    seen, since Core `.explain()` is rejected there.
-9. The `find_nearest` stage reads every document with or without a vector index, see
+9. The `find_nearest` stage reads every document with or without a vector index, and a filter
+   before it does not narrow the read. Google lists this as a known issue of pipelines. Use a Core
+   `find_nearest` where the index should be used, see
    [Vector search](./vector-search.md#on-the-enterprise-edition).
 10. An `.exempt()` is already satisfied.
 11. The density of an index is which documents it holds an entry for.

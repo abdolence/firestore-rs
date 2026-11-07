@@ -130,3 +130,14 @@ The pipeline [`find_nearest`](./pipeline-aggregations-and-joins.md#nearest-neigh
 the same vector and measures, and has no distance threshold. It does not use a vector index: its
 plan is a table scan, so its cost follows the size of the collection, see
 [Query plans and cost](./editions/query-plans.md#known-table-scans).
+
+Google lists this as a known issue of pipelines: they do not yet support the `vector` index type,
+and `find_nearest` is expected to be slower than its Core equivalent, see
+[Known issues](https://docs.cloud.google.com/firestore/native/docs/pipeline/overview) in the
+pipelines overview. Until pipelines use vector indexes:
+
+- a filter before the `find_nearest` stage does not narrow what the stage reads. The documents are
+  read first and the filter is applied to them afterwards, even when a composite index of the
+  filter field and the vector field exists;
+- a Core `find_nearest` is the query that can use a vector index, so use it where the index should
+  be used. Enterprise rejects a Core `.explain()`, so whether it does there cannot be seen.
