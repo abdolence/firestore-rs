@@ -1131,10 +1131,6 @@ mod tests {
         typed(gcloud_sdk::google::firestore::v1::value::ValueType::BytesValue(content.to_vec()))
     }
 
-    fn reference(path: &str) -> FirestoreValue {
-        FirestoreReference(format!("{DOCS}/{path}")).into()
-    }
-
     fn geo_point(latitude: f64, longitude: f64) -> FirestoreValue {
         typed(
             gcloud_sdk::google::firestore::v1::value::ValueType::GeoPointValue(
@@ -1432,8 +1428,16 @@ mod tests {
                 ("bytes", "v", bytes(&[1, 2, 3])),
                 ("other-bytes", "v", bytes(&[1, 2, 4])),
                 ("text-bytes", "v", "AQID".into()),
-                ("reference", "v", reference("a/target")),
-                ("other-reference", "v", reference("a/elsewhere")),
+                (
+                    "reference",
+                    "v",
+                    FirestoreReference(format!("{DOCS}/a/target")).into(),
+                ),
+                (
+                    "other-reference",
+                    "v",
+                    FirestoreReference(format!("{DOCS}/a/elsewhere")).into(),
+                ),
                 ("text-reference", "v", doc_path("a", "target").into()),
                 ("geo-point", "v", geo_point(1.0, 2.0)),
                 ("other-geo-point", "v", geo_point(1.0, 3.0)),
@@ -1454,7 +1458,7 @@ mod tests {
                 (
                     matching(FirestoreQueryFilterCompare::Equal(
                         "v".into(),
-                        reference("a/target"),
+                        FirestoreReference(format!("{DOCS}/a/target")).into(),
                     )),
                     vec!["reference"],
                 ),
@@ -1554,9 +1558,18 @@ mod tests {
             ("bytes-0", bytes(&[0])),
             ("bytes-0-1", bytes(&[0, 1])),
             ("bytes-1", bytes(&[1])),
-            ("reference-a", reference("a/one")),
-            ("reference-a-nested", reference("a/one/sub/two")),
-            ("reference-a-b", reference("a-b/one")),
+            (
+                "reference-a",
+                FirestoreReference(format!("{DOCS}/a/one")).into(),
+            ),
+            (
+                "reference-a-nested",
+                FirestoreReference(format!("{DOCS}/a/one/sub/two")).into(),
+            ),
+            (
+                "reference-a-b",
+                FirestoreReference(format!("{DOCS}/a-b/one")).into(),
+            ),
             ("geo-point-south", geo_point(0.0, 5.0)),
             ("geo-point-north", geo_point(1.0, 0.0)),
             ("array-empty", Vec::<i64>::new().into()),
@@ -1620,7 +1633,7 @@ mod tests {
                 (
                     matching(FirestoreQueryFilterCompare::LessThan(
                         "v".into(),
-                        reference("a-b/one"),
+                        FirestoreReference(format!("{DOCS}/a-b/one")).into(),
                     )),
                     vec!["reference-a", "reference-a-nested"],
                 ),

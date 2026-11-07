@@ -64,14 +64,15 @@ Functions:
   `greater_than_or_equal`, and `is_null`, `is_not_null`, `is_nan`, `is_not_nan`, which are built
   from them;
 - `and`, `or`, `not`, `exists`, `is_absent`;
-- `equal_any`, `not_equal_any`, `array_contains`, `array_contains_all`, `array_contains_any`;
+- `equal_any`, `not_equal_any`, `array_contains`, `array_contains_all`, `array_contains_any`.
 
 Everything else runs on Firestore: arithmetic and string functions, aggregates, `distinct`,
 search, `find_nearest`, `union`, `unnest`, subqueries and variables, collection groups,
 `database()`, `literals`, `force_index`, raw stages, writes, `like` and every other function. So
 do Query Explain and a pipeline in a transaction or at a read time. The cache also sends a
 pipeline to Firestore when it meets a value Firestore fails the request on, such as `not` of a
-string, and when it would have to order arrays, maps, geo points or vectors, in a
+string, when a field name is not a simple identifier (letters, digits and underscores, not
+starting with a digit), and when it would have to order arrays, maps, geo points or vectors, in a
 `sort` or a `less_than`.
 
 ### What differs from a pipeline that Firestore runs
