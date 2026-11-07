@@ -273,6 +273,7 @@ impl<'a> FirestoreCacheFilterEngine<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(super) enum CompareOp {
     Equal,
     NotEqual,
@@ -287,7 +288,7 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    fn holds_for(&self, ordering: Ordering) -> bool {
+    pub(super) fn holds_for(&self, ordering: Ordering) -> bool {
         match self {
             Self::Equal => ordering.is_eq(),
             Self::NotEqual => ordering.is_ne(),
@@ -299,7 +300,7 @@ impl CompareOp {
         }
     }
 
-    fn is_range(&self) -> bool {
+    pub(super) fn is_range(&self) -> bool {
         matches!(
             self,
             Self::LessThan | Self::LessThanOrEqual | Self::GreaterThan | Self::GreaterThanOrEqual
@@ -309,7 +310,7 @@ impl CompareOp {
 
 /// The types of a value in the order Firestore sorts them. NaN is a number, the lowest one.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-enum ValueTypeRank {
+pub(super) enum ValueTypeRank {
     Null,
     Boolean,
     Number,
@@ -347,7 +348,7 @@ impl From<&ValueType> for ValueTypeRank {
     }
 }
 
-fn is_nan(value: &ValueType) -> bool {
+pub(super) fn is_nan(value: &ValueType) -> bool {
     matches!(value, ValueType::DoubleValue(double) if double.is_nan())
 }
 

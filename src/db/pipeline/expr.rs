@@ -130,17 +130,21 @@ impl FirestoreSelection {
     }
 }
 
-/// `name` as one segment of a field path. A bare segment is a simple identifier,
-/// `[A-Za-z_][A-Za-z0-9_]*`; any other name goes between backticks, with `\\` and `` \` `` escaping
-/// a backslash and a backtick inside them.
-#[cfg(any(feature = "admin", feature = "sql"))]
-pub(crate) fn field_path_segment(name: &str) -> std::borrow::Cow<'_, str> {
-    let simple = name
-        .chars()
+/// Whether `name` is a simple identifier, `[A-Za-z_][A-Za-z0-9_]*`, the only kind of field path
+/// segment that Firestore accepts without backticks.
+#[cfg(any(feature = "admin", feature = "sql", feature = "caching"))]
+pub(crate) fn is_simple_field_segment(name: &str) -> bool {
+    name.chars()
         .next()
         .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if simple {
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// `name` as one segment of a field path: bare when it is a simple identifier, and otherwise
+/// between backticks, with `\\` and `` \` `` escaping a backslash and a backtick inside them.
+#[cfg(any(feature = "admin", feature = "sql"))]
+pub(crate) fn field_path_segment(name: &str) -> std::borrow::Cow<'_, str> {
+    if is_simple_field_segment(name) {
         std::borrow::Cow::Borrowed(name)
     } else {
         std::borrow::Cow::Owned(format!(
