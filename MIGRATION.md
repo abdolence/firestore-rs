@@ -121,6 +121,12 @@ their methods `build_condition`, `build_clause` and `build_query`. The builders 
 Code that only calls the builders compiles as it is. Code that names the traits in a bound uses `Into` instead, and
 calls `.into()` where it called `build_query()`. A closure that returned an `Option` of a string returns the string.
 
+### Read retries use the delays of transactions
+
+A retried read waits like a transaction and a simple batch writer do: 500 ms for the first retry, growing by 1.5 times
+for each next one, each delay randomised by up to 50% either way. Before, it waited a random time of up to 1 second,
+then up to 2 seconds, then up to 4. Reads still stop after `max_retries`. The `rand` dependency is removed.
+
 ## 0.62
 
 ### Simple batch writes stop retrying after 60 seconds

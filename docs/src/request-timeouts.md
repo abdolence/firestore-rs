@@ -59,3 +59,13 @@ let unlimited_db = db.clone_with_request_timeout(None);
 # Ok(())
 # }
 ```
+
+## Retry limits
+
+Reads, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
+next retry, each delay randomised by up to 50% either way. They differ in when they stop:
+- reads stop after `max_retries` of `FirestoreDbOptions`, 3 by default, with no time limit;
+- simple batch writes stop after `retry_max_elapsed_time` of `FirestoreSimpleBatchWriteOptions`, 60 seconds by default,
+  and ignore `max_retries`;
+- transactions stop after `max_retries` of `FirestoreTransactionOptions`, 4 by default, and, when set, after
+  `retry_max_elapsed_time`, which is off by default.
