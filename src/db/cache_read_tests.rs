@@ -5,7 +5,7 @@ use futures::TryStreamExt;
 use gcloud_sdk::google::firestore::v1::value::ValueType;
 use gcloud_sdk::google::firestore::v1::{
     batch_get_documents_response, BatchGetDocumentsRequest, BatchGetDocumentsResponse, Document,
-    GetDocumentRequest, ListDocumentsResponse, RunQueryResponse, Value,
+    ExecutePipelineResponse, GetDocumentRequest, ListDocumentsResponse, RunQueryResponse, Value,
 };
 use gcloud_sdk::prost::Message;
 use std::time::Duration;
@@ -89,6 +89,15 @@ fn answer(method: &str, body: &[u8]) -> (String, FakeResponse) {
             "ListDocuments".to_string(),
             FakeResponse::Message(response.encode_to_vec()),
         )
+    } else if method.ends_with("/ExecutePipeline") {
+        let response = ExecutePipelineResponse {
+            results: vec![document(&cached_name, FROM_FIRESTORE)],
+            ..Default::default()
+        };
+        (
+            "ExecutePipeline".to_string(),
+            FakeResponse::Paced(vec![response.encode_to_vec()], Duration::ZERO),
+        )
     } else {
         (method.to_string(), FakeResponse::empty())
     }
@@ -121,10 +130,17 @@ enum Read {
     BatchGet,
     Query,
     List,
+    Pipeline,
 }
 
 impl Read {
-    const ALL: [Read; 4] = [Read::Get, Read::BatchGet, Read::Query, Read::List];
+    const ALL: [Read; 5] = [
+        Read::Get,
+        Read::BatchGet,
+        Read::Query,
+        Read::List,
+        Read::Pipeline,
+    ];
 
     /// Where the first document read came from.
     async fn source(self, db: &FirestoreDb) -> FirestoreResult<String> {
@@ -148,6 +164,16 @@ impl Read {
                 .await?
                 .try_next()
                 .await?
+                .unwrap(),
+            Self::Pipeline => db
+                .fluent()
+                .pipeline()
+                .select()
+                .from(COLLECTION)
+                .query()
+                .await?
+                .into_iter()
+                .next()
                 .unwrap(),
         };
         Ok(source(&document))

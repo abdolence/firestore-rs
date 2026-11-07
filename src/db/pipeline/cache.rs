@@ -12,6 +12,9 @@ impl FirestoreDb {
         &self,
         params: &FirestorePipelineParams,
     ) -> FirestoreResult<FirestoreCachedValue<Vec<FirestoreDocument>>> {
+        if self.skips_cache_for_consistency_selector()? {
+            return Ok(FirestoreCachedValue::SkipCache);
+        }
         let (cache, cached_only) = match &self.session_params.cache_mode {
             FirestoreDbSessionCacheMode::None => return Ok(FirestoreCachedValue::SkipCache),
             FirestoreDbSessionCacheMode::ReadThroughCache(cache) => (cache, false),
@@ -44,11 +47,6 @@ impl FirestoreDb {
         let compiled = if explain_options.is_some() {
             Err(FirestoreCachePipelineMiss::unsupported(
                 "Query Explain runs on Firestore",
-            ))
-        } else if self.session_params.consistency_selector.is_some() {
-            // What a transaction or a read time sees is not what the cache holds.
-            Err(FirestoreCachePipelineMiss::unsupported(
-                "the session reads in a transaction or at a read time",
             ))
         } else {
             FirestoreCachePipeline::new(pipeline, self.get_documents_path())
