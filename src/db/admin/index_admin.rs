@@ -7,8 +7,9 @@
 //! `INVALID_ARGUMENT` and the emulator's `UNIMPLEMENTED` are their errors.
 
 use crate::db::admin::index_models::{validate_collection_group, CanonicalFieldPath};
-use crate::db::admin::indexes::PendingOperation;
-use crate::db::admin::indexes::{IndexAction, RefusedFieldWrite, SEQUENCING_TIMEOUT};
+use crate::db::admin::indexes::{
+    IndexAction, PendingOperation, RefusedFieldWrite, SEQUENCING_TIMEOUT,
+};
 use crate::db::admin::operation_wait::{OperationDeadline, StartedOperation};
 use crate::db::support::FirestoreIndexSupport;
 use crate::errors::FirestoreError;
