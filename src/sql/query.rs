@@ -801,7 +801,7 @@ impl FirestoreSqlTranslator<'_> {
                 },
                 _ => self.expr(scope, expr)?,
             };
-            if let FirestoreExpr::Constant(_) = key {
+            if matches!(key, FirestoreExpr::Constant(_)) || key.sql_placeholder().is_some() {
                 return Err(FirestoreError::invalid_sql(
                     "ORDER BY",
                     "ORDER BY a constant or a position orders nothing: name a column",
@@ -880,6 +880,9 @@ impl FirestoreSqlTranslator<'_> {
             Expr::Identifier(ident) if is_parameter(ident) => Some(self.parameter(ident)?),
             _ => None,
         };
+        if let Some(value) = &value {
+            value.require_value(clause, expr_start(expr))?;
+        }
         match value.as_ref().and_then(FirestoreExpr::constant_value) {
             Some(ValueType::IntegerValue(count)) => u32::try_from(*count).ok(),
             _ => None,

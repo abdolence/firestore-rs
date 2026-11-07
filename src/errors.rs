@@ -126,6 +126,13 @@ impl FirestoreError {
         )
     }
 
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for a SQL
+    /// construct that codegen does not show, such as `construct`.
+    #[cfg(feature = "codegen")]
+    pub(crate) fn sql_codegen_refused(construct: &str) -> Self {
+        FirestoreError::invalid_parameters("codegen", format!("codegen does not show {construct}"))
+    }
+
     /// Points an [`InvalidParametersError`](FirestoreError::InvalidParametersError) from a check
     /// the crate shares, such as an ID's, at where the value starts in SQL text.
     #[cfg(feature = "sql")]

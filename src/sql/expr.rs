@@ -728,7 +728,9 @@ impl FirestoreSqlTranslator<'_> {
                 return Ok(value.array_get(position));
             }
         }
+        let start = expr_start(index);
         let index = self.expr(scope, index)?;
+        index.require_value("a subscript", start)?;
         Ok(match index.constant_value() {
             Some(ValueType::StringValue(_)) => value.map_get(index),
             _ => value.array_get(index),
@@ -745,6 +747,7 @@ impl FirestoreSqlTranslator<'_> {
         operand: FirestoreExpr,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<FirestoreExpr> {
+        operand.require_value(SQL_DOCUMENT_NAME_FIELD, start)?;
         let Some(ValueType::StringValue(name)) = operand.constant_value() else {
             return Ok(operand);
         };
@@ -787,6 +790,7 @@ impl FirestoreSqlTranslator<'_> {
         values: FirestoreExpr,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<FirestoreExpr> {
+        values.require_value(SQL_DOCUMENT_NAME_FIELD, start)?;
         let Some(ValueType::ArrayValue(ArrayValue { values: elements })) = values.constant_value()
         else {
             return Ok(values);

@@ -42,6 +42,7 @@
     - [Reads, joins and subqueries](./sql/reads.md)
     - [Writes and ON CONFLICT](./sql/writes.md)
     - [Index statements](./sql/indexes.md)
+    - [Fluent code for a statement](./sql/codegen.md)
 
 # Data modelling
 

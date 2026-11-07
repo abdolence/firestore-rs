@@ -150,6 +150,15 @@ impl<'t> FirestoreSqlTranslator<'t> {
         translated
     }
 
+    // `path` below `documents_path`, the documents root, or `None` when it is not a path in it.
+    pub(super) fn relative_to_documents<'p>(
+        documents_path: &str,
+        path: &'p str,
+    ) -> Option<&'p str> {
+        path.strip_prefix(documents_path)
+            .and_then(|path| path.strip_prefix('/'))
+    }
+
     // The path of the document `path` names, relative to the documents root: `path` is that
     // already, or a full path in this database.
     pub(super) fn document_path<'p>(
@@ -157,10 +166,7 @@ impl<'t> FirestoreSqlTranslator<'t> {
         path: &'p str,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<&'p str> {
-        let relative = path
-            .strip_prefix(self.documents_path)
-            .and_then(|path| path.strip_prefix('/'))
-            .unwrap_or(path);
+        let relative = Self::relative_to_documents(self.documents_path, path).unwrap_or(path);
         let segments: Vec<&str> = relative.split('/').collect();
         if !segments.len().is_multiple_of(2) {
             return Err(FirestoreError::invalid_sql(

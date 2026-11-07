@@ -40,12 +40,12 @@ jobs:
         run: |
           cargo fmt -- --check
           cargo clippy --all-targets --features "admin,caching-memory,caching-persistent" -- -Dwarnings
-          cargo clippy --all-targets --features "admin,caching-memory,caching-persistent,sql" -- -Dwarnings
+          cargo clippy --all-targets --features "admin,caching-memory,caching-persistent,sql,codegen" -- -Dwarnings
           cargo clippy --lib --features sql -- -Dwarnings
       - name: 'Checking documentation'
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features "admin,caching-memory,caching-persistent,sql"
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features "admin,caching-memory,caching-persistent,sql,codegen"
       - name: 'Compiling the book examples'
-        run: cargo test --doc --features "admin,caching-memory,caching-persistent,sql"
+        run: cargo test --doc --features "admin,caching-memory,caching-persistent,sql,codegen"
       - uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: '0.5.4'
@@ -54,12 +54,14 @@ jobs:
       - name: 'Checking the minimum supported Rust version'
         uses: dtolnay/rust-toolchain@1.91.0
       - name: 'Building on the minimum supported Rust version'
-        run: cargo +1.91.0 check --lib --features "admin,caching-memory,caching-persistent,sql"
+        run: cargo +1.91.0 check --lib --features "admin,caching-memory,caching-persistent,sql,codegen"
       - name: 'Run the test without a crypto provider'
         run: cargo test --no-default-features --features tls-webpki-roots --test crypto_provider_missing
+      - name: 'Run the codegen tests'
+        run: cargo test --features codegen --test codegen-tests
       - name: 'Run lib tests'
-        run: cargo test --lib --features "admin,caching-memory,caching-persistent,sql"
+        run: cargo test --lib --features "admin,caching-memory,caching-persistent,sql,codegen"
         if: github.ref != 'refs/heads/master'
       - name: 'Run all tests'
-        run: cargo test --features "admin,caching-memory,caching-persistent,sql"
+        run: cargo test --features "admin,caching-memory,caching-persistent,sql,codegen"
         if: github.ref == 'refs/heads/master'

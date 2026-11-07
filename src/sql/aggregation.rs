@@ -326,7 +326,9 @@ impl FirestoreSqlTranslator<'_> {
             return Err(FirestoreError::unsupported_sql(construct, expr_start(expr)));
         }
         let translated = self.expr(scope, expr)?;
-        if let FirestoreExpr::Constant(_) = translated {
+        if matches!(translated, FirestoreExpr::Constant(_))
+            || translated.sql_placeholder().is_some()
+        {
             return Err(FirestoreError::invalid_sql(
                 "GROUP BY",
                 "grouping by a constant or a position groups nothing: name a column",

@@ -352,14 +352,6 @@ pub(super) fn is_nan(value: &ValueType) -> bool {
     matches!(value, ValueType::DoubleValue(double) if double.is_nan())
 }
 
-/// A vector is a map with a marker field; the components are in its `value` field.
-fn is_vector(map: &MapValue) -> bool {
-    matches!(
-        map.fields.get("__type__").and_then(|marker| marker.value_type.as_ref()),
-        Some(ValueType::StringValue(marker)) if marker == "__vector__"
-    )
-}
-
 fn vector_components(map: &MapValue) -> &[Value] {
     match map
         .fields

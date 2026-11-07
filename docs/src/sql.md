@@ -43,7 +43,9 @@ shapes.
 Application code keeps the fluent API, whose field paths are checked when the program compiles. SQL
 is for text that the program does not write: an admin command line, statements kept in
 configuration, statements an LLM agent writes, and queries ported from a SQL database. See
-[Choosing Core queries, pipelines or SQL](./editions/choosing-an-api.md#when-to-use-sql).
+[Choosing Core queries, pipelines or SQL](./editions/choosing-an-api.md#when-to-use-sql). With the
+`codegen` feature, [Fluent code for a statement](./sql/codegen.md) returns the fluent API code that
+a `SELECT` translates to, to move a ported statement into application code.
 
 ## Setup
 

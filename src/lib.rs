@@ -96,6 +96,7 @@
 //! | `caching-persistent` | The same cache backed by an on-disk database |
 //! | `admin` | Declarative index management and bulk delete: composite indexes, vector indexes, single-field overrides, TTL policy, and `BulkDeleteDocuments` |
 //! | `sql` | SQL statements in the BigQuery (GoogleSQL) dialect, translated into pipelines: see `FirestoreExprBuilder::sql` |
+//! | `codegen` | The fluent pipeline code of a SQL `SELECT` as Rust source, to port a statement to application code: see `FirestoreSqlStatement::fluent_rust` |
 //!
 //! Runnable examples for every topic:
 //! <https://github.com/abdolence/firestore-rs/tree/master/examples>

@@ -47,6 +47,73 @@ impl FirestoreSqlParameters {
     }
 }
 
+#[cfg(feature = "codegen")]
+impl FirestoreSqlParameters {
+    // Each parameter bound to its placeholder: the variable `@name`, or `?1`, `?2`.. for the
+    // `?`s in text order. The translator names its own variables `[A-Za-z0-9_]+`, so the
+    // spellings cannot clash.
+    pub(super) fn placeholders(&self) -> Self {
+        Self {
+            named: self
+                .named
+                .keys()
+                .map(|name| (name.clone(), FirestoreExpr::Variable(format!("@{name}"))))
+                .collect(),
+            positional: (1..=self.positional.len())
+                .map(|position| FirestoreExpr::Variable(format!("?{position}")))
+                .collect(),
+        }
+    }
+
+    // Each placeholder of `placeholders` with the value it stands for: by name, then in text
+    // order.
+    pub(super) fn samples(&self) -> impl Iterator<Item = (String, &FirestoreExpr)> {
+        let named = self
+            .named
+            .iter()
+            .map(|(name, value)| (format!("@{name}"), value));
+        let positional = (1..)
+            .zip(&self.positional)
+            .map(|(position, value)| (format!("?{position}"), value));
+        named.chain(positional)
+    }
+}
+
+impl FirestoreExpr {
+    // The parameter this expression stands for, when codegen translates with `placeholders` in
+    // place of the values.
+    pub(super) fn sql_placeholder(&self) -> Option<&str> {
+        match self {
+            Self::Variable(name) if name.starts_with(['@', '?']) => Some(name),
+            _ => None,
+        }
+    }
+
+    // Fails for a placeholder where the translation reads the bound value, since codegen would
+    // otherwise show code that means something else. A no-op outside codegen.
+    pub(super) fn require_value(
+        &self,
+        construct: &str,
+        location: Option<FirestoreSqlLocation>,
+    ) -> FirestoreResult<()> {
+        let Some(placeholder) = self.sql_placeholder() else {
+            return Ok(());
+        };
+        let parameter = if placeholder.starts_with('?') {
+            "?"
+        } else {
+            placeholder
+        };
+        Err(FirestoreError::invalid_sql(
+            parameter,
+            format!(
+                "{construct} reads the value of {parameter} when the statement is translated, so codegen cannot show it as an argument: write the value in the text"
+            ),
+            location,
+        ))
+    }
+}
+
 pub(super) struct FirestoreSqlBinding<'p> {
     named: &'p BTreeMap<String, FirestoreExpr>,
     // The value of each `?`, by where it starts. The translator reads a statement in another

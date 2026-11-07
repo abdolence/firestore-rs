@@ -1,5 +1,8 @@
 mod aggregation;
 
+#[cfg(feature = "codegen")]
+mod codegen;
+
 mod ddl;
 
 #[cfg(feature = "admin")]

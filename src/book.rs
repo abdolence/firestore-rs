@@ -97,6 +97,10 @@ mod sql_writes {}
 #[doc = include_str!("../docs/src/sql/indexes.md")]
 mod sql_indexes {}
 
+#[cfg(feature = "codegen")]
+#[doc = include_str!("../docs/src/sql/codegen.md")]
+mod sql_codegen {}
+
 #[doc = include_str!("../docs/src/request-tags.md")]
 mod request_tags {}
 
