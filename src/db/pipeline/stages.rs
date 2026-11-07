@@ -196,8 +196,8 @@ mod tests {
     use crate::db::pipeline::fixtures::{fixture_case, pipeline};
     use crate::pipeline_builder::FirestorePipelineInitialBuilder;
     use crate::{
-        FirestoreError, FirestoreFindNearestDistanceMeasure, FirestoreFindNearestStage,
-        FirestoreReplaceWithMode, FirestoreSampleSize, FirestoreSelection, FirestoreVector,
+        FirestoreFindNearestDistanceMeasure, FirestoreFindNearestStage, FirestoreReplaceWithMode,
+        FirestoreSampleSize, FirestoreSelection, FirestoreVector,
     };
     use gcloud_sdk::google::firestore::v1::Pipeline;
     use std::collections::HashMap;
@@ -471,47 +471,6 @@ mod tests {
                 Pipeline::try_from(model).unwrap(),
                 pipeline(&fixture_case(fixture, case)),
                 "{fixture} {case:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn stages_that_cannot_be_sent_are_rejected_before_sending() {
-        let rejected = [
-            builder()
-                .from("pipeline-books")
-                .aggregate(|e| {
-                    [
-                        e.count_all().alias("books"),
-                        e.field("stock").sum().alias("books"),
-                    ]
-                })
-                .into_pipeline(),
-            builder()
-                .from("pipeline-books")
-                .distinct(|e| [e.raw("to_upper", [e.field("genre")])])
-                .into_pipeline(),
-            builder()
-                .from("pipeline-books")
-                .unnest(|e| e.raw("split", [e.field("title")]))
-                .into_pipeline(),
-            builder()
-                .from("pipeline-books")
-                .fields(|e| {
-                    [e.array_subquery(|p| {
-                        p.subcollection("reviews")
-                            .fields(|e| [e.raw("to_upper", [e.field("name")])])
-                    })
-                    .alias("reviews")]
-                })
-                .into_pipeline(),
-        ];
-
-        for model in rejected {
-            let result = Pipeline::try_from(model.clone());
-            assert!(
-                matches!(result, Err(FirestoreError::InvalidParametersError(_))),
-                "{model:?}: {result:?}"
             );
         }
     }

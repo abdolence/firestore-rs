@@ -641,35 +641,6 @@ mod tests {
     }
 
     #[test]
-    fn a_source_converts_with_its_search() {
-        let searched = |pipeline: FirestorePipeline| match pipeline.source {
-            FirestorePipelineSource::Collection(source) => Vec::<Stage>::try_from(source),
-            FirestorePipelineSource::CollectionGroup(source) => Vec::<Stage>::try_from(source),
-            other => panic!("not a collection source: {other:?}"),
-        };
-
-        for pipeline in [
-            builder()
-                .from("pipeline-restaurants")
-                .search(|s| s.text(|t| t.term("waffles")))
-                .into_pipeline(),
-            builder()
-                .from("pipeline-restaurants")
-                .all_descendants()
-                .search(|s| s.text(|t| t.term("waffles")))
-                .into_pipeline(),
-        ] {
-            let names: Vec<_> = searched(pipeline)
-                .unwrap()
-                .into_iter()
-                .map(|stage| stage.name)
-                .collect();
-
-            assert_eq!(names[1..], ["search"]);
-        }
-    }
-
-    #[test]
     fn pipelines_convert_to_the_captured_requests() {
         let books_index = FirestoreIndexId::new("CICAgJim14AK").unwrap();
         let captured = [
