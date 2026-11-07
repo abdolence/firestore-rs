@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c5f8c851.js";
+            window.path_to_searchindex_js = "searchindex-204a04a7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3b510eae.js"></script>
@@ -1192,6 +1192,9 @@ response that carries explain statistics, or no documents at all, adds an item w
 <code>document</code>.</p>
 <p><code>.request_tags(..)</code> and <code>.request_options(..)</code> attach request options to one pipeline, as they do
 for a Core query.</p>
+<p>A session created with <code>read_through_cache</code> or <code>read_cached_only</code> answers a pipeline from the
+cache when it only filters, sorts and pages cached documents, see
+<a href="#pipelines-1">Caching pipelines</a>.</p>
 <h2 id="explaining-a-pipeline"><a class="header" href="#explaining-a-pipeline">Explaining a pipeline</a></h2>
 <p>Query Explain returns the plan Firestore chose for a pipeline. <code>.explain()</code> runs the pipeline for
 its plan only: no document is read or returned. <code>.explain_with_options(..)</code> with <code>analyze</code> set
@@ -1809,6 +1812,33 @@ subquery.</li>
 </ul>
 <p>The library does not set <code>.atomic()</code> itself and does not check these rules: Firestore rejects a
 write that breaks one with <code>INVALID_ARGUMENT</code>.</p>
+<h2 id="write-limits"><a class="header" href="#write-limits">Write limits</a></h2>
+<p>Firestore rejects an atomic write that is too big with <code>InvalidArgument</code>, “Transaction too big.
+Decrease transaction size.” The limit is not one number of documents. It was measured with SQL
+statements, which run as atomic pipeline writes, on documents of two small fields (an integer and
+a short string), from a developer machine:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Statement</th><th>Largest that succeeded</th><th>Smallest that failed</th></tr>
+</thead>
+<tbody>
+<tr><td><code>UPDATE .. SET touched = 1 WHERE TRUE</code></td><td>55,000 documents, 27.5 s</td><td>60,000 documents, in two runs</td></tr>
+<tr><td><code>DELETE FROM .. WHERE TRUE</code></td><td>5,475 documents</td><td>5,500 documents</td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>DELETE</code> limit was about a tenth of the <code>UPDATE</code> limit. Throughput was 1,000 to 3,000 documents
+per second, and rose with the size of the write. Two runs that came right after inserting the
+documents failed once with <code>ResourceExhausted</code> (“This database has exceeded their maximum
+bandwidth for writes”) and passed after a pause, and one <code>UPDATE</code> of 67,500 documents failed once
+with <code>Aborted</code>.</p>
+<p>Split a large write by a <code>filter</code> on a range, such as the key or a timestamp, and send each part
+after the one before. The numbers are measurements on tiny documents.</p>
+<p>A TTL (time-to-live) policy suits retention better than a scheduled <code>delete</code>: Firestore deletes
+the documents itself once the timestamp in the policy’s field has passed, see
+<a href="#index-management">Index management</a>. The
+<a href="#bulk-delete">bulk delete</a> of the <code>admin</code> feature empties a whole collection.</p>
 <h2 id="writes-in-a-transaction"><a class="header" href="#writes-in-a-transaction">Writes in a transaction</a></h2>
 <p><code>execute_in_transaction(&amp;mut transaction)</code> runs the write in an open transaction, whether it comes
 from <code>db.begin_transaction()</code> or from <code>run_transaction</code>. Firestore holds the write until the
@@ -1842,8 +1872,7 @@ commit.</p>
 <li>every read comes before the first pipeline write; Firestore fails a read after it with
 <code>FAILED_PRECONDITION</code>;</li>
 <li>a transaction takes pipeline writes or buffered writes, not both: Firestore rejects a commit
-that mixes them, and the library fails with <code>InvalidParametersError</code> as soon as the second kind
-is added, whichever comes first;</li>
+that mixes them;</li>
 <li>a write cannot run at a read time, and <code>execute()</code> or <code>.atomic().execute()</code> on a <code>db</code> that is
 bound to a transaction or a read time fails with <code>InvalidParametersError</code>; use
 <code>execute_in_transaction</code> inside the transaction.</li>
@@ -1883,6 +1912,9 @@ documents of a pipeline, and <code>INSERT</code>, <code>UPDATE</code> and <code>
 <p>SQL needs a database of the Firestore <em>Enterprise edition</em>, as pipelines do. A statement means what
 the same pipeline means in the fluent API: Firestore’s semantics, listed in
 <a href="#semantics">Semantics</a>, where a few results differ from those of a SQL database.</p>
+<p>A read through a cache session is answered from the cache when the pipeline it translates to only
+filters, sorts and pages cached documents, see <a href="#sql-1">Caching pipelines</a> for the cached
+shapes.</p>
 <h2 id="when-to-use-sql"><a class="header" href="#when-to-use-sql">When to use SQL</a></h2>
 <p>Application code keeps the fluent API. A field name in <code>path!(Book::rating)</code> is checked when the
 program compiles, where a misspelled field in SQL text reads as an absent field and matches
@@ -1943,7 +1975,7 @@ hyphens or slashes between backticks, <code>"text"</code> as a string literal, <
 to several is refused.</p>
 <p>Parameters are the way to put a value into a statement:</p>
 <ul>
-<li><code>@name</code> is bound with <code>.param("name", value)</code>, and <code>.param("@name", value)</code> binds the same;</li>
+<li><code>@name</code> is bound with <code>.param("name", value)</code>;</li>
 <li><code>?</code> is bound with <code>.params([..])</code>, in the order the <code>?</code>s appear;</li>
 <li>a statement uses one form, and mixing them is refused, and so is <code>$1</code> or <code>:name</code>;</li>
 <li>the value is any <code>Serialize</code> type, bound as a typed constant of the pipeline, as a value in the
@@ -2005,7 +2037,7 @@ let rows = db
 <p><code>FirestoreSqlOptions</code> limits a statement before it runs. A statement that breaks a limit fails at
 translation with <code>InvalidParametersError</code>, and no request is sent. <code>FirestoreSqlOptions::new()</code>
 allows every statement the translator supports, except <a href="#joins-and-subqueries">joins and
-subqueries</a> and statements longer than 16 KiB, and
+subqueries</a>, and
 <code>FirestoreSqlOptions::read_only()</code> starts the set for text from outside the program:</p>
 <ul>
 <li><code>read_only()</code> refuses <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code>, and the <code>database()</code> source;</li>
@@ -2017,12 +2049,11 @@ statement names one: a collection, each collection of a path, a collection group
 <li><code>.with_max_rows(1_000)</code> returns at most that many rows: the <code>LIMIT</code> is lowered to it, or one is
 added. The cap counts the rows returned, not the rows read: an <code>OFFSET</code> still reads the rows it
 skips, and <code>ARRAY_AGG(..)</code> or <code>ARRAY(SELECT ..)</code> puts a whole collection into one row;</li>
-<li><code>.with_max_length(bytes)</code> refuses a longer statement, and the default is 16 KiB;</li>
 <li><code>.allow_subqueries()</code> allows joins and subqueries, see
 <a href="#joins-and-subqueries">Joins and subqueries</a>.</li>
 </ul>
-<p>The parser also refuses a statement nested deeper than 16 levels, and the translator one nested
-deeper than 64. These limits are fixed.</p>
+<p>The translator also refuses a statement longer than 16 KiB, the parser one nested deeper than 16
+levels, and the translator one nested deeper than 64. These limits are fixed.</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example(db: FirestoreDb, text: &amp;str) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
 </span>const BOOKS: FirestoreCollectionId = FirestoreCollectionId::from_static("books");
@@ -2145,6 +2176,7 @@ dropped, so a statement does not run with a clause missing.</p>
 <tbody>
 <tr><td>Pipe syntax, <code>FROM t |&gt; WHERE ..</code></td><td>not supported in this version</td></tr>
 <tr><td><code>MERGE</code>, <code>REPLACE INTO</code></td><td><code>MERGE</code> has no pipeline form, and <code>REPLACE INTO</code> does not parse in the BigQuery dialect; use <code>INSERT OR REPLACE</code> or <code>INSERT .. ON CONFLICT</code></td></tr>
+<tr><td><code>INSERT OR IGNORE</code>, <code>OR ABORT</code>, <code>OR FAIL</code>, <code>OR ROLLBACK</code>, <code>RETURNING</code>, <code>UPDATE .. FROM</code>, <code>ORDER BY</code> or <code>LIMIT</code> on a write, <code>INSERT .. SET</code>, <code>INSERT .. DEFAULT VALUES</code></td><td>a write has no pipeline form for them</td></tr>
 <tr><td>DDL, <code>BEGIN</code>, <code>EXPLAIN</code></td><td>a statement is a <code>SELECT</code>, <code>INSERT</code>, <code>UPDATE</code> or <code>DELETE</code>; transactions come from the API, and <code>.explain()</code> returns the plan</td></tr>
 <tr><td><code>WITH RECURSIVE</code>, a CTE column list, <code>MATERIALIZED</code></td><td>pipelines have no iteration</td></tr>
 <tr><td>Window functions, <code>QUALIFY</code>, <code>WINDOW</code></td><td>pipelines have no window stage</td></tr>
@@ -2396,35 +2428,8 @@ statements on one document committed 4 times and failed 4 times with <code>ABORT
 transaction was aborted due to a conflict”, and the stored <code>stock</code> was 4. A write that returns
 <code>ABORTED</code> can be sent again.</li>
 </ul>
-<p>Refused: <code>MERGE</code>, <code>REPLACE INTO</code>, <code>INSERT OR IGNORE</code>, <code>OR ABORT</code>, <code>OR FAIL</code> and <code>OR ROLLBACK</code>,
-<code>RETURNING</code>, <code>UPDATE .. FROM</code>, <code>ORDER BY</code> and <code>LIMIT</code> on a write, <code>INSERT .. SET</code>,
-<code>INSERT .. DEFAULT VALUES</code>, and any <code>ON CONFLICT</code> target but <code>__name__</code>.</p>
-<h3 id="write-limits"><a class="header" href="#write-limits">Write limits</a></h3>
-<p>Firestore rejects an atomic write that is too big with <code>InvalidArgument</code>, “Transaction too big.
-Decrease transaction size.” The limit is not one number of documents. It was measured on documents
-of two small fields (an integer and a short string), from a developer machine:</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Statement</th><th>Largest that succeeded</th><th>Smallest that failed</th></tr>
-</thead>
-<tbody>
-<tr><td><code>UPDATE .. SET touched = 1 WHERE TRUE</code></td><td>55,000 documents, 27.5 s</td><td>60,000 documents, in two runs</td></tr>
-<tr><td><code>DELETE FROM .. WHERE TRUE</code></td><td>5,475 documents</td><td>5,500 documents</td></tr>
-</tbody>
-</table>
-</div>
-<p>The <code>DELETE</code> limit was about a tenth of the <code>UPDATE</code> limit. Throughput was 1,000 to 3,000 documents
-per second, and rose with the size of the write. Two runs that came right after inserting the
-documents failed once with <code>ResourceExhausted</code> (“This database has exceeded their maximum
-bandwidth for writes”) and passed after a pause, and one <code>UPDATE</code> of 67,500 documents failed once
-with <code>Aborted</code>.</p>
-<p>Split a large write by a <code>WHERE</code> on a range, such as the key or a timestamp, and send each part
-after the one before. The numbers are measurements on tiny documents.</p>
-<p>A TTL (time-to-live) policy suits retention better than a scheduled <code>DELETE</code>: Firestore deletes
-the documents itself once the timestamp in the policy’s field has passed, see
-<a href="#index-management">Index management</a>. The
-<a href="#bulk-delete">bulk delete</a> of the <code>admin</code> feature empties a whole collection.</p>
+<p>Firestore refuses an atomic write that is too big. <a href="#write-limits">Write limits</a>
+lists the sizes that were measured.</p>
 <h2 id="errors"><a class="header" href="#errors">Errors</a></h2>
 <p>A text that does not parse, a construct that is refused, a parameter bound on one side only, and a
 statement that the options refuse all fail with <code>InvalidParametersError</code>, before any request. Its
@@ -2822,6 +2827,97 @@ latency noticeably.</p>
 <li><code>caching-persistent</code> for a persistent, disk backed cache, implemented with
 <a href="https://github.com/cberner/redb">redb</a> and protobuf.</li>
 </ul>
+<h2 id="pipelines-1"><a class="header" href="#pipelines-1">Pipelines</a></h2>
+<p><a href="#pipelines">Pipelines</a> and <a href="#sql">SQL</a> reads use the cache in the same sessions,
+<code>read_through_cache</code> and <code>read_cached_only</code>. The cache answers a pipeline on its own when every
+part of it is in the lists below, with the semantics Firestore gives a pipeline. Caching is meant
+for data such as static dictionaries, or sessions read by ID, so the cache filters, sorts and pages
+documents, and leaves computing to Firestore. Anything else runs on Firestore under
+<code>read_through_cache</code>, and fails with a <code>CacheError</code> under <code>read_cached_only</code>.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::Deserialize;
+</span><span class="boring">#[derive(Debug, Clone, Deserialize)]
+</span><span class="boring">struct Country { name: String, region: String }
+</span><span class="boring">async fn example(db: FirestoreDb, cache: FirestoreMemoryCache) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let european: Vec&lt;Country&gt; = db
+    .read_through_cache(&amp;cache)
+    .fluent()
+    .pipeline()
+    .select()
+    .from("countries")
+    .filter(|q| q.field(path!(Country::region)).eq("Europe"))
+    .sort(|e| [e.field(path!(Country::name)).asc()])
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = european;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Sources:</p>
+<ul>
+<li>a cached collection, <code>.from(name)</code>, with <code>.parent(..)</code> for a sub-collection. The collection must
+be preloaded, as for a Core <code>query</code>;</li>
+<li><code>.documents([..])</code>, and a collection whose first <code>filter</code> pins <code>__name__</code> with <code>eq</code> or <code>is_in</code>,
+read the named documents by ID, from any cached collection.</li>
+</ul>
+<p>Stages: <code>filter</code>, <code>sort</code>, <code>limit</code>, <code>offset</code>, <code>fields</code>, <code>add_fields</code> and <code>remove_fields</code>. A <code>limit</code>
+or <code>offset</code> needs a <code>sort</code> before it, since Firestore returns unsorted documents in an order of its
+own. <code>fields</code>, <code>add_fields</code> and <code>remove_fields</code> take plain fields, with or without an alias, as
+top-level fields. A computed expression in them runs on Firestore.</p>
+<p>Functions:</p>
+<ul>
+<li>comparisons: <code>equal</code>, <code>not_equal</code>, <code>less_than</code>, <code>less_than_or_equal</code>, <code>greater_than</code>,
+<code>greater_than_or_equal</code>, and <code>is_null</code>, <code>is_not_null</code>, <code>is_nan</code>, <code>is_not_nan</code>, which are built
+from them;</li>
+<li><code>and</code>, <code>or</code>, <code>not</code>, <code>exists</code>, <code>is_absent</code>;</li>
+<li><code>equal_any</code>, <code>not_equal_any</code>, <code>array_contains</code>, <code>array_contains_all</code>, <code>array_contains_any</code>.</li>
+</ul>
+<p>Everything else runs on Firestore: arithmetic and string functions, aggregates, <code>distinct</code>,
+search, <code>find_nearest</code>, <code>union</code>, <code>unnest</code>, subqueries and variables, collection groups,
+<code>database()</code>, <code>literals</code>, <code>force_index</code>, raw stages, writes, <code>like</code> and every other function. So
+do Query Explain and a pipeline in a transaction or at a read time. The cache also sends a
+pipeline to Firestore when it meets a value Firestore fails the request on, such as <code>not</code> of a
+string, when a field name is not a simple identifier (letters, digits and underscores, not
+starting with a digit), and when it would have to order arrays, maps, geo points or vectors, in a
+<code>sort</code> or a <code>less_than</code>.</p>
+<h3 id="what-differs-from-a-pipeline-that-firestore-runs"><a class="header" href="#what-differs-from-a-pipeline-that-firestore-runs">What differs from a pipeline that Firestore runs</a></h3>
+<ul>
+<li>Results are eventually consistent, as for Core reads, see
+<a href="#how-the-cache-is-updated">How the cache is updated</a>.</li>
+<li>The cache does not check the edition of the database. On a Standard edition database, where
+Firestore fails every pipeline with <code>FAILED_PRECONDITION</code>, a pipeline the cache answers
+succeeds, and one it does not answer fails as on Firestore.</li>
+<li>A result from the cache has no <code>execution_time</code> in its metadata, and an empty result has no
+item without a document.</li>
+<li>A read by ID that names a document the cache does not hold runs on Firestore under
+<code>read_through_cache</code>. Under <code>read_cached_only</code> the missing documents are left out, as a Core batch
+read leaves them. In a preloaded collection, a <code>__name__</code> filter that names a missing document
+is answered from the collection, where the document is absent.</li>
+<li>Pipelines never write to the cache: a pipeline that runs on Firestore leaves the cache as it was.
+Reads by ID through <code>get</code> fill a lazily loaded collection.</li>
+<li>Documents that tie on every sort key come back in document-name order from the cache, where
+Firestore’s order of them is unspecified, so a <code>limit</code> that cuts through them can keep other
+documents than Firestore would.</li>
+</ul>
+<h3 id="sql-1"><a class="header" href="#sql-1">SQL</a></h3>
+<p>A SQL read runs as a pipeline, so the same lists apply. These shapes are cached, over one cached
+collection or <code>documents(..)</code>:</p>
+<ul>
+<li><code>SELECT</code> of columns, aliases, <code>*</code> and <code>* EXCEPT (..)</code>;</li>
+<li><code>WHERE</code> with comparisons, <code>AND</code>, <code>OR</code>, <code>NOT</code>, <code>IS [NOT] NULL</code>, <code>IS [NOT] DISTINCT FROM</code>,
+<code>[NOT] IN (list)</code>, <code>IN UNNEST(array)</code> and <code>BETWEEN</code>;</li>
+<li><code>WHERE __name__ = 'id'</code> and <code>WHERE __name__ IN ('id', ..)</code>, read by ID;</li>
+<li><code>ORDER BY</code>, and <code>LIMIT</code> and <code>OFFSET</code> with an <code>ORDER BY</code>.</li>
+</ul>
+<p><code>GROUP BY</code>, aggregates, <code>DISTINCT</code>, <code>UNION</code>, joins and subqueries, <code>collection_group(..)</code>,
+<code>database()</code>, <code>+ - * / %</code>, <code>||</code>, <code>LOWER</code>, <code>UPPER</code>, <code>CHAR_LENGTH</code>, <code>LIKE</code>, <code>ILIKE</code>, <code>CASE</code>,
+<code>COALESCE</code>, <code>IFNULL</code>, <code>SUBSTR</code> and search run on Firestore.</p>
+<h3 id="enterprise-databases"><a class="header" href="#enterprise-databases">Enterprise databases</a></h3>
+<p>The listener that keeps a cache current needs real-time updates on a database of the Enterprise
+edition. They are enabled when the database is created:</p>
+<pre><code class="language-sh">gcloud firestore databases create --database=my-database --edition=enterprise \
+  --location=nam5 --enable-firestore-data-access --enable-realtime-updates
+</code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="usage"><a class="header" href="#usage">Usage</a></h1>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
@@ -2939,7 +3035,9 @@ requests the cache cannot answer completely return an error.</li>
 <tr><td>Read by ID, batch read by IDs</td><td>yes, for any cached collection</td></tr>
 <tr><td>Listing all documents in a collection</td><td>only for <strong>preloaded</strong> collections</td></tr>
 <tr><td>Querying a collection (filtering, ordering, cursors)</td><td>only for <strong>preloaded</strong> collections, and only for supported queries</td></tr>
-<tr><td>Paged listing, queries with metadata, aggregations, transactions, writes</td><td>never</td></tr>
+<tr><td>Reads in a transaction or at a read time</td><td>never: <code>read_through_cache</code> reads from Firestore, <code>read_cached_only</code> returns an error</td></tr>
+<tr><td>Pipeline and SQL reads</td><td>for <strong>preloaded</strong> collections, and by ID for any cached collection, with the stages and functions in <a href="#pipelines-1">Pipelines</a></td></tr>
+<tr><td>Paged listing, queries with metadata, aggregations, writes</td><td>never</td></tr>
 </tbody>
 </table>
 </div>
@@ -3831,6 +3929,16 @@ Batch writers and transactions created from the clone keep it:</p>
 let unlimited_db = db.clone_with_request_timeout(None);
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<h2 id="retry-limits"><a class="header" href="#retry-limits">Retry limits</a></h2>
+<p>Reads, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
+next retry, each delay randomised by up to 50% either way. They differ in when they stop:</p>
+<ul>
+<li>reads stop after <code>max_retries</code> of <code>FirestoreDbOptions</code>, 3 by default, with no time limit;</li>
+<li>simple batch writes stop after <code>retry_max_elapsed_time</code> of <code>FirestoreSimpleBatchWriteOptions</code>, 60 seconds by default,
+and ignore <code>max_retries</code>;</li>
+<li>transactions stop after <code>max_retries</code> of <code>FirestoreTransactionOptions</code>, 4 by default, and, when set, after
+<code>retry_max_elapsed_time</code>, which is off by default.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="testing-your-own-code"><a class="header" href="#testing-your-own-code">Testing your own code</a></h1>
 <p>The Fluent API is built on <code>FirestoreDb</code> directly, so there is no built-in way to substitute a

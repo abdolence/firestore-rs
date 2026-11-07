@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c5f8c851.js";
+            window.path_to_searchindex_js = "searchindex-204a04a7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3b510eae.js"></script>
@@ -228,6 +228,16 @@ Batch writers and transactions created from the clone keep it:</p>
 let unlimited_db = db.clone_with_request_timeout(None);
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<h2 id="retry-limits"><a class="header" href="#retry-limits">Retry limits</a></h2>
+<p>Reads, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
+next retry, each delay randomised by up to 50% either way. They differ in when they stop:</p>
+<ul>
+<li>reads stop after <code>max_retries</code> of <code>FirestoreDbOptions</code>, 3 by default, with no time limit;</li>
+<li>simple batch writes stop after <code>retry_max_elapsed_time</code> of <code>FirestoreSimpleBatchWriteOptions</code>, 60 seconds by default,
+and ignore <code>max_retries</code>;</li>
+<li>transactions stop after <code>max_retries</code> of <code>FirestoreTransactionOptions</code>, 4 by default, and, when set, after
+<code>retry_max_elapsed_time</code>, which is off by default.</li>
+</ul>
 
                     </main>
 

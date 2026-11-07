@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c5f8c851.js";
+            window.path_to_searchindex_js = "searchindex-204a04a7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3b510eae.js"></script>
@@ -402,6 +402,9 @@ response that carries explain statistics, or no documents at all, adds an item w
 <code>document</code>.</p>
 <p><code>.request_tags(..)</code> and <code>.request_options(..)</code> attach request options to one pipeline, as they do
 for a Core query.</p>
+<p>A session created with <code>read_through_cache</code> or <code>read_cached_only</code> answers a pipeline from the
+cache when it only filters, sorts and pages cached documents, see
+<a href="./caching.html#pipelines">Caching pipelines</a>.</p>
 <h2 id="explaining-a-pipeline"><a class="header" href="#explaining-a-pipeline">Explaining a pipeline</a></h2>
 <p>Query Explain returns the plan Firestore chose for a pipeline. <code>.explain()</code> runs the pipeline for
 its plan only: no document is read or returned. <code>.explain_with_options(..)</code> with <code>analyze</code> set

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c5f8c851.js";
+            window.path_to_searchindex_js = "searchindex-204a04a7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3b510eae.js"></script>
@@ -201,6 +201,9 @@ documents of a pipeline, and <code>INSERT</code>, <code>UPDATE</code> and <code>
 <p>SQL needs a database of the Firestore <em>Enterprise edition</em>, as pipelines do. A statement means what
 the same pipeline means in the fluent API: Firestore’s semantics, listed in
 <a href="#semantics">Semantics</a>, where a few results differ from those of a SQL database.</p>
+<p>A read through a cache session is answered from the cache when the pipeline it translates to only
+filters, sorts and pages cached documents, see <a href="./caching.html#sql">Caching pipelines</a> for the cached
+shapes.</p>
 <h2 id="when-to-use-sql"><a class="header" href="#when-to-use-sql">When to use SQL</a></h2>
 <p>Application code keeps the fluent API. A field name in <code>path!(Book::rating)</code> is checked when the
 program compiles, where a misspelled field in SQL text reads as an absent field and matches
@@ -261,7 +264,7 @@ hyphens or slashes between backticks, <code>"text"</code> as a string literal, <
 to several is refused.</p>
 <p>Parameters are the way to put a value into a statement:</p>
 <ul>
-<li><code>@name</code> is bound with <code>.param("name", value)</code>, and <code>.param("@name", value)</code> binds the same;</li>
+<li><code>@name</code> is bound with <code>.param("name", value)</code>;</li>
 <li><code>?</code> is bound with <code>.params([..])</code>, in the order the <code>?</code>s appear;</li>
 <li>a statement uses one form, and mixing them is refused, and so is <code>$1</code> or <code>:name</code>;</li>
 <li>the value is any <code>Serialize</code> type, bound as a typed constant of the pipeline, as a value in the
@@ -323,7 +326,7 @@ let rows = db
 <p><code>FirestoreSqlOptions</code> limits a statement before it runs. A statement that breaks a limit fails at
 translation with <code>InvalidParametersError</code>, and no request is sent. <code>FirestoreSqlOptions::new()</code>
 allows every statement the translator supports, except <a href="#joins-and-subqueries">joins and
-subqueries</a> and statements longer than 16 KiB, and
+subqueries</a>, and
 <code>FirestoreSqlOptions::read_only()</code> starts the set for text from outside the program:</p>
 <ul>
 <li><code>read_only()</code> refuses <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code>, and the <code>database()</code> source;</li>
@@ -335,12 +338,11 @@ statement names one: a collection, each collection of a path, a collection group
 <li><code>.with_max_rows(1_000)</code> returns at most that many rows: the <code>LIMIT</code> is lowered to it, or one is
 added. The cap counts the rows returned, not the rows read: an <code>OFFSET</code> still reads the rows it
 skips, and <code>ARRAY_AGG(..)</code> or <code>ARRAY(SELECT ..)</code> puts a whole collection into one row;</li>
-<li><code>.with_max_length(bytes)</code> refuses a longer statement, and the default is 16 KiB;</li>
 <li><code>.allow_subqueries()</code> allows joins and subqueries, see
 <a href="#joins-and-subqueries">Joins and subqueries</a>.</li>
 </ul>
-<p>The parser also refuses a statement nested deeper than 16 levels, and the translator one nested
-deeper than 64. These limits are fixed.</p>
+<p>The translator also refuses a statement longer than 16 KiB, the parser one nested deeper than 16
+levels, and the translator one nested deeper than 64. These limits are fixed.</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example(db: FirestoreDb, text: &amp;str) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
 </span>const BOOKS: FirestoreCollectionId = FirestoreCollectionId::from_static("books");
@@ -463,6 +465,7 @@ dropped, so a statement does not run with a clause missing.</p>
 <tbody>
 <tr><td>Pipe syntax, <code>FROM t |&gt; WHERE ..</code></td><td>not supported in this version</td></tr>
 <tr><td><code>MERGE</code>, <code>REPLACE INTO</code></td><td><code>MERGE</code> has no pipeline form, and <code>REPLACE INTO</code> does not parse in the BigQuery dialect; use <code>INSERT OR REPLACE</code> or <code>INSERT .. ON CONFLICT</code></td></tr>
+<tr><td><code>INSERT OR IGNORE</code>, <code>OR ABORT</code>, <code>OR FAIL</code>, <code>OR ROLLBACK</code>, <code>RETURNING</code>, <code>UPDATE .. FROM</code>, <code>ORDER BY</code> or <code>LIMIT</code> on a write, <code>INSERT .. SET</code>, <code>INSERT .. DEFAULT VALUES</code></td><td>a write has no pipeline form for them</td></tr>
 <tr><td>DDL, <code>BEGIN</code>, <code>EXPLAIN</code></td><td>a statement is a <code>SELECT</code>, <code>INSERT</code>, <code>UPDATE</code> or <code>DELETE</code>; transactions come from the API, and <code>.explain()</code> returns the plan</td></tr>
 <tr><td><code>WITH RECURSIVE</code>, a CTE column list, <code>MATERIALIZED</code></td><td>pipelines have no iteration</td></tr>
 <tr><td>Window functions, <code>QUALIFY</code>, <code>WINDOW</code></td><td>pipelines have no window stage</td></tr>
@@ -714,35 +717,8 @@ statements on one document committed 4 times and failed 4 times with <code>ABORT
 transaction was aborted due to a conflict”, and the stored <code>stock</code> was 4. A write that returns
 <code>ABORTED</code> can be sent again.</li>
 </ul>
-<p>Refused: <code>MERGE</code>, <code>REPLACE INTO</code>, <code>INSERT OR IGNORE</code>, <code>OR ABORT</code>, <code>OR FAIL</code> and <code>OR ROLLBACK</code>,
-<code>RETURNING</code>, <code>UPDATE .. FROM</code>, <code>ORDER BY</code> and <code>LIMIT</code> on a write, <code>INSERT .. SET</code>,
-<code>INSERT .. DEFAULT VALUES</code>, and any <code>ON CONFLICT</code> target but <code>__name__</code>.</p>
-<h3 id="write-limits"><a class="header" href="#write-limits">Write limits</a></h3>
-<p>Firestore rejects an atomic write that is too big with <code>InvalidArgument</code>, “Transaction too big.
-Decrease transaction size.” The limit is not one number of documents. It was measured on documents
-of two small fields (an integer and a short string), from a developer machine:</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Statement</th><th>Largest that succeeded</th><th>Smallest that failed</th></tr>
-</thead>
-<tbody>
-<tr><td><code>UPDATE .. SET touched = 1 WHERE TRUE</code></td><td>55,000 documents, 27.5 s</td><td>60,000 documents, in two runs</td></tr>
-<tr><td><code>DELETE FROM .. WHERE TRUE</code></td><td>5,475 documents</td><td>5,500 documents</td></tr>
-</tbody>
-</table>
-</div>
-<p>The <code>DELETE</code> limit was about a tenth of the <code>UPDATE</code> limit. Throughput was 1,000 to 3,000 documents
-per second, and rose with the size of the write. Two runs that came right after inserting the
-documents failed once with <code>ResourceExhausted</code> (“This database has exceeded their maximum
-bandwidth for writes”) and passed after a pause, and one <code>UPDATE</code> of 67,500 documents failed once
-with <code>Aborted</code>.</p>
-<p>Split a large write by a <code>WHERE</code> on a range, such as the key or a timestamp, and send each part
-after the one before. The numbers are measurements on tiny documents.</p>
-<p>A TTL (time-to-live) policy suits retention better than a scheduled <code>DELETE</code>: Firestore deletes
-the documents itself once the timestamp in the policy’s field has passed, see
-<a href="./index-management.html">Index management</a>. The
-<a href="./bulk-delete.html">bulk delete</a> of the <code>admin</code> feature empties a whole collection.</p>
+<p>Firestore refuses an atomic write that is too big. <a href="./pipeline-writes.html#write-limits">Write limits</a>
+lists the sizes that were measured.</p>
 <h2 id="errors"><a class="header" href="#errors">Errors</a></h2>
 <p>A text that does not parse, a construct that is refused, a parameter bound on one side only, and a
 statement that the options refuse all fail with <code>InvalidParametersError</code>, before any request. Its

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c5f8c851.js";
+            window.path_to_searchindex_js = "searchindex-204a04a7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3b510eae.js"></script>
@@ -277,6 +277,33 @@ subquery.</li>
 </ul>
 <p>The library does not set <code>.atomic()</code> itself and does not check these rules: Firestore rejects a
 write that breaks one with <code>INVALID_ARGUMENT</code>.</p>
+<h2 id="write-limits"><a class="header" href="#write-limits">Write limits</a></h2>
+<p>Firestore rejects an atomic write that is too big with <code>InvalidArgument</code>, “Transaction too big.
+Decrease transaction size.” The limit is not one number of documents. It was measured with SQL
+statements, which run as atomic pipeline writes, on documents of two small fields (an integer and
+a short string), from a developer machine:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Statement</th><th>Largest that succeeded</th><th>Smallest that failed</th></tr>
+</thead>
+<tbody>
+<tr><td><code>UPDATE .. SET touched = 1 WHERE TRUE</code></td><td>55,000 documents, 27.5 s</td><td>60,000 documents, in two runs</td></tr>
+<tr><td><code>DELETE FROM .. WHERE TRUE</code></td><td>5,475 documents</td><td>5,500 documents</td></tr>
+</tbody>
+</table>
+</div>
+<p>The <code>DELETE</code> limit was about a tenth of the <code>UPDATE</code> limit. Throughput was 1,000 to 3,000 documents
+per second, and rose with the size of the write. Two runs that came right after inserting the
+documents failed once with <code>ResourceExhausted</code> (“This database has exceeded their maximum
+bandwidth for writes”) and passed after a pause, and one <code>UPDATE</code> of 67,500 documents failed once
+with <code>Aborted</code>.</p>
+<p>Split a large write by a <code>filter</code> on a range, such as the key or a timestamp, and send each part
+after the one before. The numbers are measurements on tiny documents.</p>
+<p>A TTL (time-to-live) policy suits retention better than a scheduled <code>delete</code>: Firestore deletes
+the documents itself once the timestamp in the policy’s field has passed, see
+<a href="./index-management.html">Index management</a>. The
+<a href="./bulk-delete.html">bulk delete</a> of the <code>admin</code> feature empties a whole collection.</p>
 <h2 id="writes-in-a-transaction"><a class="header" href="#writes-in-a-transaction">Writes in a transaction</a></h2>
 <p><code>execute_in_transaction(&amp;mut transaction)</code> runs the write in an open transaction, whether it comes
 from <code>db.begin_transaction()</code> or from <code>run_transaction</code>. Firestore holds the write until the
@@ -310,8 +337,7 @@ commit.</p>
 <li>every read comes before the first pipeline write; Firestore fails a read after it with
 <code>FAILED_PRECONDITION</code>;</li>
 <li>a transaction takes pipeline writes or buffered writes, not both: Firestore rejects a commit
-that mixes them, and the library fails with <code>InvalidParametersError</code> as soon as the second kind
-is added, whichever comes first;</li>
+that mixes them;</li>
 <li>a write cannot run at a read time, and <code>execute()</code> or <code>.atomic().execute()</code> on a <code>db</code> that is
 bound to a transaction or a read time fails with <code>InvalidParametersError</code>; use
 <code>execute_in_transaction</code> inside the transaction.</li>

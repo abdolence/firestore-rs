@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-c5f8c851.js";
+            window.path_to_searchindex_js = "../searchindex-204a04a7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-3b510eae.js"></script>
@@ -194,7 +194,9 @@ requests the cache cannot answer completely return an error.</li>
 <tr><td>Read by ID, batch read by IDs</td><td>yes, for any cached collection</td></tr>
 <tr><td>Listing all documents in a collection</td><td>only for <strong>preloaded</strong> collections</td></tr>
 <tr><td>Querying a collection (filtering, ordering, cursors)</td><td>only for <strong>preloaded</strong> collections, and only for supported queries</td></tr>
-<tr><td>Paged listing, queries with metadata, aggregations, transactions, writes</td><td>never</td></tr>
+<tr><td>Reads in a transaction or at a read time</td><td>never: <code>read_through_cache</code> reads from Firestore, <code>read_cached_only</code> returns an error</td></tr>
+<tr><td>Pipeline and SQL reads</td><td>for <strong>preloaded</strong> collections, and by ID for any cached collection, with the stages and functions in <a href="../caching.html#pipelines">Pipelines</a></td></tr>
+<tr><td>Paged listing, queries with metadata, aggregations, writes</td><td>never</td></tr>
 </tbody>
 </table>
 </div>

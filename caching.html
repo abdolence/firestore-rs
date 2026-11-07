@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c5f8c851.js";
+            window.path_to_searchindex_js = "searchindex-204a04a7.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-3b510eae.js"></script>
@@ -191,6 +191,97 @@ latency noticeably.</p>
 <li><code>caching-persistent</code> for a persistent, disk backed cache, implemented with
 <a href="https://github.com/cberner/redb">redb</a> and protobuf.</li>
 </ul>
+<h2 id="pipelines"><a class="header" href="#pipelines">Pipelines</a></h2>
+<p><a href="./pipelines.html">Pipelines</a> and <a href="./sql.html">SQL</a> reads use the cache in the same sessions,
+<code>read_through_cache</code> and <code>read_cached_only</code>. The cache answers a pipeline on its own when every
+part of it is in the lists below, with the semantics Firestore gives a pipeline. Caching is meant
+for data such as static dictionaries, or sessions read by ID, so the cache filters, sorts and pages
+documents, and leaves computing to Firestore. Anything else runs on Firestore under
+<code>read_through_cache</code>, and fails with a <code>CacheError</code> under <code>read_cached_only</code>.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::Deserialize;
+</span><span class="boring">#[derive(Debug, Clone, Deserialize)]
+</span><span class="boring">struct Country { name: String, region: String }
+</span><span class="boring">async fn example(db: FirestoreDb, cache: FirestoreMemoryCache) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let european: Vec&lt;Country&gt; = db
+    .read_through_cache(&amp;cache)
+    .fluent()
+    .pipeline()
+    .select()
+    .from("countries")
+    .filter(|q| q.field(path!(Country::region)).eq("Europe"))
+    .sort(|e| [e.field(path!(Country::name)).asc()])
+    .obj()
+    .query()
+    .await?;
+<span class="boring">let _ = european;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Sources:</p>
+<ul>
+<li>a cached collection, <code>.from(name)</code>, with <code>.parent(..)</code> for a sub-collection. The collection must
+be preloaded, as for a Core <code>query</code>;</li>
+<li><code>.documents([..])</code>, and a collection whose first <code>filter</code> pins <code>__name__</code> with <code>eq</code> or <code>is_in</code>,
+read the named documents by ID, from any cached collection.</li>
+</ul>
+<p>Stages: <code>filter</code>, <code>sort</code>, <code>limit</code>, <code>offset</code>, <code>fields</code>, <code>add_fields</code> and <code>remove_fields</code>. A <code>limit</code>
+or <code>offset</code> needs a <code>sort</code> before it, since Firestore returns unsorted documents in an order of its
+own. <code>fields</code>, <code>add_fields</code> and <code>remove_fields</code> take plain fields, with or without an alias, as
+top-level fields. A computed expression in them runs on Firestore.</p>
+<p>Functions:</p>
+<ul>
+<li>comparisons: <code>equal</code>, <code>not_equal</code>, <code>less_than</code>, <code>less_than_or_equal</code>, <code>greater_than</code>,
+<code>greater_than_or_equal</code>, and <code>is_null</code>, <code>is_not_null</code>, <code>is_nan</code>, <code>is_not_nan</code>, which are built
+from them;</li>
+<li><code>and</code>, <code>or</code>, <code>not</code>, <code>exists</code>, <code>is_absent</code>;</li>
+<li><code>equal_any</code>, <code>not_equal_any</code>, <code>array_contains</code>, <code>array_contains_all</code>, <code>array_contains_any</code>.</li>
+</ul>
+<p>Everything else runs on Firestore: arithmetic and string functions, aggregates, <code>distinct</code>,
+search, <code>find_nearest</code>, <code>union</code>, <code>unnest</code>, subqueries and variables, collection groups,
+<code>database()</code>, <code>literals</code>, <code>force_index</code>, raw stages, writes, <code>like</code> and every other function. So
+do Query Explain and a pipeline in a transaction or at a read time. The cache also sends a
+pipeline to Firestore when it meets a value Firestore fails the request on, such as <code>not</code> of a
+string, when a field name is not a simple identifier (letters, digits and underscores, not
+starting with a digit), and when it would have to order arrays, maps, geo points or vectors, in a
+<code>sort</code> or a <code>less_than</code>.</p>
+<h3 id="what-differs-from-a-pipeline-that-firestore-runs"><a class="header" href="#what-differs-from-a-pipeline-that-firestore-runs">What differs from a pipeline that Firestore runs</a></h3>
+<ul>
+<li>Results are eventually consistent, as for Core reads, see
+<a href="./caching/updates.html">How the cache is updated</a>.</li>
+<li>The cache does not check the edition of the database. On a Standard edition database, where
+Firestore fails every pipeline with <code>FAILED_PRECONDITION</code>, a pipeline the cache answers
+succeeds, and one it does not answer fails as on Firestore.</li>
+<li>A result from the cache has no <code>execution_time</code> in its metadata, and an empty result has no
+item without a document.</li>
+<li>A read by ID that names a document the cache does not hold runs on Firestore under
+<code>read_through_cache</code>. Under <code>read_cached_only</code> the missing documents are left out, as a Core batch
+read leaves them. In a preloaded collection, a <code>__name__</code> filter that names a missing document
+is answered from the collection, where the document is absent.</li>
+<li>Pipelines never write to the cache: a pipeline that runs on Firestore leaves the cache as it was.
+Reads by ID through <code>get</code> fill a lazily loaded collection.</li>
+<li>Documents that tie on every sort key come back in document-name order from the cache, where
+Firestore’s order of them is unspecified, so a <code>limit</code> that cuts through them can keep other
+documents than Firestore would.</li>
+</ul>
+<h3 id="sql"><a class="header" href="#sql">SQL</a></h3>
+<p>A SQL read runs as a pipeline, so the same lists apply. These shapes are cached, over one cached
+collection or <code>documents(..)</code>:</p>
+<ul>
+<li><code>SELECT</code> of columns, aliases, <code>*</code> and <code>* EXCEPT (..)</code>;</li>
+<li><code>WHERE</code> with comparisons, <code>AND</code>, <code>OR</code>, <code>NOT</code>, <code>IS [NOT] NULL</code>, <code>IS [NOT] DISTINCT FROM</code>,
+<code>[NOT] IN (list)</code>, <code>IN UNNEST(array)</code> and <code>BETWEEN</code>;</li>
+<li><code>WHERE __name__ = 'id'</code> and <code>WHERE __name__ IN ('id', ..)</code>, read by ID;</li>
+<li><code>ORDER BY</code>, and <code>LIMIT</code> and <code>OFFSET</code> with an <code>ORDER BY</code>.</li>
+</ul>
+<p><code>GROUP BY</code>, aggregates, <code>DISTINCT</code>, <code>UNION</code>, joins and subqueries, <code>collection_group(..)</code>,
+<code>database()</code>, <code>+ - * / %</code>, <code>||</code>, <code>LOWER</code>, <code>UPPER</code>, <code>CHAR_LENGTH</code>, <code>LIKE</code>, <code>ILIKE</code>, <code>CASE</code>,
+<code>COALESCE</code>, <code>IFNULL</code>, <code>SUBSTR</code> and search run on Firestore.</p>
+<h3 id="enterprise-databases"><a class="header" href="#enterprise-databases">Enterprise databases</a></h3>
+<p>The listener that keeps a cache current needs real-time updates on a database of the Enterprise
+edition. They are enabled when the database is created:</p>
+<pre><code class="language-sh">gcloud firestore databases create --database=my-database --edition=enterprise \
+  --location=nam5 --enable-firestore-data-access --enable-realtime-updates
+</code></pre>
 
                     </main>
 
