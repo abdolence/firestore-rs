@@ -13,60 +13,60 @@ editions, and the client picks one by its ID, see
 
 The API column names the API a row is about: Core queries, pipelines, SQL, Admin for index
 management, TTL and bulk delete, or Any for a row that belongs to no one API. "Pipeline, SQL" marks
-a row where both behave the same. A number in brackets points to the notes under the table.
+a row where both behave the same. A number points to the notes under the table.
 
 | Feature | API | Standard | Enterprise |
 |---|---|---|---|
 | Reads and queries | Core | yes | yes |
-| Reads and queries | [Pipeline](./pipelines.md), [SQL](./sql.md) | fails (1) | yes |
+| Reads and queries | [Pipeline](./pipelines.md), [SQL](./sql.md) | fails[^pipeline-standard] | yes |
 | Writes and batch writes | Core | yes | yes |
 | [Writes](./pipeline-writes.md) | Pipeline, SQL | no | yes |
-| Query that no index covers | Core | fails (2) | table scan (3) |
-| Query that no index covers | Pipeline, SQL | no | table scan (4) |
+| Query that no index covers | Core | fails[^core-no-index] | table scan[^core-table-scan] |
+| Query that no index covers | Pipeline, SQL | no | table scan[^pipeline-table-scan] |
 | Aggregations: count, sum, avg | Core | yes | yes, same results |
-| [Transactions](./transactions.md) | Any | yes | yes (5) |
-| Query plans | Core | `.explain()` | rejected (6) |
-| Query plans | Pipeline, SQL | no | `.explain()` (6) |
-| [Vector search](./vector-search.md) | Core | needs a vector index (7) | no index needed (8) |
-| [Vector search](./vector-search.md) | Pipeline | no | table scan (9) |
+| [Transactions](./transactions.md) | Any | yes | yes[^optimistic] |
+| Query plans | Core | `.explain()` | rejected[^explain] |
+| Query plans | Pipeline, SQL | no | `.explain()`[^explain] |
+| [Vector search](./vector-search.md) | Core | needs a vector index[^vector-index] | no index needed[^vector-enterprise] |
+| [Vector search](./vector-search.md) | Pipeline | no | table scan[^pipeline-vector] |
 | [Text and geo search](./pipeline-search.md) | Pipeline, SQL | no | needs a search index |
 | [Listeners](./listening-changes.md) | Core | yes | needs real-time updates |
 | [Caching](./caching.md) | Core | yes | needs real-time updates |
 | [Caching](./caching.md) | Pipeline, SQL | only if the cache answers in full | needs real-time updates |
 | Automatic single-field indexes | Admin | yes | none |
-| Single-field overrides | Admin | yes | none (10) |
+| Single-field overrides | Admin | yes | none[^exempt] |
 | Composite index of one field | Admin | a vector field only | yes |
 | Unique indexes | Admin | no | yes |
-| Index density (11) | Admin | `SparseAll` only | `Dense` by default, or `SparseAny` (12) |
+| Index density[^density] | Admin | `SparseAll` only | `Dense` by default, or `SparseAny`[^search-sparse-any] |
 | `__name__` appended to an index | Admin | yes | no |
 | TTL policy | Admin | yes | yes |
 | [Bulk delete](./bulk-delete.md) | Admin | yes | yes |
 | [Firestore emulator](./emulator.md) | Any | the default emulator | started with `--edition=enterprise` |
-| Billing | Any | per document read, written and deleted | read units and write units (13) |
+| Billing | Any | per document read, written and deleted | read units and write units[^realtime-billing] |
 
-1. A pipeline or SQL statement sent to a Standard edition database fails with
-   `FAILED_PRECONDITION`, unless a [cache](./caching.md#pipelines) session answers it.
-2. `FAILED_PRECONDITION`, "The query requires an index".
-3. The query reads every document of the collection. Without `order_by` the order of its results is
-   unspecified.
-4. A pipeline or SQL statement that no index covers runs as a table scan. A search is the
-   exception: it needs a search index and fails without one, see
-   [Known table scans](./editions/query-plans.md#known-table-scans).
-5. Optimistic by default, so under contention more attempts abort and are retried.
-6. An Enterprise edition database rejects a Core `.explain()` with `INVALID_ARGUMENT`, so explain
-   the same query as a pipeline or SQL, see
-   [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline).
-7. Without a vector index the query fails with `FAILED_PRECONDITION`.
-8. A vector index can still be created on Enterprise, but whether a Core query uses it cannot be
-   seen, since Core `.explain()` is rejected there.
-9. The `find_nearest` stage reads every document with or without a vector index, and a filter
-   before it does not narrow the read. Google lists this as a known issue of pipelines. Use a Core
-   `find_nearest` where the index should be used, see
-   [Vector search](./vector-search.md#on-the-enterprise-edition).
-10. An `.exempt()` is already satisfied.
-11. The density of an index is which documents it holds an entry for.
-12. A search index is `SparseAny`.
-13. Real-time updates are billed separately.
+[^pipeline-standard]: A pipeline or SQL statement sent to a Standard edition database fails with
+    `FAILED_PRECONDITION`, unless a [cache](./caching.md#pipelines) session answers it.
+[^core-no-index]: `FAILED_PRECONDITION`, "The query requires an index".
+[^core-table-scan]: The query reads every document of the collection. Without `order_by` the order of its results is
+    unspecified.
+[^pipeline-table-scan]: A pipeline or SQL statement that no index covers runs as a table scan. A search is the
+    exception: it needs a search index and fails without one, see
+    [Known table scans](./editions/query-plans.md#known-table-scans).
+[^optimistic]: Optimistic by default, so under contention more attempts abort and are retried.
+[^explain]: An Enterprise edition database rejects a Core `.explain()` with `INVALID_ARGUMENT`, so explain
+    the same query as a pipeline or SQL, see
+    [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline).
+[^vector-index]: Without a vector index the query fails with `FAILED_PRECONDITION`.
+[^vector-enterprise]: A vector index can still be created on Enterprise, but whether a Core query uses it cannot be
+    seen, since Core `.explain()` is rejected there.
+[^pipeline-vector]: The `find_nearest` stage reads every document with or without a vector index, and a filter
+    before it does not narrow the read. Google lists this as a known issue of pipelines. Use a Core
+    `find_nearest` where the index should be used, see
+    [Vector search](./vector-search.md#on-the-enterprise-edition).
+[^exempt]: An `.exempt()` is already satisfied.
+[^density]: The density of an index is which documents it holds an entry for.
+[^search-sparse-any]: A search index is `SparseAny`.
+[^realtime-billing]: Real-time updates are billed separately.
 
 ## Telling which edition a database is
 

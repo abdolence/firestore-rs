@@ -16,6 +16,7 @@ create-missing = false
 default-theme = "navy"
 git-repository-url = "https://github.com/abdolence/firestore-rs"
 cname = "firestore-rust.abdolence.dev"
+additional-js = ["theme/footnote-tooltips.js"]
 
 [output.html.playground]
 runnable = false
