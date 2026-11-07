@@ -477,7 +477,9 @@ async fn timestamp_functions_compute_timestamps() -> TestResult {
                 .timestamp_trunc(FirestoreTimestampGranularity::Day)
                 .alias("timestamp_trunc"),
             timestamp()
-                .timestamp_trunc(FirestoreTimestampGranularity::WeekStartingMonday)
+                .timestamp_trunc(FirestoreTimestampGranularity::WeekStarting(
+                    jiff::civil::Weekday::Monday,
+                ))
                 .alias("timestamp_trunc_week"),
             timestamp()
                 .timestamp_trunc_with_time_zone(FirestoreTimestampGranularity::Day, "Asia/Tokyo")

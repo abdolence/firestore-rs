@@ -118,6 +118,10 @@ their methods `build_condition`, `build_clause` and `build_query`. The builders 
 Code that only calls the builders compiles as it is. Code that names the traits in a bound uses `Into` instead, and
 calls `.into()` where it called `build_query()`. A closure that returned an `Option` of a string returns the string.
 
+### Week variants take a `Weekday`
+
+The seven `WeekStartingMonday` … `WeekStartingSunday` variants of `FirestoreTimestampGranularity` and `FirestoreTimestampPart` are replaced by `WeekStarting(jiff::civil::Weekday)`: `WeekStartingMonday` becomes `WeekStarting(Weekday::Monday)`.
+
 ### Read retries use the delays of transactions
 
 A retried read waits like a transaction and a simple batch writer do: 500 ms for the first retry, growing by 1.5 times
