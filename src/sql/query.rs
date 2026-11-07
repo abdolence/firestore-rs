@@ -24,7 +24,7 @@ use sqlparser::ast::{
 
 pub(super) struct FirestoreSqlBranch {
     pub(super) pipeline: FirestorePipeline,
-    /// The names of the columns it outputs, or `None` for `*`, which lists none.
+    // The names of the columns it outputs, or `None` for `*`, which lists none.
     pub(super) columns: Option<Vec<String>>,
     pub(super) start: Option<FirestoreSqlLocation>,
 }
@@ -112,8 +112,8 @@ impl FirestoreSqlTranslator<'_> {
         Ok(pipeline)
     }
 
-    /// A query as the `SELECT` it ends in, with the pipeline that reads its rows. The common
-    /// table expressions of its `WITH` are in scope for the query and the ones inside it.
+    // A query as the `SELECT` it ends in, with the pipeline that reads its rows. The common
+    // table expressions of its `WITH` are in scope for the query and the ones inside it.
     pub(super) fn query(
         &mut self,
         query: &Query,
@@ -184,11 +184,11 @@ impl FirestoreSqlTranslator<'_> {
         FirestoreError::unsupported_sql(construct, None)
     }
 
-    /// A `SELECT` with the `ORDER BY` of its query, which sorts before the projection, so that
-    /// Firestore can read an index in order rather than sort the projected rows. A query that
-    /// groups sorts its groups, after the aggregate stage.
-    ///
-    /// A `SELECT` nested in this one translates with a state of its own.
+    // A `SELECT` with the `ORDER BY` of its query, which sorts before the projection, so that
+    // Firestore can read an index in order rather than sort the projected rows. A query that
+    // groups sorts its groups, after the aggregate stage.
+    //
+    // A `SELECT` nested in this one translates with a state of its own.
     pub(super) fn select(
         &mut self,
         select: &Select,
@@ -362,8 +362,8 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// A condition that is the constant `true`, as `ON TRUE` is, keeps every row and adds no
-    /// stage.
+    // A condition that is the constant `true`, as `ON TRUE` is, keeps every row and adds no
+    // stage.
     pub(super) fn filter(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -380,9 +380,9 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// The pipeline that reads a table and the relation its names resolve against. `children`
-    /// says whether the table can be the subcollection of a document: it can in a subquery and
-    /// as a joined table.
+    // The pipeline that reads a table and the relation its names resolve against. `children`
+    // says whether the table can be the subcollection of a document: it can in a subquery and
+    // as a joined table.
     pub(super) fn table(
         &mut self,
         factor: &TableFactor,
@@ -547,7 +547,7 @@ impl FirestoreSqlTranslator<'_> {
         &mut self,
         name: &ObjectName,
         args: &[FunctionArg],
-        alias: Option<String>,
+        mut alias: Option<String>,
         children: bool,
     ) -> FirestoreResult<(FirestorePipelineSource, FirestoreSqlRelation)> {
         let start = name_start(name);
@@ -567,36 +567,33 @@ impl FirestoreSqlTranslator<'_> {
             })
             .collect::<FirestoreResult<Vec<_>>>()?;
         let source = match (function.as_str(), arguments.as_slice()) {
-            ("collection_group" | "subcollection", [collection_id]) => {
-                let source = if function == "collection_group" {
-                    if !self.options.collection_groups {
-                        return Err(FirestoreError::invalid_sql(
-                            "collection_group",
-                            "the options refuse collection groups",
-                            start,
-                        ));
-                    }
-                    FirestorePipelineSource::CollectionGroup(FirestoreCollectionGroupSource::new(
-                        collection_id.to_string(),
-                    ))
-                } else {
-                    if !children {
-                        return Err(FirestoreError::invalid_sql(
-                            "subcollection",
-                            "subcollection(..) reads the collection under the current document, so it belongs in a subquery or a join",
-                            start,
-                        ));
-                    }
-                    FirestorePipelineSource::Subcollection(FirestoreSubcollectionSource::new(
-                        collection_id.to_string(),
-                    ))
-                };
+            ("collection_group", [collection_id]) => {
+                if !self.options.collection_groups {
+                    return Err(FirestoreError::invalid_sql(
+                        "collection_group",
+                        "the options refuse collection groups",
+                        start,
+                    ));
+                }
                 self.check_collection(collection_id, start)?;
-                let relation = FirestoreSqlRelation {
-                    name: alias.or_else(|| Some(collection_id.to_string())),
-                    collection_path: None,
-                };
-                return Ok((source, relation));
+                alias.get_or_insert_with(|| collection_id.to_string());
+                FirestorePipelineSource::CollectionGroup(FirestoreCollectionGroupSource::new(
+                    collection_id.to_string(),
+                ))
+            }
+            ("subcollection", [collection_id]) => {
+                if !children {
+                    return Err(FirestoreError::invalid_sql(
+                        "subcollection",
+                        "subcollection(..) reads the collection under the current document, so it belongs in a subquery or a join",
+                        start,
+                    ));
+                }
+                self.check_collection(collection_id, start)?;
+                alias.get_or_insert_with(|| collection_id.to_string());
+                FirestorePipelineSource::Subcollection(FirestoreSubcollectionSource::new(
+                    collection_id.to_string(),
+                ))
             }
             ("documents", paths) if !paths.is_empty() => {
                 let paths = paths

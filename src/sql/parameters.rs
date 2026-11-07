@@ -49,8 +49,8 @@ impl FirestoreSqlParameters {
 
 pub(super) struct FirestoreSqlBinding<'p> {
     named: &'p BTreeMap<String, FirestoreExpr>,
-    /// The value of each `?`, by where it starts. The translator reads a statement in another
-    /// order than the text, so a `?` finds its value by position rather than by count.
+    // The value of each `?`, by where it starts. The translator reads a statement in another
+    // order than the text, so a `?` finds its value by position rather than by count.
     positional: BTreeMap<Location, &'p FirestoreExpr>,
 }
 
@@ -152,8 +152,8 @@ impl<'p> FirestoreSqlBinding<'p> {
         self.positional.get(&start).copied()
     }
 
-    /// Fails for a value that did not serialise, which [`FirestoreExpr::constant`] keeps as a
-    /// constant with no type.
+    // Fails for a value that did not serialise, which [`FirestoreExpr::constant`] keeps as a
+    // constant with no type.
     fn serialised(parameter: &str, value: &FirestoreExpr, start: Location) -> FirestoreResult<()> {
         match value {
             FirestoreExpr::Constant(FirestoreValue {

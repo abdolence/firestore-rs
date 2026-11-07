@@ -9,13 +9,13 @@ use sqlparser::dialect::BigQueryDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::Tokenizer;
 
-/// How deep sqlparser may nest while it parses. Its own default of 50 overflows a 2 MiB stack in
-/// a debug build: each level of a nested `NOT` or function call takes about 90 KB there.
+// How deep sqlparser may nest while it parses. Its own default of 50 overflows a 2 MiB stack in
+// a debug build: each level of a nested `NOT` or function call takes about 90 KB there.
 const SQL_PARSER_RECURSION_LIMIT: usize = 16;
 
-/// The longest statement accepted, in bytes. sqlparser nests a chain of infix operators one level
-/// per operator, and its parsed statement is dropped recursively: a chain of 8,192 operators
-/// drops well within a 2 MiB stack.
+// The longest statement accepted, in bytes. sqlparser nests a chain of infix operators one level
+// per operator, and its parsed statement is dropped recursively: a chain of 8,192 operators
+// drops well within a 2 MiB stack.
 const SQL_MAX_LENGTH: usize = 16 * 1024;
 
 /// A SQL statement translated into the pipeline model.

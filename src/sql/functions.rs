@@ -31,8 +31,8 @@ impl FirestoreSqlCall<'_> {
 }
 
 impl FirestoreSqlTranslator<'_> {
-    /// A call of a scalar function. A name the alias table does not rename passes through to the
-    /// pipeline function of that name, and Firestore rejects one it does not have.
+    // A call of a scalar function. A name the alias table does not rename passes through to the
+    // pipeline function of that name, and Firestore rejects one it does not have.
     pub(super) fn function(
         &mut self,
         scope: &FirestoreSqlScope,

@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 struct FirestoreSqlGroupKey {
     selection: FirestoreSelection,
     name: String,
-    /// Whether `name` was made up, because neither the select list nor the expression gave one.
+    // Whether `name` was made up, because neither the select list nor the expression gave one.
     generated: bool,
 }
 
@@ -30,17 +30,17 @@ struct FirestoreSqlColumnRead {
     start: Option<FirestoreSqlLocation>,
 }
 
-/// How a query groups its documents, and what it accumulates over each group.
-///
-/// Every expression the translator returns for the select list, `HAVING` and `ORDER BY` of the
-/// query describes a document after the aggregate stage, which holds only the group keys and the
-/// accumulators: an aggregate call is the field of its accumulator, and an expression that is a
-/// group key is the field of that key. A column read that neither of these covers cannot be
-/// evaluated after the stage, and fails the query.
+// How a query groups its documents, and what it accumulates over each group.
+//
+// Every expression the translator returns for the select list, `HAVING` and `ORDER BY` of the
+// query describes a document after the aggregate stage, which holds only the group keys and the
+// accumulators: an aggregate call is the field of its accumulator, and an expression that is a
+// group key is the field of that key. A column read that neither of these covers cannot be
+// evaluated after the stage, and fails the query.
 pub(super) struct FirestoreSqlAggregation {
     keys: Vec<FirestoreSqlGroupKey>,
     accumulators: Vec<FirestoreSqlAccumulator>,
-    /// The names no generated name may take: the select list's aliases and the keys' names.
+    // The names no generated name may take: the select list's aliases and the keys' names.
     taken: BTreeSet<String>,
     reads: Vec<FirestoreSqlColumnRead>,
     outputs: Vec<(String, FirestoreExpr)>,
@@ -61,8 +61,8 @@ impl FirestoreSqlAggregation {
         !self.keys.is_empty() || !self.accumulators.is_empty()
     }
 
-    /// Groups by `expr`, output under `alias`. A field is output under its own path unless that
-    /// path is nested, whose dots a field name cannot hold. A repeated key is kept once.
+    // Groups by `expr`, output under `alias`. A field is output under its own path unless that
+    // path is nested, whose dots a field name cannot hold. A repeated key is kept once.
     pub(super) fn add_key(&mut self, expr: FirestoreExpr, alias: Option<&str>) {
         if self.keys.iter().any(|key| key.selection.expr == expr) {
             return;
@@ -124,9 +124,6 @@ impl FirestoreSqlAggregation {
         }
     }
 
-    /// The field of the accumulator for `aggregate`, adding one when the query has none yet. The
-    /// accumulator is output under `output`, or under a generated name when the call is not a
-    /// select item of its own.
     fn accumulator(&mut self, aggregate: FirestoreAggregate, output: Option<&str>) -> String {
         if let Some(known) = self
             .accumulators
@@ -198,11 +195,11 @@ impl FirestoreSqlAggregation {
 }
 
 impl FirestoreSqlTranslator<'_> {
-    /// Adds the group keys of the query to `aggregation`: the `GROUP BY` expressions, or for
-    /// `SELECT DISTINCT` the select list, which keeps one row per distinct combination.
-    ///
-    /// A key is output under the alias the select list gives the same expression. `GROUP BY`
-    /// also accepts a select alias for the expression it names.
+    // Adds the group keys of the query to `aggregation`: the `GROUP BY` expressions, or for
+    // `SELECT DISTINCT` the select list, which keeps one row per distinct combination.
+    //
+    // A key is output under the alias the select list gives the same expression. `GROUP BY`
+    // also accepts a select alias for the expression it names.
     pub(super) fn group_keys(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -266,9 +263,9 @@ impl FirestoreSqlTranslator<'_> {
         Ok(())
     }
 
-    /// Fails for the `SELECT` of an `EXISTS` that groups or aggregates. `EXISTS` asks whether the
-    /// query finds a row, and its select list is dropped, but an aggregate returns one row
-    /// whatever the `WHERE` found, and `GROUP BY` and `HAVING` change which rows exist.
+    // Fails for the `SELECT` of an `EXISTS` that groups or aggregates. `EXISTS` asks whether the
+    // query finds a row, and its select list is dropped, but an aggregate returns one row
+    // whatever the `WHERE` found, and `GROUP BY` and `HAVING` change which rows exist.
     pub(super) fn ensure_existence_ungrouped(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -384,7 +381,7 @@ impl FirestoreSqlTranslator<'_> {
             subquery: _,
         } = call;
         let distinct = matches!(duplicate_treatment, Some(DuplicateTreatment::Distinct));
-        let Some(accumulator) = accumulator(name, distinct) else {
+        let Some(accumulator) = accumulator_builder(name, distinct) else {
             return Err(FirestoreError::unsupported_sql(
                 &if distinct {
                     format!("DISTINCT in {name}")
@@ -410,9 +407,6 @@ impl FirestoreSqlTranslator<'_> {
         Ok(accumulator(self.expr(scope, argument)?))
     }
 
-    /// The column `parts` names. A column of the query is noted as read for the aggregation to
-    /// check, and a column of an enclosing query becomes the variable a subquery reads it
-    /// through.
     pub(super) fn column(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -440,8 +434,8 @@ impl FirestoreSqlTranslator<'_> {
             .map_or(0, |aggregation| aggregation.reads.len())
     }
 
-    /// `translated`, which is the translation of an expression whose column reads since `mark`
-    /// belong to it: the field of the group key when it is one, and then those reads are covered.
+    // `translated`, which is the translation of an expression whose column reads since `mark`
+    // belong to it: the field of the group key when it is one, and then those reads are covered.
     pub(super) fn grouped(&mut self, translated: FirestoreExpr, mark: usize) -> FirestoreExpr {
         let Some(aggregation) = self.aggregation.as_mut() else {
             return translated;
@@ -461,9 +455,10 @@ impl FirestoreSqlTranslator<'_> {
     }
 }
 
-/// The builder of the accumulator that the SQL aggregate function `name` computes, or `None` for
-/// a function or a `DISTINCT` it has no accumulator for.
-fn accumulator(name: &str, distinct: bool) -> Option<fn(FirestoreExpr) -> FirestoreAggregate> {
+fn accumulator_builder(
+    name: &str,
+    distinct: bool,
+) -> Option<fn(FirestoreExpr) -> FirestoreAggregate> {
     let build: fn(FirestoreExpr) -> FirestoreAggregate = match (name, distinct) {
         ("count", false) => FirestoreExpr::count,
         ("count", true) | ("count_distinct", false) => FirestoreExpr::count_distinct,
@@ -483,11 +478,11 @@ fn accumulator(name: &str, distinct: bool) -> Option<fn(FirestoreExpr) -> Firest
     Some(build)
 }
 
-/// Whether `name` is an aggregate function: one with an accumulator, or one of SQL's that has none
-/// and is refused rather than passed on as a scalar function. `minimum` and `maximum` are not,
-/// since pipelines also have scalar functions of those names.
+// Whether `name` is an aggregate function: one with an accumulator, or one of SQL's that has none
+// and is refused rather than passed on as a scalar function. `minimum` and `maximum` are not,
+// since pipelines also have scalar functions of those names.
 pub(super) fn is_aggregate_function(name: &str) -> bool {
-    accumulator(name, false).is_some()
+    accumulator_builder(name, false).is_some()
         || matches!(
             name,
             "any_value" | "logical_and" | "logical_or" | "string_agg"

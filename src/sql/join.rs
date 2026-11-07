@@ -12,11 +12,8 @@ use sqlparser::ast::{Expr, Join, JoinConstraint, JoinOperator, TableFactor, Tabl
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FirestoreSqlJoinKind {
-    /// Each row with each match, and no row without one.
     Inner,
-    /// As `Inner`, and each row without a match once, with the joined table null.
     Left,
-    /// Each row with every row of the table.
     Cross,
 }
 
@@ -27,11 +24,11 @@ struct FirestoreSqlJoin<'a> {
 }
 
 impl FirestoreSqlTranslator<'_> {
-    /// The pipeline that reads the tables of a `FROM`, and the scope of their names.
-    ///
-    /// A table after the first is joined by a subquery that runs for each row before it: its
-    /// documents become an array under the table's name, and `unnest` makes one row of each
-    /// element. `UNNEST` of an array of the row needs no subquery.
+    // The pipeline that reads the tables of a `FROM`, and the scope of their names.
+    //
+    // A table after the first is joined by a subquery that runs for each row before it: its
+    // documents become an array under the table's name, and `unnest` makes one row of each
+    // element. `UNNEST` of an array of the row needs no subquery.
     pub(super) fn from<'o>(
         &mut self,
         from: &[TableWithJoins],
@@ -131,8 +128,8 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// Joins a table, as a subquery that runs for each row. A table of the row's own
-    /// subcollection reads only that row's children, so it needs no opt-in.
+    // Joins a table, as a subquery that runs for each row. A table of the row's own
+    // subcollection reads only that row's children, so it needs no opt-in.
     fn table_join<'o>(
         &mut self,
         pipeline: &mut FirestorePipeline,

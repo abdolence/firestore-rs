@@ -16,12 +16,12 @@ use sqlparser::ast::{
 const SQL_SCORE_FIELD: &str = "_score";
 
 impl FirestoreSqlTranslator<'_> {
-    /// Splits the `WHERE` of a query into the search it holds, which belongs to the source, and
-    /// the condition that remains.
-    ///
-    /// A search is a top-level `AND` condition: `document_matches(query)`, or
-    /// `geo_distance(field, point) <= meters`. Firestore accepts it only right after a collection
-    /// or collection group source, so it cannot sit under `OR` or `NOT`.
+    // Splits the `WHERE` of a query into the search it holds, which belongs to the source, and
+    // the condition that remains.
+    //
+    // A search is a top-level `AND` condition: `document_matches(query)`, or
+    // `geo_distance(field, point) <= meters`. Firestore accepts it only right after a collection
+    // or collection group source, so it cannot sit under `OR` or `NOT`.
     pub(super) fn split_search(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -217,10 +217,10 @@ impl FirestoreSqlTranslator<'_> {
         Ok(FirestoreExpr::Field(field.clone()))
     }
 
-    /// Whether the `ORDER BY` is the order of the search, which the search itself applies:
-    /// `score() DESC` for a text search, and the distance it filters on for a geo search. It must
-    /// be the only key, since Firestore keeps neither the score nor the distance outside the
-    /// search; a score ordered with other keys is selected under a name and ordered by that name.
+    // Whether the `ORDER BY` is the order of the search, which the search itself applies:
+    // `score() DESC` for a text search, and the distance it filters on for a geo search. It must
+    // be the only key, since Firestore keeps neither the score nor the distance outside the
+    // search; a score ordered with other keys is selected under a name and ordered by that name.
     pub(super) fn search_order(
         &mut self,
         scope: &FirestoreSqlScope,
