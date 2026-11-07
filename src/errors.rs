@@ -12,6 +12,7 @@ use serde::*;
 use std::error::Error;
 use std::fmt::Display;
 use std::fmt::Formatter;
+use std::time::Duration;
 
 /// The main error type for all Firestore operations.
 ///
@@ -151,6 +152,12 @@ impl FirestoreError {
             FirestoreErrorPublicGenericDetails::new("SystemError".into()),
             message.into(),
         ))
+    }
+
+    /// Whether the failed request may succeed if sent again: a database error marked
+    /// `retry_possible`.
+    pub(crate) fn retry_possible(&self) -> bool {
+        matches!(self, FirestoreError::DatabaseError(error) if error.retry_possible)
     }
 
     /// Clears `retry_possible`, for the failure of a write that may have left part of its
@@ -708,7 +715,7 @@ impl FirestoreErrorInTransaction {
     pub fn retry_after<E: std::error::Error + Send + Sync + 'static>(
         transaction: &FirestoreTransaction,
         source: E,
-        retry_after: std::time::Duration,
+        retry_after: Duration,
     ) -> BackoffError<FirestoreError> {
         BackoffError::retry_after(
             FirestoreError::ErrorInTransaction(FirestoreErrorInTransaction {
@@ -737,22 +744,62 @@ impl std::error::Error for FirestoreErrorInTransaction {
     }
 }
 
-/// A re-export of [`backoff::Error`], used by the retrying transaction API.
+/// The error a [`FirestoreDb::run_transaction`](crate::FirestoreDb::run_transaction) closure
+/// returns, to say whether the transaction should be retried.
 ///
-/// You need this type to signal from a [`FirestoreDb::run_transaction`](crate::FirestoreDb::run_transaction)
-/// closure whether a failure should be retried ([`backoff::Error::transient`]) or not
-/// ([`backoff::Error::permanent`]).
-///
-/// Note that the `backoff` version behind this alias is not covered by this crate's semver
-/// contract and may change in a minor release.
-pub type BackoffError<E> = backoff::Error<E>;
+/// `?` inside the closure converts any error into [`BackoffError::Transient`] through the blanket
+/// `From`, so the ordinary error paths retry. Return [`BackoffError::Permanent`] for an error that
+/// must not be retried.
+#[derive(Debug)]
+pub enum BackoffError<E> {
+    /// An error that is not retried: the transaction is rolled back and the error returned.
+    Permanent(E),
+    /// An error that retries the transaction, after `retry_after` when it is set and after the
+    /// next backoff delay otherwise.
+    ///
+    /// A struct variant because it keeps the shape of the `backoff` crate's `Error::Transient`, so
+    /// that closures written against that type compile unchanged.
+    Transient {
+        err: E,
+        retry_after: Option<Duration>,
+    },
+}
+
+impl<E> BackoffError<E> {
+    /// An error that is not retried.
+    pub fn permanent(err: E) -> Self {
+        Self::Permanent(err)
+    }
+
+    /// An error that is retried after the next backoff delay.
+    pub fn transient(err: E) -> Self {
+        Self::Transient {
+            err,
+            retry_after: None,
+        }
+    }
+
+    /// An error that is retried after `retry_after` instead of the backoff delay. The retry still
+    /// counts against `max_retries` and `retry_max_elapsed_time`.
+    pub fn retry_after(err: E, retry_after: Duration) -> Self {
+        Self::Transient {
+            err,
+            retry_after: Some(retry_after),
+        }
+    }
+}
+
+impl<E> From<E> for BackoffError<E> {
+    fn from(err: E) -> Self {
+        Self::transient(err)
+    }
+}
 
 pub(crate) fn firestore_err_to_backoff(err: FirestoreError) -> BackoffError<FirestoreError> {
-    match err {
-        FirestoreError::DatabaseError(ref db_err) if db_err.retry_possible => {
-            backoff::Error::transient(err)
-        }
-        other => backoff::Error::permanent(other),
+    if err.retry_possible() {
+        BackoffError::transient(err)
+    } else {
+        BackoffError::permanent(err)
     }
 }
 

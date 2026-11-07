@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 mod common;
+use firestore::errors::BackoffError;
 use firestore::*;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -80,7 +81,7 @@ async fn transaction_tests() -> Result<(), Box<dyn std::error::Error + Send + Sy
             .run_transaction(|_db, _tx| {
                 Box::pin(async move {
                     //Test returning an error
-                    Err(backoff::Error::Permanent(common::CustomUserError::new(
+                    Err(BackoffError::Permanent(common::CustomUserError::new(
                         "test error",
                     )))
                 })
@@ -100,7 +101,7 @@ async fn transaction_tests() -> Result<(), Box<dyn std::error::Error + Send + Sy
                         return Ok(());
                     }
                     //Test returning an error
-                    Err(backoff::Error::Transient {
+                    Err(BackoffError::Transient {
                         err: common::CustomUserError::new("test error"),
                         retry_after: None,
                     })

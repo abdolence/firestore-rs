@@ -73,7 +73,7 @@ between attempts, so the last attempt can still run for a whole timeout past it.
 ### Retry limits
 
 Reads, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
-next retry, each delay randomised by up to 50% either way. They differ in when they stop:
+next retry, each delay randomised by up to a third either way. They differ in when they stop:
 - reads stop after `max_retries` of `FirestoreDbOptions`, 3 by default, with no time limit;
 - simple batch writes stop after `retry_max_elapsed_time` of `FirestoreSimpleBatchWriteOptions`, 60 seconds by default,
   and ignore `max_retries`;
