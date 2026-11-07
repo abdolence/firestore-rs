@@ -86,6 +86,41 @@ let FirestoreInvalidParametersPublicDetails { field, error } = details;
 let FirestoreInvalidParametersPublicDetails { field, error, .. } = details;
 ```
 
+### Mixed pipeline and buffered writes fail at commit
+
+A transaction that holds a pipeline write and a buffered write, such as `add_to_transaction`, is no longer refused by
+the library. Firestore refuses its commit instead, with `INVALID_ARGUMENT`. The related checks went too:
+
+- `FirestoreTransaction::is_empty` and `FirestoreTransactionData::is_empty` count the queued writes only, so a
+  transaction that ran a pipeline write reports `true`;
+- `execute_in_transaction` runs the write in the transaction it is given, also on a `db` bound to another transaction.
+
+### Pipeline bitwise functions are removed
+
+`bit_not`, `bit_left_shift` and `bit_right_shift` are gone from `FirestoreExpr`. Google does not document them and the
+service has failed calls to them. `FirestoreExpr::raw` sends them by name for the day they work.
+
+```rust,ignore
+// Before
+let mask = expr.bit_not();
+
+// After
+let mask = FirestoreExpr::raw("bit_not", [expr]);
+```
+
+### Pipeline list items take `Into`
+
+The traits `FirestorePipelineConditionExpr`, `FirestoreTextQueryItem` and `FirestoreTextQueryInput` are removed, with
+their methods `build_condition`, `build_clause` and `build_query`. The builders now take the standard conversions:
+
+- `for_all` and `for_any` of the filter builder take items that are `Into<Option<FirestoreBoolExpr>>`;
+- `for_all` of the text query builder takes items that are `Into<Option<FirestoreTextQueryClause>>`;
+- the closure of `text` returns anything that is `Into<FirestoreTextQuery>`: a string, a query, a clause, or an
+  `Option` of a query or a clause.
+
+Code that only calls the builders compiles as it is. Code that names the traits in a bound uses `Into` instead, and
+calls `.into()` where it called `build_query()`. A closure that returned an `Option` of a string returns the string.
+
 ## 0.62
 
 ### Simple batch writes stop retrying after 60 seconds
