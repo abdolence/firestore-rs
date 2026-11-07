@@ -156,8 +156,7 @@ Firestore sets these rules for a transaction that holds a pipeline write:
 - every read comes before the first pipeline write; Firestore fails a read after it with
   `FAILED_PRECONDITION`;
 - a transaction takes pipeline writes or buffered writes, not both: Firestore rejects a commit
-  that mixes them, and the library fails with `InvalidParametersError` as soon as the second kind
-  is added, whichever comes first;
+  that mixes them;
 - a write cannot run at a read time, and `execute()` or `.atomic().execute()` on a `db` that is
   bound to a transaction or a read time fails with `InvalidParametersError`; use
   `execute_in_transaction` inside the transaction.

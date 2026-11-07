@@ -52,15 +52,6 @@ impl FirestoreDb {
             params.transaction,
             &self.session_params.consistency_selector,
         ) {
-            (
-                Some(FirestorePipelineWriteTransaction::Existing(transaction_id)),
-                Some(FirestoreConsistencySelector::Transaction(session_transaction_id)),
-            ) if *session_transaction_id != transaction_id => {
-                return Err(FirestoreError::invalid_parameters(
-                    "consistency_selector",
-                    "the session is bound to a different transaction than the write runs in",
-                ))
-            }
             (Some(FirestorePipelineWriteTransaction::Existing(transaction_id)), _) => (
                 Some(ConsistencySelector::Transaction(transaction_id)),
                 false,
@@ -267,11 +258,10 @@ impl FirestorePipelineSupport for FirestoreDb {
         params: FirestorePipelineWriteParams,
         transaction: &mut FirestoreTransaction<'_>,
     ) -> FirestoreResult<FirestorePipelineWriteResult> {
-        let transaction_id = transaction.pipeline_write_transaction_id()?.clone();
+        let transaction_id = transaction.transaction_data().transaction_id().clone();
         let request = self.create_pipeline_write_request(
             params.with_transaction(FirestorePipelineWriteTransaction::Existing(transaction_id)),
         )?;
-        transaction.hold_pipeline_writes();
         self.send_pipeline_write(request, FirestoreError::from)
             .await
     }
@@ -669,215 +659,6 @@ mod tests {
             matches!(&result, Err(FirestoreError::DatabaseError(error)) if error.retry_possible),
             "{result:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn a_write_rejected_before_sending_leaves_the_transaction_usable() {
-        let (server, requests) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-
-        let unaliased = server
-            .db
-            .fluent()
-            .pipeline()
-            .update(|e| [e.constant("shipped")])
-            .in_col("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        let buffered = server
-            .db
-            .fluent()
-            .delete()
-            .from("pipeline-dml")
-            .document_id("doc-1")
-            .add_to_transaction(&mut transaction)
-            .map(|_| ());
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(unaliased, Err(FirestoreError::InvalidParametersError(_))),
-            "{unaliased:?}"
-        );
-        assert!(requests.lock().unwrap().is_empty());
-        buffered.unwrap();
-    }
-
-    #[tokio::test]
-    async fn a_write_that_failed_after_sending_still_holds_the_transaction() {
-        let server = failing_pipelines(Code::Unavailable).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-
-        server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await
-            .unwrap_err();
-        let buffered = server
-            .db
-            .fluent()
-            .delete()
-            .from("pipeline-dml")
-            .document_id("doc-1")
-            .add_to_transaction(&mut transaction)
-            .map(|_| ());
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(buffered, Err(FirestoreError::InvalidParametersError(_))),
-            "{buffered:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_transaction_with_a_pipeline_write_is_not_empty() {
-        let (server, _) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-        assert!(transaction.is_empty());
-
-        server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await
-            .unwrap();
-        let (is_empty, data_is_empty) = (
-            transaction.is_empty(),
-            transaction.transaction_data().is_empty(),
-        );
-        transaction.rollback().await.unwrap();
-
-        assert!(!is_empty);
-        assert!(!data_is_empty);
-    }
-
-    #[tokio::test]
-    async fn a_pipeline_write_after_finishing_the_transaction_is_rejected_unsent() {
-        let (server, requests) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-        transaction.finish().unwrap();
-
-        let result = server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(result, Err(FirestoreError::InvalidParametersError(_))),
-            "{result:?}"
-        );
-        assert!(requests.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_session_bound_to_another_transaction_rejects_a_pipeline_write_unsent() {
-        let (server, requests) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-        let mut other = transaction.transaction_id().clone();
-        other.push(1);
-        let same =
-            server
-                .db
-                .clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
-                    transaction.transaction_id().clone(),
-                ));
-        let different = server
-            .db
-            .clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(other));
-
-        let accepted = same
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        let rejected = different
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        transaction.rollback().await.unwrap();
-
-        accepted.unwrap();
-        assert!(
-            matches!(rejected, Err(FirestoreError::InvalidParametersError(_))),
-            "{rejected:?}"
-        );
-        assert_eq!(requests.lock().unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_buffered_write_after_a_pipeline_write_is_rejected() {
-        let (server, _) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-
-        server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await
-            .unwrap();
-        let buffered = server
-            .db
-            .fluent()
-            .delete()
-            .from("pipeline-dml")
-            .document_id("doc-1")
-            .add_to_transaction(&mut transaction)
-            .map(|_| ());
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(buffered, Err(FirestoreError::InvalidParametersError(_))),
-            "{buffered:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_pipeline_write_after_a_buffered_write_is_rejected_unsent() {
-        let (server, requests) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-
-        server
-            .db
-            .fluent()
-            .delete()
-            .from("pipeline-dml")
-            .document_id("doc-1")
-            .add_to_transaction(&mut transaction)
-            .unwrap();
-        let piped = server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(piped, Err(FirestoreError::InvalidParametersError(_))),
-            "{piped:?}"
-        );
-        assert!(requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

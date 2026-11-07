@@ -546,9 +546,6 @@ pub trait FirestorePipelineSupport {
 
     /// Runs a pipeline that ends in a write in `transaction`, which holds it until commit.
     /// `params.transaction` is ignored.
-    ///
-    /// The transaction is marked as holding the write only once the request is built, so a write
-    /// rejected before it was sent leaves the transaction as it was.
     async fn execute_pipeline_write_in_transaction(
         &self,
         params: FirestorePipelineWriteParams,

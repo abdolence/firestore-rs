@@ -27,9 +27,6 @@ pub struct FirestoreTransactionData {
     document_path: String,
     transaction_span: Span,
     writes: Vec<gcloud_sdk::google::firestore::v1::Write>,
-    /// Firestore holds a pipeline write until commit, and rejects a commit that also carries
-    /// buffered writes, so once one ran, `add` refuses them.
-    holds_pipeline_writes: bool,
 }
 
 impl FirestoreTransactionData {
@@ -48,7 +45,6 @@ impl FirestoreTransactionData {
             document_path,
             transaction_span,
             writes,
-            holds_pipeline_writes: false,
         }
     }
 
@@ -76,11 +72,10 @@ impl FirestoreTransactionData {
         &self.writes
     }
 
-    /// Returns whether the transaction holds no writes yet: neither queued ones nor a pipeline
-    /// write that ran in it.
+    /// Returns whether the transaction has no queued writes yet.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty() && !self.holds_pipeline_writes
+        self.writes.is_empty()
     }
 }
 
@@ -95,12 +90,6 @@ impl FirestoreTransactionOps for FirestoreTransactionData {
     where
         I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
     {
-        if self.holds_pipeline_writes {
-            return Err(FirestoreError::invalid_parameters(
-                "transaction",
-                "a transaction that ran a pipeline write cannot also buffer writes",
-            ));
-        }
         let write = write.try_into()?;
         self.writes.push(write);
         Ok(self)
@@ -200,7 +189,7 @@ impl<'a> FirestoreTransaction<'a> {
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
 
-        if self.data.is_empty() {
+        if self.data.writes.is_empty() {
             self.data.transaction_span.in_scope(|| {
                 debug!("Transaction has been committed without any writes.");
             });
@@ -296,37 +285,10 @@ impl<'a> FirestoreTransaction<'a> {
         Ok(())
     }
 
-    /// Returns whether the transaction holds no writes yet: neither queued ones nor a pipeline
-    /// write that ran in it.
+    /// Returns whether the transaction has no queued writes yet.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
-    }
-
-    /// The ID to run a pipeline write in this transaction with.
-    ///
-    /// Fails when the transaction is finished, or buffers writes already, since Firestore would
-    /// reject its commit.
-    pub(crate) fn pipeline_write_transaction_id(&self) -> FirestoreResult<&FirestoreTransactionId> {
-        if self.finished {
-            return Err(FirestoreError::invalid_parameters(
-                "transaction",
-                "a finished transaction cannot run a pipeline write",
-            ));
-        }
-        if !self.data.writes.is_empty() {
-            return Err(FirestoreError::invalid_parameters(
-                "transaction",
-                "a transaction that buffers writes cannot also run a pipeline write",
-            ));
-        }
-        Ok(&self.data.transaction_id)
-    }
-
-    /// Marks the transaction as holding pipeline writes. Called once the write is built and about
-    /// to be sent: from then on its outcome is unknown, whether or not it succeeds.
-    pub(crate) fn hold_pipeline_writes(&mut self) {
-        self.data.holds_pipeline_writes = true;
     }
 
     /// Returns the transaction's underlying data without consuming it.
@@ -360,15 +322,12 @@ impl<'a> FirestoreTransaction<'a> {
     #[inline]
     pub fn into_data(mut self) -> FirestoreTransactionData {
         self.finished = true;
-        FirestoreTransactionData {
-            holds_pipeline_writes: self.data.holds_pipeline_writes,
-            ..FirestoreTransactionData::new(
-                self.data.transaction_id.clone(),
-                self.data.document_path.clone(),
-                self.data.transaction_span.clone(),
-                std::mem::take(&mut self.data.writes),
-            )
-        }
+        FirestoreTransactionData::new(
+            self.data.transaction_id.clone(),
+            self.data.document_path.clone(),
+            self.data.transaction_span.clone(),
+            std::mem::take(&mut self.data.writes),
+        )
     }
 }
 
