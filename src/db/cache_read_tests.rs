@@ -103,6 +103,17 @@ fn answer(method: &str, body: &[u8]) -> (String, FakeResponse) {
     }
 }
 
+/// How many calls the server has answered, leaving out `Listen`. The cache's listener runs in the
+/// background, and the server logs a `Listen` whenever the listener closes its request, at a time
+/// no read controls.
+fn answered_calls(server: &FakeFirestore) -> usize {
+    server
+        .calls()
+        .iter()
+        .filter(|call| !call.ends_with("/Listen"))
+        .count()
+}
+
 /// A server and a memory cache over it whose preloaded collection holds one document, marked as
 /// coming from the cache.
 async fn cached_document_fixture() -> (FakeFirestore, MemoryCache) {
@@ -193,10 +204,10 @@ async fn read_through_goes_to_firestore_when_the_session_has_a_consistency_selec
     let through_cache = server.db.read_through_cache(&cache);
 
     for read in Read::ALL {
-        let calls_before = server.calls().len();
+        let calls_before = answered_calls(&server);
         assert_eq!(read.source(&through_cache).await.unwrap(), FROM_CACHE);
         assert_eq!(
-            server.calls().len(),
+            answered_calls(&server),
             calls_before,
             "{read:?} without selector"
         );
@@ -221,7 +232,7 @@ async fn cached_only_fails_when_the_session_has_a_consistency_selector() {
         assert_eq!(read.source(&cached_only).await.unwrap(), FROM_CACHE);
 
         for selector in selectors() {
-            let calls_before = server.calls().len();
+            let calls_before = answered_calls(&server);
             let session = cached_only.clone_with_consistency_selector(selector);
             let FirestoreError::CacheError(error) = read.source(&session).await.unwrap_err() else {
                 panic!("{read:?} did not fail with a cache error");
@@ -230,7 +241,7 @@ async fn cached_only_fails_when_the_session_has_a_consistency_selector() {
                 error.public.code, "CacheConsistencySelectorUnsupported",
                 "{read:?}"
             );
-            assert_eq!(server.calls().len(), calls_before, "{read:?}");
+            assert_eq!(answered_calls(&server), calls_before, "{read:?}");
         }
     }
 }
@@ -301,19 +312,19 @@ where
 {
     let (server, cache) = cached_document_fixture().await;
 
-    let calls_before = server.calls().len();
+    let calls_before = answered_calls(&server);
     let document = read(server.db.read_through_cache(&cache)).await.unwrap();
     assert_eq!(source(&document), FROM_FIRESTORE);
-    assert_eq!(server.calls().len(), calls_before + 1);
+    assert_eq!(answered_calls(&server), calls_before + 1);
 
-    let calls_before = server.calls().len();
+    let calls_before = answered_calls(&server);
     let FirestoreError::CacheError(error) =
         read(server.db.read_cached_only(&cache)).await.unwrap_err()
     else {
         panic!("the cached-only read did not fail with a cache error");
     };
     assert_eq!(error.public.code, cached_only_code);
-    assert_eq!(server.calls().len(), calls_before);
+    assert_eq!(answered_calls(&server), calls_before);
 }
 
 async fn first_queried(db: FirestoreDb, params: FirestoreQueryParams) -> FirestoreResult<Document> {
