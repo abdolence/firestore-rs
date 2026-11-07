@@ -110,6 +110,15 @@ impl FirestoreAggregate {
 }
 
 impl FirestoreSelection {
+    /// The selection without an alias that repeats the path of the field it selects.
+    #[cfg(feature = "sql")]
+    pub(crate) fn without_redundant_alias(self) -> Self {
+        match (&self.expr, &self.alias) {
+            (FirestoreExpr::Field(path), Some(alias)) if path == alias => Self::new(self.expr),
+            _ => self,
+        }
+    }
+
     /// The expression and the field name it is output under: the alias, or else the field's own
     /// path. Fails for a computed expression without an alias.
     pub(super) fn into_named(self, stage: &str) -> FirestoreResult<(String, FirestoreExpr)> {

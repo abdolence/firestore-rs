@@ -31,11 +31,16 @@ impl FirestoreExpr {
         self.equal(None::<bool>)
     }
 
-    /// True when this field exists and is not null. The service accepts only a field here.
+    /// True when this value exists and is not null. `exists` takes only a field, so any other
+    /// expression is compared with null alone.
     pub fn is_not_null(self) -> FirestoreBoolExpr {
-        self.clone()
-            .exists()
-            .and_maybe(Some(self.not_equal(None::<bool>)))
+        match self {
+            Self::Field(_) => self
+                .clone()
+                .exists()
+                .and_maybe(Some(self.not_equal(None::<bool>))),
+            _ => self.not_equal(None::<bool>),
+        }
     }
 
     /// True when this value is NaN.

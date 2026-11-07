@@ -23,6 +23,7 @@
     - [Pipeline aggregations and joins](./pipeline-aggregations-and-joins.md)
     - [Pipeline search](./pipeline-search.md)
     - [Pipeline writes](./pipeline-writes.md)
+- [SQL](./sql.md)
 - [Listening the document changes](./listening-changes.md)
 - [Working on dynamic/document level](./dynamic-documents.md)
 

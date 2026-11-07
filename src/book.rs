@@ -69,6 +69,10 @@ mod pipeline_search {}
 #[doc = include_str!("../docs/src/pipeline-writes.md")]
 mod pipeline_writes {}
 
+#[cfg(feature = "sql")]
+#[doc = include_str!("../docs/src/sql.md")]
+mod sql {}
+
 #[doc = include_str!("../docs/src/request-tags.md")]
 mod request_tags {}
 
