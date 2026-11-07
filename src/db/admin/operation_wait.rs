@@ -2,9 +2,9 @@
 //!
 //! One wait serves both: it polls every still-pending operation once per round against one
 //! [`OperationDeadline`], polls again after a retryable poll error, which includes a poll that did
-//! not answer in time, judges every outcome of a round before it stops at the first operation that failed,
-//! and gives up once the deadline has passed. A caller that needs more than the done/error state,
-//! such as bulk delete's progress metadata, observes every polled [`Operation`] through the
+//! not answer in time, judges every outcome of a round before it stops at the first operation that
+//! failed, and gives up once the deadline has passed. A caller that needs more than the done/error
+//! state, such as bulk delete's progress metadata, observes every polled [`Operation`] through the
 //! `on_poll` hook.
 
 use crate::errors::{FirestoreError, FirestoreErrorPublicGenericDetails, FirestoreSystemError};
@@ -324,8 +324,8 @@ impl FirestoreDb {
             let polls: Vec<_> = pending
                 .iter()
                 .map(|tracked| {
-                    // The cutoff is taken when the poll is actually sent, which can be later
-                    // than the start of the round when more operations are pending than may be
+                    // The poll limit is read when the poll first runs, which can be later than
+                    // the start of the round when more operations are pending than may be
                     // polled at once.
                     self.get_operation(&tracked.operation.name, deadline)
                         .instrument(tracked.span.clone())
