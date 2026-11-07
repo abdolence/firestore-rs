@@ -3,7 +3,8 @@
 Firestore provides additional fields for each document:
 
 - `_firestore_id`: the document ID, whether the client chose it or Firestore generated it;
-- `_firestore_full_id`: the full document name that Firestore returns;
+- `_firestore_full_id`: the full document name, such as
+  `projects/my-project/databases/(default)/documents/my-collection/my-id`;
 - `_firestore_created`: the time at which the document was created;
 - `_firestore_updated`: the time at which the document was last changed.
 

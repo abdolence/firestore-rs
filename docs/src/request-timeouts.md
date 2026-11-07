@@ -54,11 +54,10 @@ The limit applies to each attempt. A request that runs out of it fails with a `D
 - simple batch writes, until `retry_max_elapsed_time`. A retried batch may apply twice, for example an `increment`,
   as it can after a dropped connection.
 
-`request_timeout` limits how long a pipeline or SQL read waits for each response, a read that runs out of it is retried
-up to `max_retries` times like a Core query, and pipeline and SQL writes are never retried. A read makes
-`max_retries + 1` attempts, and the error that comes back after the last one still has `retry_possible` set; a pipeline
-or SQL write makes one attempt and clears the flag, see [Retries and listeners](./pipeline-writes.md#retries-and-listeners).
-A pipeline that a cache session answers sends no request, so no timeout or retry applies to it.
+A read makes `max_retries + 1` attempts, and the error that comes back after the last one still has `retry_possible` set.
+A pipeline or SQL write makes one attempt and clears the flag, see
+[Retries and listeners](./pipeline-writes.md#retries-and-listeners). A pipeline that a cache session answers sends no
+request, so no timeout or retry applies to it.
 
 Batch gets, partition queries, a query or aggregation stream that has already started and transaction commits return
 the error without a retry. A commit is never retried, because its writes may already be applied.

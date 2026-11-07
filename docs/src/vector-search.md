@@ -27,7 +27,9 @@ let article = Article {
 ## The vector index
 
 On a Standard edition database a vector query needs a vector index on the field, and uses it. The
-index declares the dimension every indexed vector in the field must have.
+index declares the dimension every indexed vector in the field must have. Without one the query
+fails with `FAILED_PRECONDITION`, "Missing vector index configuration", and the message carries the
+`gcloud` command that creates the index.
 [Index management](./index-management/composite.md#vector-indexes) declares one with
 `.vector(dimension)`, and the console or `gcloud` create one too.
 
@@ -116,8 +118,8 @@ A vector query is never answered from a [cache](./caching/modes.md#what-the-cach
 
 ## On the Enterprise edition
 
-A Core vector query answered with and without a vector index on an Enterprise edition database.
-Query Explain is refused there, so its plan cannot show whether it used the index.
+A Core vector query ran on an Enterprise edition database with and without a vector index. Query
+Explain is refused there, so its plan cannot show whether it used the index.
 
 The pipeline [`find_nearest`](./pipeline-aggregations-and-joins.md#nearest-neighbours) stage takes
 the same vector and measures, and has no distance threshold. It does not use a vector index: its

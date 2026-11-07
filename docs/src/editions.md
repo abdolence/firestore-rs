@@ -1,8 +1,9 @@
 # Standard and Enterprise editions
 
 Firestore databases come in two editions, Standard and Enterprise. The library supports both, and
-some features need Enterprise. Every page of this book applies to both editions, unless its title
-names one edition or a section "On the Enterprise edition" lists what differs.
+some features need Enterprise. Every page of this book applies to both editions, unless its title,
+or the part of the book it sits in, names one edition, or a section "On the Enterprise edition"
+lists what differs.
 
 The edition belongs to a database, not to the project: one project can hold databases of both
 editions, and the client picks one by its ID, see
