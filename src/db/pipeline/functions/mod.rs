@@ -3,8 +3,6 @@ mod arithmetic;
 mod array;
 pub use array::*;
 
-mod bitwise;
-
 mod comparison;
 
 mod conditional;
