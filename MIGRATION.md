@@ -162,7 +162,8 @@ order Firestore returns them. The rules it follows are in the "What the cache an
 mode" page of the book. Before, these queries returned other documents, in an arbitrary order:
 
 - **Timestamps.** Before, seconds and nanoseconds were compared separately, so `1.9 s < 2.1 s` was false. Now a
-  timestamp compares by seconds and then nanoseconds, and an integer and a double compare by value.
+  timestamp compares as one point in time, at the precision Firestore uses for the operator, and an integer and a double
+  compare by value.
 - **Order and range filters.** Before, only numbers and timestamps had an order: `<` and `>` on a string matched
   nothing, an `end_at` cursor on one returned nothing, and `order_by` returned an arbitrary order or panicked. Now every
   type follows Firestore's order of types.

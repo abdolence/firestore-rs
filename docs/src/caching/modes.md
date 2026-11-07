@@ -21,9 +21,15 @@ Which operations use the cache:
 A Core query on a preloaded collection runs in the library's cached query engine. The engine
 returns the documents Firestore returns, in the order Firestore returns them:
 
-- **timestamps and numbers.** Timestamps compare by seconds and then nanoseconds. An integer and a
-  double compare by value, so a filter on `1` matches the double `1.0`, and `order_by` sorts them
-  together;
+- **timestamps and numbers.** Timestamps compare by seconds and then by the fraction of a second,
+  at the precision Firestore uses:
+  - `==`, the range operators and `array-contains` compare a timestamp on its own at the
+    nanosecond;
+  - `in`, `not-in` and `array-contains-any` compare at the microsecond that Firestore stores;
+  - a timestamp inside an array or a map compares at the microsecond, whichever operator is used.
+
+  An integer and a double compare by value, so a filter on `1` matches the double `1.0`, and
+  `order_by` sorts them together;
 - **order and range filters on every type.** `<`, `<=`, `>`, `>=`, `order_by` and cursors follow
   Firestore's order of types (null, booleans, numbers, timestamps, strings, bytes, references, geo
   points, arrays, vectors, maps) and its order within each type. A range filter matches values of

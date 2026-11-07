@@ -440,7 +440,7 @@ fn compare_maps(a: &MapValue, b: &MapValue) -> Ordering {
 /// strings by their UTF-8 bytes, references by path segment, geo points by latitude then
 /// longitude, arrays by element and then length, vectors by length and then component, maps by
 /// their key-sorted entries and then size.
-pub(crate) fn value_order(a: &ValueType, b: &ValueType) -> Ordering {
+pub(super) fn value_order(a: &ValueType, b: &ValueType) -> Ordering {
     match (a, b) {
         (ValueType::NullValue(_), ValueType::NullValue(_)) => Ordering::Equal,
         (ValueType::BooleanValue(a), ValueType::BooleanValue(b)) => a.cmp(b),
@@ -489,7 +489,7 @@ fn microseconds(timestamp: &gcloud_sdk::prost_types::Timestamp) -> i64 {
 /// The order of two values as stored: [`value_order`], with timestamps compared at the microsecond
 /// that Firestore stores them at. [`value_order`] compares a timestamp inside an array or a map
 /// this way.
-pub(crate) fn stored_order(a: &ValueType, b: &ValueType) -> Ordering {
+pub(super) fn stored_order(a: &ValueType, b: &ValueType) -> Ordering {
     match (a, b) {
         (ValueType::TimestampValue(a), ValueType::TimestampValue(b)) => {
             microseconds(a).cmp(&microseconds(b))

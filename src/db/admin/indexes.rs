@@ -1364,8 +1364,9 @@ mod tests {
     };
     use crate::db::admin::index_models::IMPLIED_NAME_FIELD;
     use crate::db::fake_firestore::{
-        done_operation_response, failed_operation_response, list_fields_response,
-        list_indexes_response, pending_operation_response, FakeFirestore, FakeResponse,
+        captured_text, capturing_subscriber, done_operation_response, failed_operation_response,
+        list_fields_response, list_indexes_response, pending_operation_response, FakeFirestore,
+        FakeResponse,
     };
     use crate::db::FirestoreDbInner;
     use crate::{
@@ -4856,44 +4857,6 @@ mod tests {
             stored.lock().unwrap().is_none(),
             "the wildcard override must be reverted (index_config unset)",
         );
-    }
-
-    fn capturing_subscriber() -> (
-        impl tracing::Subscriber + Send + Sync,
-        StdArc<Mutex<Vec<u8>>>,
-    ) {
-        crate::db::fake_firestore::keep_spans_visible_to_scoped_subscribers();
-        let buffer = StdArc::new(Mutex::new(Vec::new()));
-        let make_writer = {
-            let buffer = buffer.clone();
-            move || SharedBufferWriter(buffer.clone())
-        };
-        // Scoped to this crate's own target: `cargo test` runs many tests concurrently, and an
-        // unfiltered DEBUG level captures every other test's h2/tower/hyper transport chatter
-        // into this buffer too, which has been observed to crowd out or reorder the lines this
-        // test asserts on.
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(make_writer)
-            .with_ansi(false)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-            .with_env_filter(tracing_subscriber::EnvFilter::new("firestore=debug"))
-            .finish();
-        (subscriber, buffer)
-    }
-
-    struct SharedBufferWriter(StdArc<Mutex<Vec<u8>>>);
-    impl std::io::Write for SharedBufferWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    fn captured_text(buffer: &StdArc<Mutex<Vec<u8>>>) -> String {
-        String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
     }
 
     #[tokio::test]

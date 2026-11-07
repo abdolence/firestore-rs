@@ -24,15 +24,61 @@ use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{watch, Notify};
 
+/// A subscriber that writes this crate's spans and events, at DEBUG and above, to the returned
+/// buffer, for the thread that scopes it with `set_default`. Read the buffer with
+/// [`captured_text`].
+///
+/// A subscriber scoped to this crate's own target: `cargo test` runs many tests concurrently, and
+/// an unfiltered DEBUG level captures every other test's h2, tower and hyper transport chatter
+/// too, which crowds out or reorders the lines a test asserts on.
+#[cfg(feature = "admin")]
+pub(super) fn capturing_subscriber() -> (impl tracing::Subscriber + Send + Sync, Arc<Mutex<Vec<u8>>>)
+{
+    keep_spans_visible_to_scoped_subscribers();
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let make_writer = {
+        let buffer = buffer.clone();
+        move || SharedBufferWriter(buffer.clone())
+    };
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(make_writer)
+        .with_ansi(false)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+        .with_env_filter(tracing_subscriber::EnvFilter::new("firestore=debug"))
+        .finish();
+    (subscriber, buffer)
+}
+
+/// What a [`capturing_subscriber`] has written so far.
+#[cfg(feature = "admin")]
+pub(super) fn captured_text(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
+    String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
+}
+
+#[cfg(feature = "admin")]
+struct SharedBufferWriter(Arc<Mutex<Vec<u8>>>);
+
+#[cfg(feature = "admin")]
+impl std::io::Write for SharedBufferWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Registers a second dispatcher, a disabled one, for the rest of the test binary.
 ///
 /// While tracing knows a single dispatcher, it registers a new callsite against the subscriber of
 /// the thread that first reaches it. A concurrent test without a subscriber can then disable a
 /// span for good, and the test that scoped a capturing subscriber never sees it. With two
 /// dispatchers registered, a callsite is registered against both, so each thread decides at the
-/// span itself. Call this wherever a test scopes a subscriber with `set_default`.
+/// span itself.
 #[cfg(feature = "admin")]
-pub(super) fn keep_spans_visible_to_scoped_subscribers() {
+fn keep_spans_visible_to_scoped_subscribers() {
     static REGISTERED: std::sync::Once = std::sync::Once::new();
     REGISTERED.call_once(|| {
         tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default()).ok();
