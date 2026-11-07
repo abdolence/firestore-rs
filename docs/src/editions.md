@@ -11,29 +11,60 @@ editions, and the client picks one by its ID, see
 
 ## What each edition runs
 
-| Feature | Standard | Enterprise |
-|---|---|---|
-| Core reads, queries, writes and batch writes | yes | yes |
-| A Core query that no index covers | fails with `FAILED_PRECONDITION`, "The query requires an index" | runs as a *table scan*, reading every document of the collection; without `order_by` the order of its results is unspecified |
-| Core aggregations: count, sum, avg | yes | yes, with the same results |
-| [Transactions](./transactions.md) | yes | yes; optimistic by default, so under contention more attempts abort and are retried |
-| Query plans, `.explain()` | Core queries; pipelines and SQL are not available | pipelines and SQL, see [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline); a Core query's `.explain()` is rejected with `INVALID_ARGUMENT`, so explain the same query as a pipeline |
-| Core [vector search](./vector-search.md) | needs a vector index, and fails with `FAILED_PRECONDITION` without one | does not require a vector index: the query runs without one. A vector index can still be created on Enterprise, but whether a Core query uses it cannot be seen, since Core `.explain()` is rejected there. A pipeline `find_nearest` reads every document with or without one, see [Vector search](./vector-search.md#on-the-enterprise-edition) |
-| [Pipelines](./pipelines.md) and [SQL](./sql.md) | fail with `FAILED_PRECONDITION`, unless a cache session answers them | yes |
-| [Pipeline writes](./pipeline-writes.md) and SQL writes | no | yes |
-| [Text and geo search](./pipeline-search.md) | no | yes, with a search index |
-| [Listeners](./listening-changes.md) | yes | yes, on a database with real-time updates enabled |
-| [Caching](./caching.md) | Core reads; pipeline and SQL reads only when the cache answers them in full | Core reads, pipeline and SQL reads; the cache's listener needs real-time updates |
-| Automatic single-field indexes | yes | none |
-| Single-field overrides | yes | none; an `.exempt()` is already satisfied |
-| Composite index of one field | a vector field only | yes |
-| Unique indexes | no | yes |
-| Index *density*: which documents an index holds an entry for | `SparseAll` only | `Dense` by default, or `SparseAny`; a search index `SparseAny` |
-| `__name__` appended to an index | yes | no |
-| TTL policy | yes | yes |
-| [Bulk delete](./bulk-delete.md) | yes | yes |
-| [Firestore emulator](./emulator.md) | the default emulator | an emulator started with `--edition=enterprise` |
-| Billing | per document read, written and deleted | read units and write units, with real-time updates billed separately |
+The API column names the API a row is about: Core queries, pipelines, SQL, Admin for index
+management, TTL and bulk delete, or Any for a row that belongs to no one API. "Pipeline, SQL" marks
+a row where both behave the same. A number in brackets points to the notes under the table.
+
+| Feature | API | Standard | Enterprise |
+|---|---|---|---|
+| Reads and queries | Core | yes | yes |
+| Reads and queries | [Pipeline](./pipelines.md), [SQL](./sql.md) | fails (1) | yes |
+| Writes and batch writes | Core | yes | yes |
+| [Writes](./pipeline-writes.md) | Pipeline, SQL | no | yes |
+| Query that no index covers | Core | fails (2) | table scan (3) |
+| Query that no index covers | Pipeline, SQL | no | table scan (4) |
+| Aggregations: count, sum, avg | Core | yes | yes, same results |
+| [Transactions](./transactions.md) | Any | yes | yes (5) |
+| Query plans | Core | `.explain()` | rejected (6) |
+| Query plans | Pipeline, SQL | no | `.explain()` (6) |
+| [Vector search](./vector-search.md) | Core | needs a vector index (7) | no index needed (8) |
+| [Vector search](./vector-search.md) | Pipeline | no | table scan (9) |
+| [Text and geo search](./pipeline-search.md) | Pipeline, SQL | no | needs a search index |
+| [Listeners](./listening-changes.md) | Core | yes | needs real-time updates |
+| [Caching](./caching.md) | Core | yes | needs real-time updates |
+| [Caching](./caching.md) | Pipeline, SQL | only if the cache answers in full | needs real-time updates |
+| Automatic single-field indexes | Admin | yes | none |
+| Single-field overrides | Admin | yes | none (10) |
+| Composite index of one field | Admin | a vector field only | yes |
+| Unique indexes | Admin | no | yes |
+| Index density (11) | Admin | `SparseAll` only | `Dense` by default, or `SparseAny` (12) |
+| `__name__` appended to an index | Admin | yes | no |
+| TTL policy | Admin | yes | yes |
+| [Bulk delete](./bulk-delete.md) | Admin | yes | yes |
+| [Firestore emulator](./emulator.md) | Any | the default emulator | started with `--edition=enterprise` |
+| Billing | Any | per document read, written and deleted | read units and write units (13) |
+
+1. A pipeline or SQL statement sent to a Standard edition database fails with
+   `FAILED_PRECONDITION`, unless a [cache](./caching.md#pipelines) session answers it.
+2. `FAILED_PRECONDITION`, "The query requires an index".
+3. The query reads every document of the collection. Without `order_by` the order of its results is
+   unspecified.
+4. A pipeline or SQL statement that no index covers runs as a table scan. A search is the
+   exception: it needs a search index and fails without one, see
+   [Known table scans](./editions/query-plans.md#known-table-scans).
+5. Optimistic by default, so under contention more attempts abort and are retried.
+6. An Enterprise edition database rejects a Core `.explain()` with `INVALID_ARGUMENT`, so explain
+   the same query as a pipeline or SQL, see
+   [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline).
+7. Without a vector index the query fails with `FAILED_PRECONDITION`.
+8. A vector index can still be created on Enterprise, but whether a Core query uses it cannot be
+   seen, since Core `.explain()` is rejected there.
+9. The `find_nearest` stage reads every document with or without a vector index, see
+   [Vector search](./vector-search.md#on-the-enterprise-edition).
+10. An `.exempt()` is already satisfied.
+11. The density of an index is which documents it holds an entry for.
+12. A search index is `SparseAny`.
+13. Real-time updates are billed separately.
 
 ## Telling which edition a database is
 
