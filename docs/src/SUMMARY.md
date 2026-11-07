@@ -53,10 +53,10 @@
 
 - [Caching](./caching.md)
     - [Usage](./caching/usage.md)
-    - [Caching named documents](./caching/named-documents.md)
-    - [Changing cached collections at runtime](./caching/dynamic-collections.md)
+    - [Caching named documents instead of a whole collection](./caching/named-documents.md)
+    - [Changing the cached collections at runtime](./caching/dynamic-collections.md)
     - [Choosing a cache mode](./caching/modes.md)
-    - [Load modes and preloading](./caching/load-modes.md)
+    - [Load modes, and why listings need preloading](./caching/load-modes.md)
     - [How the cache is updated](./caching/updates.md)
 
 # Administration
