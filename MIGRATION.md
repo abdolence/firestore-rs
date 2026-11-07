@@ -1,5 +1,79 @@
 # Migration guide
 
+## 0.65
+
+### `FirestoreIndexSupport` has four more methods
+
+`FirestoreIndexSupport` gains the required methods `list_indexes`, `create_index`, `delete_index` and `update_field`.
+A type outside this crate that implements the trait, such as a mock of the database, stops compiling until it
+implements them:
+
+```rust,ignore
+async fn list_indexes(
+    &self,
+    collection_group: Option<FirestoreCollectionId>,
+) -> FirestoreResult<FirestoreIndexListing>;
+
+async fn create_index(
+    &self,
+    definition: FirestoreIndexDefinition,
+    wait: Option<FirestoreOperationWaitOptions>,
+    if_not_exists: bool,
+) -> FirestoreResult<FirestoreListedCompositeIndex>;
+
+async fn delete_index(
+    &self,
+    target: FirestoreIndexDeleteTarget,
+    if_exists: bool,
+) -> FirestoreResult<Option<FirestoreListedCompositeIndex>>;
+
+async fn update_field(
+    &self,
+    update: FirestoreFieldUpdate,
+    wait: Option<FirestoreOperationWaitOptions>,
+) -> FirestoreResult<FirestoreListedField>;
+```
+
+`FirestoreDb` implements all four, and `db.fluent().indexes()` calls them as `list()`, `create()`, `delete()` and
+`update_field()`.
+
+### `FirestoreSqlStatement` has more variants
+
+`FirestoreSqlStatement` gains the variants `Explain`, `ShowCollections`, and, with the `admin` feature, `ShowIndexes`,
+`CreateIndex`, `DropIndex` and `AlterCollection`. A `match` on the result of `FirestoreSqlStatement::translate` that
+lists every variant stops compiling: add arms for the new ones, or a wildcard arm if the code runs only the statements
+it knew before. `FirestoreSqlBuilder::run()` runs every statement and returns a `FirestoreSqlOutcome`.
+
+### Listed indexes and fields carry their collection group
+
+`FirestoreListedCompositeIndex` gains the fields `collection_group` and `id`, and `FirestoreListedField` gains
+`collection_group`. Adding the fields breaks code that builds either with a struct literal, such as a test fixture:
+set them from the resource `name`, which holds both, or build the value from a listing.
+
+```rust,ignore
+let listed = FirestoreListedField {
+    name,
+    collection_group: FirestoreCollectionId::new("orders")?,
+    field_path,
+    index_override,
+    ttl,
+};
+```
+
+### SQL index statements need an opt-in
+
+`CREATE INDEX`, `DROP INDEX` and `ALTER COLLECTION` run only when the options say `.allow_index_statements()`.
+`FirestoreSqlOptions::new()` refuses them with `InvalidParametersError`, field `allow_index_statements`, before any
+request, so code that builds its options from `new()` and runs text with these statements adds the call:
+
+```rust,ignore
+let options = FirestoreSqlOptions::new().allow_index_statements();
+```
+
+`FirestoreSqlOptions::read_only()` refuses the three statements even when `.allow_index_statements()` follows it.
+`SHOW INDEXES`, `SHOW COLLECTIONS` and `EXPLAIN` need no opt-in. With `.with_collections(..)`, `DROP INDEX` by ID needs
+`ON` and a collection in the set.
+
 ## 0.64
 
 ### `BackoffError` is the crate's own type

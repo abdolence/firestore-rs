@@ -1,9 +1,13 @@
 # Index statements
 
 With the `admin` cargo feature next to `sql`, SQL text can list, create and drop indexes, and change
-the TTL and the single-field indexes of a field. These statements are for command line tools and
-admin scripts that take their text from outside the program. The same operations have a fluent API,
-see [One index at a time](../index-management.md#one-index-at-a-time).
+the TTL and the single-field indexes of a field. `CREATE INDEX`, `DROP INDEX` and `ALTER COLLECTION`
+run only when the caller opts in with `.allow_index_statements()` on the
+[options](#options), so they suit command line tools and admin scripts that the program's own
+operators write or run. `SHOW INDEXES`, `SHOW COLLECTIONS` and `EXPLAIN` only read and need no
+opt-in. Text from users or LLM agents runs with `read_only()`, which refuses the three statements.
+The same operations have a fluent API, see
+[One index at a time](../index-management.md#one-index-at-a-time).
 
 ```toml
 [dependencies]
@@ -103,9 +107,9 @@ CREATE VECTOR INDEX ON books (genre, embedding) OPTIONS (dimension = 768);
 CREATE INDEX IF NOT EXISTS ON orders (customer_id, placed_at DESC);
 ```
 
-The statement starts the build and returns the index as Firestore lists it, in state `CREATING`.
-Firestore assigns the ID of an index, so an index cannot be named: `CREATE INDEX by_customer ON ..`
-is refused.
+The statement starts the build and returns the index as Firestore lists it: in state `CREATING`,
+or `READY` after a [wait](#waiting-for-an-operation). Firestore assigns the ID of an index, so an
+index cannot be named: `CREATE INDEX by_customer ON ..` is refused.
 
 The kind of index sets what a column can be:
 
@@ -122,8 +126,8 @@ The kind of index sets what a column can be:
   holds an entry for, see [Density](../index-management/ttl-and-enterprise.md#density), and a
   *unique* index refuses a second document with the same values;
 - `IF NOT EXISTS` makes an index that already exists the outcome instead of an error: the statement
-  returns the listed index that the definition matches. `CREATE` of an index that exists, without
-  it, fails with `DataConflictError`. Firestore keeps answering `ALREADY_EXISTS` for a while after
+  returns the listed index that the definition matches, in whatever state it has. `CREATE` of an
+  index that exists, without it, fails with `DataConflictError`. Firestore keeps answering `ALREADY_EXISTS` for a while after
   an index is deleted, when the listing no longer shows it. `IF NOT EXISTS` returns an index only
   when the listing shows it, so the statement fails with `DataConflictError` in that window; run it
   again later.
@@ -209,6 +213,7 @@ return after it has finished, and the outcome is the index or field read after t
 let outcome = db
     .fluent()
     .sql("CREATE INDEX ON orders (customer_id, placed_at DESC)")
+    .options(FirestoreSqlOptions::new().allow_index_statements())
     .wait_until_ready(Duration::from_secs(900))
     .run()
     .await?;
@@ -223,9 +228,11 @@ if let FirestoreSqlOutcome::IndexCreated(created) = outcome {
 A build takes minutes even for an empty collection, see
 [Waiting for changes to finish](../index-management.md#waiting-for-changes-to-finish); set the
 timeout above that. With `IF NOT EXISTS`, an index that another caller is still building is polled
-until it is no longer `CREATING`, under the same timeout. A deadline that passes fails with
-`SystemError`, code `OPERATION_WAIT_TIMEOUT`, and a failed operation fails with the operation's
-status, as in `.sync()`.
+until it is no longer `CREATING`, under the same timeout and with the same retries as the poll of
+an operation. A deadline that passes fails with `SystemError`, code `OPERATION_WAIT_TIMEOUT`, and a
+failed operation fails with the operation's status, as in `.sync()`. An index that ends in
+`NEEDS_REPAIR`, the state of an index whose last build failed and left no operation running, fails
+the same way, with `SystemError`, code `INDEX_NEEDS_REPAIR`.
 
 A wait on any other statement fails with `InvalidParametersError`, field `wait`, before any request.
 
@@ -259,20 +266,45 @@ The emulator serves no Firestore Admin API, whatever its edition, and answers ea
 skip the emulator and return, see [The Firestore emulator](../index-management.md#the-firestore-emulator),
 but a statement is an explicit command, so it fails. `SHOW COLLECTIONS` works on the emulator.
 
-## Read-only options
+## Options
 
 `FirestoreSqlOptions` apply to the new statements as to a `SELECT`, see
 [Read-only options](../sql.md#read-only-options):
 
-- `read_only()` refuses `CREATE`, `DROP` and `ALTER COLLECTION`, and allows `SHOW` and
-  `EXPLAIN [ANALYZE] SELECT`, which only read. The error `field` is `read_only`;
+- `FirestoreSqlOptions::new()` refuses `CREATE`, `DROP` and `ALTER COLLECTION`. They run after
+  `.allow_index_statements()`; without it they fail with `InvalidParametersError`, field
+  `allow_index_statements`, before any request. `SHOW INDEXES`, `SHOW COLLECTIONS` and
+  `EXPLAIN [ANALYZE] SELECT` only read, and run without it;
+- `read_only()` refuses `CREATE`, `DROP` and `ALTER COLLECTION` even when `.allow_index_statements()`
+  follows it: read-only wins. The error `field` is `read_only`. `read_only()` allows the statements
+  that only read;
 - `.with_collections([..])` applies to every collection ID a statement names. It refuses
-  `SHOW INDEXES` without `FROM`, and `SHOW COLLECTIONS`, which list names outside the set;
+  `SHOW INDEXES` without `FROM`, and `SHOW COLLECTIONS`, which list names outside the set, and
+  `DROP INDEX id` without `ON`, which reaches an index in any group. `DROP INDEX id ON collection`
+  needs a collection in the set;
 - `.refuse_collection_groups()` refuses `collection_group('..')` in an index definition;
 - `.with_max_rows(..)` caps the rows of the `SELECT` in `EXPLAIN ANALYZE`; a `SHOW` returns every
-  entry;
-- `FirestoreSqlOptions::new()` allows the index statements, so text run with it can drop an index.
-  Text from outside the program runs with `read_only()`.
+  entry.
+
+```rust,no_run
+# use firestore::*;
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+const ORDERS: FirestoreCollectionId = FirestoreCollectionId::from_static("orders");
+
+let outcome = db
+    .fluent()
+    .sql("DROP INDEX `CICAgPj-z4oK` ON orders")
+    .options(
+        FirestoreSqlOptions::new()
+            .allow_index_statements()
+            .with_collections([ORDERS]),
+    )
+    .run()
+    .await?;
+# let _ = outcome;
+# Ok(())
+# }
+```
 
 ## Refused forms
 
@@ -321,9 +353,12 @@ EXPLAIN ANALYZE SELECT title FROM books WHERE genre = @genre ORDER BY rating DES
 ```
 
 The plan is Firestore's own text, in the metadata of the last item of the rows. `EXPLAIN` takes a
-`SELECT`: it fails for a write, which Firestore rejects with Query Explain, or runs when it
-analyses, and for an option other than `ANALYZE`. `EXPLAIN` in the text together with `.explain()` on the builder fails with
-`InvalidParametersError`, field `explain`: the text and the builder would both set the options.
+`SELECT`. It fails for a write, which Firestore rejects with Query Explain or, with `ANALYZE`, runs,
+and for an option other than `ANALYZE`. `EXPLAIN` in the text together with `.explain()` on the
+builder fails with `InvalidParametersError`, field `explain`: the text and the builder would both
+set the options. `.explain()` on `SHOW` or on an index statement fails the same way, since they have
+no plan, and so does `.request_options(..)`, or `.request_tags(..)`, on `SHOW INDEXES` and the index
+statements, field `request_options`: they go to the Admin API, which takes no request options.
 
 ## Errors
 
@@ -333,20 +368,24 @@ Every error is an existing `FirestoreError` variant:
 |---|---|
 | text that does not parse, a refused form | `InvalidParametersError`, `field` the construct, with `location` |
 | an index statement in a build without `admin` | `InvalidParametersError` |
-| `query()` or `execute()` on a statement that needs `run()`; a wait on a statement with no operation; `EXPLAIN` with `.explain()` | `InvalidParametersError`, `field` `sql`, `wait`, `explain` |
+| `query()` or `execute()` on a statement that needs `run()`; a wait on a statement with no operation; `EXPLAIN` with `.explain()`, or `.explain()` on `SHOW` or an index statement; request options on an Admin API statement | `InvalidParametersError`, `field` `sql`, `wait`, `explain`, `request_options` |
+| an index statement without `.allow_index_statements()`, or with `read_only()` | `InvalidParametersError`, `field` `allow_index_statements` or `read_only` |
 | a field update with nothing to change, TTL on every field, a reserved group such as `__default__` | `InvalidParametersError` |
 | `CREATE` of an index that exists | `DataConflictError` |
-| `DROP` of an unknown ID, of an ID in another group than `ON` names, of a definition nothing matches | `DataNotFoundError` |
-| `DROP` of a definition that several indexes match | `DataConflictError`, naming the IDs |
+| `DROP` of an unknown ID or of a definition nothing matches | `DataNotFoundError`, code `NO_MATCHING_INDEX` |
+| `DROP` of an ID in another group than `ON` names | `DataNotFoundError`, code `INDEX_IN_OTHER_GROUP` |
+| `DROP` of a definition that several indexes match | `DataConflictError`, code `SEVERAL_MATCHING_INDEXES`, naming the IDs |
 | an index or a field Firestore refuses | `DatabaseError` from `INVALID_ARGUMENT`, with Firestore's message |
 | any index call on the emulator | `DatabaseError`, code `Unimplemented` |
 | a wait that passes its deadline | `SystemError`, code `OPERATION_WAIT_TIMEOUT` |
+| an index waited for with `IF NOT EXISTS` that ends in `NEEDS_REPAIR` | `SystemError`, code `INDEX_NEEDS_REPAIR` |
 
 ## Permissions
 
 `SHOW INDEXES` and `SHOW COLLECTIONS` need `roles/datastore.viewer`. `CREATE`, `DROP` and
 `ALTER COLLECTION` need `roles/datastore.indexAdmin`. Grant the viewer role alone to credentials
-that run text from outside the program.
+that run text from users or LLM agents, with `read_only()`, so that the role refuses a statement
+the options let through.
 
 Full example available
 [here](https://github.com/abdolence/firestore-rs/blob/master/examples/sql-indexes.rs).

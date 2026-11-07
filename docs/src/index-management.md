@@ -487,8 +487,11 @@ db.fluent().indexes().delete().id(created.id).execute().await?;
   `READY` after `.wait_until_ready(timeout)`. The `id` of the result is the one Firestore assigned.
   Creating an index that exists fails with `DataConflictError`, as `.sync()` does not: it counts that
   answer as done when the listing shows the index. `.if_not_exists()` makes an existing index the
-  result instead, and with a wait, an index that another caller is still building is polled until
-  it is no longer `CREATING`;
+  result instead, in whatever state it has. With a wait, an index that another caller is still
+  building is polled until it is no longer `CREATING`, under the same deadline and retries as a
+  build of the call's own, and one that ends in `NEEDS_REPAIR` fails with `SystemError`, code
+  `INDEX_NEEDS_REPAIR`. `NEEDS_REPAIR` is the state of an index whose last build failed and left no
+  operation running;
 - `delete()` takes an index by `.id(id)`, by `.collection_group(group).id(id)`, or by
   `.collection_group(group).index(..)`, the definition that `create()` took, which deletes the one
   listed index it matches, as `.sync()` matches a declaration. It returns the index as it was listed
@@ -515,6 +518,16 @@ The four calls run no edition rule of their own: Firestore's
 `INVALID_ARGUMENT` answers arrive as `DatabaseError`, and the emulator's `UNIMPLEMENTED`, see
 [The Firestore emulator](#the-firestore-emulator). A reserved group such as `__default__` fails with
 `InvalidParametersError`.
+
+Failures the library finds itself carry a code in the error:
+
+| Case | Error |
+|---|---|
+| `delete()` of an ID that no index has, or of a definition nothing matches | `DataNotFoundError`, code `NO_MATCHING_INDEX` |
+| `delete()` of an ID that belongs to another group than the one named | `DataNotFoundError`, code `INDEX_IN_OTHER_GROUP` |
+| `delete()` of a definition that several indexes match | `DataConflictError`, code `SEVERAL_MATCHING_INDEXES`, naming the IDs |
+| a wait that passes its deadline | `SystemError`, code `OPERATION_WAIT_TIMEOUT` |
+| `create()` with `.if_not_exists()` and a wait, of an index that ends in `NEEDS_REPAIR` | `SystemError`, code `INDEX_NEEDS_REPAIR` |
 
 ## Field paths
 

@@ -5,7 +5,8 @@ for SQL text that comes from outside the program: command line tools, admin scri
 defined in configuration, LLM agents, and queries ported from a SQL database. Reads return the
 documents of a pipeline, and `INSERT`, `UPDATE` and `DELETE` run as [pipeline writes](./pipeline-writes.md).
 With the `admin` feature it also runs [index statements](./sql/indexes.md): `CREATE INDEX`,
-`DROP INDEX`, `ALTER COLLECTION` and `SHOW INDEXES`.
+`DROP INDEX`, `ALTER COLLECTION` and `SHOW INDEXES`. The first three run only when the options say
+`.allow_index_statements()`.
 
 ```rust,no_run
 # use firestore::*;
@@ -185,17 +186,21 @@ let rows = db
 `FirestoreSqlOptions` limits a statement before it runs. A statement that breaks a limit fails at
 translation with `InvalidParametersError`, and no request is sent. `FirestoreSqlOptions::new()`
 allows every statement the translator supports, except [joins and
-subqueries](./sql/reads.md#joins-and-subqueries), and
-`FirestoreSqlOptions::read_only()` starts the set for text from outside the program:
+subqueries](./sql/reads.md#joins-and-subqueries) and the [statements that change an index or a
+field](./sql/indexes.md#options), and `FirestoreSqlOptions::read_only()` starts the set for text
+from outside the program:
 
 - `read_only()` refuses `INSERT`, `UPDATE` and `DELETE`, the `database()` source, and `CREATE`,
   `DROP` and `ALTER COLLECTION`. It allows `SELECT`, `SHOW` and `EXPLAIN [ANALYZE] SELECT`, which
   only read;
+- `.allow_index_statements()` allows `CREATE INDEX`, `DROP INDEX` and `ALTER COLLECTION`, which
+  `new()` refuses. `read_only()` still refuses them after it: read-only wins;
 - `.refuse_collection_groups()` refuses `collection_group(..)`, which reads every collection with
   that ID under any document;
 - `.with_collections([BOOKS, REVIEWS])` allows only these `FirestoreCollectionId`s, wherever the
   statement names one: a collection, each collection of a path, a collection group and the paths of
-  `documents(..)`. It refuses `database()` too;
+  `documents(..)`. It refuses `database()` too, and `SHOW COLLECTIONS` and `SHOW INDEXES` without
+  `FROM`, which list names outside the set;
 - `.with_max_rows(1_000)` returns at most that many rows: the `LIMIT` is lowered to it, or one is
   added. The cap counts the rows returned, not the rows read: an `OFFSET` still reads the rows it
   skips, and `ARRAY_AGG(..)` or `ARRAY(SELECT ..)` puts a whole collection into one row;
@@ -239,7 +244,8 @@ statement that filters on an unindexed field scans the collection, as a pipeline
 ## Index statements
 
 `CREATE INDEX`, `DROP INDEX`, `ALTER COLLECTION`, `SHOW INDEXES` and `SHOW COLLECTIONS` run with
-`run()`. [Index statements](./sql/indexes.md) lists their forms, outcomes, waits and refusals.
+`run()`, and the first three need `.allow_index_statements()` on the options.
+[Index statements](./sql/indexes.md) lists their forms, outcomes, waits and refusals.
 
 ## Reads, joins and subqueries
 
