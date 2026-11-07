@@ -422,7 +422,9 @@ impl FirestoreDb {
     /// collection is not preloaded, or `params` asks for ordering, a field projection or a page -
     /// none of which the cached listing path supports. Returns an error only in
     /// [`FirestoreDbSessionCacheMode::ReadCachedOnly`], when the cache cannot serve the request
-    /// completely and there is nowhere else to fall back to.
+    /// completely and there is nowhere else to fall back to. A session with a consistency
+    /// selector (a transaction or a read time) never reads the cache, and fails in
+    /// [`FirestoreDbSessionCacheMode::ReadCachedOnly`].
     #[cfg(feature = "caching")]
     #[inline]
     pub async fn list_docs_from_cache<'b>(
@@ -430,6 +432,9 @@ impl FirestoreDb {
         params: &FirestoreListDocParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
+        if self.skips_cache_for_consistency_selector()? {
+            return Ok(FirestoreCachedValue::SkipCache);
+        }
         if let FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache)
         | FirestoreDbSessionCacheMode::ReadThroughCache(ref cache) =
             self.session_params.cache_mode

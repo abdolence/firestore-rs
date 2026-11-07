@@ -478,6 +478,9 @@ impl FirestoreDb {
             "/firestore/ids_count" = full_doc_ids.len()
         );
 
+        #[cfg(feature = "caching")]
+        let offer_to_cache = return_only_fields.is_none();
+
         let request = BatchGetDocumentsRequest {
             database: self.get_database_path().clone(),
             documents: full_doc_ids,
@@ -512,7 +515,9 @@ impl FirestoreDb {
                                         .unwrap_or_else(|| document.name.clone());
                                     #[cfg(feature = "caching")]
                                     {
-                                        self.offer_doc_update_to_cache(&document).await.ok();
+                                        if offer_to_cache {
+                                            self.offer_doc_update_to_cache(&document).await.ok();
+                                        }
 
                                         Some(Ok((doc_id, Some(document))))
                                     }
@@ -550,6 +555,9 @@ impl FirestoreDb {
         document_path: &str,
         _return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<FirestoreCachedValue<FirestoreDocument>> {
+        if self.skips_cache_for_consistency_selector()? {
+            return Ok(FirestoreCachedValue::SkipCache);
+        }
         if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache)
         | FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) = self.session_params.cache_mode
         {
@@ -610,6 +618,9 @@ impl FirestoreDb {
     ) -> FirestoreResult<
         FirestoreCachedValue<BoxStream<'_, FirestoreResult<(String, Option<Document>)>>>,
     > {
+        if self.skips_cache_for_consistency_selector()? {
+            return Ok(FirestoreCachedValue::SkipCache);
+        }
         if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache)
         | FirestoreDbSessionCacheMode::ReadCachedOnly(ref cache) = self.session_params.cache_mode
         {
@@ -669,11 +680,30 @@ impl FirestoreDb {
         &self,
         document: &FirestoreDocument,
     ) -> FirestoreResult<()> {
-        if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache) =
-            self.session_params.cache_mode
-        {
+        if let (FirestoreDbSessionCacheMode::ReadThroughCache(cache), None) = (
+            &self.session_params.cache_mode,
+            &self.session_params.consistency_selector,
+        ) {
             cache.update_doc_by_path(document).await?;
         }
         Ok(())
+    }
+
+    /// Whether this session reads from Firestore rather than the cache.
+    ///
+    /// A transaction or a read time sees a state the cache does not hold. A `ReadCachedOnly`
+    /// session cannot fall back to Firestore, so it fails.
+    #[cfg(feature = "caching")]
+    pub(crate) fn skips_cache_for_consistency_selector(&self) -> FirestoreResult<bool> {
+        match (
+            &self.session_params.consistency_selector,
+            &self.session_params.cache_mode,
+        ) {
+            (None, _) => Ok(false),
+            (Some(_), FirestoreDbSessionCacheMode::ReadCachedOnly(_)) => {
+                Err(crate::cache_consistency_selector_error())
+            }
+            (Some(_), _) => Ok(true),
+        }
     }
 }

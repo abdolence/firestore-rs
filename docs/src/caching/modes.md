@@ -12,4 +12,5 @@ Which operations use the cache:
 | Read by ID, batch read by IDs | yes, for any cached collection |
 | Listing all documents in a collection | only for **preloaded** collections |
 | Querying a collection (filtering, ordering, cursors) | only for **preloaded** collections, and only for supported queries |
-| Paged listing, queries with metadata, aggregations, transactions, writes | never |
+| Reads in a transaction or at a read time | never: `read_through_cache` reads from Firestore, `read_cached_only` returns an error |
+| Paged listing, queries with metadata, aggregations, writes | never |

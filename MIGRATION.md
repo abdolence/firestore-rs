@@ -86,6 +86,35 @@ let FirestoreInvalidParametersPublicDetails { field, error } = details;
 let FirestoreInvalidParametersPublicDetails { field, error, .. } = details;
 ```
 
+### Cache reads in a transaction or at a read time go to Firestore
+
+A session with a consistency selector never reads the cache: `get`, batch get, `query` and `list` inside
+`run_transaction`, or on a handle from `clone_with_consistency_selector`, are answered by Firestore. Before, a document
+or a preloaded collection the cache held was served from it, so the transaction did not read or lock those documents and
+a read time returned the current cached state. A document read this way is not written to the cache either.
+
+Under `read_cached_only` the same reads return `FirestoreError::CacheError`, because that mode never contacts Firestore.
+Code that read a transaction through a cached-only handle needs `read_through_cache` instead.
+
+### A failed cache read fails the batch read by IDs
+
+The default `get_docs_by_paths` of `FirestoreCacheDocsByPathSupport` yields the error of a path it fails to read.
+Before, it logged the error and left that document out, so a batch read by IDs under `read_cached_only` returned fewer
+documents without an error, and under `read_through_cache` fell back to Firestore. Both modes now return the error, as a
+read of a single document already did. A backend that overrides `get_docs_by_paths` is unaffected.
+
+### Batch reads with a field mask do not fill the cache
+
+A batch get with `.fields(..)` under `read_through_cache` no longer offers the masked documents to the cache. Before, a
+cached document could hold only the masked fields, and later reads by ID returned it as the whole document.
+
+### Cached queries compare timestamps and numbers as Firestore does
+
+The cached query engine, used by `query` on preloaded collections, now orders timestamps by seconds and then nanoseconds,
+where it compared the two parts separately, so `1.9 s < 2.1 s` was false. An integer and a double compare by value, so a
+filter on `1` matches the double `1.0`, and `order_by` sorts them together. Cached queries that filtered or sorted on
+these types returned different documents from Firestore.
+
 ## 0.62
 
 ### Simple batch writes stop retrying after 60 seconds

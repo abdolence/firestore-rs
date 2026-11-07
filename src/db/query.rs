@@ -85,6 +85,9 @@ impl FirestoreDb {
         params: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
+        if self.skips_cache_for_consistency_selector()? {
+            return Ok(FirestoreCachedValue::SkipCache);
+        }
         match &params.collection_id {
             FirestoreQueryCollection::Group(group_id) => {
                 // Collection group queries span collections the cache does not model, so they can
