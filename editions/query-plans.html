@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-1047e78b.js";
+            window.path_to_searchindex_js = "../searchindex-b567dc1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-edc99909.js"></script>
@@ -220,11 +220,11 @@ when a document leaves the results.</li>
 <p>A Core query that no index covers runs as a table scan on Enterprise, and is billed by the data it
 reads: a scan of the whole collection reads every 4 KiB of it. On Standard the same query is either
 refused or answered from an index, and billed per returned document.</p>
-<p>Query Explain with <code>analyze</code> on a database of the Enterprise edition reported 1 read unit for each
-document a SQL statement read by ID, for <code>=</code> and for <code>IN</code>, with or without a further condition such
-as <code>stock &gt;= 0</code>. Firestore’s published pricing charges a point read of the Core <code>get</code> in 4 KiB
-tranches, rounded up, so a document of up to 4 KiB costs 1 read unit through <code>get</code>, as it does
-through SQL. See <a href="../sql/reads.html#reads-by-id">Reads by ID</a>.</p>
+<p>A SQL statement that reads a document by ID, with <code>=</code> or <code>IN</code>, costs 1 read unit for each
+document on the Enterprise edition, with or without a further condition such as <code>stock &gt;= 0</code>.
+Firestore’s published pricing charges a point read of the Core <code>get</code> in 4 KiB tranches, rounded
+up, so a document of up to 4 KiB costs 1 read unit through <code>get</code>, as it does through SQL. See
+<a href="../sql/reads.html#reads-by-id">Reads by ID</a>.</p>
 <h3 id="both-editions"><a class="header" href="#both-editions">Both editions</a></h3>
 <p>A read that a <a href="../caching.html">cache</a> session answers sends no request, so Firestore charges
 nothing for it. Query Explain is never answered from the cache.</p>

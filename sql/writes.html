@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-1047e78b.js";
+            window.path_to_searchindex_js = "../searchindex-b567dc1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-edc99909.js"></script>
@@ -229,13 +229,15 @@ println!("Wrote {} documents", written.documents_modified);
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <h2 id="concurrent-writes"><a class="header" href="#concurrent-writes">Concurrent writes</a></h2>
-<p>8 concurrent <code>INSERT .. ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock</code>
-statements on one document committed 4 times and failed 4 times with <code>ABORTED</code>, “Optimistic
-transaction was aborted due to a conflict”, and the stored <code>stock</code> was 4. A write that returns
-<code>ABORTED</code> can be sent again.</p>
+<p>Concurrent writes to one document conflict: some commit, and the others fail with <code>ABORTED</code>,
+“Optimistic transaction was aborted due to a conflict”, with nothing of them applied. To have such
+writes retried, run them with <code>execute_in_transaction(..)</code> inside <code>run_transaction</code>, which runs the
+whole transaction again on <code>ABORTED</code>, see
+<a href="../pipeline-writes.html#writes-in-a-transaction">Writes in a transaction</a>. <code>execute()</code> on its own
+sends a write once.</p>
 <h2 id="write-limits"><a class="header" href="#write-limits">Write limits</a></h2>
 <p>Firestore refuses an atomic write that is too big. <a href="../pipeline-writes.html#write-limits">Write limits</a>
-lists the sizes that were measured.</p>
+lists the limits.</p>
 
                     </main>
 

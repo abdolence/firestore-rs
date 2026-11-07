@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1047e78b.js";
+            window.path_to_searchindex_js = "searchindex-b567dc1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-edc99909.js"></script>
@@ -255,20 +255,17 @@ from what was polled so far at <code>warn</code> before returning the error, the
 <code>.sync()</code> does for its own wait.</p>
 <h2 id="logs-and-spans"><a class="header" href="#logs-and-spans">Logs and spans</a></h2>
 <p>A bulk delete logs through <code>tracing</code>, one span covering the whole call (<code>Firestore Bulk Delete</code>),
-nesting a <code>Firestore Bulk Delete Wait</code> child span when you wait. An excerpt from a real run
-against five documents:</p>
+nesting a <code>Firestore Bulk Delete Wait</code> child span when you wait. An excerpt of the log:</p>
 <pre><code class="language-text">Started a bulk delete. operation=".../operations/CyA0..." action="bulk_delete" collection_groups="firestore-rs-bulk-delete-test"
 Firestore reported the bulk delete's snapshot time. snapshot_time=2026-09-26T19:50:00Z
 Operation reached a terminal state. action="bulk_delete" polls=3
 </code></pre>
 <p>The third line comes from the same wait every long-running admin operation polls through, index
 sync included, which is why it names the operation generically rather than as a bulk delete.</p>
-<p>That run took about 11 seconds end to end, for 5 documents; budget for it running longer against
-more data.</p>
-<p>Bulk delete works on both editions, and removes the named collection group at every depth. A run
-over 8 documents in two levels of one collection group returned from <code>wait_until_done</code> after 56
-seconds on a Standard edition database and 65 seconds on an Enterprise edition one. The two
-databases were in different regions, so the times do not compare.</p>
+<p>A bulk delete is an operation that Firestore runs in the background, and it takes time even for a
+few documents, from about ten seconds to about a minute. The time grows with the data, so set the
+wait timeout well above that.</p>
+<p>Bulk delete works on both editions, and removes the named collection group at every depth.</p>
 <h2 id="the-firestore-emulator"><a class="header" href="#the-firestore-emulator">The Firestore emulator</a></h2>
 <p>The emulator answers <code>BulkDeleteDocuments</code> with <code>UNIMPLEMENTED</code>. Unlike index management, which
 skips silently against the emulator, a bulk delete returns an explicit error instead: there is no

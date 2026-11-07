@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1047e78b.js";
+            window.path_to_searchindex_js = "searchindex-b567dc1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-edc99909.js"></script>
@@ -245,8 +245,7 @@ assert_eq!(query.to_string(), r#""menu:waffles" "-bacon""#);</code></pre>
 <p>A quoted word is matched as written, without other forms of the word. A quote character inside a
 phrase is replaced by a space.</p>
 <h3 id="what-the-grammar-supports"><a class="header" href="#what-the-grammar-supports">What the grammar supports</a></h3>
-<p>The query grammar is Firestore’s, and it is narrow. These are the limits, each measured against
-the service:</p>
+<p>The query grammar is Firestore’s, and it is narrow. These are its limits:</p>
 <ul>
 <li>terms separated by spaces must all match; there is no OR, and <code>pancakes OR crepes</code> matches only
 the documents that contain both words;</li>

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1047e78b.js";
+            window.path_to_searchindex_js = "searchindex-b567dc1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-edc99909.js"></script>
@@ -467,7 +467,7 @@ and takes single-field overrides. See
 <a href="#search-indexes-enterprise-edition">Search indexes</a> and
 <a href="#ttl-and-the-enterprise-edition">TTL and the Enterprise edition</a> for the rules, and
 <a href="#waiting-for-changes-to-finish">Waiting for changes to finish</a> for the build
-times measured on each edition.</p>
+times to expect on each edition.</p>
 <h2 id="cost"><a class="header" href="#cost">Cost</a></h2>
 <p>Standard bills each document read, written and deleted; Enterprise bills read units (4 KiB) and
 write units (1 KiB, one more per indexed field) instead, and real-time updates as a separate
@@ -484,8 +484,7 @@ on each edition.</p>
 <p>A <a href="#pipelines">pipeline</a> runs with Firestore’s pipeline semantics, and a <a href="#sql">SQL</a>
 statement runs as a pipeline, so it keeps them too. A Core query has semantics of its own. This
 page lists where the two differ, and where the pipeline semantics differ from what a SQL database
-does. Each pipeline and SQL row was run against a collection of documents with an integer, a
-double, strings, a boolean, a null, a NaN and a document without the field.</p>
+does.</p>
 <h2 id="null-and-absent"><a class="header" href="#null-and-absent">Null and absent</a></h2>
 <p>A document either has a field, holding a value that can be null, or lacks it. SQL has no absent
 field: the column holds <code>NULL</code>. A Core filter or <code>order_by</code> on a field never returns a document
@@ -515,16 +514,17 @@ method in brackets where it differs:</p>
 </div>
 <p>A row that lacks a key deserialises into an <code>Option</code> field as <code>None</code>.</p>
 <p><code>COUNT(x)</code> counts documents where <code>x</code> has a value that is not null. Over 11 documents, one holding
-null and one lacking the field, <code>COUNT(*)</code> was 11, <code>COUNT(v)</code> was 9 and <code>COUNT(DISTINCT v)</code> was 8.</p>
+null and one lacking the field, <code>COUNT(*)</code> is 11 and <code>COUNT(v)</code> is 9; <code>COUNT(DISTINCT v)</code> counts
+each distinct value once.</p>
 <p>The SQL results are written in SQL, using the pipeline function <code>is_absent</code>, which passes through:</p>
 <ul>
 <li><code>v IS NULL OR is_absent(v)</code> matches null and absent;</li>
 <li><code>v != 1 AND v IS NOT NULL</code> leaves them out;</li>
 <li><code>if_absent(v, NULL)</code> selects an absent field as null.</li>
 </ul>
-<p>The filters differ in cost. <code>rating != 4.2 AND rating IS NOT NULL</code> kept the index ranges of
-<code>rating != 4.2</code>, and <code>genre IS NULL OR is_absent(genre)</code> lost the range: it scanned all 11 index
-entries, where <code>genre IS NULL</code> scanned 1. See <a href="#query-plans-and-cost">Query plans and cost</a>.</p>
+<p>The filters differ in cost. <code>rating != 4.2 AND rating IS NOT NULL</code> keeps the index ranges of
+<code>rating != 4.2</code>, and <code>genre IS NULL OR is_absent(genre)</code> loses the index range of <code>genre IS NULL</code>,
+so it scans every index entry of the field. See <a href="#query-plans-and-cost">Query plans and cost</a>.</p>
 <p>Whether a field is stored as null or left absent is decided when it is written, see
 <a href="#explicit-null-value-serialisation">Explicit null value serialisation</a>.</p>
 <h2 id="types"><a class="header" href="#types">Types</a></h2>
@@ -543,7 +543,7 @@ entries, where <code>genre IS NULL</code> scanned 1. See <a href="#query-plans-a
 </table>
 </div>
 <p>A condition earlier in the same <code>AND</code> that excludes the other types avoids the failure: with
-<code>k IN ('pct', 'pcx') AND v LIKE '100%'</code>, the <code>LIKE</code> ran only on strings.</p>
+<code>k IN ('pct', 'pcx') AND v LIKE '100%'</code>, the <code>LIKE</code> runs only on strings.</p>
 <p>A Core range filter matches values of its own type only, and never NaN. A Core <code>order_by</code> over
 mixed types follows Firestore’s order of types: null, booleans, numbers, timestamps, strings,
 bytes, references, geo points, arrays, vectors and maps.</p>
@@ -659,11 +659,11 @@ when a document leaves the results.</li>
 <p>A Core query that no index covers runs as a table scan on Enterprise, and is billed by the data it
 reads: a scan of the whole collection reads every 4 KiB of it. On Standard the same query is either
 refused or answered from an index, and billed per returned document.</p>
-<p>Query Explain with <code>analyze</code> on a database of the Enterprise edition reported 1 read unit for each
-document a SQL statement read by ID, for <code>=</code> and for <code>IN</code>, with or without a further condition such
-as <code>stock &gt;= 0</code>. Firestore’s published pricing charges a point read of the Core <code>get</code> in 4 KiB
-tranches, rounded up, so a document of up to 4 KiB costs 1 read unit through <code>get</code>, as it does
-through SQL. See <a href="#reads-by-id">Reads by ID</a>.</p>
+<p>A SQL statement that reads a document by ID, with <code>=</code> or <code>IN</code>, costs 1 read unit for each
+document on the Enterprise edition, with or without a further condition such as <code>stock &gt;= 0</code>.
+Firestore’s published pricing charges a point read of the Core <code>get</code> in 4 KiB tranches, rounded
+up, so a document of up to 4 KiB costs 1 read unit through <code>get</code>, as it does through SQL. See
+<a href="#reads-by-id">Reads by ID</a>.</p>
 <h3 id="both-editions"><a class="header" href="#both-editions">Both editions</a></h3>
 <p>A read that a <a href="#caching">cache</a> session answers sends no request, so Firestore charges
 nothing for it. Query Explain is never answered from the cache.</p>
@@ -2468,8 +2468,7 @@ assert_eq!(query.to_string(), r#""menu:waffles" "-bacon""#);</code></pre>
 <p>A quoted word is matched as written, without other forms of the word. A quote character inside a
 phrase is replaced by a space.</p>
 <h3 id="what-the-grammar-supports"><a class="header" href="#what-the-grammar-supports">What the grammar supports</a></h3>
-<p>The query grammar is Firestore’s, and it is narrow. These are the limits, each measured against
-the service:</p>
+<p>The query grammar is Firestore’s, and it is narrow. These are its limits:</p>
 <ul>
 <li>terms separated by spaces must all match; there is no OR, and <code>pancakes OR crepes</code> matches only
 the documents that contain both words;</li>
@@ -2641,27 +2640,26 @@ subquery.</li>
 write that breaks one with <code>INVALID_ARGUMENT</code>.</p>
 <h2 id="write-limits"><a class="header" href="#write-limits">Write limits</a></h2>
 <p>Firestore rejects an atomic write that is too big with <code>InvalidArgument</code>, “Transaction too big.
-Decrease transaction size.” The limit is not one number of documents. It was measured with SQL
-statements, which run as atomic pipeline writes, on documents of two small fields (an integer and
-a short string), from a developer machine:</p>
+Decrease transaction size.” The limit is not one number of documents: it depends on the
+statement and on the size of the documents. For SQL statements, which run as atomic pipeline
+writes, on documents of two small fields (an integer and a short string), the limits are about:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Statement</th><th>Largest that succeeded</th><th>Smallest that failed</th></tr>
+<tr><th>Statement</th><th>Succeeds up to</th><th>Fails from</th></tr>
 </thead>
 <tbody>
-<tr><td><code>UPDATE .. SET touched = 1 WHERE TRUE</code></td><td>55,000 documents, 27.5 s</td><td>60,000 documents, in two runs</td></tr>
+<tr><td><code>UPDATE .. SET touched = 1 WHERE TRUE</code></td><td>55,000 documents</td><td>60,000 documents</td></tr>
 <tr><td><code>DELETE FROM .. WHERE TRUE</code></td><td>5,475 documents</td><td>5,500 documents</td></tr>
 </tbody>
 </table>
 </div>
-<p>The <code>DELETE</code> limit was about a tenth of the <code>UPDATE</code> limit. Throughput was 1,000 to 3,000 documents
-per second, and rose with the size of the write. Two runs that came right after inserting the
-documents failed once with <code>ResourceExhausted</code> (“This database has exceeded their maximum
-bandwidth for writes”) and passed after a pause, and one <code>UPDATE</code> of 67,500 documents failed once
-with <code>Aborted</code>.</p>
+<p>The <code>DELETE</code> limit is about a tenth of the <code>UPDATE</code> limit. Larger documents lower both. A large
+write commits at roughly 1,000 to 3,000 documents per second.</p>
+<p>A large write can also fail with <code>ResourceExhausted</code> (“This database has exceeded their maximum
+bandwidth for writes”) or with <code>Aborted</code>. Wait, and send the write again in smaller parts.</p>
 <p>Split a large write by a <code>filter</code> on a range, such as the key or a timestamp, and send each part
-after the one before. The numbers are measurements on tiny documents.</p>
+after the one before.</p>
 <p>A TTL (time-to-live) policy suits retention better than a scheduled <code>delete</code>: Firestore deletes
 the documents itself once the timestamp in the policy’s field has passed, see
 <a href="#ttl-policy">TTL and the Enterprise edition</a>. The
@@ -2925,7 +2923,9 @@ written in <code>documents_modified</code>, or with <code>execute_in_transaction
 transaction, which behaves as in <a href="#writes-in-a-transaction">Pipeline writes</a>.</p>
 <p>Every SQL write is atomic: it applies in full or not at all, as a SQL statement does. It is sent
 once and never retried, and a failed write has <code>retry_possible</code> set only for <code>ABORTED</code>, which means
-nothing was applied. A write has no <code>explain</code>, and <code>.explain()</code> on one fails with
+nothing was applied. To have a write retried on <code>ABORTED</code>, run it inside <code>run_transaction</code>, see
+<a href="#concurrent-writes">Concurrent writes</a>. A write has no <code>explain</code>, and <code>.explain()</code>
+on one fails with
 <code>InvalidParametersError</code>.</p>
 <div class="table-wrapper">
 <table>
@@ -3088,8 +3088,9 @@ dropped, so a statement does not run with a clause missing.</p>
 join as a nested loop: for each row of the left side it runs the right side as a subquery. A
 subquery in an expression, <code>[NOT] EXISTS</code>, <code>[NOT] IN (SELECT ..)</code>, <code>(SELECT ..)</code> or
 <code>ARRAY(SELECT ..)</code>, runs once per row of the query it is in too, whether or not it reads a column of
-that row. Query Explain with <code>analyze</code> on an Enterprise database, with 11 documents in the outer
-collection and 300 in the inner one:</p>
+that row, so the rows scanned multiply. Rows scanned and read units on an Enterprise edition
+database, for an outer collection of 11 documents and an inner one of 300, as Query Explain with
+<code>analyze</code> reports them:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3104,8 +3105,8 @@ collection and 300 in the inner one:</p>
 </tbody>
 </table>
 </div>
-<p>The plan of each subquery statement is an <code>Apply</code> of the outer scan to the subquery, so the
-uncorrelated <code>COUNT(*)</code> ran 11 times too.</p>
+<p>The plan of each subquery statement is an <code>Apply</code> of the outer scan to the subquery, so even an
+uncorrelated <code>COUNT(*)</code> runs once for each outer row.</p>
 <p>The cost depends on the index. Without one on the join key, each run reads the whole joined
 collection. A join or subquery is therefore refused unless the options say <code>.allow_subqueries()</code>,
 and the error says it runs one subquery per row, see
@@ -3160,8 +3161,9 @@ evaluated.</li>
 referenced twice runs twice. Results are not kept or reused between references. A statement that
 repeats CTE bodies more than 1,024 times in all is refused.</p>
 <h3 id="join-cost"><a class="header" href="#join-cost">Join cost</a></h3>
-<p>These were measured with Query Explain and <code>analyze</code> on an Enterprise database. The collections
-were small: 9 restaurants with 6 reviews, 11 books, and 1,500 items.</p>
+<p>Rows scanned and read units for some joins on an Enterprise edition database, as Query Explain
+with <code>analyze</code> reports them, over small collections: 9 restaurants with 6 reviews, 11 books and
+1,500 items.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3178,17 +3180,16 @@ were small: 9 restaurants with 6 reviews, 11 books, and 1,500 items.</p>
 </div>
 <p>The unindexed join scans the joined collection once for each left row: parents × child collection.
 The indexed join reads an index range for each left row, and a join into <code>subcollection(..)</code> reads
-each parent’s children only. The last row took 260 ms on the server, and 1.5 s as the client saw
-it.</p>
+each parent’s children only.</p>
 <p>Rules that follow from it:</p>
 <ul>
 <li>index the join key, and run <code>.explain()</code> before the join reaches production data. A plan with a
 <code>TableScan</code> under the join is the unindexed case, see
 <a href="#recognising-a-full-scan">Query plans and cost</a>;</li>
 <li>a join that compares the joined table’s <code>__name__</code> with a column of the left row becomes a lookup
-by name for each left row. In a per-row subquery over a collection of 60 documents, run for 3 rows,
-a plain <code>=</code> of <code>__name__</code> with a variable scanned the collection: 132 to 180 rows and 4 to 5
-read units, where the lookup by name read 2 rows for 3 read units;</li>
+by name for each left row. A plain <code>=</code> of <code>__name__</code> with a variable in a per-row subquery scans
+the collection instead: over a collection of 60 documents, run for 3 rows, it scans up to 180
+rows, where the lookup by name reads 2;</li>
 <li>a join over a large collection that is run for analysis belongs in BigQuery. Firestore joins fit
 a left side that a filter has narrowed to a few documents.</li>
 </ul>
@@ -3245,13 +3246,15 @@ println!("Wrote {} documents", written.documents_modified);
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <h2 id="concurrent-writes"><a class="header" href="#concurrent-writes">Concurrent writes</a></h2>
-<p>8 concurrent <code>INSERT .. ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock</code>
-statements on one document committed 4 times and failed 4 times with <code>ABORTED</code>, “Optimistic
-transaction was aborted due to a conflict”, and the stored <code>stock</code> was 4. A write that returns
-<code>ABORTED</code> can be sent again.</p>
+<p>Concurrent writes to one document conflict: some commit, and the others fail with <code>ABORTED</code>,
+“Optimistic transaction was aborted due to a conflict”, with nothing of them applied. To have such
+writes retried, run them with <code>execute_in_transaction(..)</code> inside <code>run_transaction</code>, which runs the
+whole transaction again on <code>ABORTED</code>, see
+<a href="#writes-in-a-transaction">Writes in a transaction</a>. <code>execute()</code> on its own
+sends a write once.</p>
 <h2 id="write-limits-1"><a class="header" href="#write-limits-1">Write limits</a></h2>
 <p>Firestore refuses an atomic write that is too big. <a href="#write-limits">Write limits</a>
-lists the sizes that were measured.</p>
+lists the limits.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="timestamps-support"><a class="header" href="#timestamps-support">Timestamps support</a></h1>
 <p>By default, date/time values serialise as a string to Firestore (while
@@ -4007,9 +4010,8 @@ changes. The sync reports the index as unchanged, logs a warning naming it and c
 everything else.</p>
 <p>When the fresh listing shows no matching index, the sync returns the <code>ALREADY_EXISTS</code> error
 instead of reporting the index as unchanged. Firestore keeps answering <code>ALREADY_EXISTS</code> for a
-while after an index with the same fields is deleted, while the listing no longer shows it: 40 to
-60 seconds on an Enterprise edition database, measured once. Run the sync again once the answer
-changes.</p>
+while after an index with the same fields is deleted, while the listing no longer shows it, for up to
+about a minute on an Enterprise edition database. Run the sync again once the answer changes.</p>
 <p>In both cases <code>withheld_deletes</code> on the report lists the indexes left in place and the reason.
 Reverts and TTL disables do not wait for new indexes.</p>
 <p><code>.prune_undeclared().plan()</code> previews a pruning sync without writing anything: <code>delete_indexes</code>,
@@ -4145,11 +4147,11 @@ is up:</p>
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <p><code>.wait_until_ready_with_options(...)</code> also sets the poll interval, 5 seconds by default.</p>
-<p>An index build is not instant even on an empty collection. On an empty collection,
-<code>.wait_until_ready(..)</code> waited 62 to 68 seconds for one index of each kind on an Enterprise
-edition database: ordered, array, vector, text, geo, and text with geo. On a Standard edition
-database, a lone vector index took 355 seconds, and three composite indexes with two field
-overrides and a TTL field 414 seconds.</p>
+<p>An index build takes time even on an empty collection: about a minute for one index of any kind
+(ordered, array, vector, text, geo, or text with geo) on an Enterprise edition database. On a
+Standard edition database a lone vector index takes about six minutes, and a sync of three
+composite indexes, two field overrides and a TTL field about seven. Set the timeout above these,
+and larger for a collection that holds data.</p>
 <p>The timeout covers the whole sync, from the start of the call, and every wait inside it ends by
 the same deadline. The last round of polls goes out at the deadline itself. One poll may take up
 to 10 seconds to answer (or the whole timeout, if that is shorter), so an error can arrive that
@@ -4189,8 +4191,8 @@ declaration intends.</p>
 <p>Index management logs through <code>tracing</code>. One span covers a whole <code>.plan()</code> or <code>.sync()</code> call
 (<code>Firestore Index Plan</code> or <code>Firestore Index Sync</code>), and nests child spans for listing, diffing,
 applying and, when <code>.wait_until_ready()</code> is set, waiting. Every span records its own elapsed time.</p>
-<p>An excerpt from a real <code>.plan()</code> call against <code>firestore-rs-index-sync-test</code>, currently empty (no
-composite indexes, field overrides or TTL fields declared, and none listed for the group):</p>
+<p>An excerpt of the log of a <code>.plan()</code> call for an empty collection group (no composite indexes,
+field overrides or TTL fields declared, and none listed for the group):</p>
 <pre><code class="language-text">DEBUG Firestore Index Plan{/firestore/collection_group="firestore-rs-index-sync-test" /firestore/prune=false}:Firestore Index List{...}: firestore::db::admin::indexes: Listed the collection group's indexes and fields. indexes=0 fields=0 skipped_indexes=7 skipped_fields=0
  INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Existing state: 0 indexes, 0 field overrides, 0 TTL fields collection_group="firestore-rs-index-sync-test" composite_indexes=0 field_overrides=0 ttl_fields=0
  INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Firestore index plan: no changes (0 unchanged, 0 pending, 0 ttl unchanged)
@@ -4199,13 +4201,12 @@ composite indexes, field overrides or TTL fields declared, and none listed for t
 </code></pre>
 <p><code>skipped_indexes</code> counts composite indexes <code>ListIndexes</code> returned for other collection groups
 sharing the same database; the library filters listed items down to the owned group before
-computing anything, since a raw <code>ListIndexes</code> on one group’s parent has been observed to return
-every group’s indexes.</p>
+computing anything, since a raw <code>ListIndexes</code> on one group’s parent can return every group’s
+indexes.</p>
 <p>The plan event’s fields split undeclared items the same way pruning does: <code>delete_indexes</code>,
 <code>revert_fields</code> and <code>disable_ttl</code> are what a pruning sync would remove, and
 <code>kept_undeclared_indexes</code>, <code>kept_undeclared_fields</code> and <code>kept_undeclared_ttl</code> are what it would
-leave alone. This run has none of either, since the group carries nothing undeclared to begin
-with.</p>
+leave alone. Both are zero here, since the group carries nothing undeclared.</p>
 <p>Each call reads the database’s edition first, in a <code>Firestore Index Edition</code> span, ahead of the
 listing. Its time counts in the report’s <code>total</code> and in no phase.</p>
 <p><code>.sync()</code> also logs a <code>Firestore Index Apply</code> span with one child span per applied action, and a
@@ -4557,20 +4558,17 @@ from what was polled so far at <code>warn</code> before returning the error, the
 <code>.sync()</code> does for its own wait.</p>
 <h2 id="logs-and-spans-1"><a class="header" href="#logs-and-spans-1">Logs and spans</a></h2>
 <p>A bulk delete logs through <code>tracing</code>, one span covering the whole call (<code>Firestore Bulk Delete</code>),
-nesting a <code>Firestore Bulk Delete Wait</code> child span when you wait. An excerpt from a real run
-against five documents:</p>
+nesting a <code>Firestore Bulk Delete Wait</code> child span when you wait. An excerpt of the log:</p>
 <pre><code class="language-text">Started a bulk delete. operation=".../operations/CyA0..." action="bulk_delete" collection_groups="firestore-rs-bulk-delete-test"
 Firestore reported the bulk delete's snapshot time. snapshot_time=2026-09-26T19:50:00Z
 Operation reached a terminal state. action="bulk_delete" polls=3
 </code></pre>
 <p>The third line comes from the same wait every long-running admin operation polls through, index
 sync included, which is why it names the operation generically rather than as a bulk delete.</p>
-<p>That run took about 11 seconds end to end, for 5 documents; budget for it running longer against
-more data.</p>
-<p>Bulk delete works on both editions, and removes the named collection group at every depth. A run
-over 8 documents in two levels of one collection group returned from <code>wait_until_done</code> after 56
-seconds on a Standard edition database and 65 seconds on an Enterprise edition one. The two
-databases were in different regions, so the times do not compare.</p>
+<p>A bulk delete is an operation that Firestore runs in the background, and it takes time even for a
+few documents, from about ten seconds to about a minute. The time grows with the data, so set the
+wait timeout well above that.</p>
+<p>Bulk delete works on both editions, and removes the named collection group at every depth.</p>
 <h2 id="the-firestore-emulator-1"><a class="header" href="#the-firestore-emulator-1">The Firestore emulator</a></h2>
 <p>The emulator answers <code>BulkDeleteDocuments</code> with <code>UNIMPLEMENTED</code>. Unlike index management, which
 skips silently against the emulator, a bulk delete returns an explicit error instead: there is no

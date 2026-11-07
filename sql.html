@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1047e78b.js";
+            window.path_to_searchindex_js = "searchindex-b567dc1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-edc99909.js"></script>
@@ -387,7 +387,9 @@ written in <code>documents_modified</code>, or with <code>execute_in_transaction
 transaction, which behaves as in <a href="./pipeline-writes.html#writes-in-a-transaction">Pipeline writes</a>.</p>
 <p>Every SQL write is atomic: it applies in full or not at all, as a SQL statement does. It is sent
 once and never retried, and a failed write has <code>retry_possible</code> set only for <code>ABORTED</code>, which means
-nothing was applied. A write has no <code>explain</code>, and <code>.explain()</code> on one fails with
+nothing was applied. To have a write retried on <code>ABORTED</code>, run it inside <code>run_transaction</code>, see
+<a href="./sql/writes.html#concurrent-writes">Concurrent writes</a>. A write has no <code>explain</code>, and <code>.explain()</code>
+on one fails with
 <code>InvalidParametersError</code>.</p>
 <div class="table-wrapper">
 <table>

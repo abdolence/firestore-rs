@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-1047e78b.js";
+            window.path_to_searchindex_js = "../searchindex-b567dc1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-edc99909.js"></script>
@@ -181,8 +181,7 @@
 <p>A <a href="../pipelines.html">pipeline</a> runs with Firestore’s pipeline semantics, and a <a href="../sql.html">SQL</a>
 statement runs as a pipeline, so it keeps them too. A Core query has semantics of its own. This
 page lists where the two differ, and where the pipeline semantics differ from what a SQL database
-does. Each pipeline and SQL row was run against a collection of documents with an integer, a
-double, strings, a boolean, a null, a NaN and a document without the field.</p>
+does.</p>
 <h2 id="null-and-absent"><a class="header" href="#null-and-absent">Null and absent</a></h2>
 <p>A document either has a field, holding a value that can be null, or lacks it. SQL has no absent
 field: the column holds <code>NULL</code>. A Core filter or <code>order_by</code> on a field never returns a document
@@ -212,16 +211,17 @@ method in brackets where it differs:</p>
 </div>
 <p>A row that lacks a key deserialises into an <code>Option</code> field as <code>None</code>.</p>
 <p><code>COUNT(x)</code> counts documents where <code>x</code> has a value that is not null. Over 11 documents, one holding
-null and one lacking the field, <code>COUNT(*)</code> was 11, <code>COUNT(v)</code> was 9 and <code>COUNT(DISTINCT v)</code> was 8.</p>
+null and one lacking the field, <code>COUNT(*)</code> is 11 and <code>COUNT(v)</code> is 9; <code>COUNT(DISTINCT v)</code> counts
+each distinct value once.</p>
 <p>The SQL results are written in SQL, using the pipeline function <code>is_absent</code>, which passes through:</p>
 <ul>
 <li><code>v IS NULL OR is_absent(v)</code> matches null and absent;</li>
 <li><code>v != 1 AND v IS NOT NULL</code> leaves them out;</li>
 <li><code>if_absent(v, NULL)</code> selects an absent field as null.</li>
 </ul>
-<p>The filters differ in cost. <code>rating != 4.2 AND rating IS NOT NULL</code> kept the index ranges of
-<code>rating != 4.2</code>, and <code>genre IS NULL OR is_absent(genre)</code> lost the range: it scanned all 11 index
-entries, where <code>genre IS NULL</code> scanned 1. See <a href="./query-plans.html">Query plans and cost</a>.</p>
+<p>The filters differ in cost. <code>rating != 4.2 AND rating IS NOT NULL</code> keeps the index ranges of
+<code>rating != 4.2</code>, and <code>genre IS NULL OR is_absent(genre)</code> loses the index range of <code>genre IS NULL</code>,
+so it scans every index entry of the field. See <a href="./query-plans.html">Query plans and cost</a>.</p>
 <p>Whether a field is stored as null or left absent is decided when it is written, see
 <a href="../null-serialization.html">Explicit null value serialisation</a>.</p>
 <h2 id="types"><a class="header" href="#types">Types</a></h2>
@@ -240,7 +240,7 @@ entries, where <code>genre IS NULL</code> scanned 1. See <a href="./query-plans.
 </table>
 </div>
 <p>A condition earlier in the same <code>AND</code> that excludes the other types avoids the failure: with
-<code>k IN ('pct', 'pcx') AND v LIKE '100%'</code>, the <code>LIKE</code> ran only on strings.</p>
+<code>k IN ('pct', 'pcx') AND v LIKE '100%'</code>, the <code>LIKE</code> runs only on strings.</p>
 <p>A Core range filter matches values of its own type only, and never NaN. A Core <code>order_by</code> over
 mixed types follows Firestore’s order of types: null, booleans, numbers, timestamps, strings,
 bytes, references, geo points, arrays, vectors and maps.</p>
