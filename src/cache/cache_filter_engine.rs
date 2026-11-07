@@ -1,5 +1,6 @@
 use crate::FirestoreQueryFilter;
 use crate::*;
+use std::cmp::Ordering;
 
 pub struct FirestoreCacheFilterEngine<'a> {
     filter: &'a FirestoreQueryFilter,
@@ -257,6 +258,51 @@ pub(super) enum CompareOp {
     NotIn,
 }
 
+impl CompareOp {
+    /// Whether a comparison operator holds for the outcome of comparing two values; `None` is
+    /// values with no order, as with NaN.
+    fn holds_for(&self, ordering: Option<Ordering>) -> bool {
+        match self {
+            Self::Equal => ordering == Some(Ordering::Equal),
+            Self::NotEqual => ordering != Some(Ordering::Equal),
+            Self::LessThan => ordering == Some(Ordering::Less),
+            Self::LessThanOrEqual => matches!(ordering, Some(Ordering::Less | Ordering::Equal)),
+            Self::GreaterThan => ordering == Some(Ordering::Greater),
+            Self::GreaterThanOrEqual => {
+                matches!(ordering, Some(Ordering::Greater | Ordering::Equal))
+            }
+            Self::ArrayContains | Self::ArrayContainsAny | Self::In | Self::NotIn => false,
+        }
+    }
+}
+
+/// Compares an integer with a double by value, as Firestore does: the integer is not rounded to
+/// a double first, so integers above 2^53 keep their exact order against doubles.
+fn compare_integer_to_double(integer: i64, double: f64) -> Option<Ordering> {
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if double.is_nan() {
+        None
+    } else if double >= TWO_POW_63 {
+        Some(Ordering::Less)
+    } else if double < -TWO_POW_63 {
+        Some(Ordering::Greater)
+    } else {
+        // In range, so the truncation is exact; a tie there is decided by the fraction.
+        let fraction = double.fract();
+        Some(
+            integer
+                .cmp(&(double.trunc() as i64))
+                .then(if fraction > 0.0 {
+                    Ordering::Less
+                } else if fraction < 0.0 {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                }),
+        )
+    }
+}
+
 pub(super) fn compare_values(
     op: CompareOp,
     a: &gcloud_sdk::google::firestore::v1::value::ValueType,
@@ -367,25 +413,25 @@ pub(super) fn compare_values(
             CompareOp::LessThan,
             gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
             gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => a_val.seconds < b_val.seconds && a_val.nanos < b_val.nanos,
+        ) => (a_val.seconds, a_val.nanos) < (b_val.seconds, b_val.nanos),
 
         (
             CompareOp::LessThanOrEqual,
             gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
             gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => a_val.seconds <= b_val.seconds && a_val.nanos <= b_val.nanos,
+        ) => (a_val.seconds, a_val.nanos) <= (b_val.seconds, b_val.nanos),
 
         (
             CompareOp::GreaterThan,
             gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
             gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => a_val.seconds > b_val.seconds && a_val.nanos > b_val.nanos,
+        ) => (a_val.seconds, a_val.nanos) > (b_val.seconds, b_val.nanos),
 
         (
             CompareOp::GreaterThanOrEqual,
             gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
             gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => a_val.seconds >= b_val.seconds && a_val.nanos >= b_val.nanos,
+        ) => (a_val.seconds, a_val.nanos) >= (b_val.seconds, b_val.nanos),
 
         // For StringType only Equal, NotEqual operations make sense in a general context
         (
@@ -452,6 +498,19 @@ pub(super) fn compare_values(
             .iter()
             .flat_map(|v| &v.value_type)
             .any(|a_val| !compare_values(CompareOp::Equal, a_val, b_val)),
+
+        // Integers and doubles are one number type to Firestore: `1` equals `1.0`.
+        (
+            op,
+            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(integer),
+            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(double),
+        ) => op.holds_for(compare_integer_to_double(*integer, *double)),
+
+        (
+            op,
+            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(double),
+            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(integer),
+        ) => op.holds_for(compare_integer_to_double(*integer, *double).map(Ordering::reverse)),
 
         // Any other combinations result in false
         _ => false,

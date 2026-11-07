@@ -719,6 +719,7 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::TryStreamExt;
     use gcloud_sdk::google::firestore::v1::{
         DocumentChange, DocumentDelete, DocumentRemove, TargetChange,
     };
@@ -1050,5 +1051,187 @@ mod tests {
             .expect("event handled");
 
         assert!(!cached(&backend, "elsewhere", "one").await);
+    }
+
+    async fn seed_values<const N: usize>(
+        backend: &FirestoreMemoryCacheBackend,
+        documents: [(&str, &str, FirestoreValue); N],
+    ) {
+        for (id, field, value) in documents {
+            let document = FirestoreDb::serialize_map_to_doc(doc_path("a", id), [(field, value)])
+                .expect("document");
+            backend
+                .update_doc_by_path(&document)
+                .await
+                .expect("seeded document");
+        }
+    }
+
+    async fn queried_ids(
+        backend: &FirestoreMemoryCacheBackend,
+        filter: Option<FirestoreQueryFilterCompare>,
+        order_by: Option<FirestoreQueryOrder>,
+    ) -> Vec<String> {
+        let query = FirestoreQueryParams::new("a".into())
+            .opt_filter(filter.map(|compare| FirestoreQueryFilter::Compare(Some(compare))))
+            .opt_order_by(order_by.map(|order| vec![order]));
+        let FirestoreCachedValue::UseCached(stream) = backend
+            .query_docs(&format!("{DOCS}/a"), &query)
+            .await
+            .expect("query")
+        else {
+            panic!("the collection is preloaded, so the query is served from the cache");
+        };
+        let documents: Vec<FirestoreDocument> = stream.try_collect().await.expect("documents");
+        let mut ids: Vec<String> = documents
+            .iter()
+            .map(|document| document.name.rsplit('/').next().unwrap().to_string())
+            .collect();
+        if query.order_by.is_none() {
+            ids.sort();
+        }
+        ids
+    }
+
+    fn timestamp(instant: &str) -> FirestoreValue {
+        FirestoreTimestamp(instant.parse().expect("instant")).into()
+    }
+
+    #[tokio::test]
+    async fn timestamps_compare_by_seconds_then_nanoseconds() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("early", "at", timestamp("2026-01-01T00:00:01.9Z")),
+                ("whole", "at", timestamp("2026-01-01T00:00:02Z")),
+                ("late", "at", timestamp("2026-01-01T00:00:02.1Z")),
+            ],
+        )
+        .await;
+        let whole = || timestamp("2026-01-01T00:00:02Z");
+        let field = || "at".to_string();
+
+        for (filter, expected) in [
+            (
+                FirestoreQueryFilterCompare::LessThan(field(), whole()),
+                vec!["early"],
+            ),
+            (
+                FirestoreQueryFilterCompare::LessThanOrEqual(field(), whole()),
+                vec!["early", "whole"],
+            ),
+            (
+                FirestoreQueryFilterCompare::GreaterThan(field(), whole()),
+                vec!["late"],
+            ),
+            (
+                FirestoreQueryFilterCompare::GreaterThanOrEqual(field(), whole()),
+                vec!["late", "whole"],
+            ),
+        ] {
+            assert_eq!(
+                queried_ids(&backend, Some(filter.clone()), None).await,
+                expected,
+                "{filter:?}"
+            );
+        }
+
+        assert_eq!(
+            queried_ids(
+                &backend,
+                None,
+                Some(FirestoreQueryOrder::new(
+                    field(),
+                    FirestoreQueryDirection::Descending
+                ))
+            )
+            .await,
+            vec!["late", "whole", "early"]
+        );
+    }
+
+    #[tokio::test]
+    async fn integers_and_doubles_compare_by_numeric_value() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("integer-one", "n", 1_i64.into()),
+                ("double-one", "n", 1.0_f64.into()),
+                ("double-one-and-a-half", "n", 1.5_f64.into()),
+                ("integer-two", "n", 2_i64.into()),
+                ("integers", "list", vec![1_i64, 3].into()),
+                ("doubles", "list", vec![1.0_f64, 3.0].into()),
+            ],
+        )
+        .await;
+        let field = || "n".to_string();
+        let list = || "list".to_string();
+
+        for (filter, expected) in [
+            (
+                FirestoreQueryFilterCompare::Equal(field(), 1.0_f64.into()),
+                vec!["double-one", "integer-one"],
+            ),
+            (
+                FirestoreQueryFilterCompare::Equal(field(), 2_i64.into()),
+                vec!["integer-two"],
+            ),
+            (
+                FirestoreQueryFilterCompare::NotEqual(field(), 1_i64.into()),
+                vec!["double-one-and-a-half", "integer-two"],
+            ),
+            (
+                FirestoreQueryFilterCompare::LessThan(field(), 1.5_f64.into()),
+                vec!["double-one", "integer-one"],
+            ),
+            (
+                FirestoreQueryFilterCompare::GreaterThanOrEqual(field(), 1.5_f64.into()),
+                vec!["double-one-and-a-half", "integer-two"],
+            ),
+            (
+                FirestoreQueryFilterCompare::GreaterThan(field(), 1_i64.into()),
+                vec!["double-one-and-a-half", "integer-two"],
+            ),
+            (
+                FirestoreQueryFilterCompare::ArrayContainsAny(list(), vec![3.0_f64].into()),
+                vec!["doubles", "integers"],
+            ),
+        ] {
+            assert_eq!(
+                queried_ids(&backend, Some(filter.clone()), None).await,
+                expected,
+                "{filter:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn integers_and_doubles_sort_together() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("two", "n", 2_i64.into()),
+                ("one-and-a-half", "n", 1.5_f64.into()),
+                ("one", "n", 1_i64.into()),
+                ("two-and-a-half", "n", 2.5_f64.into()),
+            ],
+        )
+        .await;
+
+        assert_eq!(
+            queried_ids(
+                &backend,
+                None,
+                Some(FirestoreQueryOrder::new(
+                    "n".into(),
+                    FirestoreQueryDirection::Ascending
+                ))
+            )
+            .await,
+            vec!["one", "one-and-a-half", "two", "two-and-a-half"]
+        );
     }
 }
