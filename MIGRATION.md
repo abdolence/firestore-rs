@@ -115,6 +115,17 @@ where it compared the two parts separately, so `1.9 s < 2.1 s` was false. An int
 filter on `1` matches the double `1.0`, and `order_by` sorts them together. Cached queries that filtered or sorted on
 these types returned different documents from Firestore.
 
+### Cached `in`, `not-in` and `array-contains` match like Firestore
+
+The cached query engine, used by `query` on preloaded collections, now matches `in` and `not-in` against a scalar
+field, and `array-contains` against an array field with a single value. `in` matches a field equal to any listed value,
+and `not-in` matches a field equal to none of them, leaving out documents where the field is null or absent. An integer
+equals the double of the same value in all three. Before, `in` and `array-contains` expected the field and the filter
+value the other way round, so they returned no documents, and `not-in` returned only the documents with an array field.
+`array-contains-any` is unchanged.
+
+An `in` filter that lists an array, to match a field holding that array, still returns no documents from the cache.
+
 ## 0.62
 
 ### Simple batch writes stop retrying after 60 seconds

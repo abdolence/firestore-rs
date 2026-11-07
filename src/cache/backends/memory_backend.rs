@@ -1234,4 +1234,120 @@ mod tests {
             vec!["one", "one-and-a-half", "two", "two-and-a-half"]
         );
     }
+
+    fn null() -> FirestoreValue {
+        FirestoreValue::from(gcloud_sdk::google::firestore::v1::Value {
+            value_type: Some(gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(0)),
+        })
+    }
+
+    #[tokio::test]
+    async fn in_matches_a_scalar_field_equal_to_a_listed_value() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("integer-one", "n", 1_i64.into()),
+                ("double-one", "n", 1.0_f64.into()),
+                ("text", "n", "x".into()),
+                ("integer-two", "n", 2_i64.into()),
+                ("null", "n", null()),
+                ("absent", "other", 1_i64.into()),
+            ],
+        )
+        .await;
+        let field = || "n".to_string();
+
+        for (filter, expected) in [
+            (
+                FirestoreQueryFilterCompare::In(field(), serde_json::json!([1, "x"]).into()),
+                vec!["double-one", "integer-one", "text"],
+            ),
+            (
+                FirestoreQueryFilterCompare::In(field(), vec![2.0_f64].into()),
+                vec!["integer-two"],
+            ),
+        ] {
+            assert_eq!(
+                queried_ids(&backend, Some(filter.clone()), None).await,
+                expected,
+                "{filter:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn not_in_excludes_listed_values_and_fields_that_are_null_or_absent() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("integer-one", "n", 1_i64.into()),
+                ("double-one", "n", 1.0_f64.into()),
+                ("text", "n", "x".into()),
+                ("integer-two", "n", 2_i64.into()),
+                ("null", "n", null()),
+                ("absent", "other", 1_i64.into()),
+                ("array", "n", vec![1_i64, 2].into()),
+            ],
+        )
+        .await;
+        let field = || "n".to_string();
+
+        for (filter, expected) in [
+            (
+                FirestoreQueryFilterCompare::NotIn(field(), vec![1_i64].into()),
+                vec!["array", "integer-two", "text"],
+            ),
+            (
+                FirestoreQueryFilterCompare::NotIn(field(), serde_json::json!(["x", 2.0]).into()),
+                vec!["array", "double-one", "integer-one"],
+            ),
+        ] {
+            assert_eq!(
+                queried_ids(&backend, Some(filter.clone()), None).await,
+                expected,
+                "{filter:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn array_contains_matches_an_array_field_holding_the_value() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("integers", "list", vec![1_i64, 2].into()),
+                ("doubles", "list", vec![1.0_f64, 3.0].into()),
+                ("texts", "list", vec!["x"].into()),
+                ("empty", "list", Vec::<i64>::new().into()),
+                ("scalar", "list", 1_i64.into()),
+                ("absent", "other", 1_i64.into()),
+            ],
+        )
+        .await;
+        let field = || "list".to_string();
+
+        for (filter, expected) in [
+            (
+                FirestoreQueryFilterCompare::ArrayContains(field(), 1_i64.into()),
+                vec!["doubles", "integers"],
+            ),
+            (
+                FirestoreQueryFilterCompare::ArrayContains(field(), 3_i64.into()),
+                vec!["doubles"],
+            ),
+            (
+                FirestoreQueryFilterCompare::ArrayContains(field(), "x".into()),
+                vec!["texts"],
+            ),
+        ] {
+            assert_eq!(
+                queried_ids(&backend, Some(filter.clone()), None).await,
+                expected,
+                "{filter:?}"
+            );
+        }
+    }
 }

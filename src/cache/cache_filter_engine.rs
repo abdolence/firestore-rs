@@ -450,18 +450,12 @@ pub(super) fn compare_values(
         (
             CompareOp::ArrayContains,
             gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(b_val),
+            b_val,
         ) => a_val
             .values
             .iter()
             .flat_map(|v| &v.value_type)
-            .any(|a_val| {
-                b_val
-                    .values
-                    .iter()
-                    .flat_map(|v| &v.value_type)
-                    .all(|b_val| compare_values(CompareOp::Equal, a_val, b_val))
-            }),
+            .any(|a_val| compare_values(CompareOp::Equal, a_val, b_val)),
 
         (
             CompareOp::ArrayContainsAny,
@@ -481,23 +475,30 @@ pub(super) fn compare_values(
 
         (
             CompareOp::In,
-            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(a_val),
-            b_val,
-        ) => a_val
+            a_val,
+            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(b_val),
+        ) => b_val
             .values
             .iter()
             .flat_map(|v| &v.value_type)
-            .any(|a_val| compare_values(CompareOp::Equal, a_val, b_val)),
+            .any(|b_val| compare_values(CompareOp::Equal, a_val, b_val)),
+
+        // Firestore leaves out documents whose field is null, as it does those without the field.
+        (
+            CompareOp::NotIn,
+            gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(_),
+            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(_),
+        ) => false,
 
         (
             CompareOp::NotIn,
-            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(a_val),
-            b_val,
-        ) => a_val
+            a_val,
+            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(b_val),
+        ) => !b_val
             .values
             .iter()
             .flat_map(|v| &v.value_type)
-            .any(|a_val| !compare_values(CompareOp::Equal, a_val, b_val)),
+            .any(|b_val| compare_values(CompareOp::Equal, a_val, b_val)),
 
         // Integers and doubles are one number type to Firestore: `1` equals `1.0`.
         (
