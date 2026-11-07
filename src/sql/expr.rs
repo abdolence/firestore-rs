@@ -14,6 +14,17 @@ use sqlparser::ast::{
 use sqlparser::tokenizer::Span;
 use std::borrow::Cow;
 
+impl FirestoreExpr {
+    pub(super) fn in_set(self, search_space: FirestoreExpr, negated: bool) -> FirestoreExpr {
+        if negated {
+            self.not_equal_any(search_space)
+        } else {
+            self.equal_any(search_space)
+        }
+        .into()
+    }
+}
+
 pub(super) const SQL_DOCUMENT_NAME_FIELD: &str = "__name__";
 
 impl FirestoreSqlTranslator<'_> {
@@ -198,8 +209,8 @@ impl FirestoreSqlTranslator<'_> {
         Ok(compute(self.expr(scope, operand)?))
     }
 
-    /// `operand IS [NOT] NULL`. Here the alias of a joined table stands for the table, which is
-    /// null for a row of a `LEFT JOIN` without a match: the anti-join is `WHERE alias IS NULL`.
+    // `operand IS [NOT] NULL`. Here the alias of a joined table stands for the table, which is
+    // null for a row of a `LEFT JOIN` without a match: the anti-join is `WHERE alias IS NULL`.
     fn null_test(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -235,9 +246,9 @@ impl FirestoreSqlTranslator<'_> {
         Ok(compare(left, right).into())
     }
 
-    /// `left = right`. A document looked up by a variable, as a join or a correlated subquery
-    /// does, is looked up by `IN` an array of the variable: Firestore reads the document by its
-    /// key for that, where it scans the collection for each row to evaluate `=`.
+    // `left = right`. A document looked up by a variable, as a join or a correlated subquery
+    // does, is looked up by `IN` an array of the variable: Firestore reads the document by its
+    // key for that, where it scans the collection for each row to evaluate `=`.
     fn equality(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -268,12 +279,7 @@ impl FirestoreSqlTranslator<'_> {
             search_space =
                 self.document_references(scope, &operand, search_space, expr_start(array))?;
         }
-        Ok(if negated {
-            operand.not_equal_any(search_space)
-        } else {
-            operand.equal_any(search_space)
-        }
-        .into())
+        Ok(operand.in_set(search_space, negated))
     }
 
     fn arithmetic(
@@ -451,11 +457,16 @@ impl FirestoreSqlTranslator<'_> {
         expr: &Expr,
         op: &BinaryOperator,
     ) -> FirestoreResult<FirestoreExpr> {
-        let operands = chain(expr, op)
-            .into_iter()
+        let operands = chain(expr, op);
+        let [first, rest @ ..] = operands.as_slice() else {
+            return Err(FirestoreError::invalid_sql("||", "|| needs operands", None));
+        };
+        let first = self.expr(scope, first)?;
+        let rest = rest
+            .iter()
             .map(|operand| self.expr(scope, operand))
             .collect::<FirestoreResult<Vec<_>>>()?;
-        Ok(FirestoreExpr::raw("concat", operands))
+        Ok(first.concat(rest))
     }
 
     fn unary(
@@ -487,8 +498,8 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// Both sides of a comparison. A string compared with `__name__` names a document, and
-    /// becomes the reference that `__name__` holds.
+    // Both sides of a comparison. A string compared with `__name__` names a document, and
+    // becomes the reference that `__name__` holds.
     fn compared(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -529,12 +540,7 @@ impl FirestoreSqlTranslator<'_> {
             });
         }
         let search_space = Self::array(elements);
-        Ok(if negated {
-            operand.not_equal_any(search_space)
-        } else {
-            operand.equal_any(search_space)
-        }
-        .into())
+        Ok(operand.in_set(search_space, negated))
     }
 
     fn between(
@@ -633,8 +639,8 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// A position SQL counts from 1, counted from 0 as pipelines count it. Only a positive
-    /// position moves: 0 and a negative one, which counts from the end, mean the same to both.
+    // A position SQL counts from 1, counted from 0 as pipelines count it. Only a positive
+    // position moves: 0 and a negative one, which counts from the end, mean the same to both.
     pub(super) fn zero_based(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -729,9 +735,9 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// The constant reference to the document a string names, when `operand` is a string: a
-    /// path relative to the documents root, a full path, or a bare ID in the source's
-    /// collection. Any other operand is kept.
+    // The constant reference to the document a string names, when `operand` is a string: a
+    // path relative to the documents root, a full path, or a bare ID in the source's
+    // collection. Any other operand is kept.
     pub(super) fn document_reference(
         &self,
         scope: &FirestoreSqlScope,
@@ -795,8 +801,8 @@ impl FirestoreSqlTranslator<'_> {
         Ok(Self::array(references))
     }
 
-    /// An array of `elements`: a constant when they all are, so that `IN` reads like the fluent
-    /// `is_in` with a list.
+    // An array of `elements`: a constant when they all are, so that `IN` reads like the fluent
+    // `is_in` with a list.
     fn array(elements: Vec<FirestoreExpr>) -> FirestoreExpr {
         let constants = elements
             .iter()
@@ -814,8 +820,8 @@ impl FirestoreSqlTranslator<'_> {
     }
 }
 
-/// The operands of a chain of `op`, such as `a AND b AND c`, in order. sqlparser nests the chain
-/// to the left, one level per operator, so it is read in a loop rather than recursively.
+// The operands of a chain of `op`, such as `a AND b AND c`, in order. sqlparser nests the chain
+// to the left, one level per operator, so it is read in a loop rather than recursively.
 pub(super) fn chain<'e>(expr: &'e Expr, op: &BinaryOperator) -> Vec<&'e Expr> {
     let mut operands = Vec::new();
     let mut rest = expr;

@@ -155,7 +155,8 @@ where
     /// Firestore answers a create with `ALREADY_EXISTS` and a fresh listing shows a matching
     /// index, which another deployment created since the plan was made. Either way the report's
     /// `withheld_deletes` says which indexes were left in place and why. An `ALREADY_EXISTS` for
-    /// an index the fresh listing does not show fails the sync. Reverts and TTL disables do not wait for new indexes.
+    /// an index the fresh listing does not show fails the sync. Reverts and TTL disables do not
+    /// wait for new indexes.
     #[inline]
     pub fn prune_undeclared(self) -> Self {
         Self {

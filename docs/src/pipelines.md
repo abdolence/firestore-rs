@@ -262,6 +262,10 @@ response that carries explain statistics, or no documents at all, adds an item w
 `.request_tags(..)` and `.request_options(..)` attach request options to one pipeline, as they do
 for a Core query.
 
+A session created with `read_through_cache` or `read_cached_only` answers a pipeline from the
+cache when it only filters, sorts and pages cached documents, see
+[Caching pipelines](./caching.md#pipelines).
+
 ## Explaining a pipeline
 
 Query Explain returns the plan Firestore chose for a pipeline. `.explain()` runs the pipeline for

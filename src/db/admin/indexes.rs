@@ -370,7 +370,7 @@ impl FirestoreDb {
 
     /// The group a statement naming `group` owns, with the database's edition read once, so every
     /// step of a call validates, matches and writes under the same edition.
-    async fn owned_group<'a>(
+    async fn read_owned_group<'a>(
         &self,
         group: &'a FirestoreCollectionId,
     ) -> FirestoreResult<OwnedGroup<'a>> {
@@ -868,29 +868,20 @@ impl FirestoreDb {
             return Err(refused.into_logged_error());
         }
         loop {
-            let polled = tokio::time::timeout_at(
-                deadline.poll_cutoff(),
-                self.admin_client().get_field(self.request_with_timeout(
+            let polled = self
+                .admin_client()
+                .get_field(self.poll_request(
                     GetFieldRequest {
                         name: name.to_string(),
                     },
-                    RequestTimeouts::with_total,
-                )),
-            )
-            .await;
+                    deadline,
+                ))
+                .await;
             let read_back = match polled {
-                Err(_) => {
-                    warn!(
-                        field = name,
-                        "Reading a field back after a refused write did not answer in time; \
-                         reading it again.",
-                    );
-                    None
-                }
                 // A read that answers but decodes into nothing usable is not evidence the write
                 // still stands: keep the refusal that is actually known, rather than fail on a
                 // decode error that says nothing about whether the write took effect.
-                Ok(Ok(field)) => match kind.read_back(field.into_inner()) {
+                Ok(field) => match kind.read_back(field.into_inner()) {
                     Ok(read_back) => Some(read_back),
                     Err(decode_err) => {
                         warn!(
@@ -908,7 +899,7 @@ impl FirestoreDb {
                 // GetOperation's poll, a GetField after this sync's own write to that same field
                 // has no "too new to be visible yet" case, so NOT_FOUND here means the field or
                 // database is gone, not a race with propagation.
-                Ok(Err(status)) => {
+                Err(status) => {
                     match FirestoreError::from_read_status(status) {
                         FirestoreError::DatabaseError(db_err) if db_err.retry_possible => {
                             warn!(
@@ -1270,7 +1261,7 @@ impl FirestoreIndexSupport for FirestoreDb {
         );
         let began = FirestoreInstant::now();
         let plan = async {
-            let group = self.owned_group(&params.collection_group).await?;
+            let group = self.read_owned_group(&params.collection_group).await?;
             let (plan, _) = self
                 .plan_against_server(&params, &group, options.prune)
                 .await?;
@@ -1323,7 +1314,7 @@ impl FirestoreIndexSupport for FirestoreDb {
         let deadline = OperationDeadline::from_now(options.wait.as_ref().unwrap_or(&implicit_wait));
         let began = FirestoreInstant::now();
         let report = async {
-            let group = self.owned_group(&params.collection_group).await?;
+            let group = self.read_owned_group(&params.collection_group).await?;
             let (plan, list_elapsed) = self
                 .plan_against_server(&params, &group, options.prune)
                 .await?;
@@ -1369,12 +1360,13 @@ impl FirestoreIndexSupport for FirestoreDb {
 mod tests {
     use super::*;
     use crate::db::admin::index_diff::tests::{
-        field_resource, listed_index, order_field, USERS_GROUP_PATH,
+        field_resource, is_invalid_parameter, listed_index, order_field, USERS_GROUP_PATH,
     };
     use crate::db::admin::index_models::IMPLIED_NAME_FIELD;
     use crate::db::fake_firestore::{
-        done_operation_response, failed_operation_response, list_fields_response,
-        list_indexes_response, pending_operation_response, FakeFirestore, FakeResponse,
+        captured_text, capturing_subscriber, done_operation_response, failed_operation_response,
+        list_fields_response, list_indexes_response, pending_operation_response, FakeFirestore,
+        FakeResponse,
     };
     use crate::db::FirestoreDbInner;
     use crate::{
@@ -1572,14 +1564,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(
-            matches!(
-                &err,
-                FirestoreError::InvalidParametersError(invalid)
-                    if invalid.public.field == "field_overrides"
-            ),
-            "{err:?}"
-        );
+        assert!(is_invalid_parameter(&err, "field_overrides"), "{err:?}");
         assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
     }
 
@@ -4441,14 +4426,7 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                FirestoreError::InvalidParametersError(invalid)
-                    if invalid.public.field == "composite_indexes"
-            ),
-            "{err:?}"
-        );
+        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
     }
 
     #[test]
@@ -4879,43 +4857,6 @@ mod tests {
             stored.lock().unwrap().is_none(),
             "the wildcard override must be reverted (index_config unset)",
         );
-    }
-
-    fn capturing_subscriber() -> (
-        impl tracing::Subscriber + Send + Sync,
-        StdArc<Mutex<Vec<u8>>>,
-    ) {
-        let buffer = StdArc::new(Mutex::new(Vec::new()));
-        let make_writer = {
-            let buffer = buffer.clone();
-            move || SharedBufferWriter(buffer.clone())
-        };
-        // Scoped to this crate's own target: `cargo test` runs many tests concurrently, and an
-        // unfiltered DEBUG level captures every other test's h2/tower/hyper transport chatter
-        // into this buffer too, which has been observed to crowd out or reorder the lines this
-        // test asserts on.
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(make_writer)
-            .with_ansi(false)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-            .with_env_filter(tracing_subscriber::EnvFilter::new("firestore=debug"))
-            .finish();
-        (subscriber, buffer)
-    }
-
-    struct SharedBufferWriter(StdArc<Mutex<Vec<u8>>>);
-    impl std::io::Write for SharedBufferWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    fn captured_text(buffer: &StdArc<Mutex<Vec<u8>>>) -> String {
-        String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
     }
 
     #[tokio::test]

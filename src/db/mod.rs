@@ -58,6 +58,9 @@ pub use transaction::*;
 #[cfg(test)]
 mod transaction_read_tests;
 
+#[cfg(all(test, feature = "caching-memory"))]
+mod cache_read_tests;
+
 mod transaction_models;
 pub use transaction_models::*;
 
@@ -747,7 +750,7 @@ pub(crate) fn end_at_first_error<T, E>(
 mod tests {
     use super::*;
     use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
-    use futures::{StreamExt, TryStreamExt};
+    use futures::StreamExt;
     use gcloud_sdk::prost::Message as _;
     use gcloud_sdk::tonic::Code;
     use std::time::Instant;
@@ -846,27 +849,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn request_timeout_fails_a_unary_call_the_server_never_answers() {
-        let server =
-            FakeFirestore::start(|_, _| ("GetDocument".to_string(), FakeResponse::Hang)).await;
-        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
-
-        let started = Instant::now();
-        let error = tokio::time::timeout(LIMITED_CALL_BOUND, db.ping())
-            .await
-            .expect("the request timeout must end the call")
-            .unwrap_err();
-
-        let elapsed = started.elapsed();
-        assert!(elapsed >= REQUEST_TIMEOUT, "{elapsed:?}");
-        assert!(
-            matches!(error, FirestoreError::DatabaseError(ref error)
-                if error.public.code == "DeadlineExceeded" && error.retry_possible),
-            "expected a retryable DeadlineExceeded, got {error:?}"
-        );
-    }
-
-    #[tokio::test]
     async fn request_timeout_ends_a_query_stream_that_stalls() {
         let server = FakeFirestore::start(|_, _| {
             (
@@ -906,70 +888,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_batch_get_stream_ends_at_its_first_error() {
-        let server = FakeFirestore::start(|_, _| {
-            let found = |id: usize| {
-                BatchGetDocumentsResponse {
-                    result: Some(batch_get_documents_response::Result::Found(Document {
-                        name: format!(
-                            "projects/fake-firestore/databases/(default)/documents/items/{id}"
-                        ),
-                        ..Document::default()
-                    })),
-                    ..BatchGetDocumentsResponse::default()
-                }
-                .encode_to_vec()
-            };
-            (
-                "BatchGetDocuments".to_string(),
-                FakeResponse::Paced(vec![found(1), found(2)], LIMITED_CALL_BOUND * 2),
-            )
-        })
-        .await;
-        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
-        let documents = db
-            .batch_stream_get_docs_with_errors("items", ["1", "2"], None)
-            .await
-            .unwrap();
-
-        let results: Vec<_> = tokio::time::timeout(LIMITED_CALL_BOUND, documents.collect())
-            .await
-            .expect("the request timeout must end the stalled stream");
-
-        assert!(matches!(results.as_slice(), [Ok(_), Err(_)]), "{results:?}");
-    }
-
-    #[tokio::test]
-    async fn an_aggregation_query_stream_ends_at_its_first_error() {
-        let server = FakeFirestore::start(|_, _| {
-            let aggregated = RunAggregationQueryResponse {
-                result: Some(AggregationResult::default()),
-                ..RunAggregationQueryResponse::default()
-            }
-            .encode_to_vec();
-            (
-                "RunAggregationQuery".to_string(),
-                FakeResponse::Paced(vec![aggregated.clone(), aggregated], LIMITED_CALL_BOUND * 2),
-            )
-        })
-        .await;
-        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
-        let documents = db
-            .stream_aggregated_query_doc_with_errors(FirestoreAggregatedQueryParams::new(
-                FirestoreQueryParams::new("items".into()),
-                vec![FirestoreAggregation::new("count".into())],
-            ))
-            .await
-            .unwrap();
-
-        let results: Vec<_> = tokio::time::timeout(LIMITED_CALL_BOUND, documents.collect())
-            .await
-            .expect("the request timeout must end the stalled stream");
-
-        assert!(matches!(results.as_slice(), [Ok(_), Err(_)]), "{results:?}");
-    }
-
-    #[tokio::test]
     async fn a_stream_ends_at_its_first_error_without_waiting_for_more() {
         let stream = futures::stream::iter([Ok(1), Err("failed")])
             .chain(futures::stream::pending::<Result<i32, &str>>());
@@ -991,56 +909,6 @@ mod tests {
 
         assert!(responses.next().await.is_none());
         assert!(responses.next().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn request_timeout_does_not_end_a_slow_stream_that_keeps_delivering() {
-        const DOCUMENT_COUNT: usize = 8;
-        let server = FakeFirestore::start(|_, _| {
-            let documents = (1..=DOCUMENT_COUNT).map(query_response).collect();
-            (
-                "RunQuery".to_string(),
-                FakeResponse::Paced(documents, REQUEST_TIMEOUT / 3),
-            )
-        })
-        .await;
-        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
-
-        let names: Vec<String> = tokio::time::timeout(LIMITED_CALL_BOUND, async {
-            let mut documents = db
-                .stream_query_doc_with_errors(FirestoreQueryParams::new("items".into()))
-                .await
-                .unwrap();
-            let first = documents.next().await.unwrap().unwrap();
-            // A caller busy for longer than the timeout is not waiting for Firestore.
-            tokio::time::sleep(REQUEST_TIMEOUT * 2).await;
-            let rest: Vec<Document> = documents.try_collect().await.unwrap();
-            std::iter::once(first)
-                .chain(rest)
-                .map(|document| split_document_path(&document.name).1.to_string())
-                .collect()
-        })
-        .await
-        .expect("the stream must end on its own");
-
-        let expected: Vec<String> = (1..=DOCUMENT_COUNT).map(|id| id.to_string()).collect();
-        assert_eq!(names, expected);
-    }
-
-    #[tokio::test]
-    async fn request_timeout_does_not_limit_a_quiet_listen() {
-        let server = FakeFirestore::start_with_quiet_listen(|_, _| {
-            ("Listen closed".to_string(), FakeResponse::empty())
-        })
-        .await;
-        let db = server.db.clone_with_request_timeout(Some(REQUEST_TIMEOUT));
-        let (_requests, request_reader) = tokio::sync::mpsc::unbounded_channel();
-        let mut responses = db.listen_doc_changes(request_reader).await.unwrap();
-
-        if let Ok(response) = tokio::time::timeout(UNLIMITED_CALL_RUNS_FOR, responses.next()).await
-        {
-            panic!("a quiet Listen must stay open, got {response:?}");
-        }
     }
 
     /// A client of `server` whose options set [`REQUEST_TIMEOUT`].

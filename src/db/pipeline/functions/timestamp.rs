@@ -1,4 +1,5 @@
 use crate::FirestoreExpr;
+use jiff::civil::Weekday;
 
 /// The unit of the amount in `timestamp_add`, `timestamp_subtract` and `timestamp_diff`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,13 +22,7 @@ pub enum FirestoreTimestampGranularity {
     Hour,
     Day,
     Week,
-    WeekStartingMonday,
-    WeekStartingTuesday,
-    WeekStartingWednesday,
-    WeekStartingThursday,
-    WeekStartingFriday,
-    WeekStartingSaturday,
-    WeekStartingSunday,
+    WeekStarting(jiff::civil::Weekday),
     IsoWeek,
     Month,
     Quarter,
@@ -47,13 +42,7 @@ pub enum FirestoreTimestampPart {
     Day,
     DayOfYear,
     Week,
-    WeekStartingMonday,
-    WeekStartingTuesday,
-    WeekStartingWednesday,
-    WeekStartingThursday,
-    WeekStartingFriday,
-    WeekStartingSaturday,
-    WeekStartingSunday,
+    WeekStarting(jiff::civil::Weekday),
     IsoWeek,
     Month,
     Quarter,
@@ -74,6 +63,19 @@ impl From<FirestoreTimestampUnit> for FirestoreExpr {
     }
 }
 
+/// The name Firestore gives to the week that starts on `day`, such as `week(monday)`.
+fn week_starting_name(day: Weekday) -> &'static str {
+    match day {
+        Weekday::Monday => "week(monday)",
+        Weekday::Tuesday => "week(tuesday)",
+        Weekday::Wednesday => "week(wednesday)",
+        Weekday::Thursday => "week(thursday)",
+        Weekday::Friday => "week(friday)",
+        Weekday::Saturday => "week(saturday)",
+        Weekday::Sunday => "week(sunday)",
+    }
+}
+
 impl From<FirestoreTimestampGranularity> for FirestoreExpr {
     fn from(value: FirestoreTimestampGranularity) -> Self {
         FirestoreExpr::constant(match value {
@@ -84,13 +86,7 @@ impl From<FirestoreTimestampGranularity> for FirestoreExpr {
             FirestoreTimestampGranularity::Hour => "hour",
             FirestoreTimestampGranularity::Day => "day",
             FirestoreTimestampGranularity::Week => "week",
-            FirestoreTimestampGranularity::WeekStartingMonday => "week(monday)",
-            FirestoreTimestampGranularity::WeekStartingTuesday => "week(tuesday)",
-            FirestoreTimestampGranularity::WeekStartingWednesday => "week(wednesday)",
-            FirestoreTimestampGranularity::WeekStartingThursday => "week(thursday)",
-            FirestoreTimestampGranularity::WeekStartingFriday => "week(friday)",
-            FirestoreTimestampGranularity::WeekStartingSaturday => "week(saturday)",
-            FirestoreTimestampGranularity::WeekStartingSunday => "week(sunday)",
+            FirestoreTimestampGranularity::WeekStarting(day) => week_starting_name(day),
             FirestoreTimestampGranularity::IsoWeek => "isoweek",
             FirestoreTimestampGranularity::Month => "month",
             FirestoreTimestampGranularity::Quarter => "quarter",
@@ -112,13 +108,7 @@ impl From<FirestoreTimestampPart> for FirestoreExpr {
             FirestoreTimestampPart::Day => "day",
             FirestoreTimestampPart::DayOfYear => "dayofyear",
             FirestoreTimestampPart::Week => "week",
-            FirestoreTimestampPart::WeekStartingMonday => "week(monday)",
-            FirestoreTimestampPart::WeekStartingTuesday => "week(tuesday)",
-            FirestoreTimestampPart::WeekStartingWednesday => "week(wednesday)",
-            FirestoreTimestampPart::WeekStartingThursday => "week(thursday)",
-            FirestoreTimestampPart::WeekStartingFriday => "week(friday)",
-            FirestoreTimestampPart::WeekStartingSaturday => "week(saturday)",
-            FirestoreTimestampPart::WeekStartingSunday => "week(sunday)",
+            FirestoreTimestampPart::WeekStarting(day) => week_starting_name(day),
             FirestoreTimestampPart::IsoWeek => "isoweek",
             FirestoreTimestampPart::Month => "month",
             FirestoreTimestampPart::Quarter => "quarter",
@@ -217,5 +207,40 @@ impl FirestoreExpr {
     /// The timestamp at this many seconds since the Unix epoch.
     pub fn unix_seconds_to_timestamp(self) -> FirestoreExpr {
         Self::raw("unix_seconds_to_timestamp", [self])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::pipeline::expr::wire_value;
+    use gcloud_sdk::google::firestore::v1::{value::ValueType, Value};
+
+    fn sent(expr: FirestoreExpr) -> Value {
+        Value::try_from(expr).unwrap()
+    }
+
+    fn string(text: &str) -> Value {
+        wire_value(ValueType::StringValue(text.to_string()))
+    }
+
+    #[test]
+    fn week_starting_sends_the_weekday_name() {
+        assert_eq!(
+            sent(FirestoreTimestampGranularity::WeekStarting(Weekday::Monday).into()),
+            string("week(monday)"),
+        );
+        assert_eq!(
+            sent(FirestoreTimestampGranularity::WeekStarting(Weekday::Sunday).into()),
+            string("week(sunday)"),
+        );
+        assert_eq!(
+            sent(FirestoreTimestampPart::WeekStarting(Weekday::Monday).into()),
+            string("week(monday)"),
+        );
+        assert_eq!(
+            sent(FirestoreTimestampPart::WeekStarting(Weekday::Sunday).into()),
+            string("week(sunday)"),
+        );
     }
 }

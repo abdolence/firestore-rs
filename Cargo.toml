@@ -57,7 +57,6 @@ hex = "0.4"
 backoff = { version = "0.4", features = ["tokio"] }
 redb = { version = "4.0", optional = true }
 moka = { version = "0.12", features = ["future"], optional = true } # Caching library
-rand = "0.10"
 regex = "1.13"
 serde_json = "1"
 # Default features would add a dependency that grows the stack while parsing; the translator caps
@@ -138,6 +137,11 @@ required-features = ["caching-memory"]
 name = "caching_watched_documents_test"
 path = "tests/caching_watched_documents_test.rs"
 required-features = ["caching-memory", "caching-persistent"]
+
+[[test]]
+name = "pipeline-cache-tests"
+path = "tests/pipeline-cache-tests.rs"
+required-features = ["caching-memory"]
 
 [[test]]
 name = "pipeline-integration-tests"

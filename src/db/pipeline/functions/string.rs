@@ -1,7 +1,7 @@
 use crate::{FirestoreBoolExpr, FirestoreExpr};
 
+/// The [string functions](https://docs.cloud.google.com/firestore/native/docs/pipeline/functions/string_functions) of the service.
 impl FirestoreExpr {
-    /// The number of characters of this string.
     pub fn char_length(self) -> FirestoreExpr {
         Self::raw("char_length", [self])
     }
@@ -11,17 +11,14 @@ impl FirestoreExpr {
         Self::raw("byte_length", [self])
     }
 
-    /// True when this string starts with `prefix`.
     pub fn starts_with(self, prefix: impl Into<FirestoreExpr>) -> FirestoreBoolExpr {
         FirestoreBoolExpr(Self::raw("starts_with", [self, prefix.into()]))
     }
 
-    /// True when this string ends with `postfix`.
     pub fn ends_with(self, postfix: impl Into<FirestoreExpr>) -> FirestoreBoolExpr {
         FirestoreBoolExpr(Self::raw("ends_with", [self, postfix.into()]))
     }
 
-    /// True when this string contains `substring`.
     pub fn string_contains(self, substring: impl Into<FirestoreExpr>) -> FirestoreBoolExpr {
         FirestoreBoolExpr(Self::raw("string_contains", [self, substring.into()]))
     }
@@ -47,12 +44,10 @@ impl FirestoreExpr {
         Self::raw("regex_find", [self, regexp.into()])
     }
 
-    /// Every part of this string that matches `regexp`, as an array.
     pub fn regex_find_all(self, regexp: impl Into<FirestoreExpr>) -> FirestoreExpr {
         Self::raw("regex_find_all", [self, regexp.into()])
     }
 
-    /// This string followed by `others`, joined into one string.
     pub fn string_concat<I>(self, others: I) -> FirestoreExpr
     where
         I: IntoIterator,
@@ -87,7 +82,6 @@ impl FirestoreExpr {
         Self::raw("string_repeat", [self, repetitions.into()])
     }
 
-    /// This string with every `find` replaced by `replacement`.
     pub fn string_replace_all(
         self,
         find: impl Into<FirestoreExpr>,
@@ -99,7 +93,6 @@ impl FirestoreExpr {
         )
     }
 
-    /// This string with the first `find` replaced by `replacement`.
     pub fn string_replace_one(
         self,
         find: impl Into<FirestoreExpr>,
@@ -111,12 +104,10 @@ impl FirestoreExpr {
         )
     }
 
-    /// The rest of this string from `position`.
     pub fn substring(self, position: impl Into<FirestoreExpr>) -> FirestoreExpr {
         Self::raw("substring", [self, position.into()])
     }
 
-    /// `length` characters of this string from `position`.
     pub fn substring_with_length(
         self,
         position: impl Into<FirestoreExpr>,
@@ -125,32 +116,26 @@ impl FirestoreExpr {
         Self::raw("substring", [self, position.into(), length.into()])
     }
 
-    /// This string without leading and trailing whitespace.
     pub fn trim(self) -> FirestoreExpr {
         Self::raw("trim", [self])
     }
 
-    /// This string without the leading and trailing `values_to_trim`.
     pub fn trim_with(self, values_to_trim: impl Into<FirestoreExpr>) -> FirestoreExpr {
         Self::raw("trim", [self, values_to_trim.into()])
     }
 
-    /// This string without leading whitespace.
     pub fn ltrim(self) -> FirestoreExpr {
         Self::raw("ltrim", [self])
     }
 
-    /// This string without the leading `to_trim`.
     pub fn ltrim_with(self, to_trim: impl Into<FirestoreExpr>) -> FirestoreExpr {
         Self::raw("ltrim", [self, to_trim.into()])
     }
 
-    /// This string without trailing whitespace.
     pub fn rtrim(self) -> FirestoreExpr {
         Self::raw("rtrim", [self])
     }
 
-    /// This string without the trailing `to_trim`.
     pub fn rtrim_with(self, to_trim: impl Into<FirestoreExpr>) -> FirestoreExpr {
         Self::raw("rtrim", [self, to_trim.into()])
     }
@@ -165,7 +150,6 @@ impl FirestoreExpr {
         Self::raw("split", [self, delimiter.into()])
     }
 
-    /// The elements of this array joined into one string with `delimiter` between them.
     pub fn join(self, delimiter: impl Into<FirestoreExpr>) -> FirestoreExpr {
         Self::raw("join", [self, delimiter.into()])
     }

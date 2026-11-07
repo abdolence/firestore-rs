@@ -15,6 +15,9 @@ pub use results::*;
 
 mod execute;
 
+#[cfg(feature = "caching")]
+mod cache;
+
 mod search;
 pub use search::*;
 

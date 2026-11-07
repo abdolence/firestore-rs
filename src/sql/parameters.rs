@@ -21,16 +21,15 @@ impl FirestoreSqlParameters {
         Self::default()
     }
 
-    /// Binds `value` to the parameter `@name`. The name matches case-sensitively, and is given
-    /// with or without the `@`.
+    /// Binds `value` to the parameter `@name`, given without the `@`. The name matches
+    /// case-sensitively.
     pub fn param<N, V>(mut self, name: N, value: V) -> Self
     where
         N: Into<String>,
         V: Serialize,
     {
-        let name: String = name.into();
-        let name = name.strip_prefix('@').map(str::to_string).unwrap_or(name);
-        self.named.insert(name, FirestoreExpr::constant(value));
+        self.named
+            .insert(name.into(), FirestoreExpr::constant(value));
         self
     }
 
@@ -50,8 +49,8 @@ impl FirestoreSqlParameters {
 
 pub(super) struct FirestoreSqlBinding<'p> {
     named: &'p BTreeMap<String, FirestoreExpr>,
-    /// The value of each `?`, by where it starts. The translator reads a statement in another
-    /// order than the text, so a `?` finds its value by position rather than by count.
+    // The value of each `?`, by where it starts. The translator reads a statement in another
+    // order than the text, so a `?` finds its value by position rather than by count.
     positional: BTreeMap<Location, &'p FirestoreExpr>,
 }
 
@@ -153,8 +152,8 @@ impl<'p> FirestoreSqlBinding<'p> {
         self.positional.get(&start).copied()
     }
 
-    /// Fails for a value that did not serialise, which [`FirestoreExpr::constant`] keeps as a
-    /// constant with no type.
+    // Fails for a value that did not serialise, which [`FirestoreExpr::constant`] keeps as a
+    // constant with no type.
     fn serialised(parameter: &str, value: &FirestoreExpr, start: Location) -> FirestoreResult<()> {
         match value {
             FirestoreExpr::Constant(FirestoreValue {

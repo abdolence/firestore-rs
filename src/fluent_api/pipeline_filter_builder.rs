@@ -52,7 +52,7 @@ impl FirestorePipelineFilterBuilder {
     pub fn for_all<I>(&self, conditions: I) -> Option<FirestoreBoolExpr>
     where
         I: IntoIterator,
-        I::Item: FirestorePipelineConditionExpr,
+        I::Item: Into<Option<FirestoreBoolExpr>>,
     {
         self.connect_present("and", conditions)
     }
@@ -63,7 +63,7 @@ impl FirestorePipelineFilterBuilder {
     pub fn for_any<I>(&self, conditions: I) -> Option<FirestoreBoolExpr>
     where
         I: IntoIterator,
-        I::Item: FirestorePipelineConditionExpr,
+        I::Item: Into<Option<FirestoreBoolExpr>>,
     {
         self.connect_present("or", conditions)
     }
@@ -71,31 +71,11 @@ impl FirestorePipelineFilterBuilder {
     fn connect_present<I>(&self, function: &str, conditions: I) -> Option<FirestoreBoolExpr>
     where
         I: IntoIterator,
-        I::Item: FirestorePipelineConditionExpr,
+        I::Item: Into<Option<FirestoreBoolExpr>>,
     {
-        let present: Vec<FirestoreBoolExpr> = conditions
-            .into_iter()
-            .filter_map(FirestorePipelineConditionExpr::build_condition)
-            .collect();
+        let present: Vec<FirestoreBoolExpr> =
+            conditions.into_iter().filter_map(Into::into).collect();
         (!present.is_empty()).then(|| self.values().connect(function, present))
-    }
-}
-
-/// A condition, or an `Option` of one, as the list forms `for_all` and `for_any` take them.
-pub trait FirestorePipelineConditionExpr {
-    /// The condition, or `None` for an item that stands for no condition.
-    fn build_condition(self) -> Option<FirestoreBoolExpr>;
-}
-
-impl FirestorePipelineConditionExpr for FirestoreBoolExpr {
-    fn build_condition(self) -> Option<FirestoreBoolExpr> {
-        Some(self)
-    }
-}
-
-impl<C: FirestorePipelineConditionExpr> FirestorePipelineConditionExpr for Option<C> {
-    fn build_condition(self) -> Option<FirestoreBoolExpr> {
-        self.and_then(FirestorePipelineConditionExpr::build_condition)
     }
 }
 
@@ -270,7 +250,7 @@ impl FirestorePipelineFilterFieldExpr {
 #[cfg(test)]
 mod tests {
     use crate::pipeline_builder::FirestorePipelineInitialBuilder;
-    use crate::{FirestoreExpr, FirestoreLimitStage, FirestorePipeline, FirestorePipelineStage};
+    use crate::{FirestoreLimitStage, FirestorePipeline, FirestorePipelineStage};
     use gcloud_sdk::google::firestore::v1::{pipeline::Stage, value::ValueType, Pipeline};
 
     fn builder() -> FirestorePipelineInitialBuilder<()> {
@@ -323,32 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn expr_and_condition_lift_a_value_and_a_plain_condition() {
-        let lifted = builder()
-            .from("pipeline-books")
-            .filter(|q| {
-                q.for_all([
-                    q.expr(FirestoreExpr::field("title").to_lower())
-                        .starts_with("the"),
-                    q.condition(q.values().not(q.values().field("stock").eq(0))),
-                ])
-            })
-            .into_pipeline();
-        let by_hand = builder()
-            .from("pipeline-books")
-            .filter(|q| {
-                let e = q.values();
-                q.condition(e.and([
-                    FirestoreExpr::field("title").to_lower().starts_with("the"),
-                    e.not(e.field("stock").eq(0)),
-                ]))
-            })
-            .into_pipeline();
-
-        assert_eq!(where_stages(lifted), where_stages(by_hand));
-    }
-
-    #[test]
     fn a_single_present_condition_stands_alone() {
         let joined = builder()
             .from("pipeline-books")
@@ -375,31 +329,5 @@ mod tests {
             pipeline.stages,
             vec![FirestorePipelineStage::Limit(FirestoreLimitStage::new(1))]
         );
-    }
-
-    #[test]
-    fn for_any_drops_the_absent_conditions() {
-        let genre: Option<&str> = None;
-        let any = builder()
-            .from("pipeline-books")
-            .filter(|q| {
-                q.for_any([
-                    q.field("stock").greater_than(0),
-                    genre.and_then(|genre| q.field("genre").eq(genre)),
-                    q.field("rating").greater_than_or_equal(4.0),
-                ])
-            })
-            .into_pipeline();
-        let or = builder()
-            .from("pipeline-books")
-            .filter(|q| {
-                q.condition(q.values().or([
-                    q.values().field("stock").greater_than(0),
-                    q.values().field("rating").greater_than_or_equal(4.0),
-                ]))
-            })
-            .into_pipeline();
-
-        assert_eq!(where_stages(any), where_stages(or));
     }
 }

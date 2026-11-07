@@ -998,6 +998,7 @@ impl From<redb::CompactionError> for FirestoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::TryStreamExt;
     use gcloud_sdk::google::firestore::v1::{DocumentDelete, DocumentRemove, TargetChange};
 
     const DOCS: &str = "projects/test/databases/(default)/documents";
@@ -1215,5 +1216,38 @@ mod tests {
             .expect("event handled");
 
         assert!(is_listable(&backend, "a").await);
+    }
+
+    #[tokio::test]
+    async fn a_batch_read_fails_when_a_stored_document_cannot_be_read() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed(&backend, "a", "one").await;
+        seed(&backend, "a", "two").await;
+        let collection_path = format!("{DOCS}/a");
+        let write_txn = backend
+            .open_db()
+            .expect("open database")
+            .as_ref()
+            .expect("database checked open")
+            .begin_write()
+            .expect("write transaction");
+        {
+            let mut table = write_txn
+                .open_table(TableDefinition::<&str, &[u8]>::new(&collection_path))
+                .expect("collection table");
+            table
+                .insert("one", [0xFF].as_slice())
+                .expect("corrupted document");
+        }
+        write_txn.commit().expect("commit");
+
+        let read = backend
+            .get_docs_by_paths(&[doc_path("a", "one"), doc_path("a", "two")])
+            .await
+            .expect("stream")
+            .try_collect::<Vec<_>>()
+            .await;
+
+        assert!(read.is_err());
     }
 }

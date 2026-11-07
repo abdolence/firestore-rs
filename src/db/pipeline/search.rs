@@ -169,7 +169,7 @@ mod tests {
     use super::*;
     use crate::db::pipeline::fixtures::{fixture_case, pipeline};
     use crate::pipeline_builder::FirestorePipelineInitialBuilder;
-    use crate::pipeline_search_builder::{FirestoreTextQueryBuilder, FirestoreTextQueryInput};
+    use crate::pipeline_search_builder::FirestoreTextQueryBuilder;
     use crate::FirestoreTextQueryClause;
     use crate::{FirestoreGeoPoint, FirestorePipeline};
     use gcloud_sdk::google::firestore::v1::Pipeline;
@@ -285,38 +285,31 @@ mod tests {
     fn text_queries_built_from_clauses_convert_to_the_captured_query_strings() {
         let t = FirestoreTextQueryBuilder;
         let captured: [(&str, FirestoreTextQuery); 14] = [
-            ("term", t.term("waffles").build_query()),
-            ("phrase", t.phrase("maple syrup").build_query()),
-            ("phrase-belgian", t.phrase("belgian waffles").build_query()),
-            (
-                "phrase-wrong-order",
-                t.phrase("waffles belgian").build_query(),
-            ),
+            ("term", t.term("waffles").into()),
+            ("phrase", t.phrase("maple syrup").into()),
+            ("phrase-belgian", t.phrase("belgian waffles").into()),
+            ("phrase-wrong-order", t.phrase("waffles belgian").into()),
             (
                 "and",
-                t.for_all([t.term("waffles"), t.term("bacon")])
-                    .build_query(),
+                t.for_all([t.term("waffles"), t.term("bacon")]).into(),
             ),
             (
                 "exclude",
                 t.for_all([t.term("waffles"), t.exclude(t.term("bacon"))])
-                    .build_query(),
+                    .into(),
             ),
             (
                 "exclude-phrase",
                 t.for_all([t.term("pizza"), t.exclude(t.phrase("New York"))])
-                    .build_query(),
+                    .into(),
             ),
-            ("case", t.term("WAFFLES").build_query()),
-            ("diacritic", t.term("cr\u{ea}pes").build_query()),
-            ("stem", t.term("waffle").build_query()),
-            ("hyphen-term", t.term("gluten-free").build_query()),
-            ("hyphen-phrase", t.phrase("gluten-free").build_query()),
-            (
-                "quoted-phrase-with-colon",
-                t.phrase("field:menu").build_query(),
-            ),
-            ("tilde", t.term("waffles~").build_query()),
+            ("case", t.term("WAFFLES").into()),
+            ("diacritic", t.term("cr\u{ea}pes").into()),
+            ("stem", t.term("waffle").into()),
+            ("hyphen-term", t.term("gluten-free").into()),
+            ("hyphen-phrase", t.phrase("gluten-free").into()),
+            ("quoted-phrase-with-colon", t.phrase("field:menu").into()),
+            ("tilde", t.term("waffles~").into()),
         ];
 
         for (case, query) in captured {

@@ -9,13 +9,13 @@ use crate::{
 use sqlparser::ast::{OrderBy, SetExpr, SetOperator, SetQuantifier};
 
 impl FirestoreSqlTranslator<'_> {
-    /// A chain of `UNION`s, each of whose branches is a plain `SELECT`.
-    ///
-    /// A pipeline's `union` appends the documents of the other pipeline and aligns nothing, so
-    /// the branches' columns meet by name where SQL aligns them by position. The branches must
-    /// therefore output the same names in the same order, which makes both readings agree. A
-    /// `UNION` that deduplicates then does so over those names. The result outputs the names of
-    /// its first branch.
+    // A chain of `UNION`s, each of whose branches is a plain `SELECT`.
+    //
+    // A pipeline's `union` appends the documents of the other pipeline and aligns nothing, so
+    // the branches' columns meet by name where SQL aligns them by position. The branches must
+    // therefore output the same names in the same order, which makes both readings agree. A
+    // `UNION` that deduplicates then does so over those names. The result outputs the names of
+    // its first branch.
     pub(super) fn set_operation(
         &mut self,
         body: &SetExpr,

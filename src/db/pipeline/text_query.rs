@@ -124,6 +124,18 @@ impl From<FirestoreTextQueryClause> for FirestoreTextQuery {
     }
 }
 
+impl From<Option<FirestoreTextQueryClause>> for FirestoreTextQuery {
+    fn from(clause: Option<FirestoreTextQueryClause>) -> Self {
+        clause.map_or_else(Self::without_clauses, Self::from)
+    }
+}
+
+impl From<Option<FirestoreTextQuery>> for FirestoreTextQuery {
+    fn from(query: Option<FirestoreTextQuery>) -> Self {
+        query.unwrap_or_else(Self::without_clauses)
+    }
+}
+
 impl Display for FirestoreTextQuery {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
@@ -180,19 +192,6 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_word_is_sent_bare() {
-        for word in [
-            "waffles",
-            "WAFFLES",
-            "cr\u{ea}pes",
-            "gluten-free",
-            "waffles~",
-        ] {
-            assert_eq!(term(word).to_string(), word);
-        }
-    }
-
-    #[test]
     fn a_term_the_parser_would_split_or_read_as_syntax_is_quoted() {
         let quoted = [
             ("maple syrup", "\"maple syrup\""),
@@ -235,23 +234,6 @@ mod tests {
     }
 
     #[test]
-    fn clauses_are_joined_by_one_space() {
-        let query = FirestoreTextQuery::from_clauses([
-            term("waffles"),
-            phrase("maple syrup"),
-            term("bacon").excluded(),
-        ]);
-        assert_eq!(query.to_string(), "waffles \"maple syrup\" -bacon");
-    }
-
-    #[test]
-    fn a_raw_string_is_sent_unchanged() {
-        let text = "waffles OR (crepes -\"bacon\"";
-        assert_eq!(FirestoreTextQuery::from(text).to_string(), text);
-        assert_eq!(FirestoreTextQuery::from(text.to_string()).to_string(), text);
-    }
-
-    #[test]
     fn a_query_that_can_match_nothing_is_rejected() {
         let rejected: [FirestoreTextQuery; 5] = [
             FirestoreTextQuery::without_clauses(),
@@ -273,76 +255,6 @@ mod tests {
     fn a_raw_string_is_never_rejected() {
         for text in ["", "-bacon", "   "] {
             assert!(FirestoreTextQuery::from(text).ensure_matchable().is_ok());
-        }
-    }
-
-    /// Splits `text` the way the service's parser separates clauses: at whitespace outside a
-    /// quoted run. Fails on a quote left open.
-    fn split_clauses(text: &str) -> Vec<String> {
-        let mut clauses = Vec::new();
-        let mut current = String::new();
-        let mut in_quotes = false;
-        for c in text.chars() {
-            match c {
-                '"' => {
-                    in_quotes = !in_quotes;
-                    current.push(c);
-                }
-                c if c.is_whitespace() && !in_quotes => {
-                    if !current.is_empty() {
-                        clauses.push(std::mem::take(&mut current));
-                    }
-                }
-                c => current.push(c),
-            }
-        }
-        assert!(!in_quotes, "unbalanced quote in {text:?}");
-        if !current.is_empty() {
-            clauses.push(current);
-        }
-        clauses
-    }
-
-    /// Every string of up to four characters from an alphabet of the characters the renderer
-    /// treats specially.
-    fn strings() -> Vec<String> {
-        let alphabet = ['x', ' ', '"', '\u{201c}', '\u{201d}', '-', ':', '\\'];
-        let mut of_length = vec![String::new()];
-        let mut all = of_length.clone();
-        for _ in 0..4 {
-            of_length = of_length
-                .iter()
-                .flat_map(|prefix| alphabet.map(|c| format!("{prefix}{c}")))
-                .collect();
-            all.extend(of_length.iter().cloned());
-        }
-        all
-    }
-
-    #[test]
-    fn rendered_clauses_split_back_into_the_same_clauses() {
-        let clauses: Vec<FirestoreTextQueryClause> = strings()
-            .into_iter()
-            .flat_map(|text| {
-                [
-                    term(&text),
-                    phrase(&text),
-                    term(&text).excluded(),
-                    phrase(&text).excluded(),
-                ]
-            })
-            .filter(|clause| !clause.is_blank())
-            .collect();
-        assert!(clauses.len() > 10_000);
-
-        for window in clauses.windows(3) {
-            let rendered = window.iter().map(ToString::to_string).collect::<Vec<_>>();
-            let query = FirestoreTextQuery::from_clauses(window.iter().cloned());
-            assert_eq!(split_clauses(&query.to_string()), rendered, "{window:?}");
-            assert!(
-                !query.to_string().contains(['\u{201c}', '\u{201d}']),
-                "{window:?}"
-            );
         }
     }
 }

@@ -1096,6 +1096,14 @@ pub(crate) mod tests {
     pub(crate) const USERS_GROUP_PATH: &str =
         "projects/fake-firestore/databases/(default)/collectionGroups/users";
 
+    /// Whether `err` is an `InvalidParametersError` about the parameters field `field`.
+    pub(crate) fn is_invalid_parameter(err: &FirestoreError, field: &str) -> bool {
+        matches!(
+            err,
+            FirestoreError::InvalidParametersError(invalid) if invalid.public.field == field
+        )
+    }
+
     fn users_params() -> FirestoreIndexParams {
         FirestoreIndexParams::new(FirestoreCollectionId::from_static("users"))
     }
@@ -1791,14 +1799,7 @@ pub(crate) mod tests {
         .into();
 
         let err = plan_index_changes(&params, &existing, Standard, false).unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                FirestoreError::InvalidParametersError(invalid)
-                    if invalid.public.field == "ttl_fields"
-            ),
-            "{err:?}"
-        );
+        assert!(is_invalid_parameter(&err, "ttl_fields"), "{err:?}");
 
         let pruning = plan_index_changes(&params, &existing, Standard, true).unwrap();
         assert_eq!(pruning.enable_ttl, vec!["expires_at".to_string()]);
@@ -2320,14 +2321,7 @@ pub(crate) mod tests {
             .with_composite_indexes(vec![FirestoreCompositeIndex::new(vec![asc_field("a")])]);
         let err = plan_index_changes(&params, &FirestoreIndexListing::default(), Standard, false)
             .unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                FirestoreError::InvalidParametersError(invalid)
-                    if invalid.public.field == "composite_indexes"
-            ),
-            "{err:?}"
-        );
+        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
     }
 
     fn exempt_listed_config() -> field::IndexConfig {

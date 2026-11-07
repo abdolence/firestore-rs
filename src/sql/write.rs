@@ -19,42 +19,42 @@ use crate::{
 use gcloud_sdk::google::firestore::v1::{value::ValueType, MapValue, Value};
 use sqlparser::ast::{
     Assignment, AssignmentTarget, ConflictTarget, Delete, DoUpdate, Expr, FromTable, Ident, Insert,
-    Merge, ObjectName, ObjectNamePart, OnConflict, OnConflictAction, OnInsert, Parens, Query,
-    SetExpr, SqliteOnConflict, TableObject, TableWithJoins, Update, Values,
+    ObjectName, ObjectNamePart, OnConflict, OnConflictAction, OnInsert, Parens, Query, SetExpr,
+    SqliteOnConflict, TableObject, TableWithJoins, Update, Values,
 };
 use std::collections::{BTreeMap, HashMap};
 
-/// Why `MERGE` and `REPLACE INTO` are refused, and the forms that do what they are most often
-/// written for.
-const SQL_UPSERT_FORM: &str = "INSERT OR REPLACE INTO replaces the stored document, and INSERT .. ON CONFLICT (__name__) DO UPDATE changes some of its fields";
+// Why `MERGE` and `REPLACE INTO` are refused, and the forms that do what they are most often
+// written for.
+pub(super) const SQL_UPSERT_FORM: &str = "INSERT OR REPLACE INTO replaces the stored document, and INSERT .. ON CONFLICT (__name__) DO UPDATE changes some of its fields";
 
-/// The field that holds, during an `ON CONFLICT`, the stored document a row conflicts with.
-/// Firestore refuses a name between double underscores for a field, so the name is an ordinary
-/// one that a column of the rows must not take.
+// The field that holds, during an `ON CONFLICT`, the stored document a row conflicts with.
+// Firestore refuses a name between double underscores for a field, so the name is an ordinary
+// one that a column of the rows must not take.
 const SQL_CONFLICT_STORED_FIELD: &str = "_conflict_stored";
 
 const SQL_CONFLICT_KEY: &str = "conflict_key";
 
-/// The fields Firestore adds to the map of a document it reads as a whole, which are not fields
-/// a write may set.
+// The fields Firestore adds to the map of a document it reads as a whole, which are not fields
+// a write may set.
 const SQL_DOCUMENT_METADATA: [&str; 2] = ["__create_time__", "__update_time__"];
 
 struct FirestoreSqlRows {
     pipeline: FirestorePipeline,
-    /// The names of the fields they hold; `None` for the rows of a `SELECT *`.
+    // The names of the fields they hold; `None` for the rows of a `SELECT *`.
     columns: Option<Vec<String>>,
-    /// Whether they are the literal rows of a `VALUES`, whose `__name__` is known to name a
-    /// document of the collection written to.
+    // Whether they are the literal rows of a `VALUES`, whose `__name__` is known to name a
+    // document of the collection written to.
     literal: bool,
 }
 
 impl FirestoreSqlRows {
-    /// Whether the `__name__` of each row is the reference of a document that the pipeline
-    /// carries over from its source, and not a value it computes or renames. Firestore matches a
-    /// row to its stored document by that reference, and a string or another field is not one.
-    ///
-    /// The pipeline is read from its last stage back to the first one that decides it. A stage
-    /// this does not know to keep the name answers no.
+    // Whether the `__name__` of each row is the reference of a document that the pipeline
+    // carries over from its source, and not a value it computes or renames. Firestore matches a
+    // row to its stored document by that reference, and a string or another field is not one.
+    //
+    // The pipeline is read from its last stage back to the first one that decides it. A stage
+    // this does not know to keep the name answers no.
     fn names_documents(&self) -> bool {
         for stage in self.pipeline.stages.iter().rev() {
             match stage {
@@ -116,8 +116,8 @@ enum FirestoreSqlSet {
 }
 
 impl FirestoreSqlStatement {
-    /// A write as the statement that runs it. Every SQL write is atomic: it applies in full or
-    /// not at all, and Firestore requires that of an upsert and of an insert from a query.
+    // A write as the statement that runs it. Every SQL write is atomic: it applies in full or
+    // not at all, and Firestore requires that of an upsert and of an insert from a query.
     fn atomic(pipeline: FirestorePipeline, write: impl Into<FirestorePipelineWrite>) -> Self {
         Self::Write(Box::new(
             FirestorePipelineWriteParams::new(pipeline, write.into())
@@ -127,14 +127,6 @@ impl FirestoreSqlStatement {
 }
 
 impl FirestoreSqlTranslator<'_> {
-    pub(super) fn merge(merge: &Merge) -> FirestoreError {
-        FirestoreError::invalid_sql(
-            "MERGE",
-            format!("MERGE has no pipeline form in SQL: {SQL_UPSERT_FORM}"),
-            at(merge.merge_token.0.span),
-        )
-    }
-
     pub(super) fn insert(&mut self, insert: &Insert) -> FirestoreResult<FirestoreSqlStatement> {
         let Insert {
             insert_token,
@@ -290,8 +282,8 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// One row of a `VALUES` as a map. A value is a literal or a parameter, since a literal row
-    /// is data and not an expression to evaluate on a document.
+    // One row of a `VALUES` as a map. A value is a literal or a parameter, since a literal row
+    // is data and not an expression to evaluate on a document.
     fn row(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -337,9 +329,9 @@ impl FirestoreSqlTranslator<'_> {
         }))
     }
 
-    /// Fails unless `name` is the reference to a document directly in the collection the `INSERT`
-    /// writes to. An insert into a collection takes the ID of a row's `__name__` and no more, so
-    /// a name from another collection would write somewhere its path does not say.
+    // Fails unless `name` is the reference to a document directly in the collection the `INSERT`
+    // writes to. An insert into a collection takes the ID of a row's `__name__` and no more, so
+    // a name from another collection would write somewhere its path does not say.
     fn check_in_collection(
         &self,
         collection_path: &str,
@@ -363,8 +355,8 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// The rows of a query, with the fields of its columns named by the column list when there
-    /// is one: SQL matches them by position, where a pipeline names them.
+    // The rows of a query, with the fields of its columns named by the column list when there
+    // is one: SQL matches them by position, where a pipeline names them.
     fn insert_select(
         &mut self,
         query: &Query,
@@ -432,9 +424,8 @@ impl FirestoreSqlTranslator<'_> {
                 ));
             };
             if is_parameter(ident) {
-                return Err(FirestoreError::invalid_sql(
+                return Err(FirestoreError::sql_parameter_names_field(
                     &ident.value,
-                    "a parameter is a value and cannot name a field",
                     start,
                 ));
             }
@@ -548,8 +539,8 @@ impl FirestoreSqlTranslator<'_> {
         Ok(set)
     }
 
-    /// Fails unless every row of `rows` can be matched with the stored document it conflicts
-    /// with, so that no row is written over a document it did not find.
+    // Fails unless every row of `rows` can be matched with the stored document it conflicts
+    // with, so that no row is written over a document it did not find.
     fn check_conflict(
         &self,
         conflict_target: Option<&ConflictTarget>,
@@ -611,13 +602,13 @@ impl FirestoreSqlTranslator<'_> {
         Ok(())
     }
 
-    /// The rows of an `INSERT` with the conflicts with stored documents resolved, and whether
-    /// the pipeline ends in an upsert.
-    ///
-    /// Each row looks its stored document up by the name of the document it would write. A row
-    /// whose document exists is left out for `DO NOTHING`. For `DO UPDATE` it becomes the stored
-    /// document with the `SET` fields set, and a row without a stored document stays as it is;
-    /// either is then written by an upsert, since Firestore has no write that merges.
+    // The rows of an `INSERT` with the conflicts with stored documents resolved, and whether
+    // the pipeline ends in an upsert.
+    //
+    // Each row looks its stored document up by the name of the document it would write. A row
+    // whose document exists is left out for `DO NOTHING`. For `DO UPDATE` it becomes the stored
+    // document with the `SET` fields set, and a row without a stored document stays as it is;
+    // either is then written by an upsert, since Firestore has no write that merges.
     fn on_conflict(
         &mut self,
         on: &OnInsert,
@@ -769,9 +760,9 @@ impl FirestoreSqlTranslator<'_> {
         ))
     }
 
-    /// The pipeline that selects the documents an `UPDATE` or `DELETE` changes: the one
-    /// collection it names, filtered by its `WHERE`, which it must have so that no statement
-    /// changes every document by omission. `WHERE TRUE` says it on purpose.
+    // The pipeline that selects the documents an `UPDATE` or `DELETE` changes: the one
+    // collection it names, filtered by its `WHERE`, which it must have so that no statement
+    // changes every document by omission. `WHERE TRUE` says it on purpose.
     fn written_documents(
         &mut self,
         sources: &[TableWithJoins],
@@ -823,8 +814,8 @@ fn encloses(outer: &str, inner: &str) -> bool {
 }
 
 impl FirestoreSqlSet {
-    /// Records that `value` is assigned to the field at `names`, under the maps that hold it.
-    /// Two assignments never share a field or one inside the other: `assignments` refuses that.
+    // Records that `value` is assigned to the field at `names`, under the maps that hold it.
+    // Two assignments never share a field or one inside the other: `assignments` refuses that.
     fn place(entries: &mut BTreeMap<String, Self>, names: &[String], value: FirestoreExpr) {
         match names {
             [name] => {
@@ -842,9 +833,9 @@ impl FirestoreSqlSet {
         }
     }
 
-    /// `map` with the assigned fields set. A map that holds assigned fields starts from the map
-    /// of the same name in `read`, or from an empty one when `read` has none, as `UPDATE` does
-    /// when it sets `a.b` and `a` is missing or is not a map.
+    // `map` with the assigned fields set. A map that holds assigned fields starts from the map
+    // of the same name in `read`, or from an empty one when `read` has none, as `UPDATE` does
+    // when it sets `a.b` and `a` is missing or is not a map.
     fn apply(
         map: FirestoreExpr,
         read: &FirestoreExpr,

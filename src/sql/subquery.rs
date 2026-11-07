@@ -8,13 +8,13 @@ use crate::{
 };
 use sqlparser::ast::{Cte, Query, SetExpr, With};
 
-/// How many times in all the pipelines of common table expressions may be repeated in one
-/// statement. A common table expression that uses another twice doubles the pipeline, so a short
-/// statement could otherwise ask for more memory than it has.
+// How many times in all the pipelines of common table expressions may be repeated in one
+// statement. A common table expression that uses another twice doubles the pipeline, so a short
+// statement could otherwise ask for more memory than it has.
 const SQL_MAX_CTE_COPIES: usize = 1024;
 
-/// A column of an enclosing query that a subquery reads. The enclosing query defines it as a
-/// variable before the stage that holds the subquery, and the subquery reads the variable.
+// A column of an enclosing query that a subquery reads. The enclosing query defines it as a
+// variable before the stage that holds the subquery, and the subquery reads the variable.
 pub(super) struct FirestoreSqlCapture {
     depth: usize,
     path: String,
@@ -25,7 +25,7 @@ pub(super) struct FirestoreSqlCapture {
 pub(super) struct FirestoreSqlCte {
     name: String,
     pipeline: FirestorePipeline,
-    /// How many query bodies the pipeline holds: its own and those of the expressions it uses.
+    // How many query bodies the pipeline holds: its own and those of the expressions it uses.
     copies: usize,
 }
 
@@ -124,9 +124,9 @@ impl FirestoreSqlTranslator<'_> {
         }
     }
 
-    /// A subquery of the query whose scope is `scope`, as the pipeline that runs for each of its
-    /// rows. It runs once per row whether or not it reads a column of the row, so it must opt in
-    /// unless it reads only the subcollection of the row.
+    // A subquery of the query whose scope is `scope`, as the pipeline that runs for each of its
+    // rows. It runs once per row whether or not it reads a column of the row, so it must opt in
+    // unless it reads only the subcollection of the row.
     fn subquery(
         &mut self,
         query: &Query,
@@ -193,16 +193,9 @@ impl FirestoreSqlTranslator<'_> {
         negated: bool,
     ) -> FirestoreResult<FirestoreExpr> {
         let values = self.array_subquery(scope, query)?;
-        Ok(if negated {
-            operand.not_equal_any(values)
-        } else {
-            operand.equal_any(values)
-        }
-        .into())
+        Ok(operand.in_set(values, negated))
     }
 
-    /// `[NOT] EXISTS (SELECT ..)`: whether the subquery finds a row. It looks for one, and
-    /// returns none of the select list.
     pub(super) fn exists(
         &mut self,
         scope: &FirestoreSqlScope<'_>,
@@ -223,8 +216,8 @@ impl FirestoreSqlTranslator<'_> {
         .into())
     }
 
-    /// Translates the common table expressions of a `WITH` and adds them to those in scope. Each
-    /// is translated once, here, and a reference to it repeats its pipeline.
+    // Translates the common table expressions of a `WITH` and adds them to those in scope. Each
+    // is translated once, here, and a reference to it repeats its pipeline.
     pub(super) fn define_ctes(
         &mut self,
         with: &With,
@@ -269,8 +262,8 @@ impl FirestoreSqlTranslator<'_> {
         Ok(())
     }
 
-    /// The pipeline of the common table expression called `name`, if there is one in scope. A
-    /// name matches without regard to case, as SQL names do, and the latest definition wins.
+    // The pipeline of the common table expression called `name`, if there is one in scope. A
+    // name matches without regard to case, as SQL names do, and the latest definition wins.
     pub(super) fn cte_reference(
         &mut self,
         name: &str,

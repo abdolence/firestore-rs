@@ -110,26 +110,47 @@ impl FirestoreAggregate {
 }
 
 impl FirestoreSelection {
-    /// The selection without an alias that repeats the path of the field it selects.
-    #[cfg(feature = "sql")]
-    pub(crate) fn without_redundant_alias(self) -> Self {
-        match (&self.expr, &self.alias) {
-            (FirestoreExpr::Field(path), Some(alias)) if path == alias => Self::new(self.expr),
-            _ => self,
-        }
-    }
-
-    /// The expression and the field name it is output under: the alias, or else the field's own
-    /// path. Fails for a computed expression without an alias.
-    pub(super) fn into_named(self, stage: &str) -> FirestoreResult<(String, FirestoreExpr)> {
-        match (self.alias, self.expr) {
-            (Some(alias), expr) => Ok((alias, expr)),
-            (None, FirestoreExpr::Field(path)) => Ok((path.clone(), FirestoreExpr::Field(path))),
+    /// The field name the selection is output under: the alias, or else the field's own path.
+    /// Fails for a computed expression without an alias.
+    pub(crate) fn name(&self, stage: &str) -> FirestoreResult<&str> {
+        match (&self.alias, &self.expr) {
+            (Some(alias), _) => Ok(alias),
+            (None, FirestoreExpr::Field(path)) => Ok(path),
             (None, expr) => Err(FirestoreError::invalid_parameters(
                 stage,
                 format!("a computed expression needs an alias: {expr:?}"),
             )),
         }
+    }
+
+    /// The expression and the field name it is output under, as [`name`](Self::name).
+    pub(super) fn into_named(self, stage: &str) -> FirestoreResult<(String, FirestoreExpr)> {
+        let name = self.name(stage)?.to_string();
+        Ok((name, self.expr))
+    }
+}
+
+/// Whether `name` is a simple identifier, `[A-Za-z_][A-Za-z0-9_]*`, the only kind of field path
+/// segment that Firestore accepts without backticks.
+#[cfg(any(feature = "admin", feature = "sql", feature = "caching"))]
+pub(crate) fn is_simple_field_segment(name: &str) -> bool {
+    name.chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// `name` as one segment of a field path: bare when it is a simple identifier, and otherwise
+/// between backticks, with `\\` and `` \` `` escaping a backslash and a backtick inside them.
+#[cfg(any(feature = "admin", feature = "sql"))]
+pub(crate) fn field_path_segment(name: &str) -> std::borrow::Cow<'_, str> {
+    if is_simple_field_segment(name) {
+        std::borrow::Cow::Borrowed(name)
+    } else {
+        std::borrow::Cow::Owned(format!(
+            "`{}`",
+            name.replace('\\', "\\\\").replace('`', "\\`")
+        ))
     }
 }
 

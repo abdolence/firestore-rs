@@ -24,6 +24,67 @@ use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{watch, Notify};
 
+/// A subscriber that writes this crate's spans and events, at DEBUG and above, to the returned
+/// buffer, for the thread that scopes it with `set_default`. Read the buffer with
+/// [`captured_text`].
+///
+/// A subscriber scoped to this crate's own target: `cargo test` runs many tests concurrently, and
+/// an unfiltered DEBUG level captures every other test's h2, tower and hyper transport chatter
+/// too, which crowds out or reorders the lines a test asserts on.
+#[cfg(feature = "admin")]
+pub(super) fn capturing_subscriber() -> (impl tracing::Subscriber + Send + Sync, Arc<Mutex<Vec<u8>>>)
+{
+    keep_spans_visible_to_scoped_subscribers();
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let make_writer = {
+        let buffer = buffer.clone();
+        move || SharedBufferWriter(buffer.clone())
+    };
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(make_writer)
+        .with_ansi(false)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+        .with_env_filter(tracing_subscriber::EnvFilter::new("firestore=debug"))
+        .finish();
+    (subscriber, buffer)
+}
+
+/// What a [`capturing_subscriber`] has written so far.
+#[cfg(feature = "admin")]
+pub(super) fn captured_text(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
+    String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
+}
+
+#[cfg(feature = "admin")]
+struct SharedBufferWriter(Arc<Mutex<Vec<u8>>>);
+
+#[cfg(feature = "admin")]
+impl std::io::Write for SharedBufferWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Registers a second dispatcher, a disabled one, for the rest of the test binary.
+///
+/// While tracing knows a single dispatcher, it registers a new callsite against the subscriber of
+/// the thread that first reaches it. A concurrent test without a subscriber can then disable a
+/// span for good, and the test that scoped a capturing subscriber never sees it. With two
+/// dispatchers registered, a callsite is registered against both, so each thread decides at the
+/// span itself.
+#[cfg(feature = "admin")]
+fn keep_spans_visible_to_scoped_subscribers() {
+    static REGISTERED: std::sync::Once = std::sync::Once::new();
+    REGISTERED.call_once(|| {
+        tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default()).ok();
+    });
+}
+
 /// A handler's answer to one RPC.
 pub(super) enum FakeResponse {
     /// A framed protobuf message, sent with a `grpc-status: 0` trailer.
@@ -199,8 +260,7 @@ type Handler = dyn Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync;
 /// backend. `handler` runs once per RPC, after its request body has ended, and returns one line
 /// for `calls()` plus the response - so a test can assert a whole RPC sequence in one comparison.
 ///
-/// `Listen` is the exception: it is answered at once with an empty stream, or with an open and
-/// quiet one by [`start_with_quiet_listen`](Self::start_with_quiet_listen), and its handler runs
+/// `Listen` is the exception: it is answered at once with an empty stream, and its handler runs
 /// only when the client closes the request, so a logged `Listen` call is itself the proof that
 /// the request was closed. The handler's response to it is ignored.
 pub(super) struct FakeFirestore {
@@ -214,7 +274,7 @@ impl FakeFirestore {
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
-        Self::serve(3, false, handler).await
+        Self::serve(3, handler).await
     }
 
     /// Like [`start`](Self::start), but with a `max_retries` other than the client default -
@@ -223,20 +283,10 @@ impl FakeFirestore {
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
-        Self::serve(max_retries, false, handler).await
+        Self::serve(max_retries, handler).await
     }
 
-    /// Like [`start`](Self::start), but `Listen` is answered with the response headers and then
-    /// nothing until the client closes the request: a listener on a database where nothing
-    /// changes.
-    pub async fn start_with_quiet_listen<F>(handler: F) -> Self
-    where
-        F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
-    {
-        Self::serve(3, true, handler).await
-    }
-
-    async fn serve<F>(max_retries: usize, quiet_listen: bool, handler: F) -> Self
+    async fn serve<F>(max_retries: usize, handler: F) -> Self
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
@@ -251,12 +301,7 @@ impl FakeFirestore {
         // Detached: #[tokio::test] drops every spawned task, this one included, at test end.
         tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
-                tokio::spawn(serve_connection(
-                    socket,
-                    handler.clone(),
-                    served.clone(),
-                    quiet_listen,
-                ));
+                tokio::spawn(serve_connection(socket, handler.clone(), served.clone()));
             }
         });
         let mut options = FirestoreDbOptions::new("fake-firestore".into());
@@ -304,12 +349,7 @@ struct RequestLog {
 
 /// Serves one client connection until the client closes it or an RPC answers
 /// [`FakeResponse::Drop`], which drops the connection and its socket.
-async fn serve_connection(
-    socket: TcpStream,
-    handler: Arc<Handler>,
-    log: RequestLog,
-    quiet_listen: bool,
-) {
+async fn serve_connection(socket: TcpStream, handler: Arc<Handler>, log: RequestLog) {
     let Ok(mut connection) = h2::server::handshake(socket).await else {
         return;
     };
@@ -322,7 +362,6 @@ async fn serve_connection(
                 handler.clone(),
                 log.clone(),
                 close.clone(),
-                quiet_listen,
             ));
         }
     };
@@ -338,7 +377,6 @@ async fn answer(
     handler: Arc<Handler>,
     log: RequestLog,
     close: Arc<Notify>,
-    quiet_listen: bool,
 ) {
     let method = request.uri().path().to_owned();
     log.authorizations
@@ -346,20 +384,15 @@ async fn answer(
         .unwrap()
         .push(request.headers().get(AUTHORIZATION).cloned());
     let listening = method.ends_with("/Listen");
-    // Held until the client closes the request, since dropping it would end a quiet `Listen`.
-    let _listen_response = if listening {
-        let headers = if quiet_listen {
-            ok_headers()
-        } else {
-            ok_headers().header("grpc-status", "0")
-        };
-        let Ok(send) = respond.send_response(headers.body(()).unwrap(), !quiet_listen) else {
+    if listening {
+        let headers = ok_headers().header("grpc-status", "0");
+        if respond
+            .send_response(headers.body(()).unwrap(), true)
+            .is_err()
+        {
             return;
-        };
-        Some(send)
-    } else {
-        None
-    };
+        }
+    }
     let mut body = request.into_body();
     let mut bytes = Vec::new();
     while let Some(Ok(chunk)) = body.data().await {

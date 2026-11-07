@@ -1,9 +1,10 @@
 use crate::errors::FirestoreDatabaseError;
 use crate::{FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreResult};
+use backoff::backoff::Backoff;
+use backoff::ExponentialBackoffBuilder;
 use gcloud_sdk::google::firestore::v1::firestore_client::FirestoreClient;
 use gcloud_sdk::tonic::{Request, Response, Status};
 use gcloud_sdk::{GoogleAuthMiddleware, RequestTimeouts};
-use rand::RngExt;
 use std::future::Future;
 use std::time::Duration;
 use tracing::{warn, Span};
@@ -12,8 +13,8 @@ impl FirestoreDb {
     /// Sends a read built from `request` through `send`, limited by the request timeout as
     /// `limit` applies it. While it fails with a `retry_possible` error, or with any
     /// `DEADLINE_EXCEEDED`, which a read, unlike a write, can safely send again, it is sent again
-    /// after a random [`retry_delay`], up to [`max_retries`](crate::FirestoreDbOptions::max_retries)
-    /// times. Each retry is logged in `span` as "Failed to `action`".
+    /// after a backoff delay, up to [`max_retries`](crate::FirestoreDbOptions::max_retries) times.
+    /// Each retry is logged in `span` as "Failed to `action`".
     ///
     /// An `ABORTED` read inside a transaction is never sent again: the transaction ID is no longer
     /// valid, so only running the whole transaction again can succeed.
@@ -31,6 +32,10 @@ impl FirestoreDb {
         Fut: Future<Output = Result<Response<T>, Status>>,
     {
         let max_retries = self.inner.options.max_retries;
+        // Reads stop at `max_retries`, so the backoff only sets the delays.
+        let mut backoff = ExponentialBackoffBuilder::new()
+            .with_max_elapsed_time(None)
+            .build();
         let mut retries = 0;
         loop {
             let request = self.request_with_timeout(request.clone(), limit);
@@ -42,7 +47,9 @@ impl FirestoreDb {
                 FirestoreError::DatabaseError(err)
                     if retries < max_retries && self.read_retry_possible(&err) =>
                 {
-                    let delay = retry_delay(retries);
+                    let Some(delay) = backoff.next_backoff() else {
+                        return Err(FirestoreError::DatabaseError(err));
+                    };
                     span.in_scope(|| {
                         warn!(
                             %err,
@@ -66,27 +73,5 @@ impl FirestoreDb {
             Some(FirestoreConsistencySelector::Transaction(_))
         );
         error.retry_possible && !(in_transaction && error.public.code == "Aborted")
-    }
-}
-
-/// How long to wait before retry number `retries + 1`: a random delay of up to `2^retries`
-/// seconds, saturating rather than overflowing for large `retries`.
-fn retry_delay(retries: usize) -> Duration {
-    let max_millis = 2u64
-        .saturating_pow(u32::try_from(retries).unwrap_or(u32::MAX))
-        .saturating_mul(1000);
-    Duration::from_millis(rand::rng().random_range(0..=max_millis))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn retry_delay_saturates_for_any_retry_count() {
-        assert!(retry_delay(0) <= Duration::from_secs(1));
-        for retries in [63, 64, 1000, usize::MAX] {
-            retry_delay(retries);
-        }
     }
 }

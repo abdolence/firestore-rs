@@ -1,5 +1,6 @@
 use crate::{FirestoreAggregate, FirestoreBoolExpr, FirestoreExpr};
 
+/// The [aggregate functions](https://docs.cloud.google.com/firestore/native/docs/pipeline/functions/aggregate_functions) of the service.
 impl FirestoreExpr {
     /// Counts the documents for which this expression is neither null nor absent. To count all
     /// documents, use `count_all` on the expression builder.
@@ -12,22 +13,18 @@ impl FirestoreExpr {
         FirestoreAggregate::raw("count_distinct", [self])
     }
 
-    /// Adds up the numeric values of this expression.
     pub fn sum(self) -> FirestoreAggregate {
         FirestoreAggregate::raw("sum", [self])
     }
 
-    /// The mean of the numeric values of this expression.
     pub fn average(self) -> FirestoreAggregate {
         FirestoreAggregate::raw("average", [self])
     }
 
-    /// The least value of this expression.
     pub fn minimum(self) -> FirestoreAggregate {
         FirestoreAggregate::raw("minimum", [self])
     }
 
-    /// The greatest value of this expression.
     pub fn maximum(self) -> FirestoreAggregate {
         FirestoreAggregate::raw("maximum", [self])
     }
@@ -56,8 +53,8 @@ impl FirestoreExpr {
     }
 }
 
+/// The [aggregate functions](https://docs.cloud.google.com/firestore/native/docs/pipeline/functions/aggregate_functions) of the service.
 impl FirestoreBoolExpr {
-    /// Counts the documents for which this condition is true.
     pub fn count_if(self) -> FirestoreAggregate {
         FirestoreAggregate::raw("count_if", [self])
     }

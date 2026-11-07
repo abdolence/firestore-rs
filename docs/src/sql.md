@@ -29,6 +29,10 @@ SQL needs a database of the Firestore *Enterprise edition*, as pipelines do. A s
 the same pipeline means in the fluent API: Firestore's semantics, listed in
 [Semantics](#semantics), where a few results differ from those of a SQL database.
 
+A read through a cache session is answered from the cache when the pipeline it translates to only
+filters, sorts and pages cached documents, see [Caching pipelines](./caching.md#sql) for the cached
+shapes.
+
 ## When to use SQL
 
 Application code keeps the fluent API. A field name in `path!(Book::rating)` is checked when the
@@ -103,7 +107,7 @@ to several is refused.
 
 Parameters are the way to put a value into a statement:
 
-- `@name` is bound with `.param("name", value)`, and `.param("@name", value)` binds the same;
+- `@name` is bound with `.param("name", value)`;
 - `?` is bound with `.params([..])`, in the order the `?`s appear;
 - a statement uses one form, and mixing them is refused, and so is `$1` or `:name`;
 - the value is any `Serialize` type, bound as a typed constant of the pipeline, as a value in the
@@ -175,7 +179,7 @@ let rows = db
 `FirestoreSqlOptions` limits a statement before it runs. A statement that breaks a limit fails at
 translation with `InvalidParametersError`, and no request is sent. `FirestoreSqlOptions::new()`
 allows every statement the translator supports, except [joins and
-subqueries](#joins-and-subqueries) and statements longer than 16 KiB, and
+subqueries](#joins-and-subqueries), and
 `FirestoreSqlOptions::read_only()` starts the set for text from outside the program:
 
 - `read_only()` refuses `INSERT`, `UPDATE` and `DELETE`, and the `database()` source;
@@ -187,12 +191,11 @@ subqueries](#joins-and-subqueries) and statements longer than 16 KiB, and
 - `.with_max_rows(1_000)` returns at most that many rows: the `LIMIT` is lowered to it, or one is
   added. The cap counts the rows returned, not the rows read: an `OFFSET` still reads the rows it
   skips, and `ARRAY_AGG(..)` or `ARRAY(SELECT ..)` puts a whole collection into one row;
-- `.with_max_length(bytes)` refuses a longer statement, and the default is 16 KiB;
 - `.allow_subqueries()` allows joins and subqueries, see
   [Joins and subqueries](#joins-and-subqueries).
 
-The parser also refuses a statement nested deeper than 16 levels, and the translator one nested
-deeper than 64. These limits are fixed.
+The translator also refuses a statement longer than 16 KiB, the parser one nested deeper than 16
+levels, and the translator one nested deeper than 64. These limits are fixed.
 
 ```rust,no_run
 # use firestore::*;
@@ -321,6 +324,7 @@ dropped, so a statement does not run with a clause missing.
 |---|---|
 | Pipe syntax, `FROM t \|> WHERE ..` | not supported in this version |
 | `MERGE`, `REPLACE INTO` | `MERGE` has no pipeline form, and `REPLACE INTO` does not parse in the BigQuery dialect; use `INSERT OR REPLACE` or `INSERT .. ON CONFLICT` |
+| `INSERT OR IGNORE`, `OR ABORT`, `OR FAIL`, `OR ROLLBACK`, `RETURNING`, `UPDATE .. FROM`, `ORDER BY` or `LIMIT` on a write, `INSERT .. SET`, `INSERT .. DEFAULT VALUES` | a write has no pipeline form for them |
 | DDL, `BEGIN`, `EXPLAIN` | a statement is a `SELECT`, `INSERT`, `UPDATE` or `DELETE`; transactions come from the API, and `.explain()` returns the plan |
 | `WITH RECURSIVE`, a CTE column list, `MATERIALIZED` | pipelines have no iteration |
 | Window functions, `QUALIFY`, `WINDOW` | pipelines have no window stage |
@@ -564,34 +568,8 @@ Rules per statement:
   transaction was aborted due to a conflict", and the stored `stock` was 4. A write that returns
   `ABORTED` can be sent again.
 
-Refused: `MERGE`, `REPLACE INTO`, `INSERT OR IGNORE`, `OR ABORT`, `OR FAIL` and `OR ROLLBACK`,
-`RETURNING`, `UPDATE .. FROM`, `ORDER BY` and `LIMIT` on a write, `INSERT .. SET`,
-`INSERT .. DEFAULT VALUES`, and any `ON CONFLICT` target but `__name__`.
-
-### Write limits
-
-Firestore rejects an atomic write that is too big with `InvalidArgument`, "Transaction too big.
-Decrease transaction size." The limit is not one number of documents. It was measured on documents
-of two small fields (an integer and a short string), from a developer machine:
-
-| Statement | Largest that succeeded | Smallest that failed |
-|---|---|---|
-| `UPDATE .. SET touched = 1 WHERE TRUE` | 55,000 documents, 27.5 s | 60,000 documents, in two runs |
-| `DELETE FROM .. WHERE TRUE` | 5,475 documents | 5,500 documents |
-
-The `DELETE` limit was about a tenth of the `UPDATE` limit. Throughput was 1,000 to 3,000 documents
-per second, and rose with the size of the write. Two runs that came right after inserting the
-documents failed once with `ResourceExhausted` ("This database has exceeded their maximum
-bandwidth for writes") and passed after a pause, and one `UPDATE` of 67,500 documents failed once
-with `Aborted`.
-
-Split a large write by a `WHERE` on a range, such as the key or a timestamp, and send each part
-after the one before. The numbers are measurements on tiny documents.
-
-A TTL (time-to-live) policy suits retention better than a scheduled `DELETE`: Firestore deletes
-the documents itself once the timestamp in the policy's field has passed, see
-[Index management](./index-management.md). The
-[bulk delete](./bulk-delete.md) of the `admin` feature empties a whole collection.
+Firestore refuses an atomic write that is too big. [Write limits](./pipeline-writes.md#write-limits)
+lists the sizes that were measured.
 
 ## Errors
 

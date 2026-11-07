@@ -42,13 +42,21 @@ pub async fn setup() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + S
 #[cfg(feature = "admin")]
 #[allow(dead_code)]
 pub async fn setup_enterprise() -> Result<FirestoreDb, Box<dyn std::error::Error + Send + Sync>> {
-    init_logging()?;
-    let options = FirestoreDbOptions::new(config_env_var("GCP_PROJECT")?)
-        .with_database_id(config_env_var("GCP_ENTERPRISE_DATABASE_ID")?);
-    let db = FirestoreDb::with_options(options).await?;
+    let db = setup_enterprise_unseeded().await?;
     enterprise_seed::ensure_seeded(&db).await?;
 
     Ok(db)
+}
+
+/// A client of the Enterprise edition database `GCP_ENTERPRISE_DATABASE_ID` that neither writes
+/// documents nor reads or declares indexes.
+#[allow(dead_code)]
+pub async fn setup_enterprise_unseeded(
+) -> Result<FirestoreDb, Box<dyn std::error::Error + Send + Sync>> {
+    init_logging()?;
+    let options = FirestoreDbOptions::new(config_env_var("GCP_PROJECT")?)
+        .with_database_id(config_env_var("GCP_ENTERPRISE_DATABASE_ID")?);
+    Ok(FirestoreDb::with_options(options).await?)
 }
 
 #[allow(dead_code)]

@@ -1,21 +1,22 @@
 use super::expr::SQL_DOCUMENT_NAME_FIELD;
-use super::translator::{at, field_path, field_segment, is_parameter};
+use super::translator::{at, field_path, is_parameter};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
+use crate::field_path_segment;
 use crate::FirestoreResult;
 use sqlparser::ast::Ident;
 
 #[derive(Clone)]
 pub(super) struct FirestoreSqlRelation {
-    /// The name a column may be qualified with: the source's alias, or else its collection ID.
+    // The name a column may be qualified with: the source's alias, or else its collection ID.
     pub(super) name: Option<String>,
-    /// The collection a bare document ID resolves against, relative to the documents root;
-    /// `None` unless the source is one collection.
+    // The collection a bare document ID resolves against, relative to the documents root;
+    // `None` unless the source is one collection.
     pub(super) collection_path: Option<String>,
 }
 
 impl FirestoreSqlRelation {
-    /// Whether a column may be qualified with `name`: table names match without regard to case,
-    /// as in SQL.
+    // Whether a column may be qualified with `name`: table names match without regard to case,
+    // as in SQL.
     pub(super) fn is_called(&self, name: &str) -> bool {
         self.name
             .as_deref()
@@ -37,7 +38,7 @@ pub(super) enum FirestoreSqlColumn {
 #[derive(Clone, Copy)]
 pub(super) struct FirestoreSqlPlace<'o> {
     pub(super) outer: Option<&'o FirestoreSqlScope<'o>>,
-    /// Only whether the query finds a row matters, so its select list is not translated.
+    // Only whether the query finds a row matters, so its select list is not translated.
     pub(super) existence: bool,
 }
 
@@ -71,32 +72,31 @@ impl<'o> FirestoreSqlPlace<'o> {
     }
 }
 
-/// A relation joined to the base one.
 struct FirestoreSqlJoined {
     relation: FirestoreSqlRelation,
-    /// Whether it holds the elements of an array, which are values, and not documents.
+    // Whether it holds the elements of an array, which are values, and not documents.
     elements: bool,
 }
 
-/// The relations the names of one query resolve against.
-///
-/// The base relation's fields are fields of the documents the query reads. Each joined relation
-/// is a field of those documents named after the relation, so two relations never share one. A
-/// schemaless document can hold a field of any name, so the field of a joined relation replaces
-/// a field of the base relation with the same name: the scope refuses every spelling that would
-/// read the replaced field, and every `*`.
+// The relations the names of one query resolve against.
+//
+// The base relation's fields are fields of the documents the query reads. Each joined relation
+// is a field of those documents named after the relation, so two relations never share one. A
+// schemaless document can hold a field of any name, so the field of a joined relation replaces
+// a field of the base relation with the same name: the scope refuses every spelling that would
+// read the replaced field, and every `*`.
 pub(super) struct FirestoreSqlScope<'o> {
     relation: FirestoreSqlRelation,
     joined: Vec<FirestoreSqlJoined>,
-    /// The field that holds the stored document in the clauses of `ON CONFLICT DO UPDATE`. A
-    /// column there is a field of the stored document, unless `excluded` qualifies it as a field
-    /// of the row being inserted.
+    // The field that holds the stored document in the clauses of `ON CONFLICT DO UPDATE`. A
+    // column there is a field of the stored document, unless `excluded` qualifies it as a field
+    // of the row being inserted.
     stored: Option<&'static str>,
-    /// The scope of the query this one is a subquery of, or the left side of a join whose `ON`
-    /// this scope resolves.
+    // The scope of the query this one is a subquery of, or the left side of a join whose `ON`
+    // this scope resolves.
     outer: Option<&'o FirestoreSqlScope<'o>>,
     depth: usize,
-    /// In an `ON` clause each side could hold a column, so every column names its side.
+    // In an `ON` clause each side could hold a column, so every column names its side.
     qualified_only: bool,
 }
 
@@ -156,8 +156,8 @@ impl<'o> FirestoreSqlScope<'o> {
         });
     }
 
-    /// Whether `name`, written alone, is the alias of a joined table. The elements of an array
-    /// are values that a query reads by their alias, but a table is read through its columns.
+    // Whether `name`, written alone, is the alias of a joined table. The elements of an array
+    // are values that a query reads by their alias, but a table is read through its columns.
     pub(super) fn is_joined_table(&self, name: &str) -> bool {
         self.joined
             .iter()
@@ -209,11 +209,11 @@ impl<'o> FirestoreSqlScope<'o> {
         }
     }
 
-    /// The field path of `rest` as the relation called `qualifier` holds it, or `None` when this
-    /// scope has no such relation.
-    ///
-    /// A joined relation lives in a field named after its alias, so a field of the base relation
-    /// with that name is hidden and cannot be named through the base relation.
+    // The field path of `rest` as the relation called `qualifier` holds it, or `None` when this
+    // scope has no such relation.
+    //
+    // A joined relation lives in a field named after its alias, so a field of the base relation
+    // with that name is hidden and cannot be named through the base relation.
     fn qualified_path(&self, qualifier: &Ident, rest: &[Ident]) -> FirestoreResult<Option<String>> {
         if self.relation.is_called(&qualifier.value) {
             let hidden = self
@@ -238,34 +238,33 @@ impl<'o> FirestoreSqlScope<'o> {
             .iter()
             .find(|joined| joined.relation.is_called(&qualifier.value))
             .and_then(|joined| joined.relation.name.as_deref())
-            .map(|alias| format!("{}.{}", field_segment(alias), field_path(rest))))
+            .map(|alias| format!("{}.{}", field_path_segment(alias), field_path(rest))))
     }
 
-    /// The name a `SELECT` gives the column at `path` when it does not name it: the path without
-    /// the name of the joined relation that holds it.
+    // The name a `SELECT` gives the column at `path` when it does not name it: the path without
+    // the name of the joined relation that holds it.
     pub(super) fn output_name<'p>(&self, path: &'p str) -> &'p str {
         self.joined
             .iter()
             .filter_map(|joined| joined.relation.name.as_deref())
             .find_map(|name| {
-                path.strip_prefix(field_segment(name).as_ref())
+                path.strip_prefix(field_path_segment(name).as_ref())
                     .and_then(|rest| rest.strip_prefix('.'))
             })
             .unwrap_or(path)
     }
 
-    /// Where the column `parts` names lives.
-    ///
-    /// A first part that names a relation of this scope or of an enclosing one qualifies the rest.
-    /// Any other name is a field of the base relation, unless the query joins or sits inside
-    /// another. There a name with dots must start with a relation, and in an `ON` clause every
-    /// name must: each could belong to either side, and the alternative to an error is a field
-    /// that is silently absent.
+    // Where the column `parts` names lives.
+    //
+    // A first part that names a relation of this scope or of an enclosing one qualifies the rest.
+    // Any other name is a field of the base relation, unless the query joins or sits inside
+    // another. There a name with dots must start with a relation, and in an `ON` clause every
+    // name must: each could belong to either side, and the alternative to an error is a field
+    // that is silently absent.
     pub(super) fn column(&self, parts: &[Ident]) -> FirestoreResult<FirestoreSqlColumn> {
         if let Some(parameter) = parts.iter().find(|part| is_parameter(part)) {
-            return Err(FirestoreError::invalid_sql(
+            return Err(FirestoreError::sql_parameter_names_field(
                 &parameter.value,
-                "a parameter is a value and cannot name a field",
                 at(parameter.span),
             ));
         }

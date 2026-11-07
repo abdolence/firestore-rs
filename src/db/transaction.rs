@@ -27,8 +27,8 @@ pub struct FirestoreTransactionData {
     document_path: String,
     transaction_span: Span,
     writes: Vec<gcloud_sdk::google::firestore::v1::Write>,
-    /// Firestore holds a pipeline write until commit, and rejects a commit that also carries
-    /// buffered writes, so once one ran, `add` refuses them.
+    /// Firestore holds a pipeline write until commit, so a transaction that ran one has a write
+    /// although none is queued in `writes`.
     holds_pipeline_writes: bool,
 }
 
@@ -95,12 +95,6 @@ impl FirestoreTransactionOps for FirestoreTransactionData {
     where
         I: TryInto<gcloud_sdk::google::firestore::v1::Write, Error = FirestoreError>,
     {
-        if self.holds_pipeline_writes {
-            return Err(FirestoreError::invalid_parameters(
-                "transaction",
-                "a transaction that ran a pipeline write cannot also buffer writes",
-            ));
-        }
         let write = write.try_into()?;
         self.writes.push(write);
         Ok(self)
@@ -303,28 +297,8 @@ impl<'a> FirestoreTransaction<'a> {
         self.data.is_empty()
     }
 
-    /// The ID to run a pipeline write in this transaction with.
-    ///
-    /// Fails when the transaction is finished, or buffers writes already, since Firestore would
-    /// reject its commit.
-    pub(crate) fn pipeline_write_transaction_id(&self) -> FirestoreResult<&FirestoreTransactionId> {
-        if self.finished {
-            return Err(FirestoreError::invalid_parameters(
-                "transaction",
-                "a finished transaction cannot run a pipeline write",
-            ));
-        }
-        if !self.data.writes.is_empty() {
-            return Err(FirestoreError::invalid_parameters(
-                "transaction",
-                "a transaction that buffers writes cannot also run a pipeline write",
-            ));
-        }
-        Ok(&self.data.transaction_id)
-    }
-
-    /// Marks the transaction as holding pipeline writes. Called once the write is built and about
-    /// to be sent: from then on its outcome is unknown, whether or not it succeeds.
+    /// Records that a pipeline write is about to be sent in this transaction. Its outcome is
+    /// unknown from then on, whether or not the request succeeds.
     pub(crate) fn hold_pipeline_writes(&mut self) {
         self.data.holds_pipeline_writes = true;
     }

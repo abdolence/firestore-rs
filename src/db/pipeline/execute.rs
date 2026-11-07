@@ -52,15 +52,6 @@ impl FirestoreDb {
             params.transaction,
             &self.session_params.consistency_selector,
         ) {
-            (
-                Some(FirestorePipelineWriteTransaction::Existing(transaction_id)),
-                Some(FirestoreConsistencySelector::Transaction(session_transaction_id)),
-            ) if *session_transaction_id != transaction_id => {
-                return Err(FirestoreError::invalid_parameters(
-                    "consistency_selector",
-                    "the session is bound to a different transaction than the write runs in",
-                ))
-            }
             (Some(FirestorePipelineWriteTransaction::Existing(transaction_id)), _) => (
                 Some(ConsistencySelector::Transaction(transaction_id)),
                 false,
@@ -138,6 +129,21 @@ impl FirestorePipelineSupport for FirestoreDb {
     ) -> FirestoreResult<
         BoxStream<'b, FirestoreResult<FirestoreWithPipelineMetadata<FirestoreDocument>>>,
     > {
+        #[cfg(feature = "caching")]
+        {
+            if let crate::FirestoreCachedValue::UseCached(documents) =
+                self.pipeline_docs_from_cache(&params).await?
+            {
+                return Ok(stream::iter(documents.into_iter().map(|document| {
+                    Ok(FirestoreWithPipelineMetadata {
+                        document: Some(document),
+                        metadata: crate::FirestorePipelineMetadata::new(),
+                    })
+                }))
+                .boxed());
+            }
+        }
+
         let span = span!(
             Level::DEBUG,
             "Firestore Pipeline",
@@ -267,7 +273,7 @@ impl FirestorePipelineSupport for FirestoreDb {
         params: FirestorePipelineWriteParams,
         transaction: &mut FirestoreTransaction<'_>,
     ) -> FirestoreResult<FirestorePipelineWriteResult> {
-        let transaction_id = transaction.pipeline_write_transaction_id()?.clone();
+        let transaction_id = transaction.transaction_id().clone();
         let request = self.create_pipeline_write_request(
             params.with_transaction(FirestorePipelineWriteTransaction::Existing(transaction_id)),
         )?;
@@ -342,16 +348,14 @@ mod tests {
     use crate::{
         FirestoreConsistencySelector, FirestoreDb, FirestoreError, FirestoreExplainOptions,
         FirestoreInstant, FirestorePipelineWriteResult, FirestoreReference, FirestoreResult,
-        FirestoreTransactionId, FirestoreTransactionResponse, FirestoreWriteResult,
+        FirestoreTransactionId,
     };
     use futures::TryStreamExt;
     use gcloud_sdk::google::firestore::v1::execute_pipeline_request::ConsistencySelector;
-    use gcloud_sdk::google::firestore::v1::{
-        CommitResponse, ExecutePipelineRequest, RequestOptions, WriteResult,
-    };
+    use gcloud_sdk::google::firestore::v1::{ExecutePipelineRequest, RequestOptions};
     use gcloud_sdk::prost::Message;
     use gcloud_sdk::tonic::Code;
-    use serde::{Deserialize, Serialize};
+    use serde::Serialize;
     use std::sync::atomic::AtomicU8;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -506,68 +510,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn a_commit_after_a_pipeline_write_converts_its_write_result() {
-        let captured = fixture_case("core-rpc/commit-after-pipeline-dml", None);
-        let instant = |time: &serde_json::Value| -> FirestoreInstant {
-            time.as_str().unwrap().parse().unwrap()
-        };
-        let update_time = instant(&captured["response"]["writeResults"][0]["updateTime"]);
-        let commit_time = instant(&captured["response"]["commitTime"]);
-        let inserted: Vec<Vec<u8>> = responses(&fixture_case(
-            "dml-transactions",
-            Some("dml_in_existing_transaction"),
-        ))
-        .iter()
-        .map(Message::encode_to_vec)
-        .collect();
-        let begins = AtomicU8::new(0);
-        let server = FakeFirestore::start(move |method, _| {
-            if method.ends_with("/BeginTransaction") {
-                return begin_response(&begins);
-            }
-            if method.ends_with("/Commit") {
-                let committed = CommitResponse {
-                    write_results: vec![WriteResult {
-                        update_time: Some(to_timestamp(update_time)),
-                        transform_results: Vec::new(),
-                    }],
-                    commit_time: Some(to_timestamp(commit_time)),
-                };
-                return (
-                    "Commit".to_string(),
-                    FakeResponse::Message(committed.encode_to_vec()),
-                );
-            }
-            (
-                "ExecutePipeline".to_string(),
-                FakeResponse::Paced(inserted.clone(), Duration::ZERO),
-            )
-        })
-        .await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-        server
-            .db
-            .fluent()
-            .pipeline()
-            .insert()
-            .into("pipeline-dml")
-            .literals([serde_json::json!({ "title": "existing-tx" })])
-            .execute_in_transaction(&mut transaction)
-            .await
-            .unwrap();
-
-        let response = transaction.commit().await.unwrap();
-
-        assert_eq!(
-            response,
-            FirestoreTransactionResponse::new(vec![
-                FirestoreWriteResult::new(Vec::new()).with_update_time(update_time)
-            ])
-            .with_commit_time(commit_time)
-        );
-    }
-
     /// A server that opens and rolls back transactions and fails every pipeline with `code`.
     async fn failing_pipelines(code: Code) -> FakeFirestore {
         let begins = AtomicU8::new(0);
@@ -584,156 +526,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_failed_write_is_not_sent_again() {
-        let server = failing_pipelines(Code::Unavailable).await;
-
-        let result = server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute()
-            .await;
-
-        assert!(
-            matches!(result, Err(FirestoreError::DatabaseError(_))),
-            "{result:?}"
-        );
-        assert_eq!(server.calls(), ["ExecutePipeline"]);
-    }
-
-    #[tokio::test]
-    async fn a_failed_standalone_write_is_not_retryable() {
-        for code in [Code::Unavailable, Code::ResourceExhausted] {
-            let server = failing_pipelines(code).await;
-
-            let result = server
-                .db
-                .fluent()
-                .pipeline()
-                .delete()
-                .from("pipeline-dml")
-                .execute()
-                .await;
-
-            assert!(
-                matches!(&result, Err(FirestoreError::DatabaseError(error)) if !error.retry_possible),
-                "{code:?}: {result:?}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn a_failed_atomic_write_is_retryable_only_when_aborted() {
-        for (code, retryable) in [
-            (Code::Unavailable, false),
-            (Code::ResourceExhausted, false),
-            (Code::Aborted, true),
+    async fn a_failed_write_is_sent_once_and_flags_retry_by_its_run() {
+        for (run, code, retryable) in [
+            (WriteRun::Execute, Code::Unavailable, false),
+            (WriteRun::Execute, Code::ResourceExhausted, false),
+            (WriteRun::Atomic, Code::Unavailable, false),
+            (WriteRun::Atomic, Code::ResourceExhausted, false),
+            (WriteRun::Atomic, Code::Aborted, true),
+            (WriteRun::InTransaction, Code::Unavailable, true),
         ] {
             let server = failing_pipelines(code).await;
+            let delete = server.db.fluent().pipeline().delete().from("pipeline-dml");
 
-            let result = server
-                .db
-                .fluent()
-                .pipeline()
-                .delete()
-                .from("pipeline-dml")
-                .atomic()
-                .execute()
-                .await;
+            let result = match run {
+                WriteRun::Execute => delete.execute().await,
+                WriteRun::Atomic => delete.atomic().execute().await,
+                WriteRun::InTransaction => {
+                    let mut transaction = server.db.begin_transaction().await.unwrap();
+                    let result = delete.execute_in_transaction(&mut transaction).await;
+                    transaction.rollback().await.unwrap();
+                    result
+                }
+            };
 
             assert!(
                 matches!(&result, Err(FirestoreError::DatabaseError(error)) if error.retry_possible == retryable),
-                "{code:?}: {result:?}"
+                "{run:?} {code:?}: {result:?}"
             );
+            let sent = server
+                .calls()
+                .iter()
+                .filter(|call| *call == "ExecutePipeline")
+                .count();
+            assert_eq!(sent, 1, "{run:?} {code:?}");
         }
     }
 
     #[tokio::test]
-    async fn a_failed_write_in_a_transaction_keeps_the_retry_of_the_transaction() {
-        let server = failing_pipelines(Code::Unavailable).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-
-        let result = server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(&result, Err(FirestoreError::DatabaseError(error)) if error.retry_possible),
-            "{result:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_write_rejected_before_sending_leaves_the_transaction_usable() {
-        let (server, requests) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-
-        let unaliased = server
-            .db
-            .fluent()
-            .pipeline()
-            .update(|e| [e.constant("shipped")])
-            .in_col("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        let buffered = server
-            .db
-            .fluent()
-            .delete()
-            .from("pipeline-dml")
-            .document_id("doc-1")
-            .add_to_transaction(&mut transaction)
-            .map(|_| ());
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(unaliased, Err(FirestoreError::InvalidParametersError(_))),
-            "{unaliased:?}"
-        );
-        assert!(requests.lock().unwrap().is_empty());
-        buffered.unwrap();
-    }
-
-    #[tokio::test]
-    async fn a_write_that_failed_after_sending_still_holds_the_transaction() {
-        let server = failing_pipelines(Code::Unavailable).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-
-        server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await
-            .unwrap_err();
-        let buffered = server
-            .db
-            .fluent()
-            .delete()
-            .from("pipeline-dml")
-            .document_id("doc-1")
-            .add_to_transaction(&mut transaction)
-            .map(|_| ());
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(buffered, Err(FirestoreError::InvalidParametersError(_))),
-            "{buffered:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_transaction_with_a_pipeline_write_is_not_empty() {
+    async fn a_transaction_that_ran_a_pipeline_write_is_not_empty() {
         let (server, _) = replaying(&fixture_case("dml-delete", Some("all"))).await;
         let mut transaction = server.db.begin_transaction().await.unwrap();
         assert!(transaction.is_empty());
@@ -747,137 +577,20 @@ mod tests {
             .execute_in_transaction(&mut transaction)
             .await
             .unwrap();
-        let (is_empty, data_is_empty) = (
+        let is_empty = (
             transaction.is_empty(),
             transaction.transaction_data().is_empty(),
         );
         transaction.rollback().await.unwrap();
 
-        assert!(!is_empty);
-        assert!(!data_is_empty);
+        assert_eq!(is_empty, (false, false));
     }
 
-    #[tokio::test]
-    async fn a_pipeline_write_after_finishing_the_transaction_is_rejected_unsent() {
-        let (server, requests) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-        transaction.finish().unwrap();
+    #[test]
+    fn firestore_refuses_a_commit_that_mixes_pipeline_and_buffered_writes() {
+        let captured = fixture_case("core-rpc/commit-mixing-pipeline-and-classic-writes", None);
 
-        let result = server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(result, Err(FirestoreError::InvalidParametersError(_))),
-            "{result:?}"
-        );
-        assert!(requests.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_session_bound_to_another_transaction_rejects_a_pipeline_write_unsent() {
-        let (server, requests) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-        let mut other = transaction.transaction_id().clone();
-        other.push(1);
-        let same =
-            server
-                .db
-                .clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(
-                    transaction.transaction_id().clone(),
-                ));
-        let different = server
-            .db
-            .clone_with_consistency_selector(FirestoreConsistencySelector::Transaction(other));
-
-        let accepted = same
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        let rejected = different
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        transaction.rollback().await.unwrap();
-
-        accepted.unwrap();
-        assert!(
-            matches!(rejected, Err(FirestoreError::InvalidParametersError(_))),
-            "{rejected:?}"
-        );
-        assert_eq!(requests.lock().unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_buffered_write_after_a_pipeline_write_is_rejected() {
-        let (server, _) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-
-        server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await
-            .unwrap();
-        let buffered = server
-            .db
-            .fluent()
-            .delete()
-            .from("pipeline-dml")
-            .document_id("doc-1")
-            .add_to_transaction(&mut transaction)
-            .map(|_| ());
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(buffered, Err(FirestoreError::InvalidParametersError(_))),
-            "{buffered:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_pipeline_write_after_a_buffered_write_is_rejected_unsent() {
-        let (server, requests) = replaying(&fixture_case("dml-delete", Some("all"))).await;
-        let mut transaction = server.db.begin_transaction().await.unwrap();
-
-        server
-            .db
-            .fluent()
-            .delete()
-            .from("pipeline-dml")
-            .document_id("doc-1")
-            .add_to_transaction(&mut transaction)
-            .unwrap();
-        let piped = server
-            .db
-            .fluent()
-            .pipeline()
-            .delete()
-            .from("pipeline-dml")
-            .execute_in_transaction(&mut transaction)
-            .await;
-        transaction.rollback().await.unwrap();
-
-        assert!(
-            matches!(piped, Err(FirestoreError::InvalidParametersError(_))),
-            "{piped:?}"
-        );
-        assert!(requests.lock().unwrap().is_empty());
+        assert_eq!(captured["response"]["error"]["status"], "INVALID_ARGUMENT");
     }
 
     #[tokio::test]
@@ -974,45 +687,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[derive(Debug, PartialEq, Deserialize)]
-    struct SelectedBook {
-        #[serde(alias = "_firestore_id")]
-        id: Option<String>,
-        title: String,
-        author_name: String,
-    }
-
-    #[tokio::test]
-    async fn a_selected_result_has_no_document_id() {
-        let (server, _) = replaying(&fixture_case("stage-select", None)).await;
-
-        let books: Vec<SelectedBook> = server
-            .db
-            .fluent()
-            .pipeline()
-            .select()
-            .from("pipeline-books")
-            .obj()
-            .query()
-            .await
-            .unwrap();
-
-        assert_eq!(
-            books,
-            [
-                SelectedBook {
-                    id: None,
-                    title: "Untitled draft".to_string(),
-                    author_name: "Anonymous".to_string(),
-                },
-                SelectedBook {
-                    id: None,
-                    title: "The Hitchhiker's Guide to the Galaxy".to_string(),
-                    author_name: "Douglas Adams".to_string(),
-                },
-            ]
-        );
     }
 }

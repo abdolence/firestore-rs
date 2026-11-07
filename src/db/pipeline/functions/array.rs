@@ -16,8 +16,8 @@ impl From<FirestoreSearchDirection> for FirestoreExpr {
     }
 }
 
+/// The [array functions](https://docs.cloud.google.com/firestore/native/docs/pipeline/functions/array_functions) of the service.
 impl FirestoreExpr {
-    /// This array followed by the `others`, joined into one array.
     pub fn array_concat<I>(self, others: I) -> FirestoreExpr
     where
         I: IntoIterator,
@@ -26,12 +26,10 @@ impl FirestoreExpr {
         Self::raw("array_concat", self.followed_by(others))
     }
 
-    /// True when this array holds `value`.
     pub fn array_contains(self, value: impl Into<FirestoreExpr>) -> FirestoreBoolExpr {
         FirestoreBoolExpr(Self::raw("array_contains", [self, value.into()]))
     }
 
-    /// True when this array holds every element of the array `search_values`.
     pub fn array_contains_all(self, search_values: impl Into<FirestoreExpr>) -> FirestoreBoolExpr {
         FirestoreBoolExpr(Self::raw(
             "array_contains_all",
@@ -39,7 +37,6 @@ impl FirestoreExpr {
         ))
     }
 
-    /// True when this array holds any element of the array `search_values`.
     pub fn array_contains_any(self, search_values: impl Into<FirestoreExpr>) -> FirestoreBoolExpr {
         FirestoreBoolExpr(Self::raw(
             "array_contains_any",
@@ -47,7 +44,6 @@ impl FirestoreExpr {
         ))
     }
 
-    /// The number of elements of this array.
     pub fn array_length(self) -> FirestoreExpr {
         Self::raw("array_length", [self])
     }
@@ -63,22 +59,18 @@ impl FirestoreExpr {
         Self::raw("offset", [self, index.into()])
     }
 
-    /// The first element of this array.
     pub fn array_first(self) -> FirestoreExpr {
         Self::raw("array_first", [self])
     }
 
-    /// The last element of this array.
     pub fn array_last(self) -> FirestoreExpr {
         Self::raw("array_last", [self])
     }
 
-    /// The first `n` elements of this array.
     pub fn array_first_n(self, n: impl Into<FirestoreExpr>) -> FirestoreExpr {
         Self::raw("array_first_n", [self, n.into()])
     }
 
-    /// The last `n` elements of this array.
     pub fn array_last_n(self, n: impl Into<FirestoreExpr>) -> FirestoreExpr {
         Self::raw("array_last_n", [self, n.into()])
     }
@@ -95,17 +87,14 @@ impl FirestoreExpr {
         )
     }
 
-    /// The index of every `search` in this array.
     pub fn array_index_of_all(self, search: impl Into<FirestoreExpr>) -> FirestoreExpr {
         Self::raw("array_index_of_all", [self, search.into()])
     }
 
-    /// This array in reverse order.
     pub fn array_reverse(self) -> FirestoreExpr {
         Self::raw("array_reverse", [self])
     }
 
-    /// `length` elements of this array from `offset`.
     pub fn array_slice(
         self,
         offset: impl Into<FirestoreExpr>,

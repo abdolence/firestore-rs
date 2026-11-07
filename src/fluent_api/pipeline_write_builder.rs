@@ -278,7 +278,7 @@ where
     ///
     /// Firestore adds two rules:
     /// - A transaction takes pipeline writes or buffered writes, such as `add_to_transaction`,
-    ///   not both. Mixing them fails with `InvalidParametersError`, whichever comes first.
+    ///   not both. Firestore fails the commit that mixes them.
     /// - Every read comes before the first pipeline write. Firestore fails a read after it as
     ///   `FAILED_PRECONDITION`.
     ///

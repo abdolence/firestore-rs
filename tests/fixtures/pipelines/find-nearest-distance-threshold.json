@@ -1,0 +1,69 @@
+{
+  "description": "find_nearest with a distance_threshold option, which the stage rejects",
+  "captured": "2026-11-04",
+  "request": {
+    "database": "projects/latestbit/databases/firestore-rs-enterprise",
+    "structuredPipeline": {
+      "pipeline": {
+        "stages": [
+          {
+            "name": "collection",
+            "args": [
+              {
+                "referenceValue": "/pipeline-books"
+              }
+            ]
+          },
+          {
+            "name": "find_nearest",
+            "args": [
+              {
+                "fieldReferenceValue": "embedding"
+              },
+              {
+                "mapValue": {
+                  "fields": {
+                    "__type__": {
+                      "stringValue": "__vector__"
+                    },
+                    "value": {
+                      "arrayValue": {
+                        "values": [
+                          {
+                            "doubleValue": 0.9
+                          },
+                          {
+                            "doubleValue": 0.1
+                          },
+                          {
+                            "doubleValue": 0.2
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "stringValue": "euclidean"
+              }
+            ],
+            "options": {
+              "limit": {
+                "integerValue": "3"
+              },
+              "distance_threshold": {
+                "doubleValue": 0.5
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "error": {
+    "code": 400,
+    "message": "Stage 'find_nearest(field: FieldReference, vector: Vector, distance_measure: DistanceMeasure, limit: Int64?, distance_field: FieldPath?)' does not support option(s) [distance_threshold].",
+    "status": "INVALID_ARGUMENT"
+  }
+}

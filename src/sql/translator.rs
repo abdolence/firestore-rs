@@ -1,7 +1,9 @@
 use super::aggregation::FirestoreSqlAggregation;
 use super::parameters::FirestoreSqlBinding;
 use super::subquery::{FirestoreSqlCapture, FirestoreSqlCte};
+use super::write::SQL_UPSERT_FORM;
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
+use crate::field_path_segment;
 use crate::{
     FirestoreCollectionId, FirestoreDocumentId, FirestoreExpr, FirestoreResult,
     FirestoreSearchQuery, FirestoreSqlOptions, FirestoreSqlStatement, FirestoreValue,
@@ -9,24 +11,23 @@ use crate::{
 use gcloud_sdk::google::firestore::v1::{value::ValueType, Value};
 use sqlparser::ast::{Expr, Ident, ObjectName, ObjectNamePart, Statement};
 use sqlparser::tokenizer::Span;
-use std::borrow::Cow;
 
-/// How deep the translator nests into a statement. sqlparser's recursion limit does not bound a
-/// chain of infix operators, which it parses in a loop but nests one level per operator.
+// How deep the translator nests into a statement. sqlparser's recursion limit does not bound a
+// chain of infix operators, which it parses in a loop but nests one level per operator.
 const SQL_MAX_TRANSLATION_DEPTH: usize = 64;
 
-/// Translates one parsed statement into the pipeline model.
-///
-/// Every AST node is destructured in full: a field with no pipeline form is refused when it is
-/// set, so that no part of a statement is silently dropped. A field bound to `_` is notation,
-/// such as whether `AS` was written.
+// Translates one parsed statement into the pipeline model.
+//
+// Every AST node is destructured in full: a field with no pipeline form is refused when it is
+// set, so that no part of a statement is silently dropped. A field bound to `_` is notation,
+// such as whether `AS` was written.
 pub(super) struct FirestoreSqlTranslator<'t> {
     pub(super) documents_path: &'t str,
     pub(super) options: &'t FirestoreSqlOptions,
     pub(super) binding: FirestoreSqlBinding<'t>,
     pub(super) aggregation: Option<FirestoreSqlAggregation>,
     pub(super) search: Option<FirestoreSearchQuery>,
-    /// The columns of enclosing queries that subqueries have read and no stage defines yet.
+    // The columns of enclosing queries that subqueries have read and no stage defines yet.
     pub(super) pending: Vec<FirestoreSqlCapture>,
     pub(super) ctes: Vec<FirestoreSqlCte>,
     pub(super) cte_copies: usize,
@@ -73,7 +74,13 @@ impl<'t> FirestoreSqlTranslator<'t> {
             Statement::Insert(insert) => self.insert(insert)?,
             Statement::Update(update) => self.update(update)?,
             Statement::Delete(delete) => self.delete(delete)?,
-            Statement::Merge(merge) => return Err(Self::merge(merge)),
+            Statement::Merge(merge) => {
+                return Err(FirestoreError::invalid_sql(
+                    "MERGE",
+                    format!("MERGE has no pipeline form in SQL: {SQL_UPSERT_FORM}"),
+                    at(merge.merge_token.0.span),
+                ))
+            }
             _ => {
                 return Err(FirestoreError::invalid_sql(
                     "statement",
@@ -104,8 +111,8 @@ impl<'t> FirestoreSqlTranslator<'t> {
         translated
     }
 
-    /// The path of the document `path` names, relative to the documents root: `path` is that
-    /// already, or a full path in this database.
+    // The path of the document `path` names, relative to the documents root: `path` is that
+    // already, or a full path in this database.
     pub(super) fn document_path<'p>(
         &self,
         path: &'p str,
@@ -193,7 +200,6 @@ impl FirestoreExpr {
     }
 }
 
-/// Fails for the first of `constructs` that a statement sets, none of which has a pipeline form.
 pub(super) fn refuse_set(
     constructs: &[(bool, &str)],
     location: Option<FirestoreSqlLocation>,
@@ -204,7 +210,7 @@ pub(super) fn refuse_set(
     }
 }
 
-/// Whether `ident` is a parameter, `@name`. A backticked `` `@name` `` is a field.
+// Whether `ident` is a parameter, `@name`. A backticked `` `@name` `` is a field.
 pub(super) fn is_parameter(ident: &Ident) -> bool {
     ident.quote_style.is_none() && ident.value.starts_with('@')
 }
@@ -220,7 +226,7 @@ pub(super) fn is_column(mut expr: &Expr) -> bool {
     }
 }
 
-/// Where `span` starts, unless sqlparser made it up.
+// Where `span` starts, unless sqlparser made it up.
 pub(super) fn at(span: Span) -> Option<FirestoreSqlLocation> {
     FirestoreSqlLocation::from_sqlparser(span.start)
 }
@@ -232,8 +238,8 @@ pub(super) fn name_start(name: &ObjectName) -> Option<FirestoreSqlLocation> {
     }
 }
 
-/// Where `expr` starts, found along its first operands in a loop: a chain of infix operators
-/// nests as deep as it is long, and sqlparser's own spans recurse through all of it.
+// Where `expr` starts, found along its first operands in a loop: a chain of infix operators
+// nests as deep as it is long, and sqlparser's own spans recurse through all of it.
 pub(super) fn expr_start(mut expr: &Expr) -> Option<FirestoreSqlLocation> {
     loop {
         expr = match expr {
@@ -280,25 +286,7 @@ pub(super) fn expr_start(mut expr: &Expr) -> Option<FirestoreSqlLocation> {
 pub(super) fn field_path(parts: &[Ident]) -> String {
     parts
         .iter()
-        .map(|part| field_segment(&part.value))
+        .map(|part| field_path_segment(&part.value))
         .collect::<Vec<_>>()
         .join(".")
-}
-
-/// `name` as one segment of a field path. Firestore's field path syntax takes a name other than
-/// letters, digits and underscores, such as one with a dot, between backticks.
-pub(super) fn field_segment(name: &str) -> Cow<'_, str> {
-    let simple = name
-        .chars()
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if simple {
-        Cow::Borrowed(name)
-    } else {
-        Cow::Owned(format!(
-            "`{}`",
-            name.replace('\\', "\\\\").replace('`', "\\`")
-        ))
-    }
 }

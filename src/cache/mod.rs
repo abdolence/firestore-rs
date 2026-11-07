@@ -55,7 +55,9 @@
 //! | Read by ID, batch read by IDs | yes, for any cached collection |
 //! | `list` a collection | only for **preloaded** collections |
 //! | `query` a collection | only for **preloaded** collections, and only for supported filters |
-//! | Paged listing, query with metadata, aggregations, transactions, writes | never |
+//! | Reads in a transaction or at a read time | never: `read_through_cache` reads from Firestore, `read_cached_only` returns an error |
+//! | Pipeline and SQL reads | for **preloaded** collections, and by ID for any cached collection, with the stages and functions the cache evaluates |
+//! | Paged listing, query with metadata, aggregations, writes | never |
 //!
 //! # Preloading, and why listings need it
 //!
@@ -182,6 +184,35 @@ pub(crate) fn cache_incomplete_collection_error(
     ))
 }
 
+/// Builds the error returned when a `read_cached_only` session reads in a transaction or at a
+/// read time.
+///
+/// The cache holds the latest state the listener delivered, which is neither what a transaction
+/// reads nor what a read time names, and `read_cached_only` cannot fall back to Firestore.
+pub(crate) fn cache_consistency_selector_error() -> FirestoreError {
+    FirestoreError::CacheError(FirestoreCacheError::new(
+        FirestoreErrorPublicGenericDetails::new("CacheConsistencySelectorUnsupported".into()),
+        "A read in a transaction or at a read time cannot be served from the cache, and \
+         `read_cached_only` never contacts Firestore. Read with `db.read_through_cache(&cache)` \
+         to have Firestore answer it, or read without a transaction or read time."
+            .to_string(),
+    ))
+}
+
+/// Builds the error returned when a `read_cached_only` session reads a document with a field mask.
+///
+/// The cache holds whole documents and does not apply a mask, so serving the read from it would
+/// return fields the caller left out, and `read_cached_only` cannot fall back to Firestore.
+pub(crate) fn cache_field_mask_error() -> FirestoreError {
+    FirestoreError::CacheError(FirestoreCacheError::new(
+        FirestoreErrorPublicGenericDetails::new("CacheFieldMaskUnsupported".into()),
+        "A read with a field mask cannot be served from the cache, and `read_cached_only` never \
+         contacts Firestore. Read with `db.read_through_cache(&cache)` to have Firestore answer \
+         it, or read without a field mask."
+            .to_string(),
+    ))
+}
+
 mod options;
 pub use options::*;
 
@@ -200,7 +231,12 @@ use futures::StreamExt;
 use tracing::*;
 
 mod cache_filter_engine;
+mod cache_pipeline_engine;
 mod cache_query_engine;
+
+pub(crate) use cache_pipeline_engine::{
+    FirestoreCachePipeline, FirestoreCachePipelineMiss, FirestoreCachePipelineRows,
+};
 
 /// Manages a cache of Firestore data.
 ///
@@ -1106,8 +1142,9 @@ pub trait FirestoreCacheDocsByPathSupport {
     /// Retrieves multiple documents from the cache by their full Firestore paths, keyed by the
     /// document ID (the path's last segment).
     ///
-    /// The default implementation calls [`get_doc_by_path`](Self::get_doc_by_path) once per path;
-    /// backends may override it with a batched lookup.
+    /// The default implementation calls [`get_doc_by_path`](Self::get_doc_by_path) once per path,
+    /// leaves out the paths the cache does not hold, and yields the error of a path it fails to
+    /// read; backends may override it with a batched lookup.
     async fn get_docs_by_paths<'a>(
         &'a self,
         full_doc_ids: &'a [String],
@@ -1127,10 +1164,7 @@ pub trait FirestoreCacheDocsByPathSupport {
                             .unwrap_or_else(|| document.name.clone());
                         Ok((doc_id, Some(document)))
                     }),
-                    Err(err) => {
-                        error!(%err, "Error occurred while reading from cache.");
-                        None
-                    }
+                    Err(err) => Some(Err(err)),
                 }
             }
         })))

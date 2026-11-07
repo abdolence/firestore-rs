@@ -1,3 +1,4 @@
+use super::aggregation::is_aggregate_function;
 use super::scope::FirestoreSqlScope;
 use super::translator::{name_start, refuse_set, FirestoreSqlTranslator};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
@@ -14,9 +15,24 @@ pub(super) struct FirestoreSqlCall<'f> {
     pub(super) subquery: Option<&'f Query>,
 }
 
+impl FirestoreSqlCall<'_> {
+    fn refuse_duplicate_treatment(
+        &self,
+        start: Option<FirestoreSqlLocation>,
+    ) -> FirestoreResult<()> {
+        match self.duplicate_treatment {
+            Some(_) => Err(FirestoreError::unsupported_sql(
+                "DISTINCT or ALL in a call",
+                start,
+            )),
+            None => Ok(()),
+        }
+    }
+}
+
 impl FirestoreSqlTranslator<'_> {
-    /// A call of a scalar function. A name the alias table does not rename passes through to the
-    /// pipeline function of that name, and Firestore rejects one it does not have.
+    // A call of a scalar function. A name the alias table does not rename passes through to the
+    // pipeline function of that name, and Firestore rejects one it does not have.
     pub(super) fn function(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -42,15 +58,10 @@ impl FirestoreSqlTranslator<'_> {
                 )),
             };
         }
-        if is_aggregate(&call.name) {
+        if is_aggregate_function(&call.name) {
             return self.aggregate(scope, &call, output, start);
         }
-        if call.duplicate_treatment.is_some() {
-            return Err(FirestoreError::unsupported_sql(
-                "DISTINCT or ALL in a call",
-                start,
-            ));
-        }
+        call.refuse_duplicate_treatment(start)?;
         let FirestoreSqlCall {
             name, arguments, ..
         } = call;
@@ -108,12 +119,7 @@ impl FirestoreSqlTranslator<'_> {
 
     pub(super) fn call(function: &Function) -> FirestoreResult<(String, &[FunctionArg])> {
         let call = Self::call_parts(function)?;
-        if call.duplicate_treatment.is_some() {
-            return Err(FirestoreError::unsupported_sql(
-                "DISTINCT or ALL in a call",
-                name_start(&function.name),
-            ));
-        }
+        call.refuse_duplicate_treatment(name_start(&function.name))?;
         if call.subquery.is_some() {
             return Err(FirestoreError::unsupported_sql(
                 "a subquery as an argument",
@@ -218,31 +224,6 @@ fn scalar_function(name: &str) -> &str {
 pub(super) fn names_its_output(function: &Function) -> bool {
     matches!(
         FirestoreSqlTranslator::function_name(&function.name, None),
-        Ok(name) if is_aggregate(&name) || name == "score"
-    )
-}
-
-/// Whether `name` is an aggregate function in SQL or an accumulator of a pipeline. `minimum` and
-/// `maximum` are left out: pipelines also have scalar functions of those names.
-fn is_aggregate(name: &str) -> bool {
-    matches!(
-        name,
-        "count"
-            | "countif"
-            | "count_if"
-            | "count_distinct"
-            | "sum"
-            | "avg"
-            | "average"
-            | "min"
-            | "max"
-            | "array_agg"
-            | "array_agg_distinct"
-            | "any_value"
-            | "first"
-            | "last"
-            | "logical_and"
-            | "logical_or"
-            | "string_agg"
+        Ok(name) if is_aggregate_function(&name) || name == "score"
     )
 }

@@ -86,6 +86,132 @@ let FirestoreInvalidParametersPublicDetails { field, error } = details;
 let FirestoreInvalidParametersPublicDetails { field, error, .. } = details;
 ```
 
+### Mixed pipeline and buffered writes fail at commit
+
+A transaction that holds a pipeline write and a buffered write, such as `add_to_transaction`, is no longer refused by
+the library. Firestore refuses its commit instead, with `INVALID_ARGUMENT`. The related check went too:
+`execute_in_transaction` runs the write in the transaction it is given, also on a `db` bound to another transaction.
+
+### Pipeline bitwise functions are removed
+
+`bit_not`, `bit_left_shift` and `bit_right_shift` are gone from `FirestoreExpr`. Google does not document them and the
+service has failed calls to them. `FirestoreExpr::raw` sends them by name for the day they work.
+
+```rust,ignore
+// Before
+let mask = expr.bit_not();
+
+// After
+let mask = FirestoreExpr::raw("bit_not", [expr]);
+```
+
+### Pipeline list items take `Into`
+
+The traits `FirestorePipelineConditionExpr`, `FirestoreTextQueryItem` and `FirestoreTextQueryInput` are removed, with
+their methods `build_condition`, `build_clause` and `build_query`. The builders now take the standard conversions:
+
+- `for_all` and `for_any` of the filter builder take items that are `Into<Option<FirestoreBoolExpr>>`;
+- `for_all` of the text query builder takes items that are `Into<Option<FirestoreTextQueryClause>>`;
+- the closure of `text` returns anything that is `Into<FirestoreTextQuery>`: a string, a query, a clause, or an
+  `Option` of a query or a clause.
+
+Code that only calls the builders compiles as it is. Code that names the traits in a bound uses `Into` instead, and
+calls `.into()` where it called `build_query()`. A closure that returned an `Option` of a string returns the string.
+
+### Week variants take a `Weekday`
+
+The seven `WeekStartingMonday` … `WeekStartingSunday` variants of `FirestoreTimestampGranularity` and `FirestoreTimestampPart` are replaced by `WeekStarting(jiff::civil::Weekday)`: `WeekStartingMonday` becomes `WeekStarting(Weekday::Monday)`.
+
+### Read retries use the delays of transactions
+
+A retried read waits like a transaction and a simple batch writer do: 500 ms for the first retry, growing by 1.5 times
+for each next one, each delay randomised by up to 50% either way. Before, it waited a random time of up to 1 second,
+then up to 2 seconds, then up to 4. Reads still stop after `max_retries`. The `rand` dependency is removed.
+
+### Cache reads in a transaction or at a read time go to Firestore
+
+A session with a consistency selector never reads the cache: `get`, batch get, `query` and `list` inside
+`run_transaction`, or on a handle from `clone_with_consistency_selector`, are answered by Firestore. Before, a document
+or a preloaded collection the cache held was served from it, so the transaction did not read or lock those documents and
+a read time returned the current cached state. A document read this way is not written to the cache either.
+
+Under `read_cached_only` the same reads return `FirestoreError::CacheError` with the code
+`CacheConsistencySelectorUnsupported`, because that mode never contacts Firestore. Code that read a transaction through
+a cached-only handle needs `read_through_cache` instead.
+
+Inside `run_transaction`, a `?` on that error makes it transient, so the transaction is retried 4 times, with a few
+seconds of backoff, before the error is returned wrapped in `FirestoreError::ErrorInTransaction`. Return
+`BackoffError::permanent` from the closure to fail on the first attempt.
+
+### A failed cache read fails the batch read by IDs
+
+The default `get_docs_by_paths` of `FirestoreCacheDocsByPathSupport` yields the error of a path it fails to read.
+Before, it logged the error and left that document out, so a batch read by IDs under `read_cached_only` returned fewer
+documents without an error, and under `read_through_cache` fell back to Firestore. Both modes now return the error, as a
+read of a single document already did. A backend that overrides `get_docs_by_paths` is unaffected.
+
+### Batch reads with a field mask do not fill the cache
+
+A batch get with `.fields(..)` under `read_through_cache` no longer offers the masked documents to the cache. Before, a
+cached document could hold only the masked fields, and later reads by ID returned it as the whole document.
+
+### Cached queries return what Firestore returns
+
+The cached query engine, used by `query` on preloaded collections, now returns the documents Firestore returns, in the
+order Firestore returns them. Before, these queries returned other documents, in an arbitrary order:
+
+- **Timestamps and numbers.** Timestamps compare by seconds and then fractions of a second; before, the two parts were
+  compared separately, so `1.9 s < 2.1 s` was false. The fraction is compared at the precision Firestore uses:
+  - `==`, the range operators and `array-contains` compare a timestamp on its own at the nanosecond.
+  - `in`, `not-in` and `array-contains-any` compare at the microsecond that Firestore stores.
+  - A timestamp inside an array or a map compares at the microsecond, whichever operator is used.
+
+  An integer and a double compare by value, so a filter on `1` matches the double `1.0`, and `order_by` sorts them
+  together.
+- **Order and range filters on every type.** `<`, `<=`, `>`, `>=`, `order_by` and cursors follow Firestore's order of
+  types (null, booleans, numbers, timestamps, strings, bytes, references, geo points, arrays, vectors, maps) and its
+  order within each type. Before, only numbers and timestamps had an order: `<` and `>` on a string matched nothing,
+  an `end_at` cursor on one returned nothing, and `order_by` returned an arbitrary order or panicked. A range filter
+  matches values of its own type only, and never NaN.
+- **Several `order_by` fields.** The first field that differs decides. Ties end on the document name, in the direction of
+  the last field. Before, the last field decided. A document that lacks an `order_by` field is not returned, as in
+  Firestore.
+- **No `order_by`.** Results come in the order of the fields compared with `<`, `<=`, `>`, `>=`, `!=` or `not-in`, and
+  then by document name.
+- **Cursors, `offset` and `limit`.** The cursors apply first, then `offset`, then `limit`. Before, `limit` applied first,
+  so `limit(10).offset(5)` returned 5 documents and `start_at` with a `limit` could return none. A cursor is one position
+  in the order of its fields; before, each field was compared on its own.
+- **`in`, `not-in` and `array-contains`.** `in` matches a scalar field equal to any listed value, `not-in` one equal to
+  none of them, leaving out documents where the field is null or absent, and `array-contains` an array field holding
+  the value. Before, `in` and `array-contains` expected the field and the filter value the other way round, so they
+  returned no documents, and `not-in` returned only the documents with an array field.
+- **`find_nearest`, `return_only_fields` and `explain_options`.** The cached engine applies none of them, so a query that
+  sets one is answered by Firestore under `read_through_cache`, and fails with `CacheIncompleteCollection` under
+  `read_cached_only`. Before, it returned the filtered documents without the nearest-neighbour search, projection or
+  plan. A `get` or batch get with `.fields(..)` follows the same rule, and fails with `CacheFieldMaskUnsupported`; before,
+  it returned the whole cached document.
+- **Equality on arrays, maps, bytes, references and geo points.** `==`, `!=`, `in`, `not-in`, `array-contains` and
+  `array-contains-any` match these values. Arrays are equal when their elements are equal in order, and maps when their
+  fields are equal by key; inside both, an integer equals the double of the same value, and null and NaN equal
+  themselves. `!=` also matches a field of another type.
+- **Null and NaN in a filter.** A null in a filter value matches nothing: `== null`, `!= null` and `array-contains`
+  null return no documents, a null in an `in` or `array-contains-any` list is ignored, and a `not-in` list that holds a
+  null returns no documents. NaN equals nothing, itself included, and is in no range; `!=` and `not-in` match it. Use
+  `is_null` to find null fields. `is_null` no longer matches documents without the field, and `is_not_nan` no longer
+  matches documents where the field is null or absent.
+
+The order is that of the Standard edition. Equal values that tie can come back in another order from an Enterprise
+edition database.
+
+### Cache sessions answer pipelines from the cache
+
+A pipeline or SQL read through `read_through_cache` or `read_cached_only` is answered from the cache when the cache
+evaluates every part of it, see the "Pipelines" section of the caching chapter. Before, every pipeline ran on Firestore
+whatever the session. Under `read_through_cache` such a read is now eventually consistent, as Core reads through the
+cache are, and its items carry no `execution_time`. Under `read_cached_only` a pipeline the cache does not answer fails
+with a `CacheError`, where it used to run on Firestore. To keep a pipeline on Firestore, run it on a `FirestoreDb` that
+has no cache attached.
+
 ## 0.62
 
 ### Simple batch writes stop retrying after 60 seconds
