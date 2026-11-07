@@ -98,8 +98,7 @@ from what was polled so far at `warn` before returning the error, the same as in
 ## Logs and spans
 
 A bulk delete logs through `tracing`, one span covering the whole call (`Firestore Bulk Delete`),
-nesting a `Firestore Bulk Delete Wait` child span when you wait. An excerpt from a real run
-against five documents:
+nesting a `Firestore Bulk Delete Wait` child span when you wait. An excerpt of the log:
 
 ```text
 Started a bulk delete. operation=".../operations/CyA0..." action="bulk_delete" collection_groups="firestore-rs-bulk-delete-test"
@@ -110,13 +109,11 @@ Operation reached a terminal state. action="bulk_delete" polls=3
 The third line comes from the same wait every long-running admin operation polls through, index
 sync included, which is why it names the operation generically rather than as a bulk delete.
 
-That run took about 11 seconds end to end, for 5 documents; budget for it running longer against
-more data.
+A bulk delete is an operation that Firestore runs in the background, and it takes time even for a
+few documents, from about ten seconds to about a minute. The time grows with the data, so set the
+wait timeout well above that.
 
-Bulk delete works on both editions, and removes the named collection group at every depth. A run
-over 8 documents in two levels of one collection group returned from `wait_until_done` after 56
-seconds on a Standard edition database and 65 seconds on an Enterprise edition one. The two
-databases were in different regions, so the times do not compare.
+Bulk delete works on both editions, and removes the named collection group at every depth.
 
 ## The Firestore emulator
 

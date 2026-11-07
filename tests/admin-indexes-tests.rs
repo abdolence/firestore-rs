@@ -6,20 +6,18 @@
 //! `plan_is_read_only_and_scoped_to_the_owned_group` makes no writes and runs in seconds, so it
 //! runs by default. Every other test here creates, updates or deletes real indexes, overrides or
 //! TTL policy in `GCP_PROJECT` and takes most of an hour: each index or field operation it waits
-//! on took 6-7 minutes against the real service on 2026-09-26, even on an empty collection. So
-//! each carries `#[ignore]` and only runs on
+//! on can take minutes, even on an empty collection. So each carries `#[ignore]` and only runs on
 //! `cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture`.
 //! `search_indexes_against_real_firestore_enterprise` runs against the Enterprise edition database
 //! `GCP_ENTERPRISE_DATABASE_ID` of the same project instead, on a group of its own.
 //!
-//! Safety net: `ListIndexes` scoped to one collection group's parent has been measured, against
-//! this same project, to answer with composite indexes belonging to *every* group in the
-//! database (see the fake-server tests in `src/db/admin/indexes.rs` that replay the exact
-//! response captured). The library now filters and defends against that on its own, but the
-//! write-side test does not take that on faith: it snapshots every index outside its own two
-//! groups before touching anything, and asserts that snapshot is unchanged - not merely present,
-//! but identical in fields, scope and state - after every write it makes, including the final
-//! cleanup.
+//! Safety net: `ListIndexes` scoped to one collection group's parent can answer with composite
+//! indexes belonging to *every* group in the database (see the fake-server tests in
+//! `src/db/admin/indexes.rs` that replay a captured response). The library filters and defends
+//! against that on its own, but the write-side test does not take that on faith: it snapshots
+//! every index outside its own two groups before touching anything, and asserts that snapshot is
+//! unchanged - not merely present, but identical in fields, scope and state - after every write
+//! it makes, including the final cleanup.
 
 use firestore::errors::FirestoreError;
 use firestore::index_builder::FirestoreIndexesBuilder;

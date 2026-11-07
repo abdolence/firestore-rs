@@ -56,12 +56,14 @@ println!("Wrote {} documents", written.documents_modified);
 
 ## Concurrent writes
 
-8 concurrent `INSERT .. ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock`
-statements on one document committed 4 times and failed 4 times with `ABORTED`, "Optimistic
-transaction was aborted due to a conflict", and the stored `stock` was 4. A write that returns
-`ABORTED` can be sent again.
+Concurrent writes to one document conflict: some commit, and the others fail with `ABORTED`,
+"Optimistic transaction was aborted due to a conflict", with nothing of them applied. To have such
+writes retried, run them with `execute_in_transaction(..)` inside `run_transaction`, which runs the
+whole transaction again on `ABORTED`, see
+[Writes in a transaction](../pipeline-writes.md#writes-in-a-transaction). `execute()` on its own
+sends a write once.
 
 ## Write limits
 
 Firestore refuses an atomic write that is too big. [Write limits](../pipeline-writes.md#write-limits)
-lists the sizes that were measured.
+lists the limits.

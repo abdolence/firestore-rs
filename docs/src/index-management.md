@@ -233,9 +233,8 @@ everything else.
 
 When the fresh listing shows no matching index, the sync returns the `ALREADY_EXISTS` error
 instead of reporting the index as unchanged. Firestore keeps answering `ALREADY_EXISTS` for a
-while after an index with the same fields is deleted, while the listing no longer shows it: 40 to
-60 seconds on an Enterprise edition database, measured once. Run the sync again once the answer
-changes.
+while after an index with the same fields is deleted, while the listing no longer shows it, for up to
+about a minute on an Enterprise edition database. Run the sync again once the answer changes.
 
 In both cases `withheld_deletes` on the report lists the indexes left in place and the reason.
 Reverts and TTL disables do not wait for new indexes.
@@ -400,11 +399,11 @@ db.fluent()
 
 `.wait_until_ready_with_options(...)` also sets the poll interval, 5 seconds by default.
 
-An index build is not instant even on an empty collection. On an empty collection,
-`.wait_until_ready(..)` waited 62 to 68 seconds for one index of each kind on an Enterprise
-edition database: ordered, array, vector, text, geo, and text with geo. On a Standard edition
-database, a lone vector index took 355 seconds, and three composite indexes with two field
-overrides and a TTL field 414 seconds.
+An index build takes time even on an empty collection: about a minute for one index of any kind
+(ordered, array, vector, text, geo, or text with geo) on an Enterprise edition database. On a
+Standard edition database a lone vector index takes about six minutes, and a sync of three
+composite indexes, two field overrides and a TTL field about seven. Set the timeout above these,
+and larger for a collection that holds data.
 
 The timeout covers the whole sync, from the start of the call, and every wait inside it ends by
 the same deadline. The last round of polls goes out at the deadline itself. One poll may take up
@@ -457,8 +456,8 @@ Index management logs through `tracing`. One span covers a whole `.plan()` or `.
 (`Firestore Index Plan` or `Firestore Index Sync`), and nests child spans for listing, diffing,
 applying and, when `.wait_until_ready()` is set, waiting. Every span records its own elapsed time.
 
-An excerpt from a real `.plan()` call against `firestore-rs-index-sync-test`, currently empty (no
-composite indexes, field overrides or TTL fields declared, and none listed for the group):
+An excerpt of the log of a `.plan()` call for an empty collection group (no composite indexes,
+field overrides or TTL fields declared, and none listed for the group):
 
 ```text
 DEBUG Firestore Index Plan{/firestore/collection_group="firestore-rs-index-sync-test" /firestore/prune=false}:Firestore Index List{...}: firestore::db::admin::indexes: Listed the collection group's indexes and fields. indexes=0 fields=0 skipped_indexes=7 skipped_fields=0
@@ -470,14 +469,13 @@ DEBUG Firestore Index Plan{/firestore/collection_group="firestore-rs-index-sync-
 
 `skipped_indexes` counts composite indexes `ListIndexes` returned for other collection groups
 sharing the same database; the library filters listed items down to the owned group before
-computing anything, since a raw `ListIndexes` on one group's parent has been observed to return
-every group's indexes.
+computing anything, since a raw `ListIndexes` on one group's parent can return every group's
+indexes.
 
 The plan event's fields split undeclared items the same way pruning does: `delete_indexes`,
 `revert_fields` and `disable_ttl` are what a pruning sync would remove, and
 `kept_undeclared_indexes`, `kept_undeclared_fields` and `kept_undeclared_ttl` are what it would
-leave alone. This run has none of either, since the group carries nothing undeclared to begin
-with.
+leave alone. Both are zero here, since the group carries nothing undeclared.
 
 Each call reads the database's edition first, in a `Firestore Index Edition` span, ahead of the
 listing. Its time counts in the report's `total` and in no phase.

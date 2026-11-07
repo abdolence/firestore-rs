@@ -294,12 +294,12 @@ impl OwnedGroup<'_> {
     /// Refuses to touch a resource that is not under this group, independent of the filtering
     /// `list_existing_state` already applies to what it reports as undeclared in the first place.
     ///
-    /// The last line of defense before a delete or a revert: measured against the real service,
-    /// 2026-09-26, `ListIndexes` scoped to one collection group's parent still answered with
-    /// composite indexes belonging to other groups in the same database, so a resource's presence
-    /// in a listing response is not enough on its own to trust it with `prune_undeclared()`. A
-    /// group Firestore reserves, such as `__default__`, owns nothing this crate may touch, even
-    /// though validation already rejects a statement naming one.
+    /// The last line of defense before a delete or a revert: `ListIndexes` scoped to one
+    /// collection group's parent can answer with composite indexes belonging to other groups in
+    /// the same database, so a resource's presence in a listing response is not enough on its own
+    /// to trust it with `prune_undeclared()`. A group Firestore reserves, such as `__default__`,
+    /// owns nothing this crate may touch, even though validation already rejects a statement
+    /// naming one.
     fn ensure_owns(&self, kind: &str, name: &str) -> FirestoreResult<()> {
         validate_collection_group(self.id)?;
         let prefix = format!("{}/{kind}/", self.path);
@@ -412,8 +412,8 @@ impl FirestoreDb {
                 parent: group_path.to_string(),
                 filter: String::new(),
                 // ListIndexes rejects any page_size other than 0 ("Invalid page size. Only
-                // 0 is supported."), measured against the real service; still follow
-                // next_page_token, since 0 does not mean "no paging".
+                // 0 is supported."); still follow next_page_token, since 0 does not mean
+                // "no paging".
                 page_size: 0,
                 page_token: std::mem::take(&mut page_token),
             };
@@ -464,7 +464,7 @@ impl FirestoreDb {
     /// carries both a listed index override and a listed TTL configuration into one entry.
     ///
     /// `ListFields` also answers with `collectionGroups/__default__/fields/*` alongside the owned
-    /// group's own fields (measured against the real service), so membership is decided by a
+    /// group's own fields, so membership is decided by a
     /// fixed-prefix match on `{group_path}/fields/` rather than by splitting each resource name on
     /// its last `/`: a backtick-quoted field path can itself contain `/`, and a last-slash split
     /// would cut such a path at the wrong point and either drop it from its group or truncate it.
@@ -519,12 +519,11 @@ impl FirestoreDb {
                 },
             )?;
 
-            // Measured against the real service, 2026-09-26: `ListIndexes` scoped to one
-            // collection group's parent has still answered with composite indexes belonging to
-            // other groups in the same database. Membership is decided here, the same way as for
-            // fields below, rather than trusted from the request scope - `sync()`'s prune path
-            // must never reach an index this crate did not itself confirm belongs to the owned
-            // group.
+            // `ListIndexes` scoped to one collection group's parent can answer with composite
+            // indexes belonging to other groups in the same database. Membership is decided
+            // here, the same way as for fields below, rather than trusted from the request
+            // scope - `sync()`'s prune path must never reach an index this crate did not itself
+            // confirm belongs to the owned group.
             let indexes_prefix = format!("{group_path}/indexes/");
             let total_indexes = all_indexes.len();
             let indexes: Vec<ProtoIndex> = all_indexes
@@ -1482,8 +1481,8 @@ mod tests {
     /// interest cache is shared process-wide rather than per-thread, and every test here shares
     /// the same "Firestore Index *" span callsites (there is only one `span!(...,
     /// "Firestore Index Sync", ...)` call site in the source, for example); with two of these
-    /// tests' `FirestoreDb` calls in flight on different threads at once, that shared cache has
-    /// been observed to report one thread's spans as filtered out, dropping a span or an event
+    /// tests' `FirestoreDb` calls in flight on different threads at once, that shared cache can
+    /// report one thread's spans as filtered out, dropping a span or an event
     /// this module's tests assert on. No test here is slow enough for the lost parallelism to
     /// matter.
     static MODULE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -4084,11 +4083,10 @@ mod tests {
         );
     }
 
-    // The tests below replay `ListIndexes` responses captured read-only from the real `latestbit`
-    // project (2026-09-26), rather than hand-written fixtures: a hand-written fixture had already
-    // encoded the same wrong assumptions as the code it was meant to check (that `ListIndexes`
-    // scoped to one group's parent lists only that group, and that a vector index's `__name__`
-    // sits in a single fixed position), so unit tests and review both missed it. The raw JSON
+    // The tests below replay `ListIndexes` responses captured read-only from a real project,
+    // rather than hand-written fixtures: a hand-written fixture encodes the same assumptions as
+    // the code it checks (that `ListIndexes` scoped to one group's parent lists only that group,
+    // and that a vector index's `__name__` sits in a single fixed position). The raw JSON
     // lives in `testdata/` and is decoded into the wire types here rather than transcribed by
     // hand, so the fixture is what the service actually returned.
 

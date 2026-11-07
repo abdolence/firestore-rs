@@ -139,7 +139,7 @@ and takes single-field overrides. See
 [Search indexes](./index-management/search.md) and
 [TTL and the Enterprise edition](./index-management/ttl-and-enterprise.md) for the rules, and
 [Waiting for changes to finish](./index-management.md#waiting-for-changes-to-finish) for the build
-times measured on each edition.
+times to expect on each edition.
 
 ## Cost
 

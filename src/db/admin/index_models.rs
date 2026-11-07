@@ -875,8 +875,7 @@ pub(crate) fn validate_index_params_for_edition(
 /// configuration every collection group inherits from unless overridden), and any other ID of the
 /// shape `__*__` (Firestore's reserved namespace for system collection groups). A statement that
 /// named one of these would list and modify the reserved group's own resources instead of the
-/// caller's collection - measured against the real service, 2026-09-26: a
-/// `.collection_group("__default__")` sync issued
+/// caller's collection: a `.collection_group("__default__")` sync would issue
 /// `UpdateField .../collectionGroups/__default__/fields/*`, changing database-wide defaults no
 /// statement should be able to reach.
 ///

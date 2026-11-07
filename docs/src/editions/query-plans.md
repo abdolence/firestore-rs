@@ -48,11 +48,11 @@ A Core query that no index covers runs as a table scan on Enterprise, and is bil
 reads: a scan of the whole collection reads every 4 KiB of it. On Standard the same query is either
 refused or answered from an index, and billed per returned document.
 
-Query Explain with `analyze` on a database of the Enterprise edition reported 1 read unit for each
-document a SQL statement read by ID, for `=` and for `IN`, with or without a further condition such
-as `stock >= 0`. Firestore's published pricing charges a point read of the Core `get` in 4 KiB
-tranches, rounded up, so a document of up to 4 KiB costs 1 read unit through `get`, as it does
-through SQL. See [Reads by ID](../sql/reads.md#reads-by-id).
+A SQL statement that reads a document by ID, with `=` or `IN`, costs 1 read unit for each
+document on the Enterprise edition, with or without a further condition such as `stock >= 0`.
+Firestore's published pricing charges a point read of the Core `get` in 4 KiB tranches, rounded
+up, so a document of up to 4 KiB costs 1 read unit through `get`, as it does through SQL. See
+[Reads by ID](../sql/reads.md#reads-by-id).
 
 ### Both editions
 

@@ -703,9 +703,8 @@ impl FirestoreCompositeIndex {
     /// The field list Firestore would store for this declaration if it inserted `__name__` on its
     /// own: appended after the last field in that field's direction (ascending when the last
     /// field is not directional), or, when the last field is a vector field, `__name__ ASC`
-    /// inserted directly before it instead - measured against the real service, 2026-09-26
-    /// (`latestbit`, `test-query-vec/indexes/CICAgLiIkYMK`, a lone-vector declaration listed as
-    /// `[__name__ ASC, <vector field>]`).
+    /// inserted directly before it instead: Firestore lists a lone-vector declaration as
+    /// `[__name__ ASC, <vector field>]`.
     ///
     /// Used only to break a tie between several listed indexes that already match `self` once
     /// `__name__` is ignored (see [`composite_index_matches`]) - never to decide whether a listed
@@ -740,10 +739,10 @@ impl FirestoreCompositeIndex {
 
 /// Strips an implicit `__name__` field from `listed`, when `declared` omits `__name__` and
 /// `listed` carries exactly one more field than `declared`, at the one position Firestore is
-/// known to place it (trailing for an ordinary index, or directly before a terminal vector field,
-/// both measured against the real service, 2026-09-26). Its direction is never checked, since a
-/// declaration that omits `__name__` never states one. Returns `None` when `listed` does not have
-/// that shape, which means it is not a match for `declared` at all.
+/// known to place it (trailing for an ordinary index, or directly before a terminal vector field).
+/// Its direction is never checked, since a declaration that omits `__name__` never states one.
+/// Returns `None` when `listed` does not have that shape, which means it is not a match for
+/// `declared` at all.
 fn strip_implied_name_at_expected_position(
     declared: &[FirestoreIndexField],
     listed: &[FirestoreIndexField],
@@ -1312,9 +1311,8 @@ pub(crate) mod tests {
 
     #[test]
     fn declared_index_ending_in_vector_matches_listed_with_name_before_the_vector_field() {
-        // Measured against the real service, 2026-09-26: unlike a non-vector index, where
-        // `__name__` trails, Firestore inserts `__name__ ASC` immediately *before* the terminal
-        // vector field, whatever else precedes it.
+        // Unlike a non-vector index, where `__name__` trails, Firestore inserts `__name__ ASC`
+        // immediately *before* the terminal vector field, whatever else precedes it.
         let declared = FirestoreCompositeIndex::new(vec![
             desc_field("a"),
             FirestoreIndexField::new(
@@ -1878,9 +1876,8 @@ pub(crate) mod tests {
 
     #[test]
     fn lone_vector_composite_index_matches_listed_with_name_before_the_vector_field() {
-        // Measured against the real service, 2026-09-26 (project latestbit,
-        // `test-query-vec/indexes/CICAgLiIkYMK`): a lone-vector index lists as
-        // `[__name__ ASC, <vector field>]`, not `[<vector field>, __name__ ASC]`.
+        // A lone-vector index lists as `[__name__ ASC, <vector field>]`, not
+        // `[<vector field>, __name__ ASC]`.
         let declared = FirestoreCompositeIndex::new(vec![FirestoreIndexField::new(
             "embedding".to_string(),
             FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(8)),
