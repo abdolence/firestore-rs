@@ -1,7 +1,7 @@
 use crate::FirestoreQueryFilter;
 use crate::*;
 use gcloud_sdk::google::firestore::v1::value::ValueType;
-use gcloud_sdk::google::firestore::v1::Value;
+use gcloud_sdk::google::firestore::v1::{ArrayValue, MapValue, Value};
 use std::cmp::Ordering;
 
 pub struct FirestoreCacheFilterEngine<'a> {
@@ -15,6 +15,31 @@ impl<'a> FirestoreCacheFilterEngine<'a> {
 
     pub fn matches_doc(&'a self, doc: &FirestoreDocument) -> bool {
         Self::matches_doc_filter(doc, self.filter)
+    }
+
+    /// The fields the filter compares with an inequality, which Firestore orders a query on when
+    /// it names no ordering of its own.
+    pub fn inequality_fields(filter: &FirestoreQueryFilter) -> Vec<&str> {
+        match filter {
+            FirestoreQueryFilter::Composite(composite) => composite
+                .for_all_filters
+                .iter()
+                .flat_map(Self::inequality_fields)
+                .collect(),
+            FirestoreQueryFilter::Unary(
+                FirestoreQueryFilterUnary::IsNotNan(field)
+                | FirestoreQueryFilterUnary::IsNotNull(field),
+            )
+            | FirestoreQueryFilter::Compare(Some(
+                FirestoreQueryFilterCompare::LessThan(field, _)
+                | FirestoreQueryFilterCompare::LessThanOrEqual(field, _)
+                | FirestoreQueryFilterCompare::GreaterThan(field, _)
+                | FirestoreQueryFilterCompare::GreaterThanOrEqual(field, _)
+                | FirestoreQueryFilterCompare::NotEqual(field, _)
+                | FirestoreQueryFilterCompare::NotIn(field, _),
+            )) => vec![field],
+            FirestoreQueryFilter::Unary(_) | FirestoreQueryFilter::Compare(_) => vec![],
+        }
     }
 
     pub fn matches_doc_filter(doc: &FirestoreDocument, filter: &FirestoreQueryFilter) -> bool {
@@ -262,337 +287,243 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// Whether a comparison operator holds for the outcome of comparing two values; `None` is
-    /// values with no order, as with NaN.
-    fn holds_for(&self, ordering: Option<Ordering>) -> bool {
+    fn holds_for(&self, ordering: Ordering) -> bool {
         match self {
-            Self::Equal => ordering == Some(Ordering::Equal),
-            Self::NotEqual => ordering != Some(Ordering::Equal),
-            Self::LessThan => ordering == Some(Ordering::Less),
-            Self::LessThanOrEqual => matches!(ordering, Some(Ordering::Less | Ordering::Equal)),
-            Self::GreaterThan => ordering == Some(Ordering::Greater),
-            Self::GreaterThanOrEqual => {
-                matches!(ordering, Some(Ordering::Greater | Ordering::Equal))
-            }
+            Self::Equal => ordering.is_eq(),
+            Self::NotEqual => ordering.is_ne(),
+            Self::LessThan => ordering.is_lt(),
+            Self::LessThanOrEqual => ordering.is_le(),
+            Self::GreaterThan => ordering.is_gt(),
+            Self::GreaterThanOrEqual => ordering.is_ge(),
             Self::ArrayContains | Self::ArrayContainsAny | Self::In | Self::NotIn => false,
         }
     }
-}
 
-/// Compares an integer with a double by value, as Firestore does: the integer is not rounded to
-/// a double first, so integers above 2^53 keep their exact order against doubles.
-fn compare_integer_to_double(integer: i64, double: f64) -> Option<Ordering> {
-    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
-    if double.is_nan() {
-        None
-    } else if double >= TWO_POW_63 {
-        Some(Ordering::Less)
-    } else if double < -TWO_POW_63 {
-        Some(Ordering::Greater)
-    } else {
-        // In range, so the truncation is exact; a tie there is decided by the fraction.
-        let fraction = double.fract();
-        Some(
-            integer
-                .cmp(&(double.trunc() as i64))
-                .then(if fraction > 0.0 {
-                    Ordering::Less
-                } else if fraction < 0.0 {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                }),
+    fn is_range(&self) -> bool {
+        matches!(
+            self,
+            Self::LessThan | Self::LessThanOrEqual | Self::GreaterThan | Self::GreaterThanOrEqual
         )
     }
 }
 
-/// Equality of two values as Firestore applies it inside arrays and maps, where, unlike for a
-/// filter on a field, null equals null and NaN equals NaN.
-fn nested_values_equal(a: &ValueType, b: &ValueType) -> bool {
-    match (a, b) {
-        (ValueType::NullValue(_), ValueType::NullValue(_)) => true,
-        (ValueType::DoubleValue(a_val), ValueType::DoubleValue(b_val))
-            if a_val.is_nan() && b_val.is_nan() =>
-        {
-            true
+/// The types of a value in the order Firestore sorts them. NaN is a number, the lowest one.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum ValueTypeRank {
+    Null,
+    Boolean,
+    Number,
+    Timestamp,
+    String,
+    Bytes,
+    Reference,
+    GeoPoint,
+    Array,
+    Vector,
+    Map,
+}
+
+impl From<&ValueType> for ValueTypeRank {
+    fn from(value: &ValueType) -> Self {
+        match value {
+            ValueType::NullValue(_) => Self::Null,
+            ValueType::BooleanValue(_) => Self::Boolean,
+            ValueType::IntegerValue(_) | ValueType::DoubleValue(_) => Self::Number,
+            ValueType::TimestampValue(_) => Self::Timestamp,
+            ValueType::StringValue(_) => Self::String,
+            ValueType::BytesValue(_) => Self::Bytes,
+            ValueType::ReferenceValue(_) => Self::Reference,
+            ValueType::GeoPointValue(_) => Self::GeoPoint,
+            ValueType::ArrayValue(_) => Self::Array,
+            ValueType::MapValue(map) if is_vector(map) => Self::Vector,
+            // Pipeline expressions: a stored document never holds one, so their place is
+            // arbitrary.
+            ValueType::MapValue(_)
+            | ValueType::FieldReferenceValue(_)
+            | ValueType::VariableReferenceValue(_)
+            | ValueType::FunctionValue(_)
+            | ValueType::PipelineValue(_) => Self::Map,
         }
-        (ValueType::ArrayValue(a_val), ValueType::ArrayValue(b_val)) => {
-            a_val.values.len() == b_val.values.len()
-                && a_val
-                    .values
-                    .iter()
-                    .zip(&b_val.values)
-                    .all(|(a_item, b_item)| nested_items_equal(a_item, b_item))
-        }
-        (ValueType::MapValue(a_val), ValueType::MapValue(b_val)) => {
-            a_val.fields.len() == b_val.fields.len()
-                && a_val.fields.iter().all(|(key, a_item)| {
-                    b_val
-                        .fields
-                        .get(key)
-                        .is_some_and(|b_item| nested_items_equal(a_item, b_item))
-                })
-        }
-        _ => compare_values(CompareOp::Equal, a, b),
     }
 }
 
-fn nested_items_equal(a: &Value, b: &Value) -> bool {
+fn is_nan(value: &ValueType) -> bool {
+    matches!(value, ValueType::DoubleValue(double) if double.is_nan())
+}
+
+/// A vector is a map with a marker field; the components are in its `value` field.
+fn is_vector(map: &MapValue) -> bool {
     matches!(
-        (&a.value_type, &b.value_type),
-        (Some(a_val), Some(b_val)) if nested_values_equal(a_val, b_val)
+        map.fields.get("__type__").and_then(|marker| marker.value_type.as_ref()),
+        Some(ValueType::StringValue(marker)) if marker == "__vector__"
     )
 }
 
-pub(super) fn compare_values(
-    op: CompareOp,
-    a: &gcloud_sdk::google::firestore::v1::value::ValueType,
-    b: &gcloud_sdk::google::firestore::v1::value::ValueType,
-) -> bool {
+fn vector_components(map: &MapValue) -> &[Value] {
+    match map
+        .fields
+        .get("value")
+        .and_then(|value| value.value_type.as_ref())
+    {
+        Some(ValueType::ArrayValue(array)) => &array.values,
+        _ => &[],
+    }
+}
+
+/// The order of two doubles, with NaN equal to itself and below every other double, and `-0.0`
+/// equal to `0.0`.
+fn compare_doubles(a: f64, b: f64) -> Ordering {
+    a.partial_cmp(&b)
+        .unwrap_or_else(|| a.is_nan().cmp(&b.is_nan()).reverse())
+}
+
+// Exact rather than through `f64`: an integer above 2^53 does not survive the conversion.
+fn compare_integer_to_double(integer: i64, double: f64) -> Ordering {
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if double.is_nan() {
+        Ordering::Greater
+    } else if double >= TWO_POW_63 {
+        Ordering::Less
+    } else if double < -TWO_POW_63 {
+        Ordering::Greater
+    } else {
+        // In range, so the truncation is exact; a tie there is decided by the fraction.
+        let fraction = double.fract();
+        integer
+            .cmp(&(double.trunc() as i64))
+            .then(if fraction > 0.0 {
+                Ordering::Less
+            } else if fraction < 0.0 {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            })
+    }
+}
+
+fn compare_nested(a: &Value, b: &Value) -> Ordering {
+    match (&a.value_type, &b.value_type) {
+        (Some(a), Some(b)) => value_order(a, b),
+        (a, b) => a.is_some().cmp(&b.is_some()),
+    }
+}
+
+fn compare_elements(a: &[Value], b: &[Value]) -> Ordering {
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| compare_nested(a, b))
+        .find(|ordering| ordering.is_ne())
+        .unwrap_or(Ordering::Equal)
+}
+
+fn compare_maps(a: &MapValue, b: &MapValue) -> Ordering {
+    fn sorted(map: &MapValue) -> Vec<(&String, &Value)> {
+        let mut entries: Vec<_> = map.fields.iter().collect();
+        entries.sort_by_key(|(key, _)| *key);
+        entries
+    }
+    let (a_entries, b_entries) = (sorted(a), sorted(b));
+    a_entries
+        .iter()
+        .zip(&b_entries)
+        .map(|((a_key, a_value), (b_key, b_value))| {
+            a_key
+                .cmp(b_key)
+                .then_with(|| compare_nested(a_value, b_value))
+        })
+        .find(|ordering| ordering.is_ne())
+        .unwrap_or_else(|| a_entries.len().cmp(&b_entries.len()))
+}
+
+/// Firestore's total order over values: by type first, then within the type: numbers by value,
+/// strings by their UTF-8 bytes, references by path segment, geo points by latitude then
+/// longitude, arrays by element and then length, vectors by length and then component, maps by
+/// their key-sorted entries and then size.
+pub(crate) fn value_order(a: &ValueType, b: &ValueType) -> Ordering {
+    match (a, b) {
+        (ValueType::NullValue(_), ValueType::NullValue(_)) => Ordering::Equal,
+        (ValueType::BooleanValue(a), ValueType::BooleanValue(b)) => a.cmp(b),
+        (ValueType::IntegerValue(a), ValueType::IntegerValue(b)) => a.cmp(b),
+        (ValueType::DoubleValue(a), ValueType::DoubleValue(b)) => compare_doubles(*a, *b),
+        (ValueType::IntegerValue(integer), ValueType::DoubleValue(double)) => {
+            compare_integer_to_double(*integer, *double)
+        }
+        (ValueType::DoubleValue(double), ValueType::IntegerValue(integer)) => {
+            compare_integer_to_double(*integer, *double).reverse()
+        }
+        (ValueType::TimestampValue(a), ValueType::TimestampValue(b)) => {
+            (a.seconds, a.nanos).cmp(&(b.seconds, b.nanos))
+        }
+        (ValueType::StringValue(a), ValueType::StringValue(b)) => a.cmp(b),
+        (ValueType::BytesValue(a), ValueType::BytesValue(b)) => a.cmp(b),
+        (ValueType::ReferenceValue(a), ValueType::ReferenceValue(b)) => {
+            a.split('/').cmp(b.split('/'))
+        }
+        (ValueType::GeoPointValue(a), ValueType::GeoPointValue(b)) => {
+            compare_doubles(a.latitude, b.latitude)
+                .then_with(|| compare_doubles(a.longitude, b.longitude))
+        }
+        (ValueType::ArrayValue(a), ValueType::ArrayValue(b)) => {
+            compare_elements(&a.values, &b.values).then_with(|| a.values.len().cmp(&b.values.len()))
+        }
+        (ValueType::MapValue(a), ValueType::MapValue(b)) if is_vector(a) && is_vector(b) => {
+            let (a, b) = (vector_components(a), vector_components(b));
+            a.len().cmp(&b.len()).then_with(|| compare_elements(a, b))
+        }
+        (ValueType::MapValue(a), ValueType::MapValue(b)) if !is_vector(a) && !is_vector(b) => {
+            compare_maps(a, b)
+        }
+        _ => ValueTypeRank::from(a).cmp(&ValueTypeRank::from(b)),
+    }
+}
+
+/// Whether a filter of `op` on a field holding `a` matches `b`. A field that is null matches no
+/// comparison, and neither does a null `b`: nulls are queried with the `IsNull` filter.
+pub(super) fn compare_values(op: CompareOp, a: &ValueType, b: &ValueType) -> bool {
+    let contains = |items: &ArrayValue, value: &ValueType| {
+        items
+            .values
+            .iter()
+            .flat_map(|item| &item.value_type)
+            .any(|item| compare_values(CompareOp::Equal, item, value))
+    };
+
     match (op, a, b) {
-        // handle BooleanValue
-        (
-            CompareOp::Equal,
-            gcloud_sdk::google::firestore::v1::value::ValueType::BooleanValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::BooleanValue(b_val),
-        ) => a_val == b_val,
+        (CompareOp::ArrayContains, ValueType::ArrayValue(items), value) => contains(items, value),
 
-        (
-            CompareOp::NotEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::BooleanValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::BooleanValue(b_val),
-        ) => a_val != b_val,
-
-        // handle IntegerValue
-        (
-            CompareOp::Equal,
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(b_val),
-        ) => a_val == b_val,
-
-        (
-            CompareOp::NotEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(b_val),
-        ) => a_val != b_val,
-
-        (
-            CompareOp::LessThan,
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(b_val),
-        ) => a_val < b_val,
-
-        (
-            CompareOp::LessThanOrEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(b_val),
-        ) => a_val <= b_val,
-
-        (
-            CompareOp::GreaterThan,
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(b_val),
-        ) => a_val > b_val,
-
-        (
-            CompareOp::GreaterThanOrEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(b_val),
-        ) => a_val >= b_val,
-
-        // For DoubleValue
-        (
-            CompareOp::Equal,
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(b_val),
-        ) => a_val == b_val,
-
-        (
-            CompareOp::NotEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(b_val),
-        ) => a_val != b_val,
-
-        (
-            CompareOp::LessThan,
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(b_val),
-        ) => a_val < b_val,
-
-        (
-            CompareOp::LessThanOrEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(b_val),
-        ) => a_val <= b_val,
-
-        (
-            CompareOp::GreaterThan,
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(b_val),
-        ) => a_val > b_val,
-
-        (
-            CompareOp::GreaterThanOrEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(b_val),
-        ) => a_val >= b_val,
-
-        // For TimestampValue, assumes it's a numerical timestamp; if it's a string or date type, adjust accordingly
-        (
-            CompareOp::Equal,
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => a_val == b_val,
-
-        (
-            CompareOp::NotEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => a_val != b_val,
-
-        (
-            CompareOp::LessThan,
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => (a_val.seconds, a_val.nanos) < (b_val.seconds, b_val.nanos),
-
-        (
-            CompareOp::LessThanOrEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => (a_val.seconds, a_val.nanos) <= (b_val.seconds, b_val.nanos),
-
-        (
-            CompareOp::GreaterThan,
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => (a_val.seconds, a_val.nanos) > (b_val.seconds, b_val.nanos),
-
-        (
-            CompareOp::GreaterThanOrEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::TimestampValue(b_val),
-        ) => (a_val.seconds, a_val.nanos) >= (b_val.seconds, b_val.nanos),
-
-        // For StringType only Equal, NotEqual operations make sense in a general context
-        (
-            CompareOp::Equal,
-            gcloud_sdk::google::firestore::v1::value::ValueType::StringValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::StringValue(b_val),
-        ) => a_val == b_val,
-
-        (
-            CompareOp::NotEqual,
-            gcloud_sdk::google::firestore::v1::value::ValueType::StringValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::StringValue(b_val),
-        ) => a_val != b_val,
-
-        (CompareOp::Equal, a_val @ ValueType::ArrayValue(_), b_val @ ValueType::ArrayValue(_)) => {
-            nested_values_equal(a_val, b_val)
+        (CompareOp::ArrayContainsAny, ValueType::ArrayValue(items), ValueType::ArrayValue(any)) => {
+            any.values
+                .iter()
+                .flat_map(|value| &value.value_type)
+                .any(|value| contains(items, value))
         }
 
-        (CompareOp::Equal, a_val @ ValueType::MapValue(_), b_val @ ValueType::MapValue(_)) => {
-            nested_values_equal(a_val, b_val)
-        }
-
-        (CompareOp::Equal, ValueType::BytesValue(a_val), ValueType::BytesValue(b_val)) => {
-            a_val == b_val
-        }
-
-        (CompareOp::Equal, ValueType::ReferenceValue(a_val), ValueType::ReferenceValue(b_val)) => {
-            a_val == b_val
-        }
-
-        (CompareOp::Equal, ValueType::GeoPointValue(a_val), ValueType::GeoPointValue(b_val)) => {
-            a_val == b_val
-        }
-
-        //  Array Operation
-        (
-            CompareOp::ArrayContains,
-            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(a_val),
-            b_val,
-        ) => a_val
-            .values
-            .iter()
-            .flat_map(|v| &v.value_type)
-            .any(|a_val| compare_values(CompareOp::Equal, a_val, b_val)),
-
-        (
-            CompareOp::ArrayContainsAny,
-            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(a_val),
-            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(b_val),
-        ) => a_val
-            .values
-            .iter()
-            .flat_map(|v| &v.value_type)
-            .any(|a_val| {
-                b_val
-                    .values
-                    .iter()
-                    .flat_map(|v| &v.value_type)
-                    .any(|b_val| compare_values(CompareOp::Equal, a_val, b_val))
-            }),
-
-        (
-            CompareOp::In,
-            a_val,
-            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(b_val),
-        ) => b_val
-            .values
-            .iter()
-            .flat_map(|v| &v.value_type)
-            .any(|b_val| compare_values(CompareOp::Equal, a_val, b_val)),
+        (CompareOp::In, value, ValueType::ArrayValue(listed)) => contains(listed, value),
 
         // Firestore returns nothing for a `not-in` list that holds a null.
-        (CompareOp::NotIn, _, ValueType::ArrayValue(b_val))
-            if b_val
+        (CompareOp::NotIn, _, ValueType::ArrayValue(listed))
+            if listed
                 .values
                 .iter()
-                .any(|v| matches!(v.value_type, Some(ValueType::NullValue(_)))) =>
+                .any(|value| matches!(value.value_type, Some(ValueType::NullValue(_)))) =>
         {
             false
         }
 
         // Firestore leaves out documents whose field is null, as it does those without the field.
-        (
-            CompareOp::NotIn,
-            gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(_),
-            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(_),
-        ) => false,
+        (CompareOp::NotIn, ValueType::NullValue(_), ValueType::ArrayValue(_)) => false,
 
-        (
-            CompareOp::NotIn,
-            a_val,
-            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(b_val),
-        ) => !b_val
-            .values
-            .iter()
-            .flat_map(|v| &v.value_type)
-            .any(|b_val| compare_values(CompareOp::Equal, a_val, b_val)),
+        (CompareOp::NotIn, value, ValueType::ArrayValue(listed)) => !contains(listed, value),
 
-        // Integers and doubles are one number type to Firestore: `1` equals `1.0`.
-        (
-            op,
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(integer),
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(double),
-        ) => op.holds_for(compare_integer_to_double(*integer, *double)),
+        (_, ValueType::NullValue(_), _) | (_, _, ValueType::NullValue(_)) => false,
 
-        (
-            op,
-            gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(double),
-            gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(integer),
-        ) => op.holds_for(compare_integer_to_double(*integer, *double).map(Ordering::reverse)),
+        // NaN is ordered for sorting, but a filter treats it as equal to nothing, itself included,
+        // and as in no range.
+        (op, a, b) if is_nan(a) || is_nan(b) => matches!(op, CompareOp::NotEqual),
 
-        // Whatever its type, an existing field that is not null matches `!=` when it differs from
-        // a value that is not null.
-        (CompareOp::NotEqual, a_val, b_val) => {
-            !matches!(a_val, ValueType::NullValue(_))
-                && !matches!(b_val, ValueType::NullValue(_))
-                && !compare_values(CompareOp::Equal, a_val, b_val)
-        }
+        // A range filter matches only values of the type it compares with.
+        (op, a, b) if op.is_range() && ValueTypeRank::from(a) != ValueTypeRank::from(b) => false,
 
-        // Any other combinations result in false
-        _ => false,
+        (op, a, b) => op.holds_for(value_order(a, b)),
     }
 }
