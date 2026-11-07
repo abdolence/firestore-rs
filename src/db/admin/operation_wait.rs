@@ -1,8 +1,8 @@
 //! Waiting on long-running Firestore admin operations, shared by index sync and bulk delete.
 //!
 //! One wait serves both: it polls every still-pending operation once per round against one
-//! [`OperationDeadline`], polls again after a retryable poll error or a poll that did not answer
-//! in time, judges every outcome of a round before it stops at the first operation that failed,
+//! [`OperationDeadline`], polls again after a retryable poll error, which includes a poll that did
+//! not answer in time, judges every outcome of a round before it stops at the first operation that failed,
 //! and gives up once the deadline has passed. A caller that needs more than the done/error state,
 //! such as bulk delete's progress metadata, observes every polled [`Operation`] through the
 //! `on_poll` hook.
@@ -16,7 +16,6 @@ use gcloud_sdk::tonic::Code;
 use gcloud_sdk::RequestTimeouts;
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
-use tokio::time::error::Elapsed;
 use tokio::time::Instant;
 use tracing::*;
 
@@ -92,12 +91,13 @@ impl OperationDeadline {
         }
     }
 
-    /// When a poll sent now is abandoned. A poll sent after the deadline gets only what is left
+    /// How long a poll sent now may take. A poll sent after the deadline gets only what is left
     /// of the poll timeout past it, so a late wait cannot extend the call further. Shared with
     /// index sync's `GetField` read-back after a refused write, the only other per-poll read this
     /// crate bounds against the same deadline.
-    pub(super) fn poll_cutoff(&self) -> Instant {
-        Instant::now().min(self.at) + self.poll_timeout
+    fn poll_limit(&self) -> Duration {
+        self.poll_timeout
+            .saturating_sub(Instant::now().saturating_duration_since(self.at))
     }
 
     pub(super) fn has_passed(&self) -> bool {
@@ -148,8 +148,7 @@ impl<A: OperationAction> TrackedOperation<'_, A> {
     /// final state on its span.
     fn judge<F>(
         &mut self,
-        result: Result<FirestoreResult<Operation>, Elapsed>,
-        deadline: &OperationDeadline,
+        result: FirestoreResult<Operation>,
         began: Instant,
         on_poll: &mut F,
     ) -> PollVerdict
@@ -161,17 +160,7 @@ impl<A: OperationAction> TrackedOperation<'_, A> {
         let _entered = span.enter();
         let operation = self.operation;
         let polled = match result {
-            Err(_) => {
-                warn!(
-                    poll = self.polls,
-                    operation = operation.name.as_str(),
-                    action = operation.action.kind(),
-                    poll_timeout_ms = deadline.poll_timeout.as_millis(),
-                    "Polling an operation did not answer in time; polling it again.",
-                );
-                return PollVerdict::Pending;
-            }
-            Ok(Err(FirestoreError::DatabaseError(err))) if err.retry_possible => {
+            Err(FirestoreError::DatabaseError(err)) if err.retry_possible => {
                 warn!(
                     %err,
                     poll = self.polls,
@@ -181,7 +170,7 @@ impl<A: OperationAction> TrackedOperation<'_, A> {
                 );
                 return PollVerdict::Pending;
             }
-            Ok(Err(err)) => {
+            Err(err) => {
                 error!(
                     %err,
                     operation = operation.name.as_str(),
@@ -192,7 +181,7 @@ impl<A: OperationAction> TrackedOperation<'_, A> {
                 self.finish("poll_failed", began);
                 return PollVerdict::Failed(err);
             }
-            Ok(Ok(polled)) => polled,
+            Ok(polled) => polled,
         };
 
         on_poll(operation, &polled);
@@ -239,16 +228,37 @@ impl<A: OperationAction> TrackedOperation<'_, A> {
 }
 
 impl FirestoreDb {
+    /// Wraps `message` in a unary request limited by `deadline`'s poll limit, or by this
+    /// instance's request timeout when that is shorter.
+    pub(super) fn poll_request<M>(
+        &self,
+        message: M,
+        deadline: &OperationDeadline,
+    ) -> gcloud_sdk::tonic::Request<M> {
+        let total = deadline
+            .poll_limit()
+            .min(self.request_timeout.unwrap_or(Duration::MAX));
+        let mut request = gcloud_sdk::tonic::Request::new(message);
+        request
+            .extensions_mut()
+            .insert(RequestTimeouts::new().with_total(total));
+        request
+    }
+
     /// Polls one operation. `GetOperation` only reads, so a poll answered `DEADLINE_EXCEEDED`,
     /// or `NOT_FOUND` for an operation too new to be visible yet, is marked retryable here even
     /// though the crate-wide classification, which also covers writes, marks neither so.
-    async fn get_operation(&self, name: &str) -> FirestoreResult<Operation> {
+    async fn get_operation(
+        &self,
+        name: &str,
+        deadline: &OperationDeadline,
+    ) -> FirestoreResult<Operation> {
         self.operations_client()
-            .get_operation(self.request_with_timeout(
+            .get_operation(self.poll_request(
                 GetOperationRequest {
                     name: name.to_string(),
                 },
-                RequestTimeouts::with_total,
+                deadline,
             ))
             .await
             .map(|response| response.into_inner())
@@ -263,12 +273,12 @@ impl FirestoreDb {
     /// Each round polls every still-pending operation, at most [`MAX_CONCURRENT_POLLS`] at once,
     /// and then sleeps the poll interval, or only until the deadline when that comes first. So
     /// one slow operation never uses up the deadline before the others are checked, and the last
-    /// round goes out at the deadline itself. A poll that does not answer within the poll
-    /// timeout, or fails with an error marked `retry_possible`, is logged and sent again next
-    /// round. Each operation gets a `Wait For Operation` span, a child of the caller's current
-    /// span, that records its poll count, final state (`done`, `failed`, `poll_failed`,
-    /// `pending` at the deadline, or `abandoned` when another operation's failure ended the
-    /// wait) and elapsed time.
+    /// round goes out at the deadline itself. A poll that fails with an error marked
+    /// `retry_possible`, as one that does not answer within the poll timeout does, is logged and
+    /// sent again next round. Each operation gets a `Wait For Operation` span, a child of the
+    /// caller's current span, that records its poll count, final state (`done`, `failed`,
+    /// `poll_failed`, `pending` at the deadline, or `abandoned` when another operation's failure
+    /// ended the wait) and elapsed time.
     ///
     /// `on_poll` sees every successfully polled [`Operation`], done or not, before it is judged,
     /// and every poll of a round is judged before the wait returns.
@@ -317,14 +327,8 @@ impl FirestoreDb {
                     // The cutoff is taken when the poll is actually sent, which can be later
                     // than the start of the round when more operations are pending than may be
                     // polled at once.
-                    async move {
-                        tokio::time::timeout_at(
-                            deadline.poll_cutoff(),
-                            self.get_operation(&tracked.operation.name),
-                        )
-                        .await
-                    }
-                    .instrument(tracked.span.clone())
+                    self.get_operation(&tracked.operation.name, deadline)
+                        .instrument(tracked.span.clone())
                 })
                 .collect();
             let polled: Vec<_> = futures::stream::iter(polls)
@@ -335,7 +339,7 @@ impl FirestoreDb {
             let mut first_failure = None;
             let mut still_pending = Vec::with_capacity(pending.len());
             for (mut tracked, result) in pending.into_iter().zip(polled) {
-                match tracked.judge(result, deadline, began, &mut on_poll) {
+                match tracked.judge(result, began, &mut on_poll) {
                     PollVerdict::Pending => still_pending.push(tracked),
                     PollVerdict::Done => {}
                     PollVerdict::Failed(err) => {

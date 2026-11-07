@@ -868,29 +868,20 @@ impl FirestoreDb {
             return Err(refused.into_logged_error());
         }
         loop {
-            let polled = tokio::time::timeout_at(
-                deadline.poll_cutoff(),
-                self.admin_client().get_field(self.request_with_timeout(
+            let polled = self
+                .admin_client()
+                .get_field(self.poll_request(
                     GetFieldRequest {
                         name: name.to_string(),
                     },
-                    RequestTimeouts::with_total,
-                )),
-            )
-            .await;
+                    deadline,
+                ))
+                .await;
             let read_back = match polled {
-                Err(_) => {
-                    warn!(
-                        field = name,
-                        "Reading a field back after a refused write did not answer in time; \
-                         reading it again.",
-                    );
-                    None
-                }
                 // A read that answers but decodes into nothing usable is not evidence the write
                 // still stands: keep the refusal that is actually known, rather than fail on a
                 // decode error that says nothing about whether the write took effect.
-                Ok(Ok(field)) => match kind.read_back(field.into_inner()) {
+                Ok(field) => match kind.read_back(field.into_inner()) {
                     Ok(read_back) => Some(read_back),
                     Err(decode_err) => {
                         warn!(
@@ -908,7 +899,7 @@ impl FirestoreDb {
                 // GetOperation's poll, a GetField after this sync's own write to that same field
                 // has no "too new to be visible yet" case, so NOT_FOUND here means the field or
                 // database is gone, not a race with propagation.
-                Ok(Err(status)) => {
+                Err(status) => {
                     match FirestoreError::from_read_status(status) {
                         FirestoreError::DatabaseError(db_err) if db_err.retry_possible => {
                             warn!(
