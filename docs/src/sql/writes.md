@@ -56,17 +56,12 @@ println!("Wrote {} documents", written.documents_modified);
 
 ## Concurrent writes
 
-Concurrent writes to one document conflict: of the statements that overlap, some commit and the
-others fail with `ABORTED`, "Optimistic transaction was aborted due to a conflict", with nothing
-of them applied. This holds for an
-`INSERT .. ON CONFLICT (__name__) DO UPDATE SET stock = stock + excluded.stock` as for any other
-statement, so concurrent increments of one counter are lost unless each failed one is sent again.
-
-`execute()` does not send a failed write again. The error has `retry_possible` set, since
-`ABORTED` means nothing was applied, so the caller can send the statement again. A write that
-runs with `execute_in_transaction(..)` inside `run_transaction` needs no loop of its own:
-`run_transaction` retries the whole transaction on `ABORTED`, see
-[Writes in a transaction](../pipeline-writes.md#writes-in-a-transaction).
+Concurrent writes to one document conflict: some commit, and the others fail with `ABORTED`,
+"Optimistic transaction was aborted due to a conflict", with nothing of them applied. To have such
+writes retried, run them with `execute_in_transaction(..)` inside `run_transaction`, which runs the
+whole transaction again on `ABORTED`, see
+[Writes in a transaction](../pipeline-writes.md#writes-in-a-transaction). `execute()` on its own
+sends a write once.
 
 ## Write limits
 

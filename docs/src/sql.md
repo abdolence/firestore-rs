@@ -251,7 +251,9 @@ transaction, which behaves as in [Pipeline writes](./pipeline-writes.md#writes-i
 
 Every SQL write is atomic: it applies in full or not at all, as a SQL statement does. It is sent
 once and never retried, and a failed write has `retry_possible` set only for `ABORTED`, which means
-nothing was applied. A write has no `explain`, and `.explain()` on one fails with
+nothing was applied. To have a write retried on `ABORTED`, run it inside `run_transaction`, see
+[Concurrent writes](./sql/writes.md#concurrent-writes). A write has no `explain`, and `.explain()`
+on one fails with
 `InvalidParametersError`.
 
 | Statement | Runs as |
