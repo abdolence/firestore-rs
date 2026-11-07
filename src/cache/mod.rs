@@ -190,7 +190,7 @@ pub(crate) fn cache_incomplete_collection_error(
 /// reads nor what a read time names, and `read_cached_only` cannot fall back to Firestore.
 pub(crate) fn cache_consistency_selector_error() -> FirestoreError {
     FirestoreError::CacheError(FirestoreCacheError::new(
-        FirestoreErrorPublicGenericDetails::new("CacheConsistencySelector".into()),
+        FirestoreErrorPublicGenericDetails::new("CacheConsistencySelectorUnsupported".into()),
         "A read in a transaction or at a read time cannot be served from the cache, and \
          `read_cached_only` never contacts Firestore. Read with `db.read_through_cache(&cache)` \
          to have Firestore answer it, or read without a transaction or read time."

@@ -197,10 +197,12 @@ async fn cached_only_fails_when_the_session_has_a_consistency_selector() {
         for selector in selectors() {
             let calls_before = server.calls().len();
             let session = cached_only.clone_with_consistency_selector(selector);
-            let error = read.source(&session).await.unwrap_err();
-            assert!(
-                matches!(error, FirestoreError::CacheError(_)),
-                "{read:?}: {error}"
+            let FirestoreError::CacheError(error) = read.source(&session).await.unwrap_err() else {
+                panic!("{read:?} did not fail with a cache error");
+            };
+            assert_eq!(
+                error.public.code, "CacheConsistencySelectorUnsupported",
+                "{read:?}"
             );
             assert_eq!(server.calls().len(), calls_before, "{read:?}");
         }
