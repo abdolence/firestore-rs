@@ -108,7 +108,8 @@ CREATE INDEX IF NOT EXISTS ON orders (customer_id, placed_at DESC);
 ```
 
 The statement starts the build and returns the index as Firestore lists it: in state `CREATING`,
-or `READY` after a [wait](#waiting-for-an-operation). Firestore assigns the ID of an index, so an
+or `READY` after a [wait](#waiting-for-an-operation). With `IF NOT EXISTS`, an index that already
+exists is returned instead, as the list below says. Firestore assigns the ID of an index, so an
 index cannot be named: `CREATE INDEX by_customer ON ..` is refused.
 
 The kind of index sets what a column can be:
@@ -126,9 +127,11 @@ The kind of index sets what a column can be:
   holds an entry for, see [Density](../index-management/ttl-and-enterprise.md#density), and a
   *unique* index refuses a second document with the same values;
 - `IF NOT EXISTS` makes an index that already exists the outcome instead of an error: the statement
-  returns the listed index that the definition matches, in whatever state it has. `CREATE` of an
-  index that exists, without it, fails with `DataConflictError`. Firestore keeps answering `ALREADY_EXISTS` for a while after
-  an index is deleted, when the listing no longer shows it. `IF NOT EXISTS` returns an index only
+  returns the listed index that the definition matches. Without a wait it comes back in the state
+  Firestore lists; with a wait, an index another caller is still building is returned once it is
+  `READY`, and one that ends in `NEEDS_REPAIR` fails the statement. `CREATE` of an index that
+  exists, without `IF NOT EXISTS`, fails with `DataConflictError`. Firestore keeps answering
+  `ALREADY_EXISTS` for a while after an index is deleted, when the listing no longer shows it. `IF NOT EXISTS` returns an index only
   when the listing shows it, so the statement fails with `DataConflictError` in that window; run it
   again later.
 
