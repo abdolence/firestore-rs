@@ -577,6 +577,42 @@ pub trait FirestoreIndexSupport {
         params: FirestoreIndexParams,
         options: FirestoreIndexSyncOptions,
     ) -> FirestoreResult<FirestoreIndexSyncReport>;
+
+    /// Lists the composite indexes and field resources of `collection_group`, or of every group
+    /// but the ones Firestore reserves, such as `__default__`, when it is `None`.
+    async fn list_indexes(
+        &self,
+        collection_group: Option<FirestoreCollectionId>,
+    ) -> FirestoreResult<FirestoreIndexListing>;
+
+    /// Starts building `definition`'s index and returns it as Firestore lists it once the build
+    /// has started, or, with `wait`, once the build has finished. An index that already exists
+    /// fails with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError).
+    async fn create_index(
+        &self,
+        definition: FirestoreIndexDefinition,
+        wait: Option<FirestoreOperationWaitOptions>,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex>;
+
+    /// Deletes the one index `target` names and returns it as it was listed just before.
+    /// Deletes nothing and fails with
+    /// [`DataNotFoundError`](crate::errors::FirestoreError::DataNotFoundError) when no index
+    /// matches or the index belongs to another group than the target names, and with
+    /// [`DataConflictError`](crate::errors::FirestoreError::DataConflictError) when a definition
+    /// matches more than one.
+    async fn delete_index(
+        &self,
+        target: FirestoreIndexDeleteTarget,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex>;
+
+    /// Sends `update` as one `UpdateField` write and returns the field as Firestore reads it right
+    /// after the write, or, with `wait`, once the write has finished. Writes to one field are not
+    /// sequenced: Firestore accepts a second while the first is in progress.
+    async fn update_field(
+        &self,
+        update: FirestoreFieldUpdate,
+        wait: Option<FirestoreOperationWaitOptions>,
+    ) -> FirestoreResult<FirestoreListedField>;
 }
 
 /// Deletes every document in one or more collection groups, at any depth, across the whole

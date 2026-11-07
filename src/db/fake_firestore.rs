@@ -86,7 +86,7 @@ fn keep_spans_visible_to_scoped_subscribers() {
 }
 
 /// A handler's answer to one RPC.
-pub(super) enum FakeResponse {
+pub(crate) enum FakeResponse {
     /// A framed protobuf message, sent with a `grpc-status: 0` trailer.
     Message(Vec<u8>),
     /// A stream of framed messages, the first at once and each next one the given interval after
@@ -263,7 +263,7 @@ type Handler = dyn Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync;
 /// `Listen` is the exception: it is answered at once with an empty stream, and its handler runs
 /// only when the client closes the request, so a logged `Listen` call is itself the proof that
 /// the request was closed. The handler's response to it is ignored.
-pub(super) struct FakeFirestore {
+pub(crate) struct FakeFirestore {
     pub db: FirestoreDb,
     address: SocketAddr,
     log: RequestLog,

@@ -171,11 +171,12 @@ impl<'t> FirestoreSqlTranslator<'t> {
         Ok(())
     }
 
+    /// The collection ID `collection_id`, validated and allowed by the options.
     pub(super) fn check_collection(
         &self,
         collection_id: &str,
         start: Option<FirestoreSqlLocation>,
-    ) -> FirestoreResult<()> {
+    ) -> FirestoreResult<FirestoreCollectionId> {
         let collection_id =
             FirestoreCollectionId::new(collection_id).map_err(|error| error.located(start))?;
         match &self.options.collections {
@@ -184,7 +185,7 @@ impl<'t> FirestoreSqlTranslator<'t> {
                 format!("the options do not allow the collection {collection_id}"),
                 start,
             )),
-            _ => Ok(()),
+            _ => Ok(collection_id),
         }
     }
 }

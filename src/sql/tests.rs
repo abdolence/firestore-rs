@@ -7,11 +7,12 @@ use crate::pipeline_stage_builder::FirestorePipelineNestedContext;
 use crate::{
     FirestoreBoolExpr, FirestoreCollectionGroupSource, FirestoreCollectionId,
     FirestoreCollectionSource, FirestoreDocumentsSource, FirestoreExpr, FirestoreGeoPoint,
-    FirestoreInsertWrite, FirestoreLatLng, FirestorePipeline, FirestorePipelineSource,
-    FirestorePipelineStage, FirestorePipelineWrite, FirestorePipelineWriteParams,
-    FirestorePipelineWriteTransaction, FirestoreReference, FirestoreResult, FirestoreSelection,
-    FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUnionStage,
-    FirestoreUpdateWrite, FirestoreUpsertWrite, FirestoreWriteCollection,
+    FirestoreInsertWrite, FirestoreLatLng, FirestoreListCollectionIdsParams, FirestorePipeline,
+    FirestorePipelineSource, FirestorePipelineStage, FirestorePipelineWrite,
+    FirestorePipelineWriteParams, FirestorePipelineWriteTransaction, FirestoreReference,
+    FirestoreResult, FirestoreSelection, FirestoreSqlOptions, FirestoreSqlParameters,
+    FirestoreSqlStatement, FirestoreUnionStage, FirestoreUpdateWrite, FirestoreUpsertWrite,
+    FirestoreWriteCollection,
 };
 
 use serde::Serialize;
@@ -35,7 +36,7 @@ fn translate(
 ) -> FirestoreResult<FirestorePipeline> {
     match translate_statement(sql, parameters, options)? {
         FirestoreSqlStatement::Query(pipeline) => Ok(pipeline),
-        FirestoreSqlStatement::Write(write) => panic!("{sql}: {write:?}"),
+        other => panic!("{sql}: {other:?}"),
     }
 }
 
@@ -2077,4 +2078,79 @@ fn a_table_alias_matches_without_regard_to_case() {
         .field,
         "REST"
     );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn show_indexes_is_allowed_by_read_only_options() {
+    let statement = translate_statement(
+        "SHOW INDEXES FROM orders",
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::read_only(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        statement,
+        FirestoreSqlStatement::ShowIndexes(Some(FirestoreCollectionId::from_static("orders")))
+    );
+}
+
+#[test]
+fn show_collections_in_a_document_resolves_against_the_documents_root() {
+    let statement = translate_statement(
+        "SHOW COLLECTIONS IN `users/alice`",
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::new(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        statement,
+        FirestoreSqlStatement::ShowCollections(
+            FirestoreListCollectionIdsParams::new().with_parent(format!("{DOCUMENTS}/users/alice"))
+        )
+    );
+}
+
+#[test]
+fn read_only_options_refuse_index_statements() {
+    let refusal = refused_with(
+        "DROP INDEX `CICAgPj-z4oK`",
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::read_only(),
+    );
+
+    assert_eq!(refusal.field, "read_only");
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn if_not_exists_and_if_exists_are_read_as_part_of_the_statement() {
+    let statements = [
+        (
+            "CREATE INDEX IF NOT EXISTS ON orders (customer_id)",
+            "CREATE INDEX",
+            location(1, 28),
+        ),
+        (
+            "DROP INDEX IF EXISTS CICAgJim14AK",
+            "DROP INDEX",
+            location(1, 22),
+        ),
+        (
+            "DROP UNIQUE INDEX IF EXISTS ON users (email)",
+            "DROP INDEX",
+            location(1, 29),
+        ),
+    ];
+
+    for (sql, statement, body) in statements {
+        let refusal = refused(sql);
+        assert_eq!(
+            (refusal.field.as_str(), refusal.location),
+            (statement, body),
+            "{sql}"
+        );
+    }
 }

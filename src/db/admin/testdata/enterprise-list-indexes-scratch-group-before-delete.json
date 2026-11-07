@@ -1,0 +1,131 @@
+{
+  "indexes": [
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/sql-ddl-capture/indexes/CICAgLjyuogJ",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "email",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ANY",
+      "unique": true
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/pipeline-books/indexes/CICAgPifq5IJ",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "genre",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rating",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/sql-ddl-capture/indexes/CICAgJjmnIgK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "email",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/sql-ddl-capture/indexes/CICAgLiTpokK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "genre",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "embedding",
+          "vectorConfig": {
+            "dimension": 3,
+            "flat": {}
+          }
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/pipeline-books/indexes/CICAgJiUzYsK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "embedding",
+          "vectorConfig": {
+            "dimension": 3,
+            "flat": {}
+          }
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/pipeline-restaurants/indexes/CICAgLjRyYIL",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "menu",
+          "searchConfig": {
+            "textSpec": {
+              "indexSpecs": [
+                {
+                  "indexType": "TOKENIZED",
+                  "matchType": "MATCH_GLOBALLY"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "fieldPath": "description",
+          "searchConfig": {
+            "textSpec": {
+              "indexSpecs": [
+                {
+                  "indexType": "TOKENIZED",
+                  "matchType": "MATCH_GLOBALLY"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ANY",
+      "searchIndexOptions": {
+        "textLanguage": "en",
+        "textLanguageOverrideFieldPath": "language"
+      }
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/pipeline-restaurants/indexes/CICAgPig2YML",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "location",
+          "searchConfig": {
+            "geoSpec": {}
+          }
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ANY"
+    }
+  ]
+}

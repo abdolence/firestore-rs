@@ -1,20 +1,25 @@
-//! Builder for declaring and syncing one collection group's composite indexes, single-field
-//! overrides and TTL policy.
+//! Builders for declaring and syncing one collection group's composite indexes, single-field
+//! overrides and TTL policy, and for listing, creating, deleting and updating one index or field
+//! at a time.
 //!
 //! The entry point is [`FirestoreIndexesInitialBuilder`](crate::index_builder::FirestoreIndexesInitialBuilder),
 //! reached from [`FirestoreExprBuilder::indexes()`](crate::FirestoreExprBuilder::indexes).
 
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreFieldOverride,
-    FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreGeoIndexConfig,
-    FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan,
-    FirestoreIndexSupport, FirestoreIndexSyncOptions, FirestoreIndexSyncReport,
+    FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreFieldOverrideUpdate,
+    FirestoreFieldTtlUpdate, FirestoreFieldUpdate, FirestoreGeoIndexConfig,
+    FirestoreIndexDefinition, FirestoreIndexDeleteTarget, FirestoreIndexField,
+    FirestoreIndexFieldMode, FirestoreIndexId, FirestoreIndexIdTarget, FirestoreIndexListing,
+    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSupport, FirestoreIndexSyncOptions,
+    FirestoreIndexSyncReport, FirestoreListedCompositeIndex, FirestoreListedField,
     FirestoreOperationWaitOptions, FirestoreQueryDirection, FirestoreResult,
     FirestoreVectorIndexConfig,
 };
 use std::time::Duration;
 
-/// The initial builder for declaring one collection group's indexes.
+/// The initial builder for index management: one collection group's declared indexes, or one
+/// index or field at a time.
 ///
 /// Created by [`FirestoreExprBuilder::indexes()`](crate::fluent_api::FirestoreExprBuilder::indexes).
 #[derive(Clone, Debug)]
@@ -45,6 +50,484 @@ where
         collection_group: S,
     ) -> FirestoreIndexesBuilder<'a, D> {
         FirestoreIndexesBuilder::new(self.db, collection_group.as_ref().to_string())
+    }
+
+    /// Lists the composite indexes and field overrides of every collection group, or of the one
+    /// [`collection_group`](FirestoreIndexListBuilder::collection_group) names. End with
+    /// [`get`](FirestoreIndexListBuilder::get).
+    #[inline]
+    pub fn list(self) -> FirestoreIndexListBuilder<'a, D> {
+        FirestoreIndexListBuilder {
+            db: self.db,
+            collection_group: Ok(None),
+        }
+    }
+
+    /// Creates one composite index. Continue with `.collection_group()`, then `.index()`.
+    ///
+    /// ```rust,no_run
+    /// use firestore::{FirestoreDb, FirestoreResult};
+    /// use std::time::Duration;
+    ///
+    /// # async fn example(db: FirestoreDb) -> FirestoreResult<()> {
+    /// let created = db
+    ///     .fluent()
+    ///     .indexes()
+    ///     .create()
+    ///     .collection_group("orders")
+    ///     .index(|i| i.index([i.field("customer_id").asc(), i.field("placed_at").desc()]))
+    ///     .wait_until_ready(Duration::from_secs(600))
+    ///     .execute()
+    ///     .await?;
+    ///
+    /// db.fluent().indexes().delete().id(created.id).execute().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn create(self) -> FirestoreIndexCreateInitialBuilder<'a, D> {
+        FirestoreIndexCreateInitialBuilder { db: self.db }
+    }
+
+    /// Deletes one composite index, named by its ID with `.id()`, or by its group and definition
+    /// with `.collection_group()` then `.id()` or `.index()`.
+    #[inline]
+    pub fn delete(self) -> FirestoreIndexDeleteInitialBuilder<'a, D> {
+        FirestoreIndexDeleteInitialBuilder { db: self.db }
+    }
+
+    /// Updates one field's single-field indexes, its TTL, or both, in one write. Continue with
+    /// `.collection_group()`, then `.field()` or `.all_fields()`.
+    #[inline]
+    pub fn update_field(self) -> FirestoreFieldUpdateInitialBuilder<'a, D> {
+        FirestoreFieldUpdateInitialBuilder { db: self.db }
+    }
+}
+
+/// Lists composite indexes and field overrides.
+///
+/// Created by [`FirestoreIndexesInitialBuilder::list`].
+#[derive(Debug)]
+pub struct FirestoreIndexListBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+    collection_group: FirestoreResult<Option<FirestoreCollectionId>>,
+}
+
+impl<'a, D> FirestoreIndexListBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Lists this collection group only. An invalid ID fails `.get()`.
+    #[inline]
+    pub fn collection_group<S: AsRef<str>>(self, collection_group: S) -> Self {
+        Self {
+            collection_group: FirestoreCollectionId::new(collection_group.as_ref()).map(Some),
+            ..self
+        }
+    }
+
+    /// Lists the indexes and field overrides.
+    pub async fn get(self) -> FirestoreResult<FirestoreIndexListing> {
+        self.db.list_indexes(self.collection_group?).await
+    }
+}
+
+/// The first step of creating one composite index.
+///
+/// Created by [`FirestoreIndexesInitialBuilder::create`].
+#[derive(Debug)]
+pub struct FirestoreIndexCreateInitialBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+}
+
+impl<'a, D> FirestoreIndexCreateInitialBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Names the collection group the index belongs to, whatever its query scope. An invalid ID
+    /// fails `.execute()`.
+    #[inline]
+    pub fn collection_group<S: AsRef<str>>(
+        self,
+        collection_group: S,
+    ) -> FirestoreIndexCreateGroupBuilder<'a, D> {
+        FirestoreIndexCreateGroupBuilder {
+            db: self.db,
+            collection_group: FirestoreCollectionId::new(collection_group.as_ref()),
+        }
+    }
+}
+
+/// Creates one composite index in a named collection group.
+///
+/// Created by [`FirestoreIndexCreateInitialBuilder::collection_group`].
+#[derive(Debug)]
+pub struct FirestoreIndexCreateGroupBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+    collection_group: FirestoreResult<FirestoreCollectionId>,
+}
+
+impl<'a, D> FirestoreIndexCreateGroupBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Defines the index: the closure receives a [`FirestoreCompositeIndexBuilder`] and returns
+    /// the index built with its [`index`](FirestoreCompositeIndexBuilder::index).
+    #[inline]
+    pub fn index<FN>(self, index: FN) -> FirestoreIndexCreateBuilder<'a, D>
+    where
+        FN: FnOnce(FirestoreCompositeIndexBuilder) -> FirestoreCompositeIndex,
+    {
+        FirestoreIndexCreateBuilder {
+            db: self.db,
+            definition: self.collection_group.map(|collection_group| {
+                FirestoreIndexDefinition::new(
+                    collection_group,
+                    index(FirestoreCompositeIndexBuilder::new()),
+                )
+            }),
+            wait: None,
+        }
+    }
+}
+
+/// Creates one defined composite index.
+///
+/// Created by [`FirestoreIndexCreateGroupBuilder::index`].
+#[derive(Debug)]
+pub struct FirestoreIndexCreateBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+    definition: FirestoreResult<FirestoreIndexDefinition>,
+    wait: Option<FirestoreOperationWaitOptions>,
+}
+
+impl<'a, D> FirestoreIndexCreateBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Waits for the index to finish building before `.execute()` returns, polling at the
+    /// default interval. `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
+    #[inline]
+    pub fn wait_until_ready(self, timeout: Duration) -> Self {
+        self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))
+    }
+
+    /// Like [`wait_until_ready`](Self::wait_until_ready), with the poll interval set too.
+    #[inline]
+    pub fn wait_until_ready_with_options(self, options: FirestoreOperationWaitOptions) -> Self {
+        Self {
+            wait: Some(options),
+            ..self
+        }
+    }
+
+    /// Starts building the index and returns it as Firestore lists it: `CREATING`, or, after
+    /// [`wait_until_ready`](Self::wait_until_ready), `READY`. An index that already exists fails
+    /// with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError).
+    pub async fn execute(self) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        self.db.create_index(self.definition?, self.wait).await
+    }
+}
+
+/// The first step of deleting one composite index.
+///
+/// Created by [`FirestoreIndexesInitialBuilder::delete`].
+#[derive(Debug)]
+pub struct FirestoreIndexDeleteInitialBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+}
+
+impl<'a, D> FirestoreIndexDeleteInitialBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Deletes the index with this ID, in whichever group it belongs to.
+    #[inline]
+    pub fn id(self, id: FirestoreIndexId) -> FirestoreIndexDeleteBuilder<'a, D> {
+        FirestoreIndexDeleteBuilder {
+            db: self.db,
+            target: Ok(FirestoreIndexDeleteTarget::Id(FirestoreIndexIdTarget::new(
+                id,
+            ))),
+        }
+    }
+
+    /// Names the collection group of the index to delete. An invalid ID fails `.execute()`.
+    #[inline]
+    pub fn collection_group<S: AsRef<str>>(
+        self,
+        collection_group: S,
+    ) -> FirestoreIndexDeleteGroupBuilder<'a, D> {
+        FirestoreIndexDeleteGroupBuilder {
+            db: self.db,
+            collection_group: FirestoreCollectionId::new(collection_group.as_ref()),
+        }
+    }
+}
+
+/// Deletes one composite index of a named collection group.
+///
+/// Created by [`FirestoreIndexDeleteInitialBuilder::collection_group`].
+#[derive(Debug)]
+pub struct FirestoreIndexDeleteGroupBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+    collection_group: FirestoreResult<FirestoreCollectionId>,
+}
+
+impl<'a, D> FirestoreIndexDeleteGroupBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Deletes the index with this ID, which must belong to the named group: one of another group
+    /// fails `.execute()` with
+    /// [`DataNotFoundError`](crate::errors::FirestoreError::DataNotFoundError), and nothing is
+    /// deleted.
+    #[inline]
+    pub fn id(self, id: FirestoreIndexId) -> FirestoreIndexDeleteBuilder<'a, D> {
+        FirestoreIndexDeleteBuilder {
+            db: self.db,
+            target: self.collection_group.map(|collection_group| {
+                FirestoreIndexDeleteTarget::Id(
+                    FirestoreIndexIdTarget::new(id).with_collection_group(collection_group),
+                )
+            }),
+        }
+    }
+
+    /// Deletes the one listed index of the group this definition matches, as `.sync()` matches a
+    /// declaration. The closure receives a [`FirestoreCompositeIndexBuilder`] and returns the
+    /// index built with its [`index`](FirestoreCompositeIndexBuilder::index).
+    #[inline]
+    pub fn index<FN>(self, index: FN) -> FirestoreIndexDeleteBuilder<'a, D>
+    where
+        FN: FnOnce(FirestoreCompositeIndexBuilder) -> FirestoreCompositeIndex,
+    {
+        FirestoreIndexDeleteBuilder {
+            db: self.db,
+            target: self.collection_group.map(|collection_group| {
+                FirestoreIndexDeleteTarget::Definition(FirestoreIndexDefinition::new(
+                    collection_group,
+                    index(FirestoreCompositeIndexBuilder::new()),
+                ))
+            }),
+        }
+    }
+}
+
+/// Deletes one named composite index.
+///
+/// Created by [`FirestoreIndexDeleteInitialBuilder::id`],
+/// [`FirestoreIndexDeleteGroupBuilder::id`] or [`FirestoreIndexDeleteGroupBuilder::index`].
+#[derive(Debug)]
+pub struct FirestoreIndexDeleteBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+    target: FirestoreResult<FirestoreIndexDeleteTarget>,
+}
+
+impl<'a, D> FirestoreIndexDeleteBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Deletes the index and returns it as it was listed just before. Deletes nothing and fails
+    /// with [`DataNotFoundError`](crate::errors::FirestoreError::DataNotFoundError) when no index
+    /// matches, and with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError)
+    /// when a definition matches more than one.
+    pub async fn execute(self) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        self.db.delete_index(self.target?).await
+    }
+}
+
+/// The first step of updating one field.
+///
+/// Created by [`FirestoreIndexesInitialBuilder::update_field`].
+#[derive(Debug)]
+pub struct FirestoreFieldUpdateInitialBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+}
+
+impl<'a, D> FirestoreFieldUpdateInitialBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Names the collection group of the field. An invalid ID fails `.execute()`.
+    #[inline]
+    pub fn collection_group<S: AsRef<str>>(
+        self,
+        collection_group: S,
+    ) -> FirestoreFieldUpdateGroupBuilder<'a, D> {
+        FirestoreFieldUpdateGroupBuilder {
+            db: self.db,
+            collection_group: FirestoreCollectionId::new(collection_group.as_ref()),
+        }
+    }
+}
+
+/// Updates one field of a named collection group.
+///
+/// Created by [`FirestoreFieldUpdateInitialBuilder::collection_group`].
+#[derive(Debug)]
+pub struct FirestoreFieldUpdateGroupBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+    collection_group: FirestoreResult<FirestoreCollectionId>,
+}
+
+impl<'a, D> FirestoreFieldUpdateGroupBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Updates the field at `field_path`.
+    #[inline]
+    pub fn field<S: AsRef<str>>(self, field_path: S) -> FirestoreFieldUpdateBuilder<'a, D> {
+        self.target(FirestoreFieldOverrideTarget::Field(
+            field_path.as_ref().to_string(),
+        ))
+    }
+
+    /// Updates every field of the group that has no override of its own, Firestore's special
+    /// `*` field. TTL applies to a named field only.
+    #[inline]
+    pub fn all_fields(self) -> FirestoreFieldUpdateBuilder<'a, D> {
+        self.target(FirestoreFieldOverrideTarget::AllFields)
+    }
+
+    fn target(self, target: FirestoreFieldOverrideTarget) -> FirestoreFieldUpdateBuilder<'a, D> {
+        FirestoreFieldUpdateBuilder {
+            db: self.db,
+            update: self
+                .collection_group
+                .map(|collection_group| FirestoreFieldUpdate::new(collection_group, target)),
+            wait: None,
+        }
+    }
+}
+
+/// Updates one field's single-field indexes, its TTL, or both, in one write.
+///
+/// Created by [`FirestoreFieldUpdateGroupBuilder::field`] or
+/// [`FirestoreFieldUpdateGroupBuilder::all_fields`].
+#[derive(Debug)]
+pub struct FirestoreFieldUpdateBuilder<'a, D>
+where
+    D: FirestoreIndexSupport,
+{
+    db: &'a D,
+    update: FirestoreResult<FirestoreFieldUpdate>,
+    wait: Option<FirestoreOperationWaitOptions>,
+}
+
+impl<'a, D> FirestoreFieldUpdateBuilder<'a, D>
+where
+    D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
+{
+    /// Replaces the field's single-field indexes with exactly the ones listed, typically built
+    /// with [`FirestoreFieldOverrideBuilder::ascending`],
+    /// [`descending`](FirestoreFieldOverrideBuilder::descending) or
+    /// [`array_contains`](FirestoreFieldOverrideBuilder::array_contains). See
+    /// [`FirestoreFieldOverride`] for why this replaces rather than extends the default set.
+    #[inline]
+    pub fn indexes<FN, I>(self, indexes: FN) -> Self
+    where
+        FN: FnOnce(FirestoreFieldOverrideBuilder) -> I,
+        I: IntoIterator,
+        I::Item: FirestoreFieldOverrideIndexExpr,
+    {
+        let indexes = indexes(FirestoreFieldOverrideBuilder::new())
+            .into_iter()
+            .filter_map(FirestoreFieldOverrideIndexExpr::build_field_override_index)
+            .collect();
+        self.index_override(FirestoreFieldOverrideUpdate::Set(indexes))
+    }
+
+    /// Excludes the field from single-field indexing. Equivalent to `.indexes(|_| [])`.
+    #[inline]
+    pub fn exempt(self) -> Self {
+        self.index_override(FirestoreFieldOverrideUpdate::Set(Vec::new()))
+    }
+
+    /// Removes the field's override, so it inherits its ancestor's configuration.
+    #[inline]
+    pub fn revert_override(self) -> Self {
+        self.index_override(FirestoreFieldOverrideUpdate::Revert)
+    }
+
+    /// Expires each document at the timestamp this field holds.
+    #[inline]
+    pub fn enable_ttl(self) -> Self {
+        self.ttl(FirestoreFieldTtlUpdate::Enable)
+    }
+
+    /// Stops expiring documents by this field.
+    #[inline]
+    pub fn disable_ttl(self) -> Self {
+        self.ttl(FirestoreFieldTtlUpdate::Disable)
+    }
+
+    /// Waits for the write to finish before `.execute()` returns, polling at the default
+    /// interval. `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
+    #[inline]
+    pub fn wait_until_ready(self, timeout: Duration) -> Self {
+        self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))
+    }
+
+    /// Like [`wait_until_ready`](Self::wait_until_ready), with the poll interval set too.
+    #[inline]
+    pub fn wait_until_ready_with_options(self, options: FirestoreOperationWaitOptions) -> Self {
+        Self {
+            wait: Some(options),
+            ..self
+        }
+    }
+
+    /// Sends the update as one write and returns the field as Firestore reads it right after,
+    /// or, after [`wait_until_ready`](Self::wait_until_ready), once the write has finished. An
+    /// update that changes nothing, or that sets TTL on every field, fails with
+    /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) before
+    /// any request.
+    pub async fn execute(self) -> FirestoreResult<FirestoreListedField> {
+        self.db.update_field(self.update?, self.wait).await
+    }
+
+    fn index_override(self, index_override: FirestoreFieldOverrideUpdate) -> Self {
+        Self {
+            update: self
+                .update
+                .map(|update| update.with_index_override(index_override)),
+            ..self
+        }
+    }
+
+    fn ttl(self, ttl: FirestoreFieldTtlUpdate) -> Self {
+        Self {
+            update: self.update.map(|update| update.with_ttl(ttl)),
+            ..self
+        }
     }
 }
 

@@ -1,0 +1,19 @@
+{
+  "name": "projects/latestbit/databases/(default)/collectionGroups/test-query-vec/indexes/CICAgOi39IkJ",
+  "queryScope": "COLLECTION",
+  "fields": [
+    {
+      "fieldPath": "__name__",
+      "order": "ASCENDING"
+    },
+    {
+      "fieldPath": "some_vec",
+      "vectorConfig": {
+        "dimension": 3,
+        "flat": {}
+      }
+    }
+  ],
+  "state": "READY",
+  "density": "SPARSE_ALL"
+}

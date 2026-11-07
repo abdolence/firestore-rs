@@ -93,6 +93,39 @@ impl FirestoreError {
         )
     }
 
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for SQL text
+    /// that is no statement the crate runs, at the word where it stops being one.
+    #[cfg(all(feature = "sql", feature = "admin"))]
+    pub(crate) fn sql_not_a_statement(location: Option<FirestoreSqlLocation>) -> Self {
+        FirestoreError::invalid_sql(
+            "statement",
+            "a statement is a SELECT, INSERT, UPDATE, DELETE, EXPLAIN, SHOW, \
+             CREATE [UNIQUE | SEARCH | VECTOR] INDEX, DROP INDEX or ALTER COLLECTION",
+            location,
+        )
+    }
+
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for a SQL
+    /// index statement in a build without the `admin` feature.
+    #[cfg(all(feature = "sql", not(feature = "admin")))]
+    pub(crate) fn sql_needs_admin(statement: &str, location: Option<FirestoreSqlLocation>) -> Self {
+        FirestoreError::invalid_sql(
+            statement,
+            format!("{statement} needs the admin feature"),
+            location,
+        )
+    }
+
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for a SQL
+    /// statement sent to a terminal other than `run()`, the one that runs it.
+    #[cfg(feature = "sql")]
+    pub(crate) fn sql_runs_with_run() -> Self {
+        FirestoreError::invalid_parameters(
+            "sql",
+            "SHOW and the index statements run with run(), which returns their outcome",
+        )
+    }
+
     /// Points an [`InvalidParametersError`](FirestoreError::InvalidParametersError) from a check
     /// the crate shares, such as an ID's, at where the value starts in SQL text.
     #[cfg(feature = "sql")]
@@ -150,6 +183,26 @@ impl FirestoreError {
     pub(crate) fn system_error(message: impl Into<String>) -> Self {
         FirestoreError::SystemError(FirestoreSystemError::new(
             FirestoreErrorPublicGenericDetails::new("SystemError".into()),
+            message.into(),
+        ))
+    }
+
+    /// Builds a [`DataNotFoundError`](FirestoreError::DataNotFoundError) with `code`, for data
+    /// the crate itself found missing rather than Firestore's `NOT_FOUND`.
+    #[cfg(feature = "admin")]
+    pub(crate) fn data_not_found(code: &str, message: impl Into<String>) -> Self {
+        FirestoreError::DataNotFoundError(FirestoreDataNotFoundError::new(
+            FirestoreErrorPublicGenericDetails::new(code.to_string()),
+            message.into(),
+        ))
+    }
+
+    /// Builds a [`DataConflictError`](FirestoreError::DataConflictError) with `code`, for a
+    /// conflict the crate itself found rather than Firestore's `ALREADY_EXISTS`.
+    #[cfg(feature = "admin")]
+    pub(crate) fn data_conflict(code: &str, message: impl Into<String>) -> Self {
+        FirestoreError::DataConflictError(FirestoreDataConflictError::new(
+            FirestoreErrorPublicGenericDetails::new(code.to_string()),
             message.into(),
         ))
     }

@@ -41,6 +41,7 @@ jobs:
           cargo fmt -- --check
           cargo clippy --all-targets --features "admin,caching-memory,caching-persistent" -- -Dwarnings
           cargo clippy --all-targets --features "admin,caching-memory,caching-persistent,sql" -- -Dwarnings
+          cargo clippy --lib --features sql -- -Dwarnings
       - name: 'Checking documentation'
         run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features "admin,caching-memory,caching-persistent,sql"
       - name: 'Compiling the book examples'

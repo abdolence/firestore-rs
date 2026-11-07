@@ -184,8 +184,9 @@ impl<'a, D> FirestoreExprBuilder<'a, D>
 where
     D: crate::FirestoreIndexSupport + Clone + Send + Sync + 'static,
 {
-    /// Starts declaring one collection group's indexes. Continue with `.collection_group()`.
-    /// Requires the `admin` feature.
+    /// Starts index management. Continue with `.collection_group()` to declare one group's
+    /// indexes, or with `.list()`, `.create()`, `.delete()` or `.update_field()` for one index or
+    /// field at a time. Requires the `admin` feature.
     #[inline]
     pub fn indexes(self) -> crate::index_builder::FirestoreIndexesInitialBuilder<'a, D> {
         crate::index_builder::FirestoreIndexesInitialBuilder::new(self.db)

@@ -1010,3 +1010,20 @@ async fn a_terminal_of_the_other_kind_fails_before_sending() -> TestResult {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn show_collections_lists_the_subcollections_of_a_document() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let FirestoreSqlOutcome::Collections(collections) = db
+        .fluent()
+        .sql("SHOW COLLECTIONS IN `pipeline-restaurants/rest-01`")
+        .run()
+        .await?
+    else {
+        panic!("SHOW COLLECTIONS returns collection IDs");
+    };
+
+    assert_eq!(collections, [FirestoreCollectionId::from_static("reviews")]);
+    Ok(())
+}

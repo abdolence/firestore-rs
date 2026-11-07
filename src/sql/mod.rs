@@ -1,5 +1,13 @@
 mod aggregation;
 
+mod ddl;
+
+#[cfg(feature = "admin")]
+mod ddl_field;
+
+#[cfg(feature = "admin")]
+mod ddl_index;
+
 mod expr;
 
 mod functions;

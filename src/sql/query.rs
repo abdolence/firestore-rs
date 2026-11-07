@@ -894,7 +894,7 @@ impl FirestoreSqlTranslator<'_> {
     }
 }
 
-fn string_literal(expr: &Expr) -> Option<&str> {
+pub(super) fn string_literal(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::Value(ValueWithSpan {
             value: SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text),

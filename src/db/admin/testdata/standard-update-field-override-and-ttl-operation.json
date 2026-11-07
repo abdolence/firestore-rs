@@ -1,0 +1,50 @@
+{
+  "name": "projects/latestbit/databases/(default)/operations/AyBjN2NiZWE4N2ExNDMtODI4YS1iMjU0LTZhZmQtM2EzODVmNWMkGnNlbmlsZXBpcAkKMxI",
+  "metadata": {
+    "@type": "type.googleapis.com/google.firestore.admin.v1.FieldOperationMetadata",
+    "startTime": "2026-11-07T16:30:44.809198Z",
+    "field": "projects/latestbit/databases/(default)/collectionGroups/sql-ddl-capture/fields/expires_at",
+    "indexConfigDeltas": [
+      {
+        "changeType": "REMOVE",
+        "index": {
+          "queryScope": "COLLECTION",
+          "fields": [
+            {
+              "fieldPath": "expires_at",
+              "order": "ASCENDING"
+            }
+          ]
+        }
+      },
+      {
+        "changeType": "REMOVE",
+        "index": {
+          "queryScope": "COLLECTION",
+          "fields": [
+            {
+              "fieldPath": "expires_at",
+              "order": "DESCENDING"
+            }
+          ]
+        }
+      },
+      {
+        "changeType": "REMOVE",
+        "index": {
+          "queryScope": "COLLECTION",
+          "fields": [
+            {
+              "fieldPath": "expires_at",
+              "arrayConfig": "CONTAINS"
+            }
+          ]
+        }
+      }
+    ],
+    "state": "INITIALIZING",
+    "ttlConfigDelta": {
+      "changeType": "ADD"
+    }
+  }
+}
