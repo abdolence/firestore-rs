@@ -187,6 +187,16 @@ impl FirestoreError {
         ))
     }
 
+    /// Builds a [`SystemError`](FirestoreError::SystemError) with `code`, for a failure the crate
+    /// itself found rather than one Firestore reported.
+    #[cfg(feature = "admin")]
+    pub(crate) fn system_error_with_code(code: &str, message: impl Into<String>) -> Self {
+        FirestoreError::SystemError(FirestoreSystemError::new(
+            FirestoreErrorPublicGenericDetails::new(code.to_string()),
+            message.into(),
+        ))
+    }
+
     /// Builds a [`DataNotFoundError`](FirestoreError::DataNotFoundError) with `code`, for data
     /// the crate itself found missing rather than Firestore's `NOT_FOUND`.
     #[cfg(feature = "admin")]

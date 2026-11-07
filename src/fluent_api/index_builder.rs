@@ -238,7 +238,8 @@ where
     /// Makes an index that already exists the outcome rather than an error: `.execute()` returns
     /// the one the group lists that the definition matches. Without a wait it is returned as
     /// listed. With one, an index another caller is still building is polled until it is `READY`,
-    /// under the same timeout. Any other error stays one.
+    /// under the same timeout, and one that ends in `NEEDS_REPAIR` fails the call. Any other error
+    /// stays one.
     #[inline]
     pub fn if_not_exists(self) -> Self {
         Self {
@@ -248,7 +249,9 @@ where
     }
 
     /// Starts building the index and returns it as Firestore lists it: `CREATING`, or, after
-    /// [`wait_until_ready`](Self::wait_until_ready), `READY`. An index that already exists fails
+    /// [`wait_until_ready`](Self::wait_until_ready), `READY`. With
+    /// [`if_not_exists`](Self::if_not_exists) and no wait, an index that exists is returned in
+    /// whatever state it has. An index that already exists fails
     /// with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError), unless
     /// [`if_not_exists`](Self::if_not_exists) is set.
     pub async fn execute(self) -> FirestoreResult<FirestoreListedCompositeIndex> {

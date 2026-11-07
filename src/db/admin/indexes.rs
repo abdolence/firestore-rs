@@ -29,6 +29,7 @@ use gcloud_sdk::google::firestore::admin::v1::{
     UpdateFieldRequest,
 };
 use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
+use gcloud_sdk::google::longrunning::Operation;
 use gcloud_sdk::prost_types::FieldMask;
 use gcloud_sdk::tonic::{Code, Status};
 use gcloud_sdk::RequestTimeouts;
@@ -607,80 +608,61 @@ impl FirestoreDb {
         Ok((plan, list_elapsed))
     }
 
+    /// The listed indexes of `group` that `index` matches under the group's edition.
+    pub(super) async fn listed_matches(
+        &self,
+        group: &OwnedGroup<'_>,
+        index: &FirestoreCompositeIndex,
+    ) -> FirestoreResult<Vec<FirestoreListedCompositeIndex>> {
+        let listing = self.list_existing_state(Some(group.id)).await?;
+        Ok(listing
+            .indexes
+            .into_iter()
+            .filter(|listed| composite_index_matches(index, &listed.index, group.edition))
+            .collect())
+    }
+
     async fn apply_create_index(
         &self,
         group: &OwnedGroup<'_>,
         index: &FirestoreCompositeIndex,
     ) -> FirestoreResult<CreateIndexOutcome> {
         let action = IndexAction::CreateIndex(index.clone());
-        let span = span!(
-            Level::INFO,
-            "Create Index",
-            "/firestore/action" = action.kind(),
-            "/firestore/target" = action.target().as_str(),
-            "/firestore/operation" = field::Empty,
-            "/firestore/response_time" = field::Empty,
-        );
-        let began = FirestoreInstant::now();
         let proto = ProtoIndex::try_from(index.clone())?;
-        let outcome = async {
-            let request = CreateIndexRequest {
-                parent: group.path.clone(),
-                index: Some(proto),
-            };
-            let request = self.request_with_timeout(request, RequestTimeouts::with_total);
-            match self.admin_client().create_index(request).await {
-                Ok(response) => {
-                    let operation = response.into_inner();
-                    span.record("/firestore/operation", operation.name.as_str());
-                    info!(
-                        operation = operation.name.as_str(),
+        match self
+            .run_create_index(group.path.clone(), proto, &action)
+            .await
+        {
+            Ok(operation) => Ok(CreateIndexOutcome::Created(StartedOperation {
+                name: operation.name,
+                action,
+            })),
+            // Another deployment may have created the index since the plan listed it. The
+            // answer alone does not show that: Firestore keeps answering ALREADY_EXISTS for an
+            // index deleted minutes ago, while its listing no longer shows it. `apply_plan`
+            // withholds its deletes in the first case.
+            Err(status) if status.code() == Code::AlreadyExists => {
+                if self.listed_matches(group, index).await?.is_empty() {
+                    error!(
                         action = action.kind(),
                         index = %index,
-                        "Created a composite index.",
+                        "Firestore answered ALREADY_EXISTS for a declared index its listing does not show.",
                     );
-                    Ok(CreateIndexOutcome::Created(StartedOperation {
-                        name: operation.name,
-                        action,
-                    }))
-                }
-                // Another deployment may have created the index since the plan listed it. The
-                // answer alone does not show that: Firestore keeps answering ALREADY_EXISTS for an
-                // index deleted minutes ago, while its listing no longer shows it. `apply_plan`
-                // withholds its deletes in the first case.
-                Err(status) if status.code() == Code::AlreadyExists => {
-                    let listing = self.list_existing_state(Some(group.id)).await?;
-                    if listing
-                        .indexes
-                        .iter()
-                        .any(|listed| composite_index_matches(index, &listed.index, group.edition))
-                    {
-                        warn!(
-                            action = action.kind(),
-                            index = %index,
-                            "A declared index was created since the plan was made; counting it as unchanged and withholding every index delete of this sync.",
-                        );
-                        Ok(CreateIndexOutcome::AlreadyExists)
-                    } else {
-                        error!(
-                            action = action.kind(),
-                            index = %index,
-                            "Firestore answered ALREADY_EXISTS for a declared index its listing does not show.",
-                        );
-                        Err(FirestoreError::from(status))
-                    }
-                }
-                Err(status) => {
-                    error!(error = %status, action = action.kind(), index = %index, "Failed to create a composite index.");
                     Err(FirestoreError::from(status))
+                } else {
+                    warn!(
+                        action = action.kind(),
+                        index = %index,
+                        "A declared index was created since the plan was made; counting it as unchanged and withholding every index delete of this sync.",
+                    );
+                    Ok(CreateIndexOutcome::AlreadyExists)
                 }
             }
+            Err(status) => {
+                error!(error = %status, action = action.kind(), index = %index, "Failed to create a composite index.");
+                Err(FirestoreError::from(status))
+            }
         }
-        .instrument(span.clone())
-        .await;
-        let elapsed = FirestoreInstant::now().duration_since(began);
-        span.record("/firestore/response_time", elapsed.as_millis());
-        outcome
     }
 
     async fn apply_delete_index(
@@ -690,8 +672,77 @@ impl FirestoreDb {
     ) -> FirestoreResult<()> {
         group.ensure_owns("indexes", &listed.name)?;
         let action = IndexAction::DeleteIndex(listed.clone());
-        // DeleteIndex answers directly rather than with a long-running operation, so this span
-        // has no `/firestore/operation`.
+        match self.run_delete_index(&listed.name, &action).await {
+            Ok(()) => Ok(()),
+            // A concurrent sync, or a retry of this one after a prior response was lost, may
+            // have deleted this index already; counting it as deleted rather than failing lets
+            // a rolling deployment's overlapping syncs converge on the same end state.
+            Err(status) if status.code() == Code::NotFound => {
+                info!(action = action.kind(), index = %listed, "Index was already deleted, likely by a concurrent sync.");
+                Ok(())
+            }
+            Err(status) => {
+                error!(error = %status, action = action.kind(), index = %listed, "Failed to delete a composite index.");
+                Err(FirestoreError::from(status))
+            }
+        }
+    }
+
+    /// Runs one `CreateIndex` request under `parent` in a `Create Index` span built from
+    /// `action`, recording its response time and logging an accepted build. A refusal is returned
+    /// unlogged: the caller decides whether `ALREADY_EXISTS` is final or settles it against the
+    /// listing, as `.sync()` and `create_index` each do.
+    pub(super) async fn run_create_index(
+        &self,
+        parent: String,
+        index: ProtoIndex,
+        action: &IndexAction,
+    ) -> Result<Operation, Status> {
+        let span = span!(
+            Level::INFO,
+            "Create Index",
+            "/firestore/action" = action.kind(),
+            "/firestore/target" = action.target().as_str(),
+            "/firestore/operation" = field::Empty,
+            "/firestore/response_time" = field::Empty,
+        );
+        let began = FirestoreInstant::now();
+        let request = CreateIndexRequest {
+            parent,
+            index: Some(index),
+        };
+        let request = self.request_with_timeout(request, RequestTimeouts::with_total);
+        let outcome = self
+            .admin_client()
+            .create_index(request)
+            .instrument(span.clone())
+            .await
+            .map(|response| response.into_inner());
+        let elapsed = FirestoreInstant::now().duration_since(began);
+        span.record("/firestore/response_time", elapsed.as_millis());
+        if let Ok(operation) = &outcome {
+            span.record("/firestore/operation", operation.name.as_str());
+            span.in_scope(|| {
+                info!(
+                    operation = operation.name.as_str(),
+                    action = action.kind(),
+                    label = %action,
+                    "Created a composite index.",
+                )
+            });
+        }
+        outcome
+    }
+
+    /// Runs one `DeleteIndex` request for the index `name` in a `Delete Index` span built from
+    /// `action`, recording its response time and logging a deleted index. `DeleteIndex` answers
+    /// directly rather than with a long-running operation, so the span has no
+    /// `/firestore/operation`. A refusal is returned unlogged, for the caller to decide.
+    pub(super) async fn run_delete_index(
+        &self,
+        name: &str,
+        action: &IndexAction,
+    ) -> Result<(), Status> {
         let span = span!(
             Level::INFO,
             "Delete Index",
@@ -700,33 +751,27 @@ impl FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
-        let outcome = async {
-            let request = DeleteIndexRequest {
-                name: listed.name.clone(),
-            };
-            let request = self.request_with_timeout(request, RequestTimeouts::with_total);
-            match self.admin_client().delete_index(request).await {
-                Ok(_) => {
-                    info!(action = action.kind(), index = %listed, "Deleted an undeclared composite index.");
-                    Ok(())
-                }
-                // A concurrent sync, or a retry of this one after a prior response was lost, may
-                // have deleted this index already; counting it as deleted rather than failing lets
-                // a rolling deployment's overlapping syncs converge on the same end state.
-                Err(status) if status.code() == Code::NotFound => {
-                    info!(action = action.kind(), index = %listed, "Index was already deleted, likely by a concurrent sync.");
-                    Ok(())
-                }
-                Err(status) => {
-                    error!(error = %status, action = action.kind(), index = %listed, "Failed to delete a composite index.");
-                    Err(FirestoreError::from(status))
-                }
-            }
-        }
-        .instrument(span.clone())
-        .await;
+        let request = DeleteIndexRequest {
+            name: name.to_string(),
+        };
+        let request = self.request_with_timeout(request, RequestTimeouts::with_total);
+        let outcome = self
+            .admin_client()
+            .delete_index(request)
+            .instrument(span.clone())
+            .await
+            .map(|_| ());
         let elapsed = FirestoreInstant::now().duration_since(began);
         span.record("/firestore/response_time", elapsed.as_millis());
+        if outcome.is_ok() {
+            span.in_scope(|| {
+                info!(
+                    action = action.kind(),
+                    label = %action,
+                    "Deleted a composite index.",
+                )
+            });
+        }
         outcome
     }
 

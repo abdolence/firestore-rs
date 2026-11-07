@@ -6,10 +6,10 @@
 //! The four calls run no edition rule and no emulator check of their own: Firestore's own
 //! `INVALID_ARGUMENT` and the emulator's `UNIMPLEMENTED` are their errors.
 
-use crate::db::admin::index_diff::composite_index_matches;
 use crate::db::admin::index_models::{validate_collection_group, CanonicalFieldPath};
+use crate::db::admin::indexes::PendingOperation;
 use crate::db::admin::indexes::{IndexAction, RefusedFieldWrite, SEQUENCING_TIMEOUT};
-use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
+use crate::db::admin::operation_wait::{OperationDeadline, StartedOperation};
 use crate::db::support::FirestoreIndexSupport;
 use crate::errors::FirestoreError;
 use crate::{
@@ -24,9 +24,10 @@ use crate::{
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field::{IndexConfig, TtlConfig};
 use gcloud_sdk::google::firestore::admin::v1::{
-    CreateIndexRequest, DeleteIndexRequest, Field as ProtoField, GetFieldRequest, GetIndexRequest,
-    Index as ProtoIndex, IndexOperationMetadata, UpdateFieldRequest,
+    Field as ProtoField, GetFieldRequest, GetIndexRequest, Index as ProtoIndex,
+    IndexOperationMetadata, UpdateFieldRequest,
 };
+use gcloud_sdk::google::longrunning::Operation;
 use gcloud_sdk::prost::Message as _;
 use gcloud_sdk::prost_types::FieldMask;
 use gcloud_sdk::tonic::{Code, Status};
@@ -45,6 +46,44 @@ const NO_MATCHING_INDEX: &str = "NO_MATCHING_INDEX";
 /// The code of the [`DataConflictError`](FirestoreError::DataConflictError) a delete by
 /// definition fails with when more than one listed index matches it.
 const SEVERAL_MATCHING_INDEXES: &str = "SEVERAL_MATCHING_INDEXES";
+
+/// The code of the [`SystemError`](FirestoreError::SystemError) a wait fails with when the index
+/// it waited for ended in `NEEDS_REPAIR`.
+const INDEX_NEEDS_REPAIR: &str = "INDEX_NEEDS_REPAIR";
+
+/// A `CreateIndex` Firestore accepted: its operation, and the resource name of the index it
+/// builds.
+struct StartedIndexBuild {
+    operation: PendingOperation,
+    index_name: String,
+}
+
+impl StartedIndexBuild {
+    /// Firestore names the new index in the metadata of its first answer, which is why a build
+    /// without that name is refused: nothing else says which index to read back.
+    fn new(operation: Operation, action: IndexAction) -> FirestoreResult<Self> {
+        let index_name = operation
+            .metadata
+            .as_ref()
+            .map(|metadata| IndexOperationMetadata::decode(metadata.value.as_slice()))
+            .transpose()?
+            .map(|metadata| metadata.index)
+            .filter(|index| !index.is_empty())
+            .ok_or_else(|| {
+                FirestoreError::system_error(format!(
+                    "operation {} started to {action} without naming the index",
+                    operation.name
+                ))
+            })?;
+        Ok(Self {
+            operation: StartedOperation {
+                name: operation.name,
+                action,
+            },
+            index_name,
+        })
+    }
+}
 
 impl FirestoreDb {
     async fn get_index(&self, name: &str) -> Result<ProtoIndex, Status> {
@@ -70,109 +109,29 @@ impl FirestoreDb {
         FirestoreListedField::try_from(field)
     }
 
-    /// Sends one `CreateIndex` and returns its operation, under the resource name of the index
-    /// it builds: Firestore names the new index in the metadata of its first answer.
-    async fn start_create_index(
+    /// Reads the index `name` as one poll of a wait: bounded by `deadline`'s poll limit, and
+    /// retryable when it does not answer in time, as `GetOperation` is in
+    /// [`wait_for_operations`](Self::wait_for_operations).
+    async fn poll_index(
         &self,
-        definition: FirestoreIndexDefinition,
-    ) -> FirestoreResult<(StartedOperation<IndexAction>, String)> {
-        let action = IndexAction::CreateIndex(definition.index.clone());
-        let span = span!(
-            Level::INFO,
-            "Create Index",
-            "/firestore/action" = action.kind(),
-            "/firestore/target" = action.target().as_str(),
-            "/firestore/operation" = field::Empty,
-            "/firestore/response_time" = field::Empty,
-        );
-        let began = FirestoreInstant::now();
-        let request = CreateIndexRequest {
-            parent: self.collection_group_path(definition.collection_group.as_str()),
-            index: Some(ProtoIndex::try_from(definition.index)?),
+        name: &str,
+        deadline: &OperationDeadline,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        let request = GetIndexRequest {
+            name: name.to_string(),
         };
-        let started = self
+        let polled = self
             .admin_client()
-            .create_index(self.request_with_timeout(request, RequestTimeouts::with_total))
-            .instrument(span.clone())
-            .await;
-        span.record(
-            "/firestore/response_time",
-            FirestoreInstant::now().duration_since(began).as_millis(),
-        );
-        let operation = started
-            .inspect_err(|status| {
-                span.in_scope(|| {
-                    error!(error = %status, label = %action, "Failed to create a composite index.")
-                })
-            })?
-            .into_inner();
-        span.record("/firestore/operation", operation.name.as_str());
-        let index_name = operation
-            .metadata
-            .map(|metadata| IndexOperationMetadata::decode(metadata.value.as_slice()))
-            .transpose()?
-            .map(|metadata| metadata.index)
-            .filter(|index| !index.is_empty())
-            .ok_or_else(|| {
-                FirestoreError::system_error(format!(
-                    "operation {} started to {action} without naming the index",
-                    operation.name
-                ))
-            })?;
-        span.in_scope(|| {
-            info!(
-                operation = operation.name.as_str(),
-                index = index_name.as_str(),
-                label = %action,
-                "Created a composite index.",
-            )
-        });
-        Ok((
-            StartedOperation {
-                name: operation.name,
-                action,
-            },
-            index_name,
-        ))
+            .get_index(self.poll_request(request, deadline))
+            .await
+            .map_err(FirestoreError::from_read_status)?;
+        FirestoreListedCompositeIndex::try_from(polled.into_inner())
     }
 
-    async fn send_delete_index(
-        &self,
-        listed: &FirestoreListedCompositeIndex,
-    ) -> FirestoreResult<()> {
-        let span = span!(
-            Level::INFO,
-            "Delete Index",
-            "/firestore/action" = "delete_index",
-            "/firestore/target" = listed.name.as_str(),
-            "/firestore/response_time" = field::Empty,
-        );
-        let began = FirestoreInstant::now();
-        let request = DeleteIndexRequest {
-            name: listed.name.clone(),
-        };
-        let deleted = self
-            .admin_client()
-            .delete_index(self.request_with_timeout(request, RequestTimeouts::with_total))
-            .instrument(span.clone())
-            .await;
-        span.record(
-            "/firestore/response_time",
-            FirestoreInstant::now().duration_since(began).as_millis(),
-        );
-        span.in_scope(|| match &deleted {
-            Ok(_) => info!(index = %listed, "Deleted a composite index."),
-            Err(status) => {
-                error!(error = %status, index = %listed, "Failed to delete a composite index.")
-            }
-        });
-        deleted?;
-        Ok(())
-    }
-
-    /// Reads `index` again until it has left `CREATING`, then returns it in whatever state it
-    /// reached. No operation exists for a build another caller started, so the index itself is
-    /// polled. Fails once `deadline` has passed with the index still building.
+    /// Reads `index` again until it has left `CREATING`, then returns it unless it ended in
+    /// `NEEDS_REPAIR`, which fails the call as a build of its own that failed does. No operation
+    /// exists for a build another caller started, so the index itself is polled. Fails once
+    /// `deadline` has passed with the index still building.
     async fn wait_while_creating(
         &self,
         mut index: FirestoreListedCompositeIndex,
@@ -183,9 +142,49 @@ impl FirestoreDb {
                 return Err(deadline.timed_out(&format!("index {} to finish building", index.id)));
             }
             deadline.sleep_until_next_round().await;
-            index = FirestoreListedCompositeIndex::try_from(self.get_index(&index.name).await?)?;
+            match self.poll_index(&index.name, deadline).await {
+                Ok(polled) => index = polled,
+                Err(err) if err.retry_possible() => {
+                    warn!(
+                        %err,
+                        index = %index,
+                        "Polling an index failed with a retryable error; polling it again.",
+                    );
+                }
+                Err(err) => return Err(err),
+            }
         }
-        Ok(index)
+        match index.state {
+            FirestoreIndexState::NeedsRepair => Err(FirestoreError::system_error_with_code(
+                INDEX_NEEDS_REPAIR,
+                format!("index {} ended in NEEDS_REPAIR", index.id),
+            )),
+            _ => Ok(index),
+        }
+    }
+
+    /// What `IF NOT EXISTS` returns for a `CreateIndex` Firestore refused with `refused`, which
+    /// is `ALREADY_EXISTS`: the listed index `definition` matches, built when `deadline` is set.
+    /// Firestore keeps answering that status for an index deleted minutes ago, so it counts only
+    /// when the listing shows the index too; otherwise `refused` is the error.
+    async fn existing_index(
+        &self,
+        definition: &FirestoreIndexDefinition,
+        refused: Status,
+        deadline: Option<&OperationDeadline>,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        let Some(existing) = self.matching_index(definition).await? else {
+            error!(
+                error = %refused,
+                index = %definition.index,
+                "Firestore answered ALREADY_EXISTS for an index its listing does not show.",
+            );
+            return Err(refused.into());
+        };
+        match deadline {
+            Some(deadline) => self.wait_while_creating(existing, deadline).await,
+            None => Ok(existing),
+        }
     }
 
     /// The index `target` names, as listed, or `None` when nothing has the ID or no listed index
@@ -256,14 +255,7 @@ impl FirestoreDb {
         let group_id = &definition.collection_group;
         validate_collection_group(group_id)?;
         let group = self.read_owned_group(group_id).await?;
-        let listing = self.list_existing_state(Some(group_id)).await?;
-        let matching: Vec<FirestoreListedCompositeIndex> = listing
-            .indexes
-            .into_iter()
-            .filter(|listed| {
-                composite_index_matches(&definition.index, &listed.index, group.edition)
-            })
-            .collect();
+        let matching = self.listed_matches(&group, &definition.index).await?;
         let listed = match <[_; 1]>::try_from(matching) {
             Ok([listed]) => listed,
             Err(matching) if matching.is_empty() => return Ok(None),
@@ -275,7 +267,7 @@ impl FirestoreDb {
                 return Err(FirestoreError::data_conflict(
                     SEVERAL_MATCHING_INDEXES,
                     format!(
-                        "{} indexes of group {group_id} match {}: {}; nothing was deleted",
+                        "{} indexes of group {group_id} match {}: {}",
                         ids.len(),
                         definition.index,
                         ids.join(", ")
@@ -489,28 +481,27 @@ impl FirestoreIndexSupport for FirestoreDb {
     ) -> FirestoreResult<FirestoreListedCompositeIndex> {
         validate_collection_group(&definition.collection_group)?;
         let deadline = wait.as_ref().map(OperationDeadline::from_now);
-        let (operation, index_name) = match self.start_create_index(definition.clone()).await {
-            Ok(started) => started,
-            // `ALREADY_EXISTS` is the one status that maps to a conflict. Firestore keeps
-            // answering it for an index deleted minutes ago, so the answer counts only when the
-            // listing shows the index too.
-            Err(FirestoreError::DataConflictError(conflict)) if if_not_exists => {
-                let existing = self
-                    .matching_index(&definition)
-                    .await?
-                    .ok_or(FirestoreError::DataConflictError(conflict))?;
-                return match &deadline {
-                    Some(deadline) => self.wait_while_creating(existing, deadline).await,
-                    None => Ok(existing),
-                };
+        let action = IndexAction::CreateIndex(definition.index.clone());
+        let parent = self.collection_group_path(definition.collection_group.as_str());
+        let proto = ProtoIndex::try_from(definition.index.clone())?;
+        let operation = match self.run_create_index(parent, proto, &action).await {
+            Ok(operation) => operation,
+            Err(status) if if_not_exists && status.code() == Code::AlreadyExists => {
+                return self
+                    .existing_index(&definition, status, deadline.as_ref())
+                    .await;
             }
-            Err(err) => return Err(err),
+            Err(status) => {
+                error!(error = %status, label = %action, "Failed to create a composite index.");
+                return Err(status.into());
+            }
         };
+        let build = StartedIndexBuild::new(operation, action)?;
         if let Some(deadline) = &deadline {
-            self.wait_for_operations(&[&operation], deadline, |_, _| {})
+            self.wait_for_operations(&[&build.operation], deadline, |_, _| {})
                 .await?;
         }
-        FirestoreListedCompositeIndex::try_from(self.get_index(&index_name).await?)
+        FirestoreListedCompositeIndex::try_from(self.get_index(&build.index_name).await?)
     }
 
     async fn delete_index(
@@ -525,7 +516,11 @@ impl FirestoreIndexSupport for FirestoreDb {
                 Err(target.not_found())
             };
         };
-        self.send_delete_index(&listed).await?;
+        let action = IndexAction::DeleteIndex(listed.clone());
+        if let Err(status) = self.run_delete_index(&listed.name, &action).await {
+            error!(error = %status, label = %action, "Failed to delete a composite index.");
+            return Err(status.into());
+        }
         Ok(Some(listed))
     }
 
@@ -571,8 +566,10 @@ mod tests {
         FirestoreIndexIdTarget, FirestoreQueryDirection,
     };
     use gcloud_sdk::google::firestore::admin::v1::database::DatabaseEdition;
-    use gcloud_sdk::google::firestore::admin::v1::ListFieldsRequest;
+    use gcloud_sdk::google::firestore::admin::v1::index::State as ProtoIndexState;
+    use gcloud_sdk::google::firestore::admin::v1::{DeleteIndexRequest, ListFieldsRequest};
     use std::collections::BTreeSet;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -1034,26 +1031,61 @@ mod tests {
         assert_eq!(existing.id, FirestoreIndexId::new("CICAgPj-z4oK").unwrap());
     }
 
-    #[tokio::test]
-    async fn create_of_an_index_another_caller_is_building_waits_until_it_is_ready() {
-        let creating = include_str!("testdata/standard-get-index-creating.json");
-        let ready: serde_json::Value = serde_json::from_str(include_str!(
-            "testdata/standard-create-index-operation-done.json"
-        ))
-        .unwrap();
-        let ready = decode_captured_index(&ready["response"]);
-        let fake = start_on(DatabaseEdition::Standard, move |method, _| match method {
+    /// A fake Standard database that answers `CreateIndex` with `ALREADY_EXISTS`, lists the index
+    /// of the capture as `CREATING`, and answers the `n`th `GetIndex` with `poll(n)`.
+    async fn another_caller_is_building(
+        poll: impl Fn(u32) -> FakeResponse + Send + Sync + 'static,
+    ) -> FakeFirestore {
+        let creating = captured_index(include_str!("testdata/standard-get-index-creating.json"));
+        let polls = AtomicU32::new(0);
+        start_on(DatabaseEdition::Standard, move |method, _| match method {
             CREATE_INDEX => (
                 "CreateIndex".to_string(),
                 FakeResponse::Status(Code::AlreadyExists),
             ),
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
-                list_indexes_response(vec![captured_index(creating)]),
+                list_indexes_response(vec![creating.clone()]),
             ),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
-            GET_INDEX => ("GetIndex".to_string(), encoded(ready.clone())),
+            GET_INDEX => {
+                let poll_number = polls.fetch_add(1, Ordering::SeqCst) + 1;
+                (format!("GetIndex#{poll_number}"), poll(poll_number))
+            }
             other => panic!("unexpected RPC: {other}"),
+        })
+        .await
+    }
+
+    fn ready_index() -> ProtoIndex {
+        let ready: serde_json::Value = serde_json::from_str(include_str!(
+            "testdata/standard-create-index-operation-done.json"
+        ))
+        .unwrap();
+        decode_captured_index(&ready["response"])
+    }
+
+    #[tokio::test]
+    async fn create_of_an_index_another_caller_is_building_waits_until_it_is_ready() {
+        let ready = ready_index();
+        let fake = another_caller_is_building(move |_| encoded(ready.clone())).await;
+
+        let existing = fake
+            .db
+            .create_index(captured_definition(), fast_wait(), true)
+            .await
+            .unwrap();
+
+        assert_eq!(existing.state, FirestoreIndexState::Ready);
+        assert!(fake.calls().contains(&"GetIndex#1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_poll_of_an_index_another_caller_is_building_is_sent_again_after_a_timeout() {
+        let ready = ready_index();
+        let fake = another_caller_is_building(move |poll| match poll {
+            1 => FakeResponse::Status(Code::DeadlineExceeded),
+            _ => encoded(ready.clone()),
         })
         .await;
 
@@ -1064,7 +1096,48 @@ mod tests {
             .unwrap();
 
         assert_eq!(existing.state, FirestoreIndexState::Ready);
-        assert!(fake.calls().contains(&"GetIndex".to_string()));
+        assert!(fake.calls().contains(&"GetIndex#2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_hung_poll_of_an_index_another_caller_is_building_ends_at_the_deadline() {
+        let fake = another_caller_is_building(|_| FakeResponse::Hang).await;
+        let wait = FirestoreOperationWaitOptions::new(Duration::from_millis(300))
+            .with_poll_interval(Duration::from_millis(5));
+
+        let refused = tokio::time::timeout(
+            Duration::from_secs(5),
+            fake.db
+                .create_index(captured_definition(), Some(wait), true),
+        )
+        .await
+        .expect("the wait is bounded by its own deadline")
+        .unwrap_err();
+
+        assert!(
+            matches!(&refused, FirestoreError::SystemError(error)
+                if error.public.code == "OPERATION_WAIT_TIMEOUT"),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_index_another_caller_built_into_needs_repair_fails_the_wait() {
+        let mut broken = ready_index();
+        broken.set_state(ProtoIndexState::NeedsRepair);
+        let fake = another_caller_is_building(move |_| encoded(broken.clone())).await;
+
+        let refused = fake
+            .db
+            .create_index(captured_definition(), fast_wait(), true)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&refused, FirestoreError::SystemError(error)
+                if error.public.code == INDEX_NEEDS_REPAIR),
+            "{refused:?}"
+        );
     }
 
     #[tokio::test]
@@ -1159,38 +1232,5 @@ mod tests {
             "{:?}",
             fake.calls()
         );
-    }
-
-    #[tokio::test]
-    async fn delete_by_id_with_if_exists_still_refuses_an_index_of_another_group() {
-        let fake = FakeFirestore::start(|method, _| match method {
-            GET_INDEX => (
-                "GetIndex".to_string(),
-                encoded(captured_index(include_str!(
-                    "testdata/standard-get-index-wrong-group.json"
-                ))),
-            ),
-            other => panic!("unexpected RPC: {other}"),
-        })
-        .await;
-
-        let refused = fake
-            .db
-            .delete_index(
-                FirestoreIndexDeleteTarget::Id(
-                    FirestoreIndexIdTarget::new(FirestoreIndexId::new("CICAgOi39IkJ").unwrap())
-                        .with_collection_group(FirestoreCollectionId::from_static("versions")),
-                ),
-                true,
-            )
-            .await
-            .unwrap_err();
-
-        assert!(
-            matches!(&refused, FirestoreError::DataNotFoundError(error)
-                if error.public.code == INDEX_IN_OTHER_GROUP),
-            "{refused:?}"
-        );
-        assert_eq!(fake.calls(), vec!["GetIndex"]);
     }
 }

@@ -593,7 +593,9 @@ pub trait FirestoreIndexSupport {
     /// With `if_not_exists`, the one index of the group that `definition` matches is the outcome,
     /// and an `ALREADY_EXISTS` for an index the listing does not show stays an error. Such an
     /// index is returned as listed, or, with `wait`, once it has left `CREATING`, polled under the
-    /// same deadline as a build this call started. Any other error stays an error.
+    /// same deadline as a build this call started. With `wait`, an index that ends in
+    /// `NEEDS_REPAIR` fails the call, as a failed build of its own does. Any other error stays an
+    /// error.
     async fn create_index(
         &self,
         definition: FirestoreIndexDefinition,
