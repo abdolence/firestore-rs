@@ -4,6 +4,7 @@
 // https://github.com/abdolence/firestore-rs/issues/206.
 pub use crate::db::transaction_ops::FirestoreTransactionOps;
 
+use crate::db::retry::{RetryDeadline, RETRY_BACKOFF};
 use crate::errors::*;
 use crate::timestamp_utils::from_timestamp;
 use crate::{
@@ -11,8 +12,7 @@ use crate::{
     FirestoreResult, FirestoreTransactionId, FirestoreTransactionMode, FirestoreTransactionOptions,
     FirestoreTransactionResponse, FirestoreWriteResult,
 };
-use backoff::backoff::Backoff;
-use backoff::ExponentialBackoffBuilder;
+use backon::BackoffBuilder;
 use futures::future::BoxFuture;
 use gcloud_sdk::google::firestore::v1::{BeginTransactionRequest, CommitRequest, RollbackRequest};
 use gcloud_sdk::RequestTimeouts;
@@ -420,7 +420,7 @@ impl FirestoreDb {
     /// state read before the transaction started, and avoid side effects inside the closure that
     /// are not themselves safe to repeat, such as an external HTTP call. A convenience of this: `?`
     /// on a plain [`FirestoreResult`] inside the closure already converts to
-    /// `BackoffError::Transient` for free, through `backoff::Error`'s blanket `From` impl, so the
+    /// `BackoffError::Transient` for free, through `BackoffError`'s blanket `From` impl, so the
     /// ordinary error paths already retry; return `Err(BackoffError::Permanent(err))` explicitly
     /// for an error that must not be retried. A permanent error rolls the transaction back and is
     /// returned wrapped in [`FirestoreError::ErrorInTransaction`].
@@ -511,10 +511,9 @@ impl FirestoreDb {
             ..options
         };
         let mut result = self.run_transaction_attempt(transaction, &func).await;
-        // Built only now, so that `retry_max_elapsed_time` counts from the first failure.
-        let mut backoff = ExponentialBackoffBuilder::new()
-            .with_max_elapsed_time(retry_options.retry_max_elapsed_time)
-            .build();
+        // Started only now, so that `retry_max_elapsed_time` counts from the first failure.
+        let deadline = RetryDeadline::start(retry_options.retry_max_elapsed_time);
+        let mut delays = RETRY_BACKOFF.build();
         let mut retries = 0;
 
         loop {
@@ -526,22 +525,10 @@ impl FirestoreDb {
             if retries == retry_options.max_retries {
                 return Err(err);
             }
-            // The backoff's own clock and test bound a callback's `retry_after` too, so that
-            // `retry_max_elapsed_time` caps both kinds of delay alike. A delay that overflows the
-            // sum ends past any cap.
-            let delay = match retry_after {
-                Some(delay) => retry_options
-                    .retry_max_elapsed_time
-                    .is_none_or(|cap| {
-                        backoff
-                            .get_elapsed_time()
-                            .checked_add(delay)
-                            .is_some_and(|end| end <= cap)
-                    })
-                    .then_some(delay),
-                None => backoff.next_backoff(),
-            };
-            let Some(delay) = delay else {
+            let Some(delay) = retry_after
+                .or_else(|| delays.next())
+                .filter(|&delay| deadline.allows(delay))
+            else {
                 return Err(err);
             };
             tokio::time::sleep(delay).await;
@@ -551,7 +538,7 @@ impl FirestoreDb {
                 .await
             {
                 Ok(transaction) => self.run_transaction_attempt(transaction, &func).await,
-                Err(err) => Err(firestore_err_to_backoff(err)),
+                Err(err) => Err(err.into_backoff_error()),
             };
         }
     }
@@ -584,7 +571,7 @@ impl FirestoreDb {
                 .commit()
                 .await
                 .map(|_| value)
-                .map_err(firestore_err_to_backoff),
+                .map_err(FirestoreError::into_backoff_error),
             Err(err) => {
                 // Reads can hold locks even without queued writes, so release them now rather
                 // than leaving them until the transaction expires.

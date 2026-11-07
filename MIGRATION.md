@@ -1,5 +1,35 @@
 # Migration guide
 
+## 0.64
+
+### `BackoffError` is the crate's own type
+
+`firestore::errors::BackoffError`, the error a `run_transaction` closure returns, is no longer an alias of
+`backoff::Error`. The `backoff` crate is unmaintained, and the library now retries with `backon`.
+`BackoffError` keeps the same shape, so closures that build or match it compile unchanged:
+- the variants `Permanent(err)` and `Transient { err, retry_after }`;
+- the constructors `permanent`, `transient` and `retry_after`;
+- the blanket `From`, so `?` inside the closure still returns a transient error.
+
+`backoff` is no longer a dependency, and neither is the unmaintained `instant`, which came only through it. Code
+that names `backoff::Error` directly switches to `firestore::errors::BackoffError`:
+
+```rust,ignore
+use firestore::errors::BackoffError;
+
+Err(BackoffError::Permanent(err))
+```
+
+A crate that depended on `backoff` only to name `backoff::Error` can drop that dependency. Until it does, the
+advisories RUSTSEC-2025-0012 (`backoff` is unmaintained) and RUSTSEC-2024-0384 (`instant` is unmaintained) stay in its
+dependency tree.
+
+### Retry delays are randomised by up to a third
+
+Reads, simple batch writes and transactions wait 500 ms before the first retry, growing by 1.5 times for each next
+retry, and stop at the same limits as before. Each delay is randomised by up to a third either way instead of up to
+50%, so it stays within the range it had before, with the same average.
+
 ## 0.63
 
 ### Composite indexes gain `unique` and `density`

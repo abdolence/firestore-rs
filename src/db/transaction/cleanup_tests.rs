@@ -209,6 +209,28 @@ async fn retry_after_delays_the_next_attempt() {
     );
 }
 
+// `?` on any error inside the callback makes it transient, so the transaction is retried.
+#[tokio::test]
+async fn question_mark_in_the_callback_retries_the_transaction() {
+    let server = fixture(Code::Ok, Code::Ok).await;
+    let result: FirestoreResult<()> = server
+        .db
+        .run_transaction(|_, transaction| {
+            Box::pin(async move {
+                if transaction.transaction_id() == &[1] {
+                    Err(std::io::Error::other("busy"))?;
+                }
+                Ok(())
+            })
+        })
+        .await;
+    result.unwrap();
+    assert_eq!(
+        server.calls(),
+        vec!["Begin→1", "Rollback(1)", "Begin→2", "Commit(2)"]
+    );
+}
+
 // `retry_max_elapsed_time` bounds a callback's `retry_after` the way it bounds the backoff delay: a
 // retry runs only while the time since the first failure plus its delay stays within the cap.
 #[tokio::test]
