@@ -4,7 +4,9 @@ Firestore supports attaching request tags to requests. They are reported by Fire
 in its monitoring and billing breakdowns, which makes them useful to attribute reads
 and writes to a specific feature, tenant or background job.
 
-Tags can be set per operation for queries, aggregations, listings and listeners:
+Tags can be set per operation for queries, aggregations, listings, listeners, and
+[pipelines](./pipelines.md#typed-results-and-metadata) and [SQL statements](./sql.md#setup) on the
+Enterprise edition:
 
 ```rust,no_run
 # use firestore::*;

@@ -52,7 +52,7 @@ db.fluent()
 ```
 
 Store the validated type in your own structs instead of a bare `String` to carry the proof along
-with the value; it deserializes through the same validation, so a `CreateSession` built from an
+with the value; it deserialises through the same validation, so a `CreateSession` built from an
 untrusted request body rejects a bad ID before it reaches Firestore:
 
 ```rust

@@ -1,37 +1,52 @@
-# Table of Contents
+# Table of contents
 
-[Intro and motivation](./intro.md)
+[Firestore for Rust](./intro.md)
 
 # Getting started
 
 - [Quick start](./getting-started.md)
 - [Client instance and lifecycle](./client.md)
 
-# Working with data
+# Firestore editions
+
+- [Standard and Enterprise editions](./editions.md)
+    - [Query and write semantics](./editions/semantics.md)
+    - [Query plans and cost](./editions/query-plans.md)
+    - [Choosing Core queries, pipelines or SQL](./editions/choosing-an-api.md)
+
+# Core API
 
 - [Fluent API](./fluent-api.md)
-- [Querying](./querying.md)
 - [Get and batch get](./get-and-batch-get.md)
+- [Querying](./querying.md)
 - [Nested collections](./nested-collections.md)
+- [Aggregations](./aggregations.md)
+- [Vector search](./vector-search.md)
+- [Listening to document changes](./listening-changes.md)
+- [Working on dynamic/document level](./dynamic-documents.md)
+
+# Writes and transactions
+
 - [Transactions](./transactions.md)
 - [Batch writes](./batch-writes.md)
 - [Document transformations](./document-transformations.md)
-- [Select aggregate functions](./aggregations.md)
 - [Update/delete preconditions](./preconditions.md)
-- [Explaining the query](./explain-query.md)
+
+# Pipelines and SQL (Enterprise edition)
+
 - [Pipelines](./pipelines.md)
     - [Pipeline aggregations and joins](./pipeline-aggregations-and-joins.md)
     - [Pipeline search](./pipeline-search.md)
     - [Pipeline writes](./pipeline-writes.md)
 - [SQL](./sql.md)
-- [Listening the document changes](./listening-changes.md)
-- [Working on dynamic/document level](./dynamic-documents.md)
+    - [Reads, joins and subqueries](./sql/reads.md)
+    - [Writes and ON CONFLICT](./sql/writes.md)
 
 # Data modelling
 
 - [Timestamps support](./timestamps.md)
 - [Document metadata as struct fields](./document-metadata.md)
-- [Explicit null value serialization](./null-serialization.md)
+- [Explicit null value serialisation](./null-serialization.md)
 - [Document and collection IDs](./document-collection-ids.md)
 
 # Caching
@@ -47,6 +62,9 @@
 # Administration
 
 - [Index management](./index-management.md)
+    - [Composite and vector indexes](./index-management/composite.md)
+    - [Search indexes (Enterprise edition)](./index-management/search.md)
+    - [TTL and the Enterprise edition](./index-management/ttl-and-enterprise.md)
 - [Bulk delete](./bulk-delete.md)
 
 # Environment and operations

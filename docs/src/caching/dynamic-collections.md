@@ -21,6 +21,8 @@ collection's resume token so its listener target ID cannot be reused against a d
 Use `remove_collection_at` for a sub-collection, whose absolute path a bare name cannot address.
 A collection whose target Firestore ends, for example on `PERMISSION_DENIED`, stays configured and
 suspended, so `add_collection` reports it as already cached until `remove_collection` is called.
+On an Enterprise edition database the listener needs real-time updates, see
+[Caching](../caching.md#on-the-enterprise-edition).
 
 `FirestoreDb` handles created earlier with `read_through_cache` or `read_cached_only` pick both up
 immediately: they share the cache's backend rather than a copy of it. A cache can also be built

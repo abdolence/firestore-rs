@@ -5,6 +5,15 @@ outside your Rust code: through the console, `gcloud` or the Firebase CLI's
 `firestore.indexes.json`. The library supports declaring them in Rust instead, next to the
 structs and queries that need them, and reconciling Firestore with one explicit call.
 
+This page covers the statement, its runs and its reports. The kinds of index have pages of their
+own:
+
+- [Composite and vector indexes](./index-management/composite.md), with the single-field overrides
+  of the Standard edition;
+- [Search indexes](./index-management/search.md), on the Enterprise edition;
+- [TTL and the Enterprise edition](./index-management/ttl-and-enterprise.md): the TTL policy, and
+  the index rules of an Enterprise edition database, unique indexes and density.
+
 ## Enabling the `admin` feature
 
 Index management, and the other administrative operations under `db.fluent()` that need the
@@ -67,24 +76,18 @@ println!("{report}");
 # }
 ```
 
-`.composite()` builds the group's composite indexes: order a field with `.asc()`/`.desc()`, or
-mark it `.array_contains()`, and chain `.all_descendants()` onto the whole index for a
-collection-group index rather than a single collection. A `.vector(dimension)` field must be the
-last field of the index it belongs to.
-
-`.field_overrides()` builds single-field overrides: `.exempt()` removes a field from automatic
-single-field indexing entirely, and `.indexes([...])` replaces it with exactly the indexes listed.
-See [below](#a-field-override-replaces-the-whole-automatic-set) for what that replacement means.
-
-`.ttl()` names the one field per collection group whose timestamp value enables document TTL.
+- `.composite()` builds the group's composite and vector indexes, see
+  [Composite and vector indexes](./index-management/composite.md);
+- `.field_overrides()` builds the single-field overrides of a Standard edition database, see
+  [Single-field overrides](./index-management/composite.md#single-field-overrides-standard-edition);
+- `.ttl()` names the one field per collection group whose timestamp value enables document TTL, see
+  [TTL policy](./index-management/ttl-and-enterprise.md#ttl-policy).
 
 Each of `.composite()`, `.field_overrides()` and `.ttl()` replaces whatever an earlier call in the
-same chain set, so call each at most once. On a Standard edition database a composite index needs
-at least two fields, unless it is a single vector field on its own; an Enterprise edition database
-takes an index of one field (see [Enterprise edition](#enterprise-edition)). An index holds at
-most one `.array_contains()` field, and a field override or a TTL path may not repeat. These, and
-the vector, field-count and density limits Firestore itself enforces, are checked at `.plan()`/`.sync()`
-before anything is written, and return `InvalidParametersError` naming what is wrong.
+same chain set, so call each at most once. A field override or a TTL path may not repeat. These
+rules, the rules of the database's edition, and the vector, field-count and density limits
+Firestore itself enforces, are checked at `.plan()`/`.sync()` before anything is written, and
+return `InvalidParametersError` naming what is wrong.
 
 ## plan() versus sync()
 
@@ -190,112 +193,6 @@ let tagged_rust: Vec<Post> = db
 The ID is shared across the whole database, including subcollections your own code never writes
 to. A statement owns the collection group, so `.prune_undeclared()` on `collection_group("posts")`
 reaches the indexes of every `posts` collection in the database.
-
-## Text and geo search indexes
-
-The pipeline [search stage](./pipeline-search.md) runs against search indexes, which only a
-database of the Firestore Enterprise edition has. A text index covers one or more string fields,
-and a geo index covers a geo point field. Declare them as composite indexes with `.text()` and
-`.geo()` on a field:
-
-```rust,no_run
-# use firestore::*;
-# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-db.fluent()
-    .indexes()
-    .collection_group("restaurants")
-    .composite(|i| {
-        i.indexes([
-            i.index([i.field("menu").text(), i.field("description").text()])
-                .search_options(
-                    FirestoreSearchIndexOptions::new().with_text_language("en".to_string()),
-                ),
-            i.index([i.field("location").geo()]),
-        ])
-    })
-    .sync()
-    .await?;
-# Ok(())
-# }
-```
-
-- A search index holds text and geo fields only. An index that mixes them with ordered, array or
-  vector fields is rejected with `InvalidParametersError` at `.plan()`/`.sync()`;
-- A text search covers all the text fields of the index it uses, and Firestore offers no index
-  that matches one field by name;
-- `.search_options(..)` sets the options of a text index. `text_language` is the BCP 47 language
-  tag the fields are indexed in, such as `en`; when it is left unset, Firestore detects each
-  document's language and lists the option as `und`, the code for an undetermined language.
-  `text_language_override_field_path` names the field that holds a document's own language, and
-  Firestore reads `language` when it is unset. An index declared without options matches the
-  index Firestore lists with those defaults;
-- `.geo_with(config)` takes a `FirestoreGeoIndexConfig` that can leave GeoJSON points out of a geo
-  index, which Firestore indexes by default;
-- `.all_descendants()` on the index scopes it to a collection group, which a collection-group
-  search needs;
-- on a Standard edition database `.plan()` and `.sync()` refuse a search index with
-  `InvalidParametersError` before anything is written.
-
-## Enterprise edition
-
-An Enterprise edition database builds no index on its own: there are no automatic single-field
-indexes, so every index a query needs is one the statement declares. `.plan()` and `.sync()` read
-the database's edition once per call and follow its rules:
-
-- a composite index of one field is how a single field is indexed. Firestore accepts one there,
-  ordered, `.array_contains()` or `__name__`, while a Standard edition database refuses it;
-- `.field_overrides()` has nothing to override. An `.exempt()` is already satisfied and is never
-  written. An override that lists indexes fails with `InvalidParametersError` before anything is
-  written, since Firestore refuses it;
-- `.ttl()` enables a TTL field as on Standard, and `.prune_undeclared()` disables an undeclared
-  one the same way;
-- Firestore appends no `__name__` field to an index, so `[a, b]` and `[a, b, __name__]` are two
-  different indexes, and a statement can declare both;
-- an index can be unique, refusing a write that would give two documents the same entry, and
-  dense or sparse, holding an entry for every document or only for the ones that have the indexed
-  fields. `.unique()` and `.density(..)` set these, as the paragraphs after the example describe.
-
-```rust,no_run
-# use firestore::*;
-# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-db.fluent()
-    .indexes()
-    .collection_group("users")
-    .composite(|i| {
-        i.indexes([
-            i.index([i.field("email").asc()]).unique(),
-            i.index([i.field("country").asc()]),
-            i.index([i.field("country").asc(), i.field("nickname").asc()])
-                .density(FirestoreIndexDensity::SparseAny),
-        ])
-    })
-    .ttl(["expires_at"])
-    .sync()
-    .await?;
-# Ok(())
-# }
-```
-
-A unique index refuses a write that would give two documents the same entry in it. Firestore
-answers a create, an update and a commit alike with `ALREADY_EXISTS` ("Duplicate values are found
-for unique index."), and the write returns `DataConflictError`. A unique index of one field is how
-a value such as an email address is kept unique across a collection.
-
-The density of an index says which documents it holds an entry for. A dense index holds one for
-every document, with a missing field stored as unset; a sparse index leaves out the documents
-that lack the indexed fields. Enterprise builds an index dense by default, and a text or geo
-search index always as `FirestoreIndexDensity::SparseAny`, an entry for each document that has at
-least one of the fields. Standard builds every index as `SparseAll`, an entry only for a document
-that has all of them, and accepts no other density, while Enterprise refuses `SparseAll`, and a
-search index there takes only `SparseAny`. A declaration with a density the edition refuses fails
-with `InvalidParametersError` before anything is written. Two indexes over the same fields are
-different indexes when their densities differ, or when one is unique and the other is not, and a
-declaration matches only the one it describes.
-
-On an empty collection, `.wait_until_ready(..)` waited 62 to 68 seconds for one index of each kind
-on an Enterprise edition database: ordered, array, vector, text, geo, and text with geo. On a
-Standard edition database, a lone vector index took 355 seconds, and three composite indexes with
-two field overrides and a TTL field 414 seconds.
 
 ## Removing what you no longer declare
 
@@ -501,9 +398,13 @@ db.fluent()
 # }
 ```
 
-`.wait_until_ready_with_options(...)` also sets the poll interval, 5 seconds by default. A
-composite or vector index build is not instant even on an empty collection, so budget minutes
-for it.
+`.wait_until_ready_with_options(...)` also sets the poll interval, 5 seconds by default.
+
+An index build is not instant even on an empty collection. On an empty collection,
+`.wait_until_ready(..)` waited 62 to 68 seconds for one index of each kind on an Enterprise
+edition database: ordered, array, vector, text, geo, and text with geo. On a Standard edition
+database, a lone vector index took 355 seconds, and three composite indexes with two field
+overrides and a TTL field 414 seconds.
 
 The timeout covers the whole sync, from the start of the call, and every wait inside it ends by
 the same deadline. The last round of polls goes out at the deadline itself. One poll may take up
@@ -534,58 +435,7 @@ separate way to configure that default today.
 A revert can wait the same way for a different sync's write, not this one's own: see
 [Running from several instances](#running-from-several-instances).
 
-## Indexing only chosen fields
-
-`f.all_fields()` targets Firestore's special `*` field path, scoped to the owned collection group.
-Combined with `.exempt()`, it excludes every field in the group from automatic single-field
-indexing; list the fields you do want indexed by name alongside it:
-
-```rust,no_run
-# use firestore::*;
-# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-db.fluent()
-    .indexes()
-    .collection_group("orders")
-    .field_overrides(|f| {
-        f.fields([
-            f.all_fields().exempt(),
-            f.field("customer_id").indexes([f.ascending()]),
-            f.field("status").indexes([f.ascending(), f.descending()]),
-        ])
-    })
-    .sync()
-    .await?;
-# Ok(())
-# }
-```
-
-A named field declared alongside `all_fields()` wins for that field, since it is more specific:
-this is how "everything except these fields" is expressed. Composite indexes are unaffected by
-`all_fields()`.
-
-There is no database-wide equivalent. A collection-group statement never reaches the
-`__default__` group's own `*` field, so a default applied across every collection group at once is
-deliberately out of reach from this API.
-
-## A field override replaces the whole automatic set
-
-Declaring only `.array_contains()` on a field Firestore would otherwise also index for equality
-and ordering removes that automatic support: Firestore does not merge an override with its
-defaults, and neither does `firestore.indexes.json`. `.indexes([...])` always takes the whole set
-to maintain for a field, never one index to add to what is already there. An empty list, or
-`.exempt()` (the same thing), excludes the field from single-field indexing entirely.
-
-## `__name__` handling
-
-On a Standard edition database, a composite index declared without `__name__` matches a listed
-index that has it where Firestore puts it: last in an ordinary index, or directly before the
-vector field in a vector index. The direction of that `__name__` does not matter for the match. A
-`__name__` anywhere else makes the listed index a different one. Declare `__name__` yourself only
-when a query needs a specific direction; an explicit declaration then matches only a listed index
-with exactly the same fields, `__name__` included.
-
-An Enterprise edition database appends no `__name__`, so there a declaration matches only a
-listed index with exactly its fields.
+## Field paths
 
 Field paths compare in one spelling, so `` `expires_at` `` and `expires_at`, or `` a.`b` `` and
 `` `a`.b ``, are the same field. A segment needs backticks only when it is not a plain identifier
@@ -674,8 +524,9 @@ GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin 
 ```
 
 Every other test in that file creates, updates or deletes real indexes, overrides or TTL policy,
-and a composite or vector index build can take 10-15 minutes even on an empty collection, so those
-carry `#[ignore]` and only run explicitly:
+and waits for builds that take minutes even on an empty collection, see
+[Waiting for changes to finish](#waiting-for-changes-to-finish), so those carry `#[ignore]` and
+only run explicitly:
 
 ```bash
 GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture

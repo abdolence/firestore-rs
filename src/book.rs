@@ -12,6 +12,21 @@ mod getting_started {}
 #[doc = include_str!("../docs/src/client.md")]
 mod client {}
 
+#[doc = include_str!("../docs/src/editions.md")]
+mod editions {}
+
+#[doc = include_str!("../docs/src/editions/semantics.md")]
+mod editions_semantics {}
+
+#[doc = include_str!("../docs/src/editions/query-plans.md")]
+mod editions_query_plans {}
+
+#[doc = include_str!("../docs/src/editions/choosing-an-api.md")]
+mod editions_choosing_an_api {}
+
+#[doc = include_str!("../docs/src/vector-search.md")]
+mod vector_search {}
+
 #[doc = include_str!("../docs/src/fluent-api.md")]
 mod fluent_api {}
 
@@ -54,9 +69,6 @@ mod aggregations {}
 #[doc = include_str!("../docs/src/preconditions.md")]
 mod preconditions {}
 
-#[doc = include_str!("../docs/src/explain-query.md")]
-mod explain_query {}
-
 #[doc = include_str!("../docs/src/pipelines.md")]
 mod pipelines {}
 
@@ -73,6 +85,14 @@ mod pipeline_writes {}
 #[doc = include_str!("../docs/src/sql.md")]
 mod sql {}
 
+#[cfg(feature = "sql")]
+#[doc = include_str!("../docs/src/sql/reads.md")]
+mod sql_reads {}
+
+#[cfg(feature = "sql")]
+#[doc = include_str!("../docs/src/sql/writes.md")]
+mod sql_writes {}
+
 #[doc = include_str!("../docs/src/request-tags.md")]
 mod request_tags {}
 
@@ -82,6 +102,7 @@ mod request_timeouts {}
 #[doc = include_str!("../docs/src/document-collection-ids.md")]
 mod document_collection_ids {}
 
+#[cfg(feature = "caching")]
 #[doc = include_str!("../docs/src/caching.md")]
 mod caching {}
 
@@ -112,6 +133,18 @@ mod updates {}
 #[cfg(feature = "admin")]
 #[doc = include_str!("../docs/src/index-management.md")]
 mod index_management {}
+
+#[cfg(feature = "admin")]
+#[doc = include_str!("../docs/src/index-management/composite.md")]
+mod index_management_composite {}
+
+#[cfg(feature = "admin")]
+#[doc = include_str!("../docs/src/index-management/search.md")]
+mod index_management_search {}
+
+#[cfg(feature = "admin")]
+#[doc = include_str!("../docs/src/index-management/ttl-and-enterprise.md")]
+mod index_management_ttl_and_enterprise {}
 
 #[cfg(feature = "admin")]
 #[doc = include_str!("../docs/src/bulk-delete.md")]

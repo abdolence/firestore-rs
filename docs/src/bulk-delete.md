@@ -111,7 +111,8 @@ The third line comes from the same wait every long-running admin operation polls
 sync included, which is why it names the operation generically rather than as a bulk delete.
 
 That run took about 11 seconds end to end, for 5 documents; budget for it running longer against
-more data.
+more data. Bulk delete works on both editions, removes the named collection group at every depth,
+and with `wait_until_done` returns after about a minute for a handful of documents.
 
 ## The Firestore emulator
 

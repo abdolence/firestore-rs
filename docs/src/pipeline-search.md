@@ -162,5 +162,5 @@ A search runs only against search indexes:
   ones is rejected;
 - a collection-group search needs indexes scoped to the collection group.
 
-[Index management](./index-management.md#text-and-geo-search-indexes) declares them in Rust,
+[Index management](./index-management/search.md) declares them in Rust,
 with `i.field(..).text()` and `i.field(..).geo()`, and creates them with `.sync()`.

@@ -140,7 +140,7 @@ after the one before. The numbers are measurements on tiny documents.
 
 A TTL (time-to-live) policy suits retention better than a scheduled `delete`: Firestore deletes
 the documents itself once the timestamp in the policy's field has passed, see
-[Index management](./index-management.md). The
+[TTL and the Enterprise edition](./index-management/ttl-and-enterprise.md#ttl-policy). The
 [bulk delete](./bulk-delete.md) of the `admin` feature empties a whole collection.
 
 ## Writes in a transaction
@@ -198,4 +198,4 @@ is `retry_possible`.
 
 The changes of a pipeline write reach listeners. A Core listener on the collection receives a
 change for each inserted, updated or upserted document, and a delete for each deleted one. See
-[Listening the document changes](./listening-changes.md).
+[Listening to document changes](./listening-changes.md).

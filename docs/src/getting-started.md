@@ -7,6 +7,9 @@ Cargo.toml:
 firestore = "0.63"
 ```
 
+Pipelines and SQL need a database of the Enterprise edition, see
+[Standard and Enterprise editions](./editions.md).
+
 ## Crypto provider error
 
 Depends on your other dependencies you may see the error like:

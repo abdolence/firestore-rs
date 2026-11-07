@@ -8,6 +8,7 @@
 
 Cached results are eventually consistent: they reflect the last state the listener delivered, so a
 write may take a moment to show up. Do not cache data that must be read at strong consistency.
+This holds for pipeline and SQL reads that the cache answers too.
 
 Firestore also reports how many documents a target matches. When that disagrees with what a
 preloaded collection holds - which means changes were missed, typically deletes that happened while
@@ -20,6 +21,11 @@ token has expired - the cache drops what it holds for that collection and Firest
 While that replay is in progress the collection stops answering `list` and `query` from the cache:
 `read_through_cache` falls back to Firestore, and `read_cached_only` returns a `CacheError` rather
 than a listing that looks complete but is not.
+
+## On the Enterprise edition
+
+The listener that updates the cache needs real-time updates on an Enterprise edition database, a
+setting chosen when the database is created, see [Caching](../caching.md#on-the-enterprise-edition).
 
 Full examples are available [here](https://github.com/abdolence/firestore-rs/blob/master/examples/caching_memory_collections.rs)
 and [here](https://github.com/abdolence/firestore-rs/blob/master/examples/caching_persistent_collections.rs).

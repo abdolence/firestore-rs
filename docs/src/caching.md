@@ -15,6 +15,10 @@ Caching is opt-in through cargo features:
 - `caching-persistent` for a persistent, disk backed cache, implemented with
   [redb](https://github.com/cberner/redb) and protobuf.
 
+The cache serves Core reads, and pipeline and SQL reads, on both editions. Which reads it answers
+is listed in [Choosing a cache mode](./caching/modes.md), and the Core query rules in
+[What the cache answers](./caching/modes.md#what-the-cache-answers).
+
 ## Pipelines
 
 [Pipelines](./pipelines.md) and [SQL](./sql.md) reads use the cache in the same sessions,
@@ -109,7 +113,7 @@ collection or `documents(..)`:
 `database()`, `+ - * / %`, `||`, `LOWER`, `UPPER`, `CHAR_LENGTH`, `LIKE`, `ILIKE`, `CASE`,
 `COALESCE`, `IFNULL`, `SUBSTR` and search run on Firestore.
 
-### Enterprise databases
+## On the Enterprise edition
 
 The listener that keeps a cache current needs real-time updates on a database of the Enterprise
 edition. They are enabled when the database is created:
@@ -118,3 +122,11 @@ edition. They are enabled when the database is created:
 gcloud firestore databases create --database=my-database --edition=enterprise \
   --location=nam5 --enable-firestore-data-access --enable-realtime-updates
 ```
+
+The setting is immutable, and Google's documentation does not agree on its default for an
+Enterprise edition database, so set the flag explicitly, see
+[Settings fixed at creation](./editions.md#settings-fixed-at-creation).
+
+A cached Core query follows the order of the Standard edition, and documents with equal values can
+come back in another order from an Enterprise edition database, see
+[What the cache answers](./caching/modes.md#on-the-enterprise-edition).

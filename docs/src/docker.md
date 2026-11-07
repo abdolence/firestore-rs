@@ -14,8 +14,8 @@ For example for Debian based images, this usually can be fixed using this packag
 RUN apt-get install -y ca-certificates
 ```
 
-Also, I recommend considering using [Google Distroless images](https://github.com/GoogleContainerTools/distroless) since
-they are secure, already include Root CA certs, and are optimised for size.
+[Google Distroless images](https://github.com/GoogleContainerTools/distroless) are a good choice of
+base image, since they are secure, already include Root CA certs, and are optimised for size.
 
 ## TLS features
 Cargo provides support for different TLS features for dependencies:

@@ -158,45 +158,28 @@ cached document could hold only the masked fields, and later reads by ID returne
 ### Cached queries return what Firestore returns
 
 The cached query engine, used by `query` on preloaded collections, now returns the documents Firestore returns, in the
-order Firestore returns them. Before, these queries returned other documents, in an arbitrary order:
+order Firestore returns them. The rules it follows are in the "What the cache answers" section of the "Choosing a cache
+mode" page of the book. Before, these queries returned other documents, in an arbitrary order:
 
-- **Timestamps and numbers.** Timestamps compare by seconds and then nanoseconds; before, the two parts were compared
-  separately, so `1.9 s < 2.1 s` was false. An integer and a double compare by value, so a filter on `1` matches the
-  double `1.0`, and `order_by` sorts them together.
-- **Order and range filters on every type.** `<`, `<=`, `>`, `>=`, `order_by` and cursors follow Firestore's order of
-  types (null, booleans, numbers, timestamps, strings, bytes, references, geo points, arrays, vectors, maps) and its
-  order within each type. Before, only numbers and timestamps had an order: `<` and `>` on a string matched nothing,
-  an `end_at` cursor on one returned nothing, and `order_by` returned an arbitrary order or panicked. A range filter
-  matches values of its own type only, and never NaN.
-- **Several `order_by` fields.** The first field that differs decides. Ties end on the document name, in the direction of
-  the last field. Before, the last field decided. A document that lacks an `order_by` field is not returned, as in
-  Firestore.
-- **No `order_by`.** Results come in the order of the fields compared with `<`, `<=`, `>`, `>=`, `!=` or `not-in`, and
-  then by document name.
-- **Cursors, `offset` and `limit`.** The cursors apply first, then `offset`, then `limit`. Before, `limit` applied first,
-  so `limit(10).offset(5)` returned 5 documents and `start_at` with a `limit` could return none. A cursor is one position
-  in the order of its fields; before, each field was compared on its own.
-- **`in`, `not-in` and `array-contains`.** `in` matches a scalar field equal to any listed value, `not-in` one equal to
-  none of them, leaving out documents where the field is null or absent, and `array-contains` an array field holding
-  the value. Before, `in` and `array-contains` expected the field and the filter value the other way round, so they
-  returned no documents, and `not-in` returned only the documents with an array field.
-- **`find_nearest`, `return_only_fields` and `explain_options`.** The cached engine applies none of them, so a query that
-  sets one is answered by Firestore under `read_through_cache`, and fails with `CacheIncompleteCollection` under
-  `read_cached_only`. Before, it returned the filtered documents without the nearest-neighbour search, projection or
-  plan. A `get` or batch get with `.fields(..)` follows the same rule, and fails with `CacheFieldMaskUnsupported`; before,
-  it returned the whole cached document.
-- **Equality on arrays, maps, bytes, references and geo points.** `==`, `!=`, `in`, `not-in`, `array-contains` and
-  `array-contains-any` match these values. Arrays are equal when their elements are equal in order, and maps when their
-  fields are equal by key; inside both, an integer equals the double of the same value, and null and NaN equal
-  themselves. `!=` also matches a field of another type.
-- **Null and NaN in a filter.** A null in a filter value matches nothing: `== null`, `!= null` and `array-contains`
-  null return no documents, a null in an `in` or `array-contains-any` list is ignored, and a `not-in` list that holds a
-  null returns no documents. NaN equals nothing, itself included, and is in no range; `!=` and `not-in` match it. Use
-  `is_null` to find null fields. `is_null` no longer matches documents without the field, and `is_not_nan` no longer
-  matches documents where the field is null or absent.
-
-The order is that of the Standard edition. Equal values that tie can come back in another order from an Enterprise
-edition database.
+- **Timestamps.** Before, seconds and nanoseconds were compared separately, so `1.9 s < 2.1 s` was false. Now a
+  timestamp compares by seconds and then nanoseconds, and an integer and a double compare by value.
+- **Order and range filters.** Before, only numbers and timestamps had an order: `<` and `>` on a string matched
+  nothing, an `end_at` cursor on one returned nothing, and `order_by` returned an arbitrary order or panicked. Now every
+  type follows Firestore's order of types.
+- **Several `order_by` fields.** Before, the last field decided. Now the first field that differs decides, and ties end
+  on the document name.
+- **Cursors, `offset` and `limit`.** Before, `limit` applied first, so `limit(10).offset(5)` returned 5 documents and
+  `start_at` with a `limit` could return none, and each field of a cursor was compared on its own. Now the cursors apply
+  first, then `offset`, then `limit`, and a cursor is one position in the order of its fields.
+- **`in`, `not-in` and `array-contains`.** Before, `in` and `array-contains` expected the field and the filter value the
+  other way round, so they returned no documents, and `not-in` returned only the documents with an array field. Now
+  they match as in Firestore.
+- **`find_nearest`, `return_only_fields` and `explain_options`.** Before, a query that set one returned the filtered
+  documents without the nearest-neighbour search, projection or plan, and a `get` or batch get with `.fields(..)`
+  returned the whole cached document. Now such a read goes to Firestore under `read_through_cache`, and fails with
+  `CacheIncompleteCollection` or `CacheFieldMaskUnsupported` under `read_cached_only`.
+- **Null and NaN.** Before, `is_null` matched documents without the field, and `is_not_nan` matched documents where the
+  field is null or absent. Now neither does, and arrays, maps, bytes, references and geo points take part in equality.
 
 ### Cache sessions answer pipelines from the cache
 
@@ -408,7 +391,7 @@ those documents exist and are readable through Datastore-mode integer IDs.
 
 ### Ordering
 
-`.order_by([(path!(T::field), FirestoreQueryDirection::Descending)])` is deprecated in favor of a
+`.order_by([(path!(T::field), FirestoreQueryDirection::Descending)])` is deprecated in favour of a
 closure builder, matching `.filter()` and `.transforms()`:
 
 ```rust,ignore
@@ -420,7 +403,7 @@ closure builder, matching `.filter()` and `.transforms()`:
 
 `.order_by(...)` keeps working and is not scheduled for removal in 0.x.
 
-One behavior differs: an empty ordering built through `.order()` (every entry conditional and
+One behaviour differs: an empty ordering built through `.order()` (every entry conditional and
 every condition false) clears the query's ordering entirely, the same as never calling `.order()`.
 `.order_by([])` instead sets the ordering to an empty list, which is not equivalent for a listing
 query - an empty list disables the collection cache's fast path, while no ordering at all does not.

@@ -232,11 +232,10 @@ let nearest: Vec<Nearest> = db
 # }
 ```
 
-The stage does not use a vector index. Its plan is a `TableScan` followed by a sort by distance,
-even when a vector index exists on the field, so its cost follows the size of the collection. A
-Core vector query (`select().find_nearest(..)`) needs the index and uses it on a Standard edition
-database. On Enterprise it answered with and without one, and Query Explain is refused there, so
-its plan cannot show whether it used the index.
+The stage does not use a vector index, so its cost follows the size of the collection, see
+[Known table scans](./editions/query-plans.md#known-table-scans). A Core vector query,
+`select().find_nearest(..)`, has a distance threshold and uses a vector index on a Standard edition
+database, see [Vector search](./vector-search.md).
 
 ## Joins
 
