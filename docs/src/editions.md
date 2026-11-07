@@ -17,7 +17,7 @@ editions, and the client picks one by its ID, see
 | A Core query that no index covers | fails with `FAILED_PRECONDITION`, "The query requires an index" | runs as a *table scan*, reading every document of the collection; without `order_by` the order of its results is unspecified |
 | Core aggregations: count, sum, avg | yes | yes, with the same results |
 | [Transactions](./transactions.md) | yes | yes; optimistic by default, so under contention more attempts abort and are retried |
-| Core `.explain()` | yes | rejected with `INVALID_ARGUMENT` |
+| Query plans, `.explain()` | Core queries; pipelines and SQL are not available | pipelines and SQL, see [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline); a Core query's `.explain()` is rejected with `INVALID_ARGUMENT`, so explain the same query as a pipeline |
 | Core [vector search](./vector-search.md) | needs a vector index, and fails with `FAILED_PRECONDITION` without one | runs without a vector index |
 | [Pipelines](./pipelines.md) and [SQL](./sql.md) | fail with `FAILED_PRECONDITION`, unless a cache session answers them | yes |
 | [Pipeline writes](./pipeline-writes.md) and SQL writes | no | yes |
@@ -89,7 +89,7 @@ edition database, so set `--enable-realtime-updates` explicitly when the databas
   [Write limits](./pipeline-writes.md#write-limits);
 - Firestore has no setting that rejects a table scan, see
   [Query plans and cost](./editions/query-plans.md#recognising-a-full-scan);
-- a Core `.explain()` is rejected on Enterprise, where only a pipeline returns a plan.
+- a Core `.explain()` is rejected on Enterprise. The same query written as a pipeline or SQL returns its plan through `.explain()`, see [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline).
 
 ## Query and write semantics
 
