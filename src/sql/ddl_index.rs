@@ -69,6 +69,13 @@ impl FirestoreSqlTranslator<'_> {
         if !parser.parse_keyword(Keyword::ON) {
             let next = parser.peek_token();
             return Err(match next.token {
+                Token::Word(ref word) if word.keyword == Keyword::IF => {
+                    FirestoreError::invalid_sql(
+                        "CREATE INDEX",
+                        "expected IF NOT EXISTS, or ON",
+                        at(next.span),
+                    )
+                }
                 Token::Word(_) => FirestoreError::invalid_sql(
                     "index_name",
                     "Firestore assigns the ID of an index; an index cannot be named",
@@ -110,13 +117,20 @@ impl FirestoreSqlTranslator<'_> {
         let target = FirestoreIndexIdTarget::new(
             FirestoreIndexId::new(id.value).map_err(|error| error.located(start))?,
         );
-        Ok(FirestoreIndexDeleteTarget::Id(
-            if parser.parse_keyword(Keyword::ON) {
-                target.with_collection_group(self.collection_group_id(parser)?)
-            } else {
-                target
-            },
-        ))
+        if parser.parse_keyword(Keyword::ON) {
+            return Ok(FirestoreIndexDeleteTarget::Id(
+                target.with_collection_group(self.collection_group_id(parser)?),
+            ));
+        }
+        if self.options.collections.is_some() {
+            return Err(FirestoreError::invalid_sql(
+                "collections",
+                "DROP INDEX by ID reaches an index in any collection group; with the options' \
+                 collections it needs ON and a collection they allow",
+                start,
+            ));
+        }
+        Ok(FirestoreIndexDeleteTarget::Id(target))
     }
 
     /// The definition read after `ON`: the target, the columns and the options.

@@ -78,7 +78,9 @@ impl<'a> FirestoreSqlBuilder<'a> {
     }
 
     /// Checks the statement against `options`, such as
-    /// [`read_only`](FirestoreSqlOptions::read_only) for text from outside the program.
+    /// [`read_only`](FirestoreSqlOptions::read_only) for text from outside the program. The index
+    /// statements run only with
+    /// [`allow_index_statements`](FirestoreSqlOptions::allow_index_statements).
     pub fn options(self, options: FirestoreSqlOptions) -> Self {
         Self { options, ..self }
     }
@@ -89,7 +91,8 @@ impl<'a> FirestoreSqlBuilder<'a> {
     ///
     /// A statement that starts with `EXPLAIN` fails with
     /// [`InvalidParametersError`](FirestoreError::InvalidParametersError), field `explain`:
-    /// the text and the builder would both set the options.
+    /// the text and the builder would both set the options. So does `SHOW` or an index
+    /// statement, which have no plan.
     pub fn explain(self) -> Self {
         self.explain_with_options(FirestoreExplainOptions::new())
     }
@@ -122,7 +125,10 @@ impl<'a> FirestoreSqlBuilder<'a> {
         }
     }
 
-    /// Attaches request options to this statement.
+    /// Attaches request options to this statement. `SHOW INDEXES` and the index statements go to
+    /// the Admin API, which takes none: they fail with
+    /// [`InvalidParametersError`](FirestoreError::InvalidParametersError), field
+    /// `request_options`, before any request.
     pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
         Self {
             request_options: Some(options),
@@ -130,8 +136,8 @@ impl<'a> FirestoreSqlBuilder<'a> {
         }
     }
 
-    /// Attaches request tags to this statement. They override any session wide default
-    /// configured with
+    /// Attaches request tags to this statement, as [`request_options`](Self::request_options). They
+    /// override any session wide default configured with
     /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
     pub fn request_tags<I>(self, tags: I) -> Self
     where
@@ -269,10 +275,40 @@ impl<'a> FirestoreSqlBuilder<'a> {
             .await
     }
 
-    /// Translates the statement, and refuses a wait on one that starts no operation to wait for.
+    /// Translates the statement, and refuses what the builder holds that the statement has no use
+    /// for: an explain on anything but a `SELECT` or a write, request options on a statement that
+    /// goes to the Admin API, and a wait on one that starts no operation to wait for.
     fn statement(&self) -> FirestoreResult<FirestoreSqlStatement> {
         let statement =
             FirestoreSqlStatement::translate(self.db, &self.sql, &self.parameters, &self.options)?;
+        if self.explain_options.is_some()
+            && !matches!(
+                statement,
+                FirestoreSqlStatement::Query(_)
+                    | FirestoreSqlStatement::Explain(_)
+                    | FirestoreSqlStatement::Write(_)
+            )
+        {
+            return Err(FirestoreError::invalid_parameters(
+                "explain",
+                "only a SELECT runs with Query Explain",
+            ));
+        }
+        #[cfg(feature = "admin")]
+        if self.request_options.is_some()
+            && matches!(
+                statement,
+                FirestoreSqlStatement::ShowIndexes(_)
+                    | FirestoreSqlStatement::CreateIndex(_)
+                    | FirestoreSqlStatement::DropIndex(_)
+                    | FirestoreSqlStatement::AlterCollection(_)
+            )
+        {
+            return Err(FirestoreError::invalid_parameters(
+                "request_options",
+                "SHOW INDEXES and the index statements go to the Admin API, which takes no request options",
+            ));
+        }
         #[cfg(feature = "admin")]
         if self.wait.is_some()
             && !matches!(
@@ -428,7 +464,7 @@ where
 mod tests {
     use crate::db::fake_firestore::FakeFirestore;
     use crate::errors::FirestoreError;
-    use crate::FirestoreResult;
+    use crate::{FirestoreResult, FirestoreSqlOptions};
     use std::time::Duration;
 
     async fn refusing_every_request() -> FakeFirestore {
@@ -466,6 +502,52 @@ mod tests {
             .await;
 
         assert_eq!(refused_field(refused), "wait");
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    }
+
+    const INDEX_STATEMENTS: [&str; 5] = [
+        "SHOW INDEXES",
+        "CREATE INDEX ON orders (customer_id, placed_at DESC)",
+        "DROP INDEX CICAgJim14AK",
+        "ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = TRUE)",
+        "SHOW COLLECTIONS",
+    ];
+
+    #[tokio::test]
+    async fn explain_on_a_statement_without_a_plan_is_refused() {
+        let fake = refusing_every_request().await;
+
+        for sql in INDEX_STATEMENTS {
+            let refused = fake
+                .db
+                .fluent()
+                .sql(sql)
+                .options(FirestoreSqlOptions::new().allow_index_statements())
+                .explain()
+                .run()
+                .await;
+
+            assert_eq!(refused_field(refused), "explain", "{sql}");
+        }
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    }
+
+    #[tokio::test]
+    async fn request_options_on_an_admin_statement_are_refused() {
+        let fake = refusing_every_request().await;
+
+        for sql in &INDEX_STATEMENTS[..4] {
+            let refused = fake
+                .db
+                .fluent()
+                .sql(*sql)
+                .options(FirestoreSqlOptions::new().allow_index_statements())
+                .request_tags(["a-tag"])
+                .run()
+                .await;
+
+            assert_eq!(refused_field(refused), "request_options", "{sql}");
+        }
         assert!(fake.calls().is_empty(), "{:?}", fake.calls());
     }
 

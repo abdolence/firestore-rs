@@ -242,6 +242,13 @@ impl FirestoreSqlTranslator<'_> {
                 "a statement that changes an index or a field is refused by the read-only options",
                 start,
             ));
+        } else if !self.options.index_statements {
+            return Err(FirestoreError::invalid_sql(
+                "allow_index_statements",
+                "a statement that changes an index or a field runs only with \
+                 FirestoreSqlOptions::allow_index_statements()",
+                start,
+            ));
         } else {
             self.index_statement(parser, &leading)?
         };
@@ -363,18 +370,22 @@ impl FirestoreSqlTranslator<'_> {
     #[cfg(not(feature = "admin"))]
     fn index_statement(
         &self,
-        _parser: &mut Parser,
+        parser: &mut Parser,
         leading: &TokenWithSpan,
     ) -> FirestoreResult<FirestoreSqlStatement> {
         let statement = if is_word(leading, "ALTER") {
-            "ALTER COLLECTION".to_string()
+            parse_word(parser, "COLLECTION").then(|| "ALTER COLLECTION".to_string())
         } else {
-            format!("{} INDEX", leading.token.to_string().to_uppercase())
+            ["UNIQUE", "SEARCH", "VECTOR"]
+                .iter()
+                .any(|word| parse_word(parser, word));
+            parse_word(parser, "INDEX")
+                .then(|| format!("{} INDEX", leading.token.to_string().to_uppercase()))
         };
-        Err(FirestoreError::sql_needs_admin(
-            &statement,
-            at(leading.span),
-        ))
+        Err(match statement {
+            Some(statement) => FirestoreError::sql_needs_admin(&statement, at(leading.span)),
+            None => FirestoreError::sql_not_a_statement(next_start(parser)),
+        })
     }
 
     /// The collection group ID `parser` reads next. A path is refused: an index and a field

@@ -95,7 +95,7 @@ impl FirestoreError {
 
     /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for SQL text
     /// that is no statement the crate runs, at the word where it stops being one.
-    #[cfg(all(feature = "sql", feature = "admin"))]
+    #[cfg(feature = "sql")]
     pub(crate) fn sql_not_a_statement(location: Option<FirestoreSqlLocation>) -> Self {
         FirestoreError::invalid_sql(
             "statement",

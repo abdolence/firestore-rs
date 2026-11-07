@@ -2121,6 +2121,12 @@ fn show_collections_in_a_document_resolves_against_the_documents_root() {
     );
 }
 
+const INDEX_STATEMENTS: [&str; 3] = [
+    "CREATE INDEX ON orders (customer_id, placed_at DESC)",
+    "DROP INDEX `CICAgPj-z4oK`",
+    "ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = TRUE)",
+];
+
 #[test]
 fn read_only_options_refuse_index_statements() {
     let refusal = refused_with(
@@ -2132,13 +2138,46 @@ fn read_only_options_refuse_index_statements() {
     assert_eq!(refusal.field, "read_only");
 }
 
+#[test]
+fn new_options_refuse_the_statements_that_change_an_index_or_a_field() {
+    for sql in INDEX_STATEMENTS {
+        let refusal = refused(sql);
+        assert_eq!(refusal.field, "allow_index_statements", "{sql}");
+    }
+}
+
+#[test]
+fn read_only_wins_over_allow_index_statements() {
+    let options = FirestoreSqlOptions::read_only().allow_index_statements();
+
+    for sql in INDEX_STATEMENTS {
+        let refusal = refused_with(sql, &FirestoreSqlParameters::new(), &options);
+        assert_eq!(refusal.field, "read_only", "{sql}");
+    }
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn allow_index_statements_accepts_create_drop_and_alter() {
+    let [create, drop, alter] = INDEX_STATEMENTS;
+
+    translated_create_index(create);
+    translated_drop_index(drop);
+    translated_field_update(alter);
+}
+
+/// The options of a statement that changes an index or a field.
+fn index_options() -> FirestoreSqlOptions {
+    FirestoreSqlOptions::new().allow_index_statements()
+}
+
+fn refused_index_statement(sql: &str) -> FirestoreInvalidParametersPublicDetails {
+    refused_with(sql, &FirestoreSqlParameters::new(), &index_options())
+}
+
 #[cfg(feature = "admin")]
 fn translated_create_index(sql: &str) -> FirestoreSqlCreateIndex {
-    match translate_statement(
-        sql,
-        &FirestoreSqlParameters::new(),
-        &FirestoreSqlOptions::new(),
-    ) {
+    match translate_statement(sql, &FirestoreSqlParameters::new(), &index_options()) {
         Ok(FirestoreSqlStatement::CreateIndex(create)) => create,
         other => panic!("{sql}: {other:?}"),
     }
@@ -2146,11 +2185,7 @@ fn translated_create_index(sql: &str) -> FirestoreSqlCreateIndex {
 
 #[cfg(feature = "admin")]
 fn translated_drop_index(sql: &str) -> FirestoreSqlDropIndex {
-    match translate_statement(
-        sql,
-        &FirestoreSqlParameters::new(),
-        &FirestoreSqlOptions::new(),
-    ) {
+    match translate_statement(sql, &FirestoreSqlParameters::new(), &index_options()) {
         Ok(FirestoreSqlStatement::DropIndex(drop)) => drop,
         other => panic!("{sql}: {other:?}"),
     }
@@ -2285,8 +2320,31 @@ fn create_vector_index_makes_the_last_column_the_vector_field() {
 #[test]
 fn create_vector_index_without_a_dimension_is_refused() {
     assert_eq!(
-        refused("CREATE VECTOR INDEX ON books (genre, embedding)").field,
+        refused_index_statement("CREATE VECTOR INDEX ON books (genre, embedding)").field,
         "dimension"
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_index_if_exists_is_not_read_as_a_name() {
+    assert_eq!(
+        refused_index_statement("CREATE INDEX IF EXISTS ON orders (a, b)").field,
+        "CREATE INDEX"
+    );
+}
+
+#[cfg(not(feature = "admin"))]
+#[test]
+fn a_statement_without_the_admin_feature_is_named_only_when_it_is_an_index_statement() {
+    assert_eq!(
+        [
+            refused_index_statement("DROP TABLE orders").field,
+            refused_index_statement("ALTER TABLE orders ADD a INT").field,
+            refused_index_statement("CREATE UNIQUE INDEX ON orders (a)").field,
+            refused_index_statement("ALTER COLLECTION orders SET OPTIONS (indexes = [])").field,
+        ],
+        ["statement", "statement", "CREATE INDEX", "ALTER COLLECTION"]
     );
 }
 
@@ -2294,7 +2352,8 @@ fn create_vector_index_without_a_dimension_is_refused() {
 #[test]
 fn create_index_on_a_collection_path_is_refused() {
     assert_eq!(
-        refused("CREATE INDEX ON `users/alice/orders` (placed_at DESC, total)").field,
+        refused_index_statement("CREATE INDEX ON `users/alice/orders` (placed_at DESC, total)")
+            .field,
         "collection_group"
     );
 }
@@ -2326,23 +2385,30 @@ fn drop_index_by_definition_matches_the_create_definition() {
 #[cfg(feature = "admin")]
 #[test]
 fn collection_allowlist_applies_to_index_statements() {
-    let options =
-        FirestoreSqlOptions::new().with_collections([FirestoreCollectionId::from_static("orders")]);
+    let options = index_options().with_collections([FirestoreCollectionId::from_static("orders")]);
 
     for sql in [
         "CREATE INDEX ON secrets (a, b)",
         "DROP INDEX ON secrets (a, b)",
         "DROP INDEX CICAgJim14AK ON secrets",
+        "DROP INDEX CICAgJim14AK",
     ] {
         let refusal = refused_with(sql, &FirestoreSqlParameters::new(), &options);
         assert_eq!(refusal.field, "collections", "{sql}");
     }
+
+    translate_statement(
+        "DROP INDEX CICAgJim14AK ON orders",
+        &FirestoreSqlParameters::new(),
+        &options,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[cfg(feature = "admin")]
 #[test]
 fn refused_collection_groups_apply_to_index_definitions() {
-    let options = FirestoreSqlOptions::new().refuse_collection_groups();
+    let options = index_options().refuse_collection_groups();
 
     for sql in [
         "CREATE INDEX ON collection_group('orders') (a, b)",
@@ -2362,9 +2428,9 @@ fn a_parameter_in_an_index_statement_is_refused() {
     let option = refused_with(
         "CREATE INDEX ON orders (customer_id, at) OPTIONS (density = @density)",
         &density,
-        &FirestoreSqlOptions::new(),
+        &index_options(),
     );
-    let index_id = refused_with("DROP INDEX @id", &id, &FirestoreSqlOptions::new());
+    let index_id = refused_with("DROP INDEX @id", &id, &index_options());
 
     assert_eq!(
         (option.field.as_str(), index_id.field.as_str()),
@@ -2374,11 +2440,7 @@ fn a_parameter_in_an_index_statement_is_refused() {
 
 #[cfg(feature = "admin")]
 fn translated_field_update(sql: &str) -> crate::FirestoreFieldUpdate {
-    match translate_statement(
-        sql,
-        &FirestoreSqlParameters::new(),
-        &FirestoreSqlOptions::new(),
-    ) {
+    match translate_statement(sql, &FirestoreSqlParameters::new(), &index_options()) {
         Ok(FirestoreSqlStatement::AlterCollection(update)) => update,
         other => panic!("{sql}: {other:?}"),
     }
@@ -2461,7 +2523,7 @@ fn alter_column_indexes_null_reverts_the_override() {
 #[cfg(feature = "admin")]
 #[test]
 fn ttl_on_every_field_is_refused() {
-    let refusal = refused("ALTER COLLECTION logs SET OPTIONS (ttl = TRUE)");
+    let refusal = refused_index_statement("ALTER COLLECTION logs SET OPTIONS (ttl = TRUE)");
 
     assert_eq!(refusal.field, "ttl");
 }
