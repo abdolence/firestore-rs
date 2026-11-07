@@ -303,8 +303,9 @@ impl FirestoreBulkDeleteSupport for FirestoreDb {
 mod tests {
     use super::*;
     use crate::db::fake_firestore::{
-        bulk_delete_operation_response, done_operation_response, failed_operation_response,
-        pending_operation_response, FakeFirestore, FakeResponse,
+        bulk_delete_operation_response, captured_text, capturing_subscriber,
+        done_operation_response, failed_operation_response, pending_operation_response,
+        FakeFirestore, FakeResponse,
     };
     use crate::db::FirestoreDbInner;
     use crate::{FirestoreCollectionId, FirestoreOperationWaitOptions};
@@ -794,40 +795,6 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("emulator"));
         assert!(fake.calls().is_empty());
-    }
-
-    fn capturing_subscriber() -> (
-        impl tracing::Subscriber + Send + Sync,
-        StdArc<std::sync::Mutex<Vec<u8>>>,
-    ) {
-        crate::db::fake_firestore::keep_spans_visible_to_scoped_subscribers();
-        let buffer = StdArc::new(std::sync::Mutex::new(Vec::new()));
-        let make_writer = {
-            let buffer = buffer.clone();
-            move || SharedBufferWriter(buffer.clone())
-        };
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(make_writer)
-            .with_ansi(false)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-            .with_env_filter(tracing_subscriber::EnvFilter::new("firestore=debug"))
-            .finish();
-        (subscriber, buffer)
-    }
-
-    struct SharedBufferWriter(StdArc<std::sync::Mutex<Vec<u8>>>);
-    impl std::io::Write for SharedBufferWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    fn captured_text(buffer: &StdArc<std::sync::Mutex<Vec<u8>>>) -> String {
-        String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
     }
 
     #[tokio::test]
