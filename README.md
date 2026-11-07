@@ -60,7 +60,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-firestore = "0.62"
+firestore = "0.63"
 ```
 
 ```rust,no_run

@@ -69,6 +69,8 @@
 //! |---|---|
 //! | Creating a client | [`FirestoreDb::new`], [`FirestoreDb::with_options`], [`FirestoreDb::with_options_auth`] |
 //! | Every read and write | [`FirestoreDb::fluent`] |
+//! | Pipelines on the Enterprise edition | [`FirestoreExprBuilder::pipeline`] |
+//! | SQL statements (`sql` feature) | `FirestoreExprBuilder::sql` |
 //! | Document and collection IDs | [`FirestoreDocumentId`], [`FirestoreCollectionId`], [`ParentPathBuilder`] |
 //! | Field paths in queries and updates | [`path!`], [`paths!`] |
 //! | Transactions | [`FirestoreDb::run_transaction`], [`FirestoreTransaction`] |
