@@ -89,11 +89,8 @@ let FirestoreInvalidParametersPublicDetails { field, error, .. } = details;
 ### Mixed pipeline and buffered writes fail at commit
 
 A transaction that holds a pipeline write and a buffered write, such as `add_to_transaction`, is no longer refused by
-the library. Firestore refuses its commit instead, with `INVALID_ARGUMENT`. The related checks went too:
-
-- `FirestoreTransaction::is_empty` and `FirestoreTransactionData::is_empty` count the queued writes only, so a
-  transaction that ran a pipeline write reports `true`;
-- `execute_in_transaction` runs the write in the transaction it is given, also on a `db` bound to another transaction.
+the library. Firestore refuses its commit instead, with `INVALID_ARGUMENT`. The related check went too:
+`execute_in_transaction` runs the write in the transaction it is given, also on a `db` bound to another transaction.
 
 ### Pipeline bitwise functions are removed
 

@@ -258,10 +258,11 @@ impl FirestorePipelineSupport for FirestoreDb {
         params: FirestorePipelineWriteParams,
         transaction: &mut FirestoreTransaction<'_>,
     ) -> FirestoreResult<FirestorePipelineWriteResult> {
-        let transaction_id = transaction.transaction_data().transaction_id().clone();
+        let transaction_id = transaction.transaction_id().clone();
         let request = self.create_pipeline_write_request(
             params.with_transaction(FirestorePipelineWriteTransaction::Existing(transaction_id)),
         )?;
+        transaction.hold_pipeline_writes();
         self.send_pipeline_write(request, FirestoreError::from)
             .await
     }
@@ -544,6 +545,30 @@ mod tests {
                 .count();
             assert_eq!(sent, 1, "{run:?} {code:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_transaction_that_ran_a_pipeline_write_is_not_empty() {
+        let (server, _) = replaying(&fixture_case("dml-delete", Some("all"))).await;
+        let mut transaction = server.db.begin_transaction().await.unwrap();
+        assert!(transaction.is_empty());
+
+        server
+            .db
+            .fluent()
+            .pipeline()
+            .delete()
+            .from("pipeline-dml")
+            .execute_in_transaction(&mut transaction)
+            .await
+            .unwrap();
+        let is_empty = (
+            transaction.is_empty(),
+            transaction.transaction_data().is_empty(),
+        );
+        transaction.rollback().await.unwrap();
+
+        assert_eq!(is_empty, (false, false));
     }
 
     #[test]

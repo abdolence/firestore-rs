@@ -27,6 +27,9 @@ pub struct FirestoreTransactionData {
     document_path: String,
     transaction_span: Span,
     writes: Vec<gcloud_sdk::google::firestore::v1::Write>,
+    /// Firestore holds a pipeline write until commit, so a transaction that ran one has a write
+    /// although none is queued in `writes`.
+    holds_pipeline_writes: bool,
 }
 
 impl FirestoreTransactionData {
@@ -45,6 +48,7 @@ impl FirestoreTransactionData {
             document_path,
             transaction_span,
             writes,
+            holds_pipeline_writes: false,
         }
     }
 
@@ -72,10 +76,11 @@ impl FirestoreTransactionData {
         &self.writes
     }
 
-    /// Returns whether the transaction has no queued writes yet.
+    /// Returns whether the transaction holds no writes yet: neither queued ones nor a pipeline
+    /// write that ran in it.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty()
+        self.writes.is_empty() && !self.holds_pipeline_writes
     }
 }
 
@@ -189,7 +194,7 @@ impl<'a> FirestoreTransaction<'a> {
     pub async fn commit(mut self) -> FirestoreResult<FirestoreTransactionResponse> {
         self.finished = true;
 
-        if self.data.writes.is_empty() {
+        if self.data.is_empty() {
             self.data.transaction_span.in_scope(|| {
                 debug!("Transaction has been committed without any writes.");
             });
@@ -285,10 +290,17 @@ impl<'a> FirestoreTransaction<'a> {
         Ok(())
     }
 
-    /// Returns whether the transaction has no queued writes yet.
+    /// Returns whether the transaction holds no writes yet: neither queued ones nor a pipeline
+    /// write that ran in it.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
+    }
+
+    /// Records that a pipeline write is about to be sent in this transaction. Its outcome is
+    /// unknown from then on, whether or not the request succeeds.
+    pub(crate) fn hold_pipeline_writes(&mut self) {
+        self.data.holds_pipeline_writes = true;
     }
 
     /// Returns the transaction's underlying data without consuming it.
@@ -322,12 +334,15 @@ impl<'a> FirestoreTransaction<'a> {
     #[inline]
     pub fn into_data(mut self) -> FirestoreTransactionData {
         self.finished = true;
-        FirestoreTransactionData::new(
-            self.data.transaction_id.clone(),
-            self.data.document_path.clone(),
-            self.data.transaction_span.clone(),
-            std::mem::take(&mut self.data.writes),
-        )
+        FirestoreTransactionData {
+            holds_pipeline_writes: self.data.holds_pipeline_writes,
+            ..FirestoreTransactionData::new(
+                self.data.transaction_id.clone(),
+                self.data.document_path.clone(),
+                self.data.transaction_span.clone(),
+                std::mem::take(&mut self.data.writes),
+            )
+        }
     }
 }
 
