@@ -7,7 +7,7 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
 - Support for:
     - Querying/streaming docs/objects;
     - Listing documents/objects (`stream_all` follows the page tokens for you);
-    - Listening changes from Firestore;
+    - Listening changes from Firestore, with targets added and removed on a running listener and an opt-in idle reset for silent streams;
     - Transactions;
     - Aggregated queries: count, sum, avg;
     - Streaming batch writes with automatic throttling to stay under the Firestore write rate limits;
@@ -18,7 +18,11 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
     - Update/delete preconditions;
     - Consistency selectors to read at a given time or inside a transaction;
     - Explaining queries;
+    - Firestore Enterprise edition [pipelines](./pipelines.md): filters, projections, [aggregations, joins and subqueries](./pipeline-aggregations-and-joins.md), unions, nearest neighbours and [writes](./pipeline-writes.md);
+    - Full-text and geospatial [search in pipelines](./pipeline-search.md);
+    - [SQL statements](./sql.md) in the BigQuery dialect, translated into pipelines, behind an opt-in `sql` feature;
     - Request tags to attribute Firestore usage;
+    - [Opt-in request timeouts](./request-timeouts.md);
 - Full async based on Tokio runtime;
 - Macros that help you use your structure fields as Firestore field paths;
 - Implements own Serde serializer to Firestore protobuf values;
@@ -32,8 +36,9 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
     - In-memory cache;
     - Persistent cache;
 - [Declarative index management](./index-management.md) behind an opt-in `admin` feature:
-  composite indexes, vector indexes, single-field overrides and TTL policy, planned and synced
-  with one call;
+  composite indexes (including one-field, unique and sparse ones), vector indexes, text and geo
+  search indexes, single-field overrides and TTL policy, planned and synced with one call,
+  following the edition of the database;
 - [Bulk delete](./bulk-delete.md) behind the same `admin` feature: removes every document in named
   collection groups, at any depth across the whole database, in the background;
 - Works with the Firestore emulator through `FIRESTORE_EMULATOR_HOST`, no credentials needed;

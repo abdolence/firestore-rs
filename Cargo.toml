@@ -7,7 +7,7 @@ edition = "2021"
 # feature can never raise it. gcloud-sdk 0.33 requires 1.91, the MSRV of google-cloud-auth.
 rust-version = "1.91"
 license = "Apache-2.0"
-description = "Library provides a simple API for Google Firestore and own Serde serializer based on efficient gRPC API"
+description = "Library provides a simple API for Google Firestore, including Enterprise edition pipelines and SQL, with its own Serde serializer, based on efficient gRPC API"
 homepage = "https://firestore-rust.abdolence.dev"
 repository = "https://github.com/abdolence/firestore-rs"
 documentation = "https://docs.rs/firestore"
