@@ -404,7 +404,7 @@ fn compare_integer_to_double(integer: i64, double: f64) -> Ordering {
 
 fn compare_nested(a: &Value, b: &Value) -> Ordering {
     match (&a.value_type, &b.value_type) {
-        (Some(a), Some(b)) => value_order(a, b),
+        (Some(a), Some(b)) => stored_order(a, b),
         (a, b) => a.is_some().cmp(&b.is_some()),
     }
 }
@@ -478,15 +478,51 @@ pub(crate) fn value_order(a: &ValueType, b: &ValueType) -> Ordering {
     }
 }
 
+/// A timestamp as Firestore stores it, as a count of microseconds.
+fn microseconds(timestamp: &gcloud_sdk::prost_types::Timestamp) -> i64 {
+    timestamp
+        .seconds
+        .saturating_mul(1_000_000)
+        .saturating_add(i64::from(timestamp.nanos / 1_000))
+}
+
+/// The order of two values as stored: [`value_order`], with timestamps compared at the microsecond
+/// that Firestore stores them at. [`value_order`] compares a timestamp inside an array or a map
+/// this way.
+pub(crate) fn stored_order(a: &ValueType, b: &ValueType) -> Ordering {
+    match (a, b) {
+        (ValueType::TimestampValue(a), ValueType::TimestampValue(b)) => {
+            microseconds(a).cmp(&microseconds(b))
+        }
+        _ => value_order(a, b),
+    }
+}
+
 /// Whether a filter of `op` on a field holding `a` matches `b`. A field that is null matches no
 /// comparison, and neither does a null `b`: nulls are queried with the `IsNull` filter.
+///
+/// A timestamp compares at the nanosecond of the constant, except in the filters that take a list
+/// of values, which compare it at the microsecond that Firestore stores.
 pub(super) fn compare_values(op: CompareOp, a: &ValueType, b: &ValueType) -> bool {
+    let order = match op {
+        CompareOp::In | CompareOp::NotIn | CompareOp::ArrayContainsAny => stored_order,
+        _ => value_order,
+    };
+    compare_values_by(order, op, a, b)
+}
+
+fn compare_values_by(
+    order: fn(&ValueType, &ValueType) -> Ordering,
+    op: CompareOp,
+    a: &ValueType,
+    b: &ValueType,
+) -> bool {
     let contains = |items: &ArrayValue, value: &ValueType| {
         items
             .values
             .iter()
             .flat_map(|item| &item.value_type)
-            .any(|item| compare_values(CompareOp::Equal, item, value))
+            .any(|item| compare_values_by(order, CompareOp::Equal, item, value))
     };
 
     match (op, a, b) {
@@ -525,6 +561,6 @@ pub(super) fn compare_values(op: CompareOp, a: &ValueType, b: &ValueType) -> boo
         // A range filter matches only values of the type it compares with.
         (op, a, b) if op.is_range() && ValueTypeRank::from(a) != ValueTypeRank::from(b) => false,
 
-        (op, a, b) => op.holds_for(value_order(a, b)),
+        (op, a, b) => op.holds_for(order(a, b)),
     }
 }

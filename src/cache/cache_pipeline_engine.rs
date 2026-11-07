@@ -1,4 +1,4 @@
-use crate::cache::cache_filter_engine::{is_nan, value_order, CompareOp, ValueTypeRank};
+use crate::cache::cache_filter_engine::{is_nan, stored_order, CompareOp, ValueTypeRank};
 use crate::errors::{FirestoreCacheError, FirestoreErrorPublicGenericDetails};
 use crate::*;
 use futures::TryStreamExt;
@@ -946,25 +946,6 @@ fn truth(value: Option<&ValueType>) -> Result<Option<bool>, FirestoreCachePipeli
         Some(_) => Err(FirestoreCachePipelineMiss::unsupported(
             "a value that is not a boolean",
         )),
-    }
-}
-
-/// A timestamp as Firestore stores and compares it, as a count of microseconds.
-fn microseconds(timestamp: &gcloud_sdk::prost_types::Timestamp) -> i64 {
-    timestamp
-        .seconds
-        .saturating_mul(1_000_000)
-        .saturating_add(i64::from(timestamp.nanos / 1_000))
-}
-
-/// The order of two values as stored: Firestore's, with timestamps compared at the microsecond
-/// that Firestore stores them at.
-fn stored_order(left: &ValueType, right: &ValueType) -> Ordering {
-    match (left, right) {
-        (ValueType::TimestampValue(left), ValueType::TimestampValue(right)) => {
-            microseconds(left).cmp(&microseconds(right))
-        }
-        _ => value_order(left, right),
     }
 }
 

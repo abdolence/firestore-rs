@@ -69,6 +69,13 @@ fn map(fields: Vec<(&str, Value)>) -> Value {
     }))
 }
 
+fn nested_timestamp(nanos: i32) -> Value {
+    value(ValueType::TimestampValue(Timestamp {
+        seconds: 1_704_067_200,
+        nanos,
+    }))
+}
+
 fn document_reference(db: &FirestoreDb, collection: &str, id: &str) -> Value {
     value(ValueType::ReferenceValue(format!(
         "{}/{collection}/{id}",
@@ -212,6 +219,8 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                 ),
                 ("number", int(i64::MIN)),
                 ("text", string("e\u{301}")),
+                ("stamps", array(vec![nested_timestamp(500)])),
+                ("stamped", map(vec![("at", nested_timestamp(500))])),
             ],
         ),
         (
@@ -758,6 +767,40 @@ async fn comparisons_match_firestore() -> TestResult {
             .await;
     }
 
+    differential.finish().await
+}
+
+/// Firestore stores a timestamp at the microsecond, and compares one inside an array or a map
+/// that way, whatever nanoseconds the constant carries.
+#[tokio::test]
+async fn timestamps_inside_arrays_and_maps_compare_at_the_microsecond() -> TestResult {
+    let mut differential = Differential::new().await?;
+    for (label, stored, nested) in [
+        ("array", "stamps", array(vec![nested_timestamp(999)])),
+        ("map", "stamped", map(vec![("at", nested_timestamp(999))])),
+    ] {
+        let cases = [
+            ("equal", field(stored).equal(constant(nested.clone()))),
+            (
+                "less_than_or_equal",
+                field(stored).less_than_or_equal(constant(nested.clone())),
+            ),
+            (
+                "equal_any",
+                field(stored).equal_any(constant(array(vec![nested]))),
+            ),
+        ];
+        for (name, condition) in cases {
+            let pipeline = differential.edge_where(condition);
+            differential
+                .same(
+                    &format!("{label} {name} 999 nanoseconds later"),
+                    Expect::Rows,
+                    pipeline,
+                )
+                .await;
+        }
+    }
     differential.finish().await
 }
 

@@ -1206,6 +1206,99 @@ mod tests {
         .await;
     }
 
+    /// Firestore stores a timestamp at the microsecond. A query compares a lone timestamp at the
+    /// nanosecond, except in `in`, `not-in` and `array-contains-any`, and compares a timestamp
+    /// inside an array or a map at the microsecond.
+    #[tokio::test]
+    async fn timestamps_compare_at_the_microsecond_unless_a_lone_value_is_compared() {
+        let backend = preloaded(&[("a", 1000)]);
+        let stored = || timestamp("2026-01-01T00:00:00.000001Z");
+        let later = || timestamp("2026-01-01T00:00:00.0000015Z");
+        seed_documents(
+            &backend,
+            [(
+                "stored",
+                vec![
+                    ("at", stored()),
+                    ("list", list([stored()])),
+                    ("map", FirestoreValue::from_map([("at", stored())])),
+                ],
+            )],
+        )
+        .await;
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    matching(FirestoreQueryFilterCompare::Equal("at".into(), later())),
+                    vec![],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::LessThan("at".into(), later())),
+                    vec!["stored"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::ArrayContains(
+                        "list".into(),
+                        later(),
+                    )),
+                    vec![],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::In(
+                        "at".into(),
+                        list([later()]),
+                    )),
+                    vec!["stored"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::NotIn(
+                        "at".into(),
+                        list([later()]),
+                    )),
+                    vec![],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::ArrayContainsAny(
+                        "list".into(),
+                        list([later()]),
+                    )),
+                    vec!["stored"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "list".into(),
+                        list([later()]),
+                    )),
+                    vec!["stored"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::LessThan(
+                        "list".into(),
+                        list([later()]),
+                    )),
+                    vec![],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "map".into(),
+                        FirestoreValue::from_map([("at", later())]),
+                    )),
+                    vec!["stored"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::LessThan(
+                        "map".into(),
+                        FirestoreValue::from_map([("at", later())]),
+                    )),
+                    vec![],
+                ),
+            ],
+        )
+        .await;
+    }
+
     #[tokio::test]
     async fn integers_and_doubles_compare_by_numeric_value() {
         let backend = preloaded(&[("a", 1000)]);
