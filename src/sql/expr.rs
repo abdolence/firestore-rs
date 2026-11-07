@@ -462,11 +462,12 @@ impl FirestoreSqlTranslator<'_> {
         let [first, rest @ ..] = operands.as_slice() else {
             return Err(FirestoreError::invalid_sql("||", "|| needs operands", None));
         };
+        let first = self.expr(scope, first)?;
         let rest = rest
             .iter()
             .map(|operand| self.expr(scope, operand))
             .collect::<FirestoreResult<Vec<_>>>()?;
-        Ok(self.expr(scope, first)?.concat(rest))
+        Ok(first.concat(rest))
     }
 
     fn unary(

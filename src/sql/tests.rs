@@ -314,6 +314,16 @@ fn parameters_must_match_their_bindings_both_ways() {
 }
 
 #[test]
+fn a_refused_concatenation_reports_its_first_operand() {
+    let refusal = refused("SELECT title || author AS x FROM books GROUP BY genre");
+
+    assert_eq!(
+        (refusal.field.as_str(), refusal.location),
+        ("GROUP BY", location(1, 8))
+    );
+}
+
+#[test]
 fn text_must_hold_exactly_one_statement() {
     for sql in ["", "SELECT * FROM books; SELECT * FROM reviews"] {
         assert_eq!(refused(sql).field, "sql", "{sql:?}");
@@ -1385,6 +1395,47 @@ fn a_join_translates_to_an_array_subquery_that_unnest_flattens() {
                 e.field("r.rating").alias("rating"),
             ]
         })
+        .into_pipeline();
+
+    assert_eq!(translated_allowing_subqueries(&sql), expected);
+}
+
+#[test]
+fn a_subquery_in_a_join_condition_reads_the_joined_table() {
+    let sql = format!(
+        "SELECT rest.name AS name {RESTAURANTS_JOINED_TO_REVIEWS} \
+         AND EXISTS (SELECT c.name FROM cities AS c WHERE c.__name__ = r.city)"
+    );
+
+    let reviews = FirestorePipelineExprBuilder.array_subquery(|p| {
+        p.from("reviews")
+            .all_descendants()
+            .define_variables(|e| [e.field("city").alias("r_city")])
+            .filter(|q| {
+                q.for_all([
+                    q.field("restaurant").eq(q.variable("rest___name__")),
+                    Some(
+                        q.values()
+                            .array_subquery(|p| {
+                                p.from("cities")
+                                    .filter(|q| {
+                                        q.field("__name__")
+                                            .is_in(q.values().array([q.variable("r_city")]))
+                                    })
+                                    .limit(1)
+                            })
+                            .array_length()
+                            .greater_than(0),
+                    ),
+                ])
+            })
+    });
+    let expected = fluent()
+        .from("pipeline-restaurants")
+        .define_variables(|e| [e.field("__name__").alias("rest___name__")])
+        .add_fields(|_| [reviews.alias("r")])
+        .unnest(|e| e.field("r"))
+        .fields(|e| [e.field("name").alias("name")])
         .into_pipeline();
 
     assert_eq!(translated_allowing_subqueries(&sql), expected);
