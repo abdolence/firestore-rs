@@ -1,7 +1,9 @@
-//! [`FirestoreIndexSupport`] for [`FirestoreDb`]: lists, plans, applies, prunes and waits on one
-//! collection group's composite indexes, single-field overrides and TTL policy against the
-//! Firestore Admin API, on the same authenticated channel the data API uses
-//! ([`GoogleApiClient::get_with`](gcloud_sdk::GoogleApiClient::get_with)).
+//! Lists, plans, applies, prunes and waits on one collection group's composite indexes,
+//! single-field overrides and TTL policy against the Firestore Admin API, on the same
+//! authenticated channel the data API uses
+//! ([`GoogleApiClient::get_with`](gcloud_sdk::GoogleApiClient::get_with)), for the
+//! [`FirestoreIndexSupport`](crate::db::support::FirestoreIndexSupport) implementation in
+//! [`index_admin`](super::index_admin).
 
 use crate::db::admin::index_diff::{
     composite_index_matches, plan_index_changes, FirestoreIndexExistingState, FirestoreIndexListing,
@@ -10,17 +12,14 @@ use crate::db::admin::index_models::{
     validate_collection_group, write_section, CanonicalFieldPath, FirestoreDatabaseEdition,
 };
 use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
-use crate::db::support::FirestoreIndexSupport;
 use crate::errors::FirestoreError;
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreDb, FirestoreExplicitFieldOverride,
     FirestoreFieldOverride, FirestoreFieldOverrideOutcome, FirestoreIndexDeletesWithheld,
     FirestoreIndexDeletesWithheldReason, FirestoreIndexParams, FirestoreIndexPlan,
-    FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreIndexSyncSkipReason,
-    FirestoreIndexSyncTimings, FirestoreInstant, FirestoreListedCompositeIndex,
-    FirestoreListedField, FirestoreOperationWaitOptions, FirestoreResult,
+    FirestoreIndexSyncReport, FirestoreInstant, FirestoreListedCompositeIndex,
+    FirestoreListedField, FirestoreResult,
 };
-use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field as proto_field;
 use gcloud_sdk::google::firestore::admin::v1::firestore_admin_client::FirestoreAdminClient;
 use gcloud_sdk::google::firestore::admin::v1::{
@@ -39,7 +38,7 @@ use tracing::*;
 /// One write `.sync()` sends for the owned collection group, holding the declared or listed
 /// item it writes. `Display` is the text every log line and wait error uses for the write, such as
 /// `enable TTL on expires_at`, so the two never disagree on what an operation was for.
-enum IndexAction {
+pub(super) enum IndexAction {
     CreateIndex(FirestoreCompositeIndex),
     UpdateFieldOverride(FirestoreFieldOverride),
     EnableTtl(String),
@@ -153,7 +152,7 @@ impl std::fmt::Display for IndexAction {
     }
 }
 
-type PendingOperation = StartedOperation<IndexAction>;
+pub(super) type PendingOperation = StartedOperation<IndexAction>;
 
 /// The result of [`FirestoreDb::apply_create_index`]: whether the create actually started a
 /// build, or another writer created the index since the plan was made, which `.sync()` reports
@@ -278,7 +277,7 @@ fn log_plan(group: &FirestoreCollectionId, plan: &FirestoreIndexPlan) {
 
 /// The one collection group a statement owns: its ID, its resource path in the database, and the
 /// edition of that database.
-struct OwnedGroup<'a> {
+pub(super) struct OwnedGroup<'a> {
     id: &'a FirestoreCollectionId,
     path: String,
     edition: FirestoreDatabaseEdition,
@@ -321,7 +320,7 @@ impl OwnedGroup<'_> {
 /// between dependent writes (see [`FirestoreDb::apply_plan`]): long enough for a composite index
 /// build or a field override's single-field index build, so such a sync only fails when a write
 /// it depends on is stuck.
-const SEQUENCING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+pub(super) const SEQUENCING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// The operations one sync has started, which of them are known to have finished, and which one
 /// last wrote each field.
@@ -370,7 +369,7 @@ impl FirestoreDb {
 
     /// The group a statement naming `group` owns, with the database's edition read once, so every
     /// step of a call validates, matches and writes under the same edition.
-    async fn read_owned_group<'a>(
+    pub(super) async fn read_owned_group<'a>(
         &self,
         group: &'a FirestoreCollectionId,
     ) -> FirestoreResult<OwnedGroup<'a>> {
@@ -574,7 +573,7 @@ impl FirestoreDb {
     /// Lists the owned group's existing state, logs it, computes the plan, and logs it - the
     /// step `.plan()` and `.sync()` share, so a plan made with the same `prune` is exactly what
     /// the sync applies.
-    async fn plan_against_server(
+    pub(super) async fn plan_against_server(
         &self,
         params: &FirestoreIndexParams,
         group: &OwnedGroup<'_>,
@@ -1035,7 +1034,7 @@ impl FirestoreDb {
     ///
     /// Returns the report of what was applied, even when a write or a wait failed, and either
     /// that failure or the started operations not already waited for.
-    async fn apply_plan(
+    pub(super) async fn apply_plan(
         &self,
         group: &OwnedGroup<'_>,
         plan: &FirestoreIndexPlan,
@@ -1170,7 +1169,7 @@ impl FirestoreDb {
 
     /// Waits for every operation `.sync()` started and has not already waited for (see
     /// [`FirestoreDb::wait_for_operations`]), in a `Firestore Index Wait` span.
-    async fn wait_for_index_operations(
+    pub(super) async fn wait_for_index_operations(
         &self,
         pending: &[PendingOperation],
         deadline: &OperationDeadline,
@@ -1232,129 +1231,6 @@ impl FirestoreIndexPlan {
     }
 }
 
-#[async_trait]
-impl FirestoreIndexSupport for FirestoreDb {
-    async fn plan_indexes(
-        &self,
-        params: FirestoreIndexParams,
-        options: FirestoreIndexSyncOptions,
-    ) -> FirestoreResult<FirestoreIndexPlan> {
-        crate::validate_index_params(&params)?;
-        if self.inner.is_emulator {
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "Skipping index plan: the Firestore emulator does not implement the admin API.",
-            );
-            return Ok(FirestoreIndexPlan {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                ..Default::default()
-            });
-        }
-
-        let root = span!(
-            Level::INFO,
-            "Firestore Index Plan",
-            "/firestore/collection_group" = params.collection_group.as_str(),
-            "/firestore/prune" = options.prune,
-            "/firestore/response_time" = field::Empty,
-        );
-        let began = FirestoreInstant::now();
-        let plan = async {
-            let group = self.read_owned_group(&params.collection_group).await?;
-            let (plan, _) = self
-                .plan_against_server(&params, &group, options.prune)
-                .await?;
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "plan() reports what sync() would change; nothing was applied.",
-            );
-            Ok::<_, FirestoreError>(plan)
-        }
-        .instrument(root.clone())
-        .await?;
-        let elapsed = FirestoreInstant::now().duration_since(began);
-        root.record("/firestore/response_time", elapsed.as_millis());
-        Ok(plan)
-    }
-
-    async fn sync_indexes(
-        &self,
-        params: FirestoreIndexParams,
-        options: FirestoreIndexSyncOptions,
-    ) -> FirestoreResult<FirestoreIndexSyncReport> {
-        let started = Instant::now();
-        crate::validate_index_params(&params)?;
-        if self.inner.is_emulator {
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "Skipping index sync: the Firestore emulator does not implement the admin API.",
-            );
-            return Ok(FirestoreIndexSyncReport {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                timings: FirestoreIndexSyncTimings {
-                    total: started.elapsed(),
-                    list: None,
-                    apply: None,
-                    wait: None,
-                },
-                ..Default::default()
-            });
-        }
-
-        let root = span!(
-            Level::INFO,
-            "Firestore Index Sync",
-            "/firestore/collection_group" = params.collection_group.as_str(),
-            "/firestore/prune" = options.prune,
-            "/firestore/wait" = options.wait.is_some(),
-            "/firestore/response_time" = field::Empty,
-        );
-        let implicit_wait = FirestoreOperationWaitOptions::new(SEQUENCING_TIMEOUT);
-        let deadline = OperationDeadline::from_now(options.wait.as_ref().unwrap_or(&implicit_wait));
-        let began = FirestoreInstant::now();
-        let report = async {
-            let group = self.read_owned_group(&params.collection_group).await?;
-            let (plan, list_elapsed) = self
-                .plan_against_server(&params, &group, options.prune)
-                .await?;
-            let apply_started = Instant::now();
-            let (mut report, applied) = self.apply_plan(&group, &plan, &deadline).await;
-            report.timings.list = Some(list_elapsed);
-            report.timings.apply = Some(apply_started.elapsed());
-            let finished = match (applied, &options.wait) {
-                (Ok(pending_operations), Some(_)) => {
-                    let wait_started = Instant::now();
-                    let waited = self
-                        .wait_for_index_operations(&pending_operations, &deadline)
-                        .await;
-                    report.timings.wait = Some(wait_started.elapsed());
-                    waited
-                }
-                (Ok(_), None) => Ok(()),
-                (Err(err), _) => Err(err),
-            };
-            report.timings.total = started.elapsed();
-            if let Err(err) = finished {
-                warn!(
-                    collection_group = params.collection_group.as_str(),
-                    "The sync failed after it started writing; what it applied before that: {report}",
-                );
-                return Err(err);
-            }
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "{report}"
-            );
-            Ok::<_, FirestoreError>(report)
-        }
-        .instrument(root.clone())
-        .await?;
-        let elapsed = FirestoreInstant::now().duration_since(began);
-        root.record("/firestore/response_time", elapsed.as_millis());
-        Ok(report)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1367,11 +1243,13 @@ mod tests {
         list_fields_response, list_indexes_response, pending_operation_response, FakeFirestore,
         FakeResponse,
     };
+    use crate::db::support::FirestoreIndexSupport;
     use crate::db::FirestoreDbInner;
     use crate::{
         FirestoreCollectionId, FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget,
         FirestoreGeoIndexConfig, FirestoreIndexDensity, FirestoreIndexField,
-        FirestoreIndexFieldMode, FirestoreQueryDirection, FirestoreSearchIndexOptions,
+        FirestoreIndexFieldMode, FirestoreIndexSyncOptions, FirestoreIndexSyncSkipReason,
+        FirestoreOperationWaitOptions, FirestoreQueryDirection, FirestoreSearchIndexOptions,
         FirestoreVectorIndexConfig,
     };
     use gcloud_sdk::google::firestore::admin::v1::database::DatabaseEdition;
