@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-a59eacfa.js";
+            window.path_to_searchindex_js = "../searchindex-44799e9e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-edc99909.js"></script>
+        <script src="../toc-0efaf104.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -280,7 +280,21 @@ for item in items {
 <p>The text is Firestore’s own format. The library does not parse it, since Firestore can change it
 at any time.</p>
 <p>A SQL <code>SELECT</code> returns its plan the same way, through <code>explain()</code> and <code>explain_with_options(..)</code> of
-the <a href="../sql.html#setup">SQL builder</a>.</p>
+the <a href="../sql.html#setup">SQL builder</a>, or with the <code>EXPLAIN</code> and <code>EXPLAIN ANALYZE</code> prefix in the text,
+which is the SQL spelling of the same two calls:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let items = db
+    .fluent()
+    .sql("EXPLAIN SELECT title FROM books WHERE genre = 'Dystopian'")
+    .stream_query_with_metadata()
+    .await?;
+<span class="boring">let _ = items;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p><code>EXPLAIN</code> takes a <code>SELECT</code> and no other option than <code>ANALYZE</code>, and fails together with <code>.explain()</code>
+on the builder, since the text and the builder would both set the options. The Enterprise
+emulator answers an <code>EXPLAIN</code> with the rows and no plan, see <a href="../emulator.html">Firestore emulator</a>.</p>
 <h3 id="recognising-a-full-scan"><a class="header" href="#recognising-a-full-scan">Recognising a full scan</a></h3>
 <p>The plan names how the pipeline reads its documents:</p>
 <ul>

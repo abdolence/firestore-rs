@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a59eacfa.js";
+            window.path_to_searchindex_js = "searchindex-44799e9e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-edc99909.js"></script>
+        <script src="toc-0efaf104.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -189,7 +189,9 @@ configured to develop against it. Specifying credentials explicitly, with
 <code>FirestoreDb::with_options_auth()</code> for example, still takes precedence.</p>
 <p>The emulator implements neither <a href="./bulk-delete.html">bulk delete</a>, which fails with
 <code>BULK_DELETE_UNAVAILABLE_ON_EMULATOR</code>, nor <a href="./index-management.html#the-firestore-emulator">index management</a>,
-which skips its run.</p>
+which skips its run. The index calls <code>list()</code>, <code>create()</code>, <code>delete()</code> and <code>update_field()</code>, and the
+<a href="./sql/indexes.html">SQL index statements</a>, fail with the emulator’s <code>UNIMPLEMENTED</code>. <code>SHOW COLLECTIONS</code>
+works on the emulator.</p>
 <h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
 <p>The emulator acts as one edition, Standard by default. <code>gcloud</code> starts it, and needs a Java runtime
 (a JDK) for it:</p>
@@ -200,6 +202,9 @@ which skips its run.</p>
 Standard emulator answers them with <code>INVALID_ARGUMENT</code>, and neither edition of the emulator
 supports bulk delete. Core inserts and queries run on an emulator of either edition, and Core
 aggregations, transactions and listeners run on the Enterprise one as on a live database.</p>
+<p>The Enterprise emulator runs SQL and pipelines, and ignores Query Explain: an <code>EXPLAIN</code> or
+<code>EXPLAIN ANALYZE</code> statement, and <code>.explain()</code>, return the rows and no plan. Check the plan of a
+query against a live database, see <a href="./editions/query-plans.html#explaining-a-pipeline">Explaining a pipeline</a>.</p>
 
                     </main>
 

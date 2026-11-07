@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a59eacfa.js";
+            window.path_to_searchindex_js = "searchindex-44799e9e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-edc99909.js"></script>
+        <script src="toc-0efaf104.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -383,6 +383,7 @@ a row where both behave the same. A number points to the notes under the table.<
 <tr><td>Index density<sup class="footnote-reference" id="fr-density-1"><a href="#footnote-density">11</a></sup></td><td>Admin</td><td><code>SparseAll</code> only</td><td><code>Dense</code> by default, or <code>SparseAny</code><sup class="footnote-reference" id="fr-search-sparse-any-1"><a href="#footnote-search-sparse-any">12</a></sup></td></tr>
 <tr><td><code>__name__</code> appended to an index</td><td>Admin</td><td>yes</td><td>no</td></tr>
 <tr><td>TTL policy</td><td>Admin</td><td>yes</td><td>yes</td></tr>
+<tr><td><a href="#index-statements-1">Index statements</a></td><td>SQL</td><td>yes</td><td>yes</td></tr>
 <tr><td><a href="#bulk-delete">Bulk delete</a></td><td>Admin</td><td>yes</td><td>yes</td></tr>
 <tr><td><a href="#firestore-emulator">Firestore emulator</a></td><td>Any</td><td>the default emulator</td><td>started with <code>--edition=enterprise</code></td></tr>
 <tr><td>Billing</td><td>Any</td><td>per document read, written and deleted</td><td>read units and write units<sup class="footnote-reference" id="fr-realtime-billing-1"><a href="#footnote-realtime-billing">13</a></sup></td></tr>
@@ -748,7 +749,21 @@ for item in items {
 <p>The text is Firestore’s own format. The library does not parse it, since Firestore can change it
 at any time.</p>
 <p>A SQL <code>SELECT</code> returns its plan the same way, through <code>explain()</code> and <code>explain_with_options(..)</code> of
-the <a href="#setup">SQL builder</a>.</p>
+the <a href="#setup">SQL builder</a>, or with the <code>EXPLAIN</code> and <code>EXPLAIN ANALYZE</code> prefix in the text,
+which is the SQL spelling of the same two calls:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let items = db
+    .fluent()
+    .sql("EXPLAIN SELECT title FROM books WHERE genre = 'Dystopian'")
+    .stream_query_with_metadata()
+    .await?;
+<span class="boring">let _ = items;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p><code>EXPLAIN</code> takes a <code>SELECT</code> and no other option than <code>ANALYZE</code>, and fails together with <code>.explain()</code>
+on the builder, since the text and the builder would both set the options. The Enterprise
+emulator answers an <code>EXPLAIN</code> with the rows and no plan, see <a href="#firestore-emulator">Firestore emulator</a>.</p>
 <h3 id="recognising-a-full-scan"><a class="header" href="#recognising-a-full-scan">Recognising a full scan</a></h3>
 <p>The plan names how the pipeline reads its documents:</p>
 <ul>
@@ -2759,7 +2774,10 @@ change for each inserted, updated or upserted document, and a delete for each de
 <p>The library translates a SQL statement into a <a href="#pipelines">pipeline</a> and runs it. It is meant
 for SQL text that comes from outside the program: command line tools, admin scripts, reports
 defined in configuration, LLM agents, and queries ported from a SQL database. Reads return the
-documents of a pipeline, and <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> run as <a href="#pipeline-writes">pipeline writes</a>.</p>
+documents of a pipeline, and <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> run as <a href="#pipeline-writes">pipeline writes</a>.
+With the <code>admin</code> feature it also runs <a href="#index-statements-1">index statements</a>: <code>CREATE INDEX</code>,
+<code>DROP INDEX</code>, <code>ALTER COLLECTION</code> and <code>SHOW INDEXES</code>. The first three run only when the options say
+<code>.allow_index_statements()</code>.</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::Deserialize;
 </span><span class="boring">#[derive(Debug, Clone, Deserialize)]
@@ -2777,8 +2795,9 @@ documents of a pipeline, and <code>INSERT</code>, <code>UPDATE</code> and <code>
 </span><span class="boring">}</span></code></pre>
 <p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/sql.rs">here</a>.</p>
 <p>SQL needs a database of the Firestore <em>Enterprise edition</em>, as pipelines do: a statement sent to a
-Standard edition database fails with <code>FAILED_PRECONDITION</code>, unless a cache session answers it. A
-statement means what the same pipeline means in the fluent API: Firestore’s semantics, listed in
+Standard edition database fails with <code>FAILED_PRECONDITION</code>, unless a cache session answers it.
+The index statements and <code>SHOW COLLECTIONS</code> use the Admin and Core APIs, and run on both editions.
+A statement means what the same pipeline means in the fluent API: Firestore’s semantics, listed in
 <a href="#semantics">Semantics</a>, where a few results differ from those of a SQL database.</p>
 <p>A read through a cache session is answered from the cache when the pipeline it translates to only
 filters, sorts and pages cached documents, see <a href="#sql-1">Caching pipelines</a> for the cached
@@ -2801,11 +2820,16 @@ firestore = { version = "...", features = ["sql"] }
 <li><code>.obj::&lt;T&gt;()</code> deserialises the rows into <code>T</code>, as in a pipeline;</li>
 <li><code>query()</code> returns every row, and <code>stream_query()</code>, <code>stream_query_with_errors()</code> and
 <code>stream_query_with_metadata()</code> stream them;</li>
+<li><code>run()</code> runs any statement, a <code>SELECT</code>, a write, <code>SHOW</code> or an index statement, and returns a
+<code>FirestoreSqlOutcome</code> with one variant for each kind of statement, see
+<a href="#running-a-statement">Index statements</a>;</li>
+<li><code>.wait_until_ready(timeout)</code> and <code>.wait_until_ready_with_options(..)</code>, with the <code>admin</code> feature,
+make <code>run()</code> wait for the operation of a <code>CREATE INDEX</code> or an <code>ALTER COLLECTION</code>;</li>
 <li><code>execute()</code> and <code>execute_in_transaction(&amp;mut transaction)</code> run an <code>INSERT</code>, <code>UPDATE</code> or
 <code>DELETE</code>, see <a href="#writes-1">Writes</a>;</li>
 <li><code>explain()</code> and <code>explain_with_options(..)</code> return the plan of a <code>SELECT</code> in the metadata of the
-last item of <code>stream_query_with_metadata()</code>, see
-<a href="#explaining-a-pipeline">Explaining a pipeline</a>;</li>
+last item of <code>stream_query_with_metadata()</code>, and so does an <code>EXPLAIN [ANALYZE]</code> prefix in the
+text, see <a href="#explaining-a-pipeline">Explaining a pipeline</a>;</li>
 <li><code>.request_tags(..)</code> and <code>.request_options(..)</code> attach request options to one statement, as they
 do for a pipeline.</li>
 </ul>
@@ -2814,7 +2838,8 @@ selects <code>__name__</code>. An <code>_firestore_id</code> field of the result
 <a href="#typed-results-and-metadata">Pipelines</a>. A field that a document lacks is absent
 from its row, and the result type needs an <code>Option</code> for it too.</p>
 <p>A statement that is a <code>SELECT</code> fails from <code>execute()</code>, and a write fails from <code>query()</code>, with
-<code>InvalidParametersError</code> and before any request.</p>
+<code>InvalidParametersError</code> and before any request. So does a <code>SHOW</code> or an index statement from
+either of them: they run with <code>run()</code>.</p>
 <p><code>FirestoreSqlStatement::translate(&amp;db, text, &amp;parameters, &amp;options)</code> translates a statement without
 running it. The <code>Query</code> variant holds a <code>FirestorePipeline</code>, which <code>from_pipeline(..)</code> runs:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
@@ -2901,15 +2926,21 @@ let rows = db
 <p><code>FirestoreSqlOptions</code> limits a statement before it runs. A statement that breaks a limit fails at
 translation with <code>InvalidParametersError</code>, and no request is sent. <code>FirestoreSqlOptions::new()</code>
 allows every statement the translator supports, except <a href="#joins-and-subqueries">joins and
-subqueries</a>, and
-<code>FirestoreSqlOptions::read_only()</code> starts the set for text from outside the program:</p>
+subqueries</a> and the <a href="#options-1">statements that change an index or a
+field</a>, and <code>FirestoreSqlOptions::read_only()</code> starts the set for text
+from outside the program:</p>
 <ul>
-<li><code>read_only()</code> refuses <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code>, and the <code>database()</code> source;</li>
+<li><code>read_only()</code> refuses <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code>, the <code>database()</code> source, and <code>CREATE</code>,
+<code>DROP</code> and <code>ALTER COLLECTION</code>. It allows <code>SELECT</code>, <code>SHOW</code> and <code>EXPLAIN [ANALYZE] SELECT</code>, which
+only read;</li>
+<li><code>.allow_index_statements()</code> allows <code>CREATE INDEX</code>, <code>DROP INDEX</code> and <code>ALTER COLLECTION</code>, which
+<code>new()</code> refuses. <code>read_only()</code> still refuses them after it: read-only wins;</li>
 <li><code>.refuse_collection_groups()</code> refuses <code>collection_group(..)</code>, which reads every collection with
 that ID under any document;</li>
 <li><code>.with_collections([BOOKS, REVIEWS])</code> allows only these <code>FirestoreCollectionId</code>s, wherever the
 statement names one: a collection, each collection of a path, a collection group and the paths of
-<code>documents(..)</code>. It refuses <code>database()</code> too;</li>
+<code>documents(..)</code>. It refuses <code>database()</code> too, and <code>SHOW COLLECTIONS</code> and <code>SHOW INDEXES</code> without
+<code>FROM</code>, which list names outside the set;</li>
 <li><code>.with_max_rows(1_000)</code> returns at most that many rows: the <code>LIMIT</code> is lowered to it, or one is
 added. The cap counts the rows returned, not the rows read: an <code>OFFSET</code> still reads the rows it
 skips, and <code>ARRAY_AGG(..)</code> or <code>ARRAY(SELECT ..)</code> puts a whole collection into one row;</li>
@@ -2944,6 +2975,10 @@ write.</p>
 <p>Firestore has no setting that rejects a table scan, and the options do not check for one. A
 statement that filters on an unindexed field scans the collection, as a pipeline does, see
 <a href="#known-table-scans">Known table scans</a>.</p>
+<h2 id="index-statements"><a class="header" href="#index-statements">Index statements</a></h2>
+<p><code>CREATE INDEX</code>, <code>DROP INDEX</code>, <code>ALTER COLLECTION</code>, <code>SHOW INDEXES</code> and <code>SHOW COLLECTIONS</code> run with
+<code>run()</code>, and the first three need <code>.allow_index_statements()</code> on the options.
+<a href="#index-statements-1">Index statements</a> lists their forms, outcomes, waits and refusals.</p>
 <h2 id="reads-joins-and-subqueries"><a class="header" href="#reads-joins-and-subqueries">Reads, joins and subqueries</a></h2>
 <p><a href="#reads-joins-and-subqueries-1">Reads, joins and subqueries</a> lists the sources a <code>FROM</code> clause names, reads by
 ID, the supported and refused constructs, search, and joins and subqueries with their cost.</p>
@@ -3297,6 +3332,377 @@ sends a write once.</p>
 <h2 id="write-limits-1"><a class="header" href="#write-limits-1">Write limits</a></h2>
 <p>Firestore refuses an atomic write that is too big. <a href="#write-limits">Write limits</a>
 lists the limits.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="index-statements-1"><a class="header" href="#index-statements-1">Index statements</a></h1>
+<p>With the <code>admin</code> cargo feature next to <code>sql</code>, SQL text can list, create and drop indexes, and change
+the TTL and the single-field indexes of a field. <code>CREATE INDEX</code>, <code>DROP INDEX</code> and <code>ALTER COLLECTION</code>
+run only when the caller opts in with <code>.allow_index_statements()</code> on the
+<a href="#options-1">options</a>, so they suit command line tools and admin scripts that the program’s own
+operators write or run. <code>SHOW INDEXES</code>, <code>SHOW COLLECTIONS</code> and <code>EXPLAIN</code> only read and need no
+opt-in. Text from users or LLM agents runs with <code>read_only()</code>, which refuses the three statements.
+The same operations have a fluent API, see
+<a href="#one-index-at-a-time">One index at a time</a>.</p>
+<pre><code class="language-toml">[dependencies]
+firestore = { version = "...", features = ["sql", "admin"] }
+</code></pre>
+<p><code>SHOW COLLECTIONS</code> and <code>EXPLAIN</code> need <code>sql</code> alone. An index statement in a build without <code>admin</code>
+fails with <code>InvalidParametersError</code>, before any request; its <code>field</code> is the statement, such as
+<code>CREATE INDEX</code>.</p>
+<h2 id="running-a-statement"><a class="header" href="#running-a-statement">Running a statement</a></h2>
+<p><code>run()</code> of the <a href="#setup">SQL builder</a> runs any statement and returns a
+<code>FirestoreSqlOutcome</code>, one variant for each kind of statement:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Statement</th><th>Outcome</th></tr>
+</thead>
+<tbody>
+<tr><td><code>SELECT</code>, <code>EXPLAIN [ANALYZE] SELECT</code></td><td><code>Rows(stream)</code></td></tr>
+<tr><td><code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code></td><td><code>Written(FirestorePipelineWriteResult)</code></td></tr>
+<tr><td><code>SHOW COLLECTIONS</code></td><td><code>Collections(Vec&lt;FirestoreCollectionId&gt;)</code></td></tr>
+<tr><td><code>SHOW INDEXES</code></td><td><code>Indexes(FirestoreIndexListing)</code></td></tr>
+<tr><td><code>CREATE .. INDEX</code></td><td><code>IndexCreated(FirestoreListedCompositeIndex)</code></td></tr>
+<tr><td><code>DROP INDEX</code></td><td><code>IndexDropped(Option&lt;FirestoreListedCompositeIndex&gt;)</code></td></tr>
+<tr><td><code>ALTER COLLECTION</code></td><td><code>FieldUpdated(FirestoreListedField)</code></td></tr>
+</tbody>
+</table>
+</div>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let outcome = db.fluent().sql("SHOW INDEXES FROM orders").run().await?;
+
+if let FirestoreSqlOutcome::Indexes(listing) = outcome {
+    for listed in listing.indexes {
+        println!("{} {}", listed.id, listed);
+    }
+}
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p><code>query()</code>, its streaming variants and <code>obj()</code> run <code>SELECT</code> and <code>EXPLAIN [ANALYZE] SELECT</code>, and fail
+with <code>InvalidParametersError</code>, before any request, for every other new statement, as they do for a
+write. <code>execute()</code> fails the same way.</p>
+<h2 id="names-scope-and-options"><a class="header" href="#names-scope-and-options">Names, scope and options</a></h2>
+<ul>
+<li>a collection or a collection group is named by its ID. An ID with hyphens or dots goes between
+backticks, as in a <code>FROM</code> clause, and so does an index ID, which can hold <code>-</code>, such as
+<code>`CICAgPj-z4oK`</code>. A path such as <code>users/alice/orders</code> is refused: an index belongs to every
+collection with the ID, wherever it is;</li>
+<li>a column of an index is a field path, written as in a <code>WHERE</code>;</li>
+<li>an index has a <em>scope</em>. <code>ON orders</code> is an index for queries on one collection, which a query
+reaches with <code>.from("orders").parent(..)</code>. <code>ON collection_group('orders')</code> is an index for
+queries across every collection with that ID, which a query reaches with <code>.all_descendants()</code>. In
+both the index belongs to the collection group <code>orders</code>, and <code>SHOW INDEXES FROM</code> and
+<code>DROP INDEX .. ON</code> name that group;</li>
+<li>keywords and option values are matched without regard to case;</li>
+<li>an option value is a literal. A <code>@name</code> parameter is refused there, and in every name.</li>
+</ul>
+<h2 id="listing"><a class="header" href="#listing">Listing</a></h2>
+<pre><code class="language-sql">SHOW INDEXES;
+SHOW INDEXES FROM orders;
+SHOW COLLECTIONS;
+SHOW COLLECTIONS IN `users/alice`;
+</code></pre>
+<p><code>SHOW INDEXES</code> returns a <code>FirestoreIndexListing</code> for one collection group, or for every group of
+the database except the ones Firestore reserves, such as <code>__default__</code>:</p>
+<ul>
+<li><code>indexes</code> holds the composite indexes, each with its <code>collection_group</code>, <code>id</code>, <code>state</code> and the
+<code>index</code> itself: <code>query_scope</code>, <code>fields</code>, <code>unique</code>, <code>density</code> and the search options. A composite
+index is an index over several fields, which a query that filters or sorts on them needs. On a
+Standard edition database <code>fields</code> ends with the <code>__name__</code> field that Firestore appends;</li>
+<li><code>fields</code> holds the fields that carry a single-field override or a TTL policy, see
+<a href="#alter-collection">ALTER COLLECTION</a>;</li>
+<li><code>unrecognised</code> holds the items the library cannot represent, each with its <code>name</code> and <code>reason</code>.</li>
+</ul>
+<p><code>id</code> is a <code>FirestoreIndexId</code>, the type that <code>force_index(..)</code> of a
+<a href="#choosing-an-index">pipeline</a> takes.</p>
+<p><code>SHOW COLLECTIONS</code> returns the collection IDs under the documents root, or under the document that
+<code>IN</code> names, in the order Firestore lists them. A document that does not exist has none, and the
+list is empty.</p>
+<h2 id="create-index"><a class="header" href="#create-index">CREATE INDEX</a></h2>
+<pre><code class="language-sql">CREATE INDEX ON orders (customer_id, placed_at DESC);
+CREATE INDEX ON collection_group('orders') (tags CONTAINS, placed_at DESC);
+CREATE INDEX ON `order-lines` (`unit-price` DESC, sku);
+CREATE UNIQUE INDEX ON users (email) OPTIONS (density = 'SPARSE_ANY');
+CREATE INDEX ON events (kind, at DESC) OPTIONS (density = 'DENSE');
+CREATE SEARCH INDEX ON restaurants (menu, description, location GEO)
+    OPTIONS (text_language = 'en', text_language_override_field_path = 'lang');
+CREATE VECTOR INDEX ON books (genre, embedding) OPTIONS (dimension = 768);
+CREATE INDEX IF NOT EXISTS ON orders (customer_id, placed_at DESC);
+</code></pre>
+<p>The statement starts the build and returns the index as Firestore lists it: in state <code>CREATING</code>,
+or <code>READY</code> after a <a href="#waiting-for-an-operation">wait</a>. With <code>IF NOT EXISTS</code>, an index that already
+exists is returned instead, as the list below says. Firestore assigns the ID of an index, so an
+index cannot be named: <code>CREATE INDEX by_customer ON ..</code> is refused.</p>
+<p>The kind of index sets what a column can be:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Statement</th><th>Columns</th><th>Options</th></tr>
+</thead>
+<tbody>
+<tr><td><code>CREATE INDEX</code></td><td>a field with <code>ASC</code> or <code>DESC</code>, a bare field, which is ascending, or a field with <code>CONTAINS</code>, which matches the members of an array field</td><td><code>density</code></td></tr>
+<tr><td><code>CREATE UNIQUE INDEX</code></td><td>as <code>CREATE INDEX</code></td><td><code>density</code></td></tr>
+<tr><td><code>CREATE SEARCH INDEX</code></td><td>a bare field, which is a text field, or a field with <code>GEO</code></td><td><code>text_language</code>, <code>text_language_override_field_path</code></td></tr>
+<tr><td><code>CREATE VECTOR INDEX</code></td><td>ordinary columns, and the vector field last, written bare</td><td><code>dimension</code>, which is required, and <code>density</code></td></tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li>a column takes a direction or a mode, never both;</li>
+<li>the options of a search index are those of
+<a href="#search-indexes-enterprise-edition">Search indexes</a>. The <em>density</em> of an index says which documents it
+holds an entry for, see <a href="#density">Density</a>, and a
+<em>unique</em> index refuses a second document with the same values;</li>
+<li><code>IF NOT EXISTS</code> makes an index that already exists the outcome instead of an error: the statement
+returns the listed index that the definition matches. Without a wait it comes back in the state
+Firestore lists; with a wait, an index another caller is still building is returned once it is
+<code>READY</code>, and one that ends in <code>NEEDS_REPAIR</code> fails the statement. <code>CREATE</code> of an index that
+exists, without <code>IF NOT EXISTS</code>, fails with <code>DataConflictError</code>. Firestore keeps answering
+<code>ALREADY_EXISTS</code> for a while after an index is deleted, when the listing no longer shows it. <code>IF NOT EXISTS</code> returns an index only
+when the listing shows it, so the statement fails with <code>DataConflictError</code> in that window; run it
+again later.</li>
+</ul>
+<p>A fluent <code>.create()</code> takes the same definition, see
+<a href="#one-index-at-a-time">One index at a time</a>.</p>
+<h2 id="drop-index"><a class="header" href="#drop-index">DROP INDEX</a></h2>
+<pre><code class="language-sql">DROP INDEX `CICAgPj-z4oK`;
+DROP INDEX CICAgJim14AK ON orders;
+DROP INDEX ON orders (customer_id, placed_at DESC);
+DROP UNIQUE INDEX ON users (email) OPTIONS (density = 'SPARSE_ANY');
+DROP INDEX IF EXISTS `CICAgPj-z4oK`;
+</code></pre>
+<p>A drop deletes one index and returns it as it was listed just before. Firestore deletes it at once,
+so there is nothing to wait for.</p>
+<ul>
+<li><strong>By ID.</strong> The index is read first, and <code>ON orders</code> makes the drop fail with <code>DataNotFoundError</code>,
+deleting nothing, when the index belongs to another collection group. Firestore itself ignores
+the group of a request, and answers <code>200</code> for the second delete of an ID, so the check is made by
+the library. An ID that no index has fails with <code>DataNotFoundError</code>;</li>
+<li><strong>By definition.</strong> <code>DROP [UNIQUE | SEARCH | VECTOR] INDEX ON target (..) [OPTIONS (..)]</code> takes
+the text that <code>CREATE</code> took, and deletes the one listed index that it matches, as <code>.sync()</code> matches
+a declaration. On an Enterprise edition database two indexes over the same fields differ by
+<code>unique</code> and <code>density</code>, and the options pick between them. No match fails with
+<code>DataNotFoundError</code>, and several matches fail with <code>DataConflictError</code>; nothing is deleted in
+either case;</li>
+<li><code>IF EXISTS</code> makes an ID that no index has, or a definition that nothing matches, delete nothing
+and return <code>None</code> in <code>IndexDropped</code>. An index in another group than <code>ON</code> names, and a definition
+with several matches, stay errors;</li>
+<li><code>UNIQUE</code>, <code>SEARCH</code> and <code>VECTOR</code> belong to the definition form. A drop takes one index.</li>
+</ul>
+<h2 id="alter-collection"><a class="header" href="#alter-collection">ALTER COLLECTION</a></h2>
+<pre><code class="language-sql">ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = TRUE, indexes = []);
+ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = FALSE, indexes = NULL);
+ALTER COLLECTION orders ALTER COLUMN tags SET OPTIONS (indexes = ['CONTAINS', 'COLLECTION_GROUP CONTAINS']);
+ALTER COLLECTION orders ALTER address.city SET OPTIONS (indexes = NULL);
+ALTER COLLECTION logs SET OPTIONS (indexes = []);
+</code></pre>
+<p><code>ALTER COLLECTION</code> changes one field of a collection group, or every field that has no setting of its
+own. It sends one write, with the parts that the options name, and returns the field as Firestore
+reads it after the write.</p>
+<ul>
+<li><code>ttl = TRUE</code> enables <em>TTL</em>, time to live: Firestore deletes a document once the timestamp in the
+field has passed. <code>ttl = FALSE</code> disables it. TTL applies to a named field, so
+<code>ALTER COLLECTION c SET OPTIONS (ttl = ..)</code> is refused, and the value is <code>TRUE</code> or <code>FALSE</code>;</li>
+<li><code>indexes</code> sets the <em>single-field override</em> of the field. Firestore indexes every field of a
+Standard edition database on its own, and an override replaces those indexes, see
+<a href="#single-field-overrides-standard-edition">Single-field overrides</a>.
+<code>indexes = [..]</code> replaces the whole set with the entries listed, <code>[]</code> exempts the field from
+single-field indexing, and <code>NULL</code> removes the override, so that the field inherits the
+configuration of its group, or of the database;</li>
+<li>an entry of <code>indexes</code> is <code>'ASC'</code>, <code>'DESC'</code> or <code>'CONTAINS'</code> for queries on one collection, or the
+same word after <code>COLLECTION_GROUP </code> for queries across the collection group;</li>
+<li><code>ttl</code> and <code>indexes</code> in one <code>SET OPTIONS</code> are one write;</li>
+<li>without <code>ALTER COLUMN</code>, <code>indexes</code> sets the configuration of every field that has no setting of
+its own.</li>
+</ul>
+<p>Firestore refuses a write that names <code>indexes</code> on an Enterprise edition database, unless the list is
+empty or <code>NULL</code>, and then the write changes nothing; see <a href="#editions-and-the-emulator">Editions</a>. A
+<code>ttl</code> in the same refused statement is not applied either.</p>
+<p>Writes to one field are not sequenced: Firestore accepts a second write while the first is still
+running. The statement reads the field after its own write, so a second write that overlaps it can
+show in the result.</p>
+<h2 id="waiting-for-an-operation"><a class="header" href="#waiting-for-an-operation">Waiting for an operation</a></h2>
+<p><code>CREATE .. INDEX</code> and <code>ALTER COLLECTION</code> start an operation that Firestore runs in the background.
+<code>.wait_until_ready(timeout)</code> and <code>.wait_until_ready_with_options(..)</code> of the SQL builder make <code>run()</code>
+return after it has finished, and the outcome is the index or field read after that:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::Duration;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let outcome = db
+    .fluent()
+    .sql("CREATE INDEX ON orders (customer_id, placed_at DESC)")
+    .options(FirestoreSqlOptions::new().allow_index_statements())
+    .wait_until_ready(Duration::from_secs(900))
+    .run()
+    .await?;
+
+if let FirestoreSqlOutcome::IndexCreated(created) = outcome {
+    assert_eq!(created.state, FirestoreIndexState::Ready);
+}
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>A build takes minutes even for an empty collection, see
+<a href="#waiting-for-changes-to-finish">Waiting for changes to finish</a>; set the
+timeout above that. With <code>IF NOT EXISTS</code>, an index that another caller is still building is polled
+until it is no longer <code>CREATING</code>, under the same timeout and with the same retries as the poll of
+an operation. A deadline that passes fails with <code>SystemError</code>, code <code>OPERATION_WAIT_TIMEOUT</code>, and a
+failed operation fails with the operation’s status, as in <code>.sync()</code>. An index that ends in
+<code>NEEDS_REPAIR</code>, the state of an index whose last build failed and left no operation running, fails
+the same way, with <code>SystemError</code>, code <code>INDEX_NEEDS_REPAIR</code>.</p>
+<p>A wait on any other statement fails with <code>InvalidParametersError</code>, field <code>wait</code>, before any request.</p>
+<h2 id="editions-and-the-emulator"><a class="header" href="#editions-and-the-emulator">Editions and the emulator</a></h2>
+<p>The library runs no edition rule of its own on these statements. Firestore answers a statement its
+edition does not take with <code>INVALID_ARGUMENT</code>, which arrives as <code>DatabaseError</code> with Firestore’s
+message.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Statement</th><th>Standard</th><th>Enterprise</th><th>Emulator</th></tr>
+</thead>
+<tbody>
+<tr><td><code>CREATE INDEX</code></td><td>two fields or more; <code>SPARSE_ALL</code> only</td><td>one field or more; <code>DENSE</code> by default</td><td><code>UNIMPLEMENTED</code></td></tr>
+<tr><td><code>CREATE UNIQUE INDEX</code></td><td>refused</td><td>yes</td><td><code>UNIMPLEMENTED</code></td></tr>
+<tr><td><code>CREATE SEARCH INDEX</code></td><td>refused</td><td>yes</td><td><code>UNIMPLEMENTED</code></td></tr>
+<tr><td><code>CREATE VECTOR INDEX</code></td><td>yes</td><td>yes</td><td><code>UNIMPLEMENTED</code></td></tr>
+<tr><td><code>DROP INDEX</code></td><td>yes</td><td>yes</td><td><code>UNIMPLEMENTED</code></td></tr>
+<tr><td><code>ALTER COLLECTION .. indexes</code></td><td>yes</td><td><code>[]</code> and <code>NULL</code> only<sup class="footnote-reference" id="fr-enterprise-indexes-1"><a href="#footnote-enterprise-indexes">1</a></sup></td><td><code>UNIMPLEMENTED</code></td></tr>
+<tr><td><code>ALTER COLLECTION .. ttl</code></td><td>yes</td><td>yes</td><td><code>UNIMPLEMENTED</code></td></tr>
+<tr><td><code>SHOW INDEXES</code></td><td>yes</td><td>yes</td><td><code>UNIMPLEMENTED</code></td></tr>
+<tr><td><code>SHOW COLLECTIONS</code></td><td>yes</td><td>yes</td><td>yes</td></tr>
+<tr><td><code>EXPLAIN [ANALYZE]</code></td><td>fails<sup class="footnote-reference" id="fr-explain-standard-1"><a href="#footnote-explain-standard">2</a></sup></td><td>yes</td><td>rows without a plan<sup class="footnote-reference" id="fr-explain-emulator-1"><a href="#footnote-explain-emulator">3</a></sup></td></tr>
+</tbody>
+</table>
+</div>
+<p>The emulator serves no Firestore Admin API, whatever its edition, and answers each index call with
+<code>UNIMPLEMENTED</code>; it arrives as <code>DatabaseError</code>, with <code>retry_possible</code> unset. <code>.plan()</code> and <code>.sync()</code>
+skip the emulator and return, see <a href="#the-firestore-emulator">The Firestore emulator</a>,
+but a statement is an explicit command, so it fails. <code>SHOW COLLECTIONS</code> works on the emulator.</p>
+<h2 id="options-1"><a class="header" href="#options-1">Options</a></h2>
+<p><code>FirestoreSqlOptions</code> apply to the new statements as to a <code>SELECT</code>, see
+<a href="#read-only-options">Read-only options</a>:</p>
+<ul>
+<li><code>FirestoreSqlOptions::new()</code> refuses <code>CREATE</code>, <code>DROP</code> and <code>ALTER COLLECTION</code>. They run after
+<code>.allow_index_statements()</code>; without it they fail with <code>InvalidParametersError</code>, field
+<code>allow_index_statements</code>, before any request. <code>SHOW INDEXES</code>, <code>SHOW COLLECTIONS</code> and
+<code>EXPLAIN [ANALYZE] SELECT</code> only read, and run without it;</li>
+<li><code>read_only()</code> refuses <code>CREATE</code>, <code>DROP</code> and <code>ALTER COLLECTION</code> even when <code>.allow_index_statements()</code>
+follows it: read-only wins. The error <code>field</code> is <code>read_only</code>. <code>read_only()</code> allows the statements
+that only read;</li>
+<li><code>.with_collections([..])</code> applies to every collection ID a statement names. It refuses
+<code>SHOW INDEXES</code> without <code>FROM</code>, and <code>SHOW COLLECTIONS</code>, which list names outside the set, and
+<code>DROP INDEX id</code> without <code>ON</code>, which reaches an index in any group. <code>DROP INDEX id ON collection</code>
+needs a collection in the set;</li>
+<li><code>.refuse_collection_groups()</code> refuses <code>collection_group('..')</code> in an index definition;</li>
+<li><code>.with_max_rows(..)</code> caps the rows of the <code>SELECT</code> in <code>EXPLAIN ANALYZE</code>; a <code>SHOW</code> returns every
+entry.</li>
+</ul>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>const ORDERS: FirestoreCollectionId = FirestoreCollectionId::from_static("orders");
+
+let outcome = db
+    .fluent()
+    .sql("DROP INDEX `CICAgPj-z4oK` ON orders")
+    .options(
+        FirestoreSqlOptions::new()
+            .allow_index_statements()
+            .with_collections([ORDERS]),
+    )
+    .run()
+    .await?;
+<span class="boring">let _ = outcome;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<h2 id="refused-forms"><a class="header" href="#refused-forms">Refused forms</a></h2>
+<p>A statement of these forms fails with <code>InvalidParametersError</code>, before any request. <code>field</code> names
+the construct, and <code>location</code> says where it starts:</p>
+<pre><code class="language-sql">-- an index cannot be named
+CREATE INDEX by_customer ON orders (customer_id, placed_at DESC);
+-- a path is not a collection group ID
+CREATE INDEX ON `users/alice/orders` (placed_at DESC, total);
+-- a column is a field path, with a direction or a mode, not both
+CREATE INDEX ON orders (tags CONTAINS DESC);
+CREATE INDEX ON orders (lower(name));
+-- CREATE VECTOR INDEX takes its dimension in OPTIONS
+CREATE VECTOR INDEX ON books (genre, embedding);
+-- an option the statement does not take
+CREATE INDEX ON orders (customer_id, placed_at DESC) OPTIONS (dimension = 3);
+-- an option is a literal
+CREATE INDEX ON orders (customer_id, placed_at DESC) OPTIONS (density = @density);
+-- an index has no WHERE
+CREATE INDEX ON orders (customer_id, placed_at DESC) WHERE total &gt; 0;
+-- one index for each DROP
+DROP INDEX CICAgJim14AK, CICAgOi36pgK;
+-- ttl is TRUE or FALSE, and it applies to a named field
+ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = 'yes');
+ALTER COLLECTION logs SET OPTIONS (ttl = TRUE);
+-- an entry is ASC, DESC or CONTAINS, optionally after COLLECTION_GROUP
+ALTER COLLECTION orders ALTER COLUMN tags SET OPTIONS (indexes = ['ASCENDING']);
+-- FROM names a collection group ID
+SHOW INDEXES FROM `users/alice/orders`;
+-- only SHOW INDEXES and SHOW COLLECTIONS
+SHOW TABLES;
+</code></pre>
+<h2 id="explaining-a-select"><a class="header" href="#explaining-a-select">Explaining a SELECT</a></h2>
+<p><code>EXPLAIN SELECT ..</code> returns the plan of a <code>SELECT</code> without reading any document, and
+<code>EXPLAIN ANALYZE SELECT ..</code> also returns the rows and the execution profile. The prefix is the SQL
+spelling of <code>.explain()</code> and <code>.explain_with_options(..)</code>, see
+<a href="#explaining-a-pipeline">Explaining a pipeline</a>:</p>
+<pre><code class="language-sql">EXPLAIN SELECT title FROM books WHERE genre = 'Dystopian';
+EXPLAIN ANALYZE SELECT title FROM books WHERE genre = @genre ORDER BY rating DESC LIMIT 10;
+</code></pre>
+<p>The plan is Firestore’s own text, in the metadata of the last item of the rows. <code>EXPLAIN</code> takes a
+<code>SELECT</code>. It fails for a write, which Firestore rejects with Query Explain or, with <code>ANALYZE</code>, runs,
+and for an option other than <code>ANALYZE</code>. <code>EXPLAIN</code> in the text together with <code>.explain()</code> on the
+builder fails with <code>InvalidParametersError</code>, field <code>explain</code>: the text and the builder would both
+set the options. <code>.explain()</code> on <code>SHOW</code> or on an index statement fails the same way, since they have
+no plan, and so does <code>.request_options(..)</code>, or <code>.request_tags(..)</code>, on <code>SHOW INDEXES</code> and the index
+statements, field <code>request_options</code>: they go to the Admin API, which takes no request options.</p>
+<h2 id="errors-1"><a class="header" href="#errors-1">Errors</a></h2>
+<p>Every error is an existing <code>FirestoreError</code> variant:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Case</th><th>Error</th></tr>
+</thead>
+<tbody>
+<tr><td>text that does not parse, a refused form</td><td><code>InvalidParametersError</code>, <code>field</code> the construct, with <code>location</code></td></tr>
+<tr><td>an index statement in a build without <code>admin</code></td><td><code>InvalidParametersError</code></td></tr>
+<tr><td><code>query()</code> or <code>execute()</code> on a statement that needs <code>run()</code>; a wait on a statement with no operation; <code>EXPLAIN</code> with <code>.explain()</code>, or <code>.explain()</code> on <code>SHOW</code> or an index statement; request options on an Admin API statement</td><td><code>InvalidParametersError</code>, <code>field</code> <code>sql</code>, <code>wait</code>, <code>explain</code>, <code>request_options</code></td></tr>
+<tr><td>an index statement without <code>.allow_index_statements()</code>, or with <code>read_only()</code></td><td><code>InvalidParametersError</code>, <code>field</code> <code>allow_index_statements</code> or <code>read_only</code></td></tr>
+<tr><td>a field update with nothing to change, TTL on every field, a reserved group such as <code>__default__</code></td><td><code>InvalidParametersError</code></td></tr>
+<tr><td><code>CREATE</code> of an index that exists</td><td><code>DataConflictError</code></td></tr>
+<tr><td><code>DROP</code> of an unknown ID or of a definition nothing matches</td><td><code>DataNotFoundError</code>, code <code>NO_MATCHING_INDEX</code></td></tr>
+<tr><td><code>DROP</code> of an ID in another group than <code>ON</code> names</td><td><code>DataNotFoundError</code>, code <code>INDEX_IN_OTHER_GROUP</code></td></tr>
+<tr><td><code>DROP</code> of a definition that several indexes match</td><td><code>DataConflictError</code>, code <code>SEVERAL_MATCHING_INDEXES</code>, naming the IDs</td></tr>
+<tr><td>an index or a field Firestore refuses</td><td><code>DatabaseError</code> from <code>INVALID_ARGUMENT</code>, with Firestore’s message</td></tr>
+<tr><td>any index call on the emulator</td><td><code>DatabaseError</code>, code <code>Unimplemented</code></td></tr>
+<tr><td>a wait that passes its deadline</td><td><code>SystemError</code>, code <code>OPERATION_WAIT_TIMEOUT</code></td></tr>
+<tr><td>an index waited for with <code>IF NOT EXISTS</code> that ends in <code>NEEDS_REPAIR</code></td><td><code>SystemError</code>, code <code>INDEX_NEEDS_REPAIR</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="permissions"><a class="header" href="#permissions">Permissions</a></h2>
+<p><code>SHOW INDEXES</code> and <code>SHOW COLLECTIONS</code> need <code>roles/datastore.viewer</code>. <code>CREATE</code>, <code>DROP</code> and
+<code>ALTER COLLECTION</code> need <code>roles/datastore.indexAdmin</code>. Grant the viewer role alone to credentials
+that run text from users or LLM agents, with <code>read_only()</code>, so that the role refuses a statement
+the options let through.</p>
+<p>Full example available
+<a href="https://github.com/abdolence/firestore-rs/blob/master/examples/sql-indexes.rs">here</a>.</p>
+<hr>
+<ol class="footnote-definition">
+<li id="footnote-enterprise-indexes">
+<p><code>[]</code> and <code>NULL</code> are accepted and write nothing: an Enterprise edition database
+has no automatic single-field indexes to override. <a href="#fr-enterprise-indexes-1">↩</a></p>
+</li>
+<li id="footnote-explain-standard">
+<p>Like every SQL statement on a Standard edition database, <code>FAILED_PRECONDITION</code>. <a href="#fr-explain-standard-1">↩</a></p>
+</li>
+<li id="footnote-explain-emulator">
+<p>The Enterprise emulator returns the rows and no explain output. The Standard
+emulator fails every pipeline and SQL statement with <code>INVALID_ARGUMENT</code>. <a href="#fr-explain-emulator-1">↩</a></p>
+</li>
+</ol>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="timestamps-support"><a class="header" href="#timestamps-support">Timestamps support</a></h1>
 <p>By default, date/time values serialise as a string to Firestore (while
@@ -3875,7 +4281,8 @@ Firestore Admin API, are behind the <code>admin</code> cargo feature, off by def
 firestore = { version = "...", features = ["admin"] }
 </code></pre>
 <p>Nothing runs at <code>FirestoreDb</code> construction. An administrative operation only runs when your code
-calls one of its terminals, <code>.plan()</code>/<code>.sync()</code> for index management.</p>
+calls one of its terminals: <code>.plan()</code>/<code>.sync()</code> for a declaration, or <code>.get()</code>/<code>.execute()</code> for
+<a href="#one-index-at-a-time">one index at a time</a>.</p>
 <h2 id="declaring-a-collection-groups-indexes"><a class="header" href="#declaring-a-collection-groups-indexes">Declaring a collection group’s indexes</a></h2>
 <p>Everything starts from <code>db.fluent().indexes().collection_group(...)</code>, then a chain of
 declarations ending in <code>.plan()</code> or <code>.sync()</code>:</p>
@@ -4217,6 +4624,98 @@ otherwise, which is long enough for a field override’s own single-field index 
 separate way to configure that default today.</p>
 <p>A revert can wait the same way for a different sync’s write, not this one’s own: see
 <a href="#running-from-several-instances">Running from several instances</a>.</p>
+<h2 id="one-index-at-a-time"><a class="header" href="#one-index-at-a-time">One index at a time</a></h2>
+<p><code>.plan()</code> and <code>.sync()</code> reconcile a whole declaration. Four calls under <code>db.fluent().indexes()</code> do
+one thing each, with no declaration, diff or pruning: <code>list()</code>, <code>create()</code>, <code>delete()</code> and
+<code>update_field()</code>. The <a href="#index-statements-1">SQL index statements</a> run through the same calls.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::Duration;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let created = db
+    .fluent()
+    .indexes()
+    .create()
+    .collection_group("orders")
+    .index(|i| i.index([i.field("customer_id").asc(), i.field("placed_at").desc()]))
+    .wait_until_ready(Duration::from_secs(900))
+    .execute()
+    .await?;
+
+let listing = db
+    .fluent()
+    .indexes()
+    .list()
+    .collection_group("orders")
+    .get()
+    .await?;
+println!("{} indexes", listing.indexes.len());
+
+db.fluent()
+    .indexes()
+    .update_field()
+    .collection_group("sessions")
+    .field("expires_at")
+    .enable_ttl()
+    .exempt()
+    .wait_until_ready(Duration::from_secs(900))
+    .execute()
+    .await?;
+
+db.fluent().indexes().delete().id(created.id).execute().await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<ul>
+<li><code>list()</code> returns a <code>FirestoreIndexListing</code> of the composite indexes and field overrides of every
+collection group, or of the one that <code>.collection_group(..)</code> names. The listing leaves out the
+groups Firestore reserves, such as <code>__default__</code>;</li>
+<li><code>create()</code> starts the build of one index and returns it as Firestore lists it: <code>CREATING</code>, or
+<code>READY</code> after <code>.wait_until_ready(timeout)</code>. The <code>id</code> of the result is the one Firestore assigned.
+Creating an index that exists fails with <code>DataConflictError</code>, as <code>.sync()</code> does not: it counts that
+answer as done when the listing shows the index. <code>.if_not_exists()</code> makes an existing index the
+result instead, in whatever state it has. With a wait, an index that another caller is still
+building is polled until it is no longer <code>CREATING</code>, under the same deadline and retries as a
+build of the call’s own, and one that ends in <code>NEEDS_REPAIR</code> fails with <code>SystemError</code>, code
+<code>INDEX_NEEDS_REPAIR</code>. <code>NEEDS_REPAIR</code> is the state of an index whose last build failed and left no
+operation running;</li>
+<li><code>delete()</code> takes an index by <code>.id(id)</code>, by <code>.collection_group(group).id(id)</code>, or by
+<code>.collection_group(group).index(..)</code>, the definition that <code>create()</code> took, which deletes the one
+listed index it matches, as <code>.sync()</code> matches a declaration. It returns the index as it was listed
+just before. <code>.if_exists()</code> makes an index that is not there, and a definition that matches none,
+return <code>None</code> instead of <code>DataNotFoundError</code>;</li>
+<li><code>update_field()</code> writes one field, or every field without a setting of its own with
+<code>.all_fields()</code>, in one request: <code>.indexes(..)</code> or <code>.exempt()</code> set its single-field indexes,
+<code>.revert_override()</code> removes the override, and <code>.enable_ttl()</code> and <code>.disable_ttl()</code> set its TTL.
+It returns the field as Firestore reads it after the write, or after the wait. An update that
+changes nothing, and TTL on <code>.all_fields()</code>, fail with <code>InvalidParametersError</code> before any
+request.</li>
+</ul>
+<p>A delete by ID reads the index before it deletes anything. Firestore ignores the collection group
+in a <code>DeleteIndex</code> request, so an ID that belongs to another group would be deleted all the same.
+The library deletes the index only when it belongs to the group the caller named, and fails with
+<code>DataNotFoundError</code> otherwise, deleting nothing. Without a group the ID alone names the index: an ID
+is unique within one database.</p>
+<p>A delete by definition fails with <code>DataNotFoundError</code> when nothing matches, and with
+<code>DataConflictError</code>, naming the IDs, when several indexes match. On an Enterprise edition database
+two indexes over the same fields differ by <code>unique</code> and density, and the definition tells them apart.</p>
+<p>The four calls run no edition rule of their own: Firestore’s
+<code>INVALID_ARGUMENT</code> answers arrive as <code>DatabaseError</code>, and the emulator’s <code>UNIMPLEMENTED</code>, see
+<a href="#the-firestore-emulator">The Firestore emulator</a>. A reserved group such as <code>__default__</code> fails with
+<code>InvalidParametersError</code>.</p>
+<p>Failures the library finds itself carry a code in the error:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Case</th><th>Error</th></tr>
+</thead>
+<tbody>
+<tr><td><code>delete()</code> of an ID that no index has, or of a definition nothing matches</td><td><code>DataNotFoundError</code>, code <code>NO_MATCHING_INDEX</code></td></tr>
+<tr><td><code>delete()</code> of an ID that belongs to another group than the one named</td><td><code>DataNotFoundError</code>, code <code>INDEX_IN_OTHER_GROUP</code></td></tr>
+<tr><td><code>delete()</code> of a definition that several indexes match</td><td><code>DataConflictError</code>, code <code>SEVERAL_MATCHING_INDEXES</code>, naming the IDs</td></tr>
+<tr><td>a wait that passes its deadline</td><td><code>SystemError</code>, code <code>OPERATION_WAIT_TIMEOUT</code></td></tr>
+<tr><td><code>create()</code> with <code>.if_not_exists()</code> and a wait, of an index that ends in <code>NEEDS_REPAIR</code></td><td><code>SystemError</code>, code <code>INDEX_NEEDS_REPAIR</code></td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="field-paths"><a class="header" href="#field-paths">Field paths</a></h2>
 <p>Field paths compare in one spelling, so <code>`expires_at`</code> and <code>expires_at</code>, or <code>a.`b`</code> and
 <code>`a`.b</code>, are the same field. A segment needs backticks only when it is not a plain identifier
@@ -4269,10 +4768,17 @@ rather than as “no changes needed” on a project the emulator never actually 
 <code>ListIndexes</code> with <code>UNIMPLEMENTED</code>, so both return an empty plan or report carrying the emulator
 <code>skipped</code> marker, and log an <code>info</code> line saying so, instead of failing, so the same startup code
 runs unmodified against the emulator.</p>
+<p>The emulator serves no Firestore Admin API, whatever its edition. <code>list()</code>, <code>create()</code>, <code>delete()</code>
+and <code>update_field()</code>, and the SQL index statements, are explicit commands, so they fail with the
+emulator’s own <code>UNIMPLEMENTED</code>, which arrives as <code>DatabaseError</code> and whose message names the admin
+method.</p>
 <h2 id="iam-roles"><a class="header" href="#iam-roles">IAM roles</a></h2>
 <p><code>.plan()</code> needs only <code>roles/datastore.viewer</code>. <code>.sync()</code> needs <code>roles/datastore.indexAdmin</code> too,
 to create, update and delete indexes and fields. Both read the database’s edition, through the
 <code>datastore.databases.getMetadata</code> permission each of the two roles carries.</p>
+<p><code>list()</code> needs <code>roles/datastore.viewer</code>, and <code>create()</code>, <code>delete()</code> and <code>update_field()</code> need
+<code>roles/datastore.indexAdmin</code>. A delete by definition also lists the group’s indexes and reads the
+database’s edition.</p>
 <h2 id="running-the-tests-against-a-real-project"><a class="header" href="#running-the-tests-against-a-real-project">Running the tests against a real project</a></h2>
 <p><code>tests/admin-indexes-tests.rs</code> needs the <code>admin</code> feature, a real Firestore project through
 <code>GCP_PROJECT</code>, and local application default credentials. The fast, read-only test runs by
@@ -4284,6 +4790,13 @@ and waits for builds that take minutes even on an empty collection, see
 <a href="#waiting-for-changes-to-finish">Waiting for changes to finish</a>, so those carry <code>#[ignore]</code> and
 only run explicitly:</p>
 <pre><code class="language-bash">GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture
+</code></pre>
+<p>With the <code>sql</code> feature next to <code>admin</code>, the file also runs the <a href="#index-statements-1">index statements</a>
+against the database of <code>GCP_PROJECT</code> and against the Enterprise edition database of
+<code>GCP_ENTERPRISE_DATABASE_ID</code>. Each of those tests carries <code>#[ignore]</code> too, and runs on a collection
+group of its own that it empties again:</p>
+<pre><code class="language-bash">GCP_PROJECT=your-project GCP_ENTERPRISE_DATABASE_ID=your-enterprise-database \
+  cargo test --test admin-indexes-tests --features admin,sql -- --ignored sql_ --nocapture
 </code></pre>
 <p>Full examples available
 <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-management.rs">here</a>,
@@ -4668,7 +5181,9 @@ configured to develop against it. Specifying credentials explicitly, with
 <code>FirestoreDb::with_options_auth()</code> for example, still takes precedence.</p>
 <p>The emulator implements neither <a href="#bulk-delete">bulk delete</a>, which fails with
 <code>BULK_DELETE_UNAVAILABLE_ON_EMULATOR</code>, nor <a href="#the-firestore-emulator">index management</a>,
-which skips its run.</p>
+which skips its run. The index calls <code>list()</code>, <code>create()</code>, <code>delete()</code> and <code>update_field()</code>, and the
+<a href="#index-statements-1">SQL index statements</a>, fail with the emulator’s <code>UNIMPLEMENTED</code>. <code>SHOW COLLECTIONS</code>
+works on the emulator.</p>
 <h2 id="on-the-enterprise-edition-9"><a class="header" href="#on-the-enterprise-edition-9">On the Enterprise edition</a></h2>
 <p>The emulator acts as one edition, Standard by default. <code>gcloud</code> starts it, and needs a Java runtime
 (a JDK) for it:</p>
@@ -4679,6 +5194,9 @@ which skips its run.</p>
 Standard emulator answers them with <code>INVALID_ARGUMENT</code>, and neither edition of the emulator
 supports bulk delete. Core inserts and queries run on an emulator of either edition, and Core
 aggregations, transactions and listeners run on the Enterprise one as on a live database.</p>
+<p>The Enterprise emulator runs SQL and pipelines, and ignores Query Explain: an <code>EXPLAIN</code> or
+<code>EXPLAIN ANALYZE</code> statement, and <code>.explain()</code>, return the rows and no plan. Check the plan of a
+query against a live database, see <a href="#explaining-a-pipeline">Explaining a pipeline</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="docker-images-and-tls"><a class="header" href="#docker-images-and-tls">Docker images and TLS</a></h1>
 <p>When you design your Dockerfile make sure you either installed Root CA certificates or use base images that already

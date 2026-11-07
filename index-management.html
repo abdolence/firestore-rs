@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a59eacfa.js";
+            window.path_to_searchindex_js = "searchindex-44799e9e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-edc99909.js"></script>
+        <script src="toc-0efaf104.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,7 +198,8 @@ Firestore Admin API, are behind the <code>admin</code> cargo feature, off by def
 firestore = { version = "...", features = ["admin"] }
 </code></pre>
 <p>Nothing runs at <code>FirestoreDb</code> construction. An administrative operation only runs when your code
-calls one of its terminals, <code>.plan()</code>/<code>.sync()</code> for index management.</p>
+calls one of its terminals: <code>.plan()</code>/<code>.sync()</code> for a declaration, or <code>.get()</code>/<code>.execute()</code> for
+<a href="#one-index-at-a-time">one index at a time</a>.</p>
 <h2 id="declaring-a-collection-groups-indexes"><a class="header" href="#declaring-a-collection-groups-indexes">Declaring a collection group’s indexes</a></h2>
 <p>Everything starts from <code>db.fluent().indexes().collection_group(...)</code>, then a chain of
 declarations ending in <code>.plan()</code> or <code>.sync()</code>:</p>
@@ -540,6 +541,98 @@ otherwise, which is long enough for a field override’s own single-field index 
 separate way to configure that default today.</p>
 <p>A revert can wait the same way for a different sync’s write, not this one’s own: see
 <a href="#running-from-several-instances">Running from several instances</a>.</p>
+<h2 id="one-index-at-a-time"><a class="header" href="#one-index-at-a-time">One index at a time</a></h2>
+<p><code>.plan()</code> and <code>.sync()</code> reconcile a whole declaration. Four calls under <code>db.fluent().indexes()</code> do
+one thing each, with no declaration, diff or pruning: <code>list()</code>, <code>create()</code>, <code>delete()</code> and
+<code>update_field()</code>. The <a href="./sql/indexes.html">SQL index statements</a> run through the same calls.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use std::time::Duration;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let created = db
+    .fluent()
+    .indexes()
+    .create()
+    .collection_group("orders")
+    .index(|i| i.index([i.field("customer_id").asc(), i.field("placed_at").desc()]))
+    .wait_until_ready(Duration::from_secs(900))
+    .execute()
+    .await?;
+
+let listing = db
+    .fluent()
+    .indexes()
+    .list()
+    .collection_group("orders")
+    .get()
+    .await?;
+println!("{} indexes", listing.indexes.len());
+
+db.fluent()
+    .indexes()
+    .update_field()
+    .collection_group("sessions")
+    .field("expires_at")
+    .enable_ttl()
+    .exempt()
+    .wait_until_ready(Duration::from_secs(900))
+    .execute()
+    .await?;
+
+db.fluent().indexes().delete().id(created.id).execute().await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<ul>
+<li><code>list()</code> returns a <code>FirestoreIndexListing</code> of the composite indexes and field overrides of every
+collection group, or of the one that <code>.collection_group(..)</code> names. The listing leaves out the
+groups Firestore reserves, such as <code>__default__</code>;</li>
+<li><code>create()</code> starts the build of one index and returns it as Firestore lists it: <code>CREATING</code>, or
+<code>READY</code> after <code>.wait_until_ready(timeout)</code>. The <code>id</code> of the result is the one Firestore assigned.
+Creating an index that exists fails with <code>DataConflictError</code>, as <code>.sync()</code> does not: it counts that
+answer as done when the listing shows the index. <code>.if_not_exists()</code> makes an existing index the
+result instead, in whatever state it has. With a wait, an index that another caller is still
+building is polled until it is no longer <code>CREATING</code>, under the same deadline and retries as a
+build of the call’s own, and one that ends in <code>NEEDS_REPAIR</code> fails with <code>SystemError</code>, code
+<code>INDEX_NEEDS_REPAIR</code>. <code>NEEDS_REPAIR</code> is the state of an index whose last build failed and left no
+operation running;</li>
+<li><code>delete()</code> takes an index by <code>.id(id)</code>, by <code>.collection_group(group).id(id)</code>, or by
+<code>.collection_group(group).index(..)</code>, the definition that <code>create()</code> took, which deletes the one
+listed index it matches, as <code>.sync()</code> matches a declaration. It returns the index as it was listed
+just before. <code>.if_exists()</code> makes an index that is not there, and a definition that matches none,
+return <code>None</code> instead of <code>DataNotFoundError</code>;</li>
+<li><code>update_field()</code> writes one field, or every field without a setting of its own with
+<code>.all_fields()</code>, in one request: <code>.indexes(..)</code> or <code>.exempt()</code> set its single-field indexes,
+<code>.revert_override()</code> removes the override, and <code>.enable_ttl()</code> and <code>.disable_ttl()</code> set its TTL.
+It returns the field as Firestore reads it after the write, or after the wait. An update that
+changes nothing, and TTL on <code>.all_fields()</code>, fail with <code>InvalidParametersError</code> before any
+request.</li>
+</ul>
+<p>A delete by ID reads the index before it deletes anything. Firestore ignores the collection group
+in a <code>DeleteIndex</code> request, so an ID that belongs to another group would be deleted all the same.
+The library deletes the index only when it belongs to the group the caller named, and fails with
+<code>DataNotFoundError</code> otherwise, deleting nothing. Without a group the ID alone names the index: an ID
+is unique within one database.</p>
+<p>A delete by definition fails with <code>DataNotFoundError</code> when nothing matches, and with
+<code>DataConflictError</code>, naming the IDs, when several indexes match. On an Enterprise edition database
+two indexes over the same fields differ by <code>unique</code> and density, and the definition tells them apart.</p>
+<p>The four calls run no edition rule of their own: Firestore’s
+<code>INVALID_ARGUMENT</code> answers arrive as <code>DatabaseError</code>, and the emulator’s <code>UNIMPLEMENTED</code>, see
+<a href="#the-firestore-emulator">The Firestore emulator</a>. A reserved group such as <code>__default__</code> fails with
+<code>InvalidParametersError</code>.</p>
+<p>Failures the library finds itself carry a code in the error:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Case</th><th>Error</th></tr>
+</thead>
+<tbody>
+<tr><td><code>delete()</code> of an ID that no index has, or of a definition nothing matches</td><td><code>DataNotFoundError</code>, code <code>NO_MATCHING_INDEX</code></td></tr>
+<tr><td><code>delete()</code> of an ID that belongs to another group than the one named</td><td><code>DataNotFoundError</code>, code <code>INDEX_IN_OTHER_GROUP</code></td></tr>
+<tr><td><code>delete()</code> of a definition that several indexes match</td><td><code>DataConflictError</code>, code <code>SEVERAL_MATCHING_INDEXES</code>, naming the IDs</td></tr>
+<tr><td>a wait that passes its deadline</td><td><code>SystemError</code>, code <code>OPERATION_WAIT_TIMEOUT</code></td></tr>
+<tr><td><code>create()</code> with <code>.if_not_exists()</code> and a wait, of an index that ends in <code>NEEDS_REPAIR</code></td><td><code>SystemError</code>, code <code>INDEX_NEEDS_REPAIR</code></td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="field-paths"><a class="header" href="#field-paths">Field paths</a></h2>
 <p>Field paths compare in one spelling, so <code>`expires_at`</code> and <code>expires_at</code>, or <code>a.`b`</code> and
 <code>`a`.b</code>, are the same field. A segment needs backticks only when it is not a plain identifier
@@ -592,10 +685,17 @@ rather than as “no changes needed” on a project the emulator never actually 
 <code>ListIndexes</code> with <code>UNIMPLEMENTED</code>, so both return an empty plan or report carrying the emulator
 <code>skipped</code> marker, and log an <code>info</code> line saying so, instead of failing, so the same startup code
 runs unmodified against the emulator.</p>
+<p>The emulator serves no Firestore Admin API, whatever its edition. <code>list()</code>, <code>create()</code>, <code>delete()</code>
+and <code>update_field()</code>, and the SQL index statements, are explicit commands, so they fail with the
+emulator’s own <code>UNIMPLEMENTED</code>, which arrives as <code>DatabaseError</code> and whose message names the admin
+method.</p>
 <h2 id="iam-roles"><a class="header" href="#iam-roles">IAM roles</a></h2>
 <p><code>.plan()</code> needs only <code>roles/datastore.viewer</code>. <code>.sync()</code> needs <code>roles/datastore.indexAdmin</code> too,
 to create, update and delete indexes and fields. Both read the database’s edition, through the
 <code>datastore.databases.getMetadata</code> permission each of the two roles carries.</p>
+<p><code>list()</code> needs <code>roles/datastore.viewer</code>, and <code>create()</code>, <code>delete()</code> and <code>update_field()</code> need
+<code>roles/datastore.indexAdmin</code>. A delete by definition also lists the group’s indexes and reads the
+database’s edition.</p>
 <h2 id="running-the-tests-against-a-real-project"><a class="header" href="#running-the-tests-against-a-real-project">Running the tests against a real project</a></h2>
 <p><code>tests/admin-indexes-tests.rs</code> needs the <code>admin</code> feature, a real Firestore project through
 <code>GCP_PROJECT</code>, and local application default credentials. The fast, read-only test runs by
@@ -607,6 +707,13 @@ and waits for builds that take minutes even on an empty collection, see
 <a href="#waiting-for-changes-to-finish">Waiting for changes to finish</a>, so those carry <code>#[ignore]</code> and
 only run explicitly:</p>
 <pre><code class="language-bash">GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture
+</code></pre>
+<p>With the <code>sql</code> feature next to <code>admin</code>, the file also runs the <a href="./sql/indexes.html">index statements</a>
+against the database of <code>GCP_PROJECT</code> and against the Enterprise edition database of
+<code>GCP_ENTERPRISE_DATABASE_ID</code>. Each of those tests carries <code>#[ignore]</code> too, and runs on a collection
+group of its own that it empties again:</p>
+<pre><code class="language-bash">GCP_PROJECT=your-project GCP_ENTERPRISE_DATABASE_ID=your-enterprise-database \
+  cargo test --test admin-indexes-tests --features admin,sql -- --ignored sql_ --nocapture
 </code></pre>
 <p>Full examples available
 <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/index-management.rs">here</a>,

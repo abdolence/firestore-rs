@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a59eacfa.js";
+            window.path_to_searchindex_js = "searchindex-44799e9e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-edc99909.js"></script>
+        <script src="toc-0efaf104.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,7 +181,10 @@
 <p>The library translates a SQL statement into a <a href="./pipelines.html">pipeline</a> and runs it. It is meant
 for SQL text that comes from outside the program: command line tools, admin scripts, reports
 defined in configuration, LLM agents, and queries ported from a SQL database. Reads return the
-documents of a pipeline, and <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> run as <a href="./pipeline-writes.html">pipeline writes</a>.</p>
+documents of a pipeline, and <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> run as <a href="./pipeline-writes.html">pipeline writes</a>.
+With the <code>admin</code> feature it also runs <a href="./sql/indexes.html">index statements</a>: <code>CREATE INDEX</code>,
+<code>DROP INDEX</code>, <code>ALTER COLLECTION</code> and <code>SHOW INDEXES</code>. The first three run only when the options say
+<code>.allow_index_statements()</code>.</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::Deserialize;
 </span><span class="boring">#[derive(Debug, Clone, Deserialize)]
@@ -199,8 +202,9 @@ documents of a pipeline, and <code>INSERT</code>, <code>UPDATE</code> and <code>
 </span><span class="boring">}</span></code></pre>
 <p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/sql.rs">here</a>.</p>
 <p>SQL needs a database of the Firestore <em>Enterprise edition</em>, as pipelines do: a statement sent to a
-Standard edition database fails with <code>FAILED_PRECONDITION</code>, unless a cache session answers it. A
-statement means what the same pipeline means in the fluent API: Firestore’s semantics, listed in
+Standard edition database fails with <code>FAILED_PRECONDITION</code>, unless a cache session answers it.
+The index statements and <code>SHOW COLLECTIONS</code> use the Admin and Core APIs, and run on both editions.
+A statement means what the same pipeline means in the fluent API: Firestore’s semantics, listed in
 <a href="#semantics">Semantics</a>, where a few results differ from those of a SQL database.</p>
 <p>A read through a cache session is answered from the cache when the pipeline it translates to only
 filters, sorts and pages cached documents, see <a href="./caching.html#sql">Caching pipelines</a> for the cached
@@ -223,11 +227,16 @@ firestore = { version = "...", features = ["sql"] }
 <li><code>.obj::&lt;T&gt;()</code> deserialises the rows into <code>T</code>, as in a pipeline;</li>
 <li><code>query()</code> returns every row, and <code>stream_query()</code>, <code>stream_query_with_errors()</code> and
 <code>stream_query_with_metadata()</code> stream them;</li>
+<li><code>run()</code> runs any statement, a <code>SELECT</code>, a write, <code>SHOW</code> or an index statement, and returns a
+<code>FirestoreSqlOutcome</code> with one variant for each kind of statement, see
+<a href="./sql/indexes.html#running-a-statement">Index statements</a>;</li>
+<li><code>.wait_until_ready(timeout)</code> and <code>.wait_until_ready_with_options(..)</code>, with the <code>admin</code> feature,
+make <code>run()</code> wait for the operation of a <code>CREATE INDEX</code> or an <code>ALTER COLLECTION</code>;</li>
 <li><code>execute()</code> and <code>execute_in_transaction(&amp;mut transaction)</code> run an <code>INSERT</code>, <code>UPDATE</code> or
 <code>DELETE</code>, see <a href="#writes">Writes</a>;</li>
 <li><code>explain()</code> and <code>explain_with_options(..)</code> return the plan of a <code>SELECT</code> in the metadata of the
-last item of <code>stream_query_with_metadata()</code>, see
-<a href="./editions/query-plans.html#explaining-a-pipeline">Explaining a pipeline</a>;</li>
+last item of <code>stream_query_with_metadata()</code>, and so does an <code>EXPLAIN [ANALYZE]</code> prefix in the
+text, see <a href="./editions/query-plans.html#explaining-a-pipeline">Explaining a pipeline</a>;</li>
 <li><code>.request_tags(..)</code> and <code>.request_options(..)</code> attach request options to one statement, as they
 do for a pipeline.</li>
 </ul>
@@ -236,7 +245,8 @@ selects <code>__name__</code>. An <code>_firestore_id</code> field of the result
 <a href="./pipelines.html#typed-results-and-metadata">Pipelines</a>. A field that a document lacks is absent
 from its row, and the result type needs an <code>Option</code> for it too.</p>
 <p>A statement that is a <code>SELECT</code> fails from <code>execute()</code>, and a write fails from <code>query()</code>, with
-<code>InvalidParametersError</code> and before any request.</p>
+<code>InvalidParametersError</code> and before any request. So does a <code>SHOW</code> or an index statement from
+either of them: they run with <code>run()</code>.</p>
 <p><code>FirestoreSqlStatement::translate(&amp;db, text, &amp;parameters, &amp;options)</code> translates a statement without
 running it. The <code>Query</code> variant holds a <code>FirestorePipeline</code>, which <code>from_pipeline(..)</code> runs:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
@@ -323,15 +333,21 @@ let rows = db
 <p><code>FirestoreSqlOptions</code> limits a statement before it runs. A statement that breaks a limit fails at
 translation with <code>InvalidParametersError</code>, and no request is sent. <code>FirestoreSqlOptions::new()</code>
 allows every statement the translator supports, except <a href="./sql/reads.html#joins-and-subqueries">joins and
-subqueries</a>, and
-<code>FirestoreSqlOptions::read_only()</code> starts the set for text from outside the program:</p>
+subqueries</a> and the <a href="./sql/indexes.html#options">statements that change an index or a
+field</a>, and <code>FirestoreSqlOptions::read_only()</code> starts the set for text
+from outside the program:</p>
 <ul>
-<li><code>read_only()</code> refuses <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code>, and the <code>database()</code> source;</li>
+<li><code>read_only()</code> refuses <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code>, the <code>database()</code> source, and <code>CREATE</code>,
+<code>DROP</code> and <code>ALTER COLLECTION</code>. It allows <code>SELECT</code>, <code>SHOW</code> and <code>EXPLAIN [ANALYZE] SELECT</code>, which
+only read;</li>
+<li><code>.allow_index_statements()</code> allows <code>CREATE INDEX</code>, <code>DROP INDEX</code> and <code>ALTER COLLECTION</code>, which
+<code>new()</code> refuses. <code>read_only()</code> still refuses them after it: read-only wins;</li>
 <li><code>.refuse_collection_groups()</code> refuses <code>collection_group(..)</code>, which reads every collection with
 that ID under any document;</li>
 <li><code>.with_collections([BOOKS, REVIEWS])</code> allows only these <code>FirestoreCollectionId</code>s, wherever the
 statement names one: a collection, each collection of a path, a collection group and the paths of
-<code>documents(..)</code>. It refuses <code>database()</code> too;</li>
+<code>documents(..)</code>. It refuses <code>database()</code> too, and <code>SHOW COLLECTIONS</code> and <code>SHOW INDEXES</code> without
+<code>FROM</code>, which list names outside the set;</li>
 <li><code>.with_max_rows(1_000)</code> returns at most that many rows: the <code>LIMIT</code> is lowered to it, or one is
 added. The cap counts the rows returned, not the rows read: an <code>OFFSET</code> still reads the rows it
 skips, and <code>ARRAY_AGG(..)</code> or <code>ARRAY(SELECT ..)</code> puts a whole collection into one row;</li>
@@ -366,6 +382,10 @@ write.</p>
 <p>Firestore has no setting that rejects a table scan, and the options do not check for one. A
 statement that filters on an unindexed field scans the collection, as a pipeline does, see
 <a href="./editions/query-plans.html#known-table-scans">Known table scans</a>.</p>
+<h2 id="index-statements"><a class="header" href="#index-statements">Index statements</a></h2>
+<p><code>CREATE INDEX</code>, <code>DROP INDEX</code>, <code>ALTER COLLECTION</code>, <code>SHOW INDEXES</code> and <code>SHOW COLLECTIONS</code> run with
+<code>run()</code>, and the first three need <code>.allow_index_statements()</code> on the options.
+<a href="./sql/indexes.html">Index statements</a> lists their forms, outcomes, waits and refusals.</p>
 <h2 id="reads-joins-and-subqueries"><a class="header" href="#reads-joins-and-subqueries">Reads, joins and subqueries</a></h2>
 <p><a href="./sql/reads.html">Reads, joins and subqueries</a> lists the sources a <code>FROM</code> clause names, reads by
 ID, the supported and refused constructs, search, and joins and subqueries with their cost.</p>
