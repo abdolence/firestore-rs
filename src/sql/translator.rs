@@ -5,11 +5,12 @@ use super::write::SQL_UPSERT_FORM;
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::field_path_segment;
 use crate::{
-    FirestoreCollectionId, FirestoreDocumentId, FirestoreExpr, FirestoreResult,
-    FirestoreSearchQuery, FirestoreSqlOptions, FirestoreSqlStatement, FirestoreValue,
+    FirestoreCollectionId, FirestoreDocumentId, FirestoreExplainOptions, FirestoreExpr,
+    FirestoreResult, FirestoreSearchQuery, FirestoreSqlExplain, FirestoreSqlOptions,
+    FirestoreSqlStatement, FirestoreValue,
 };
 use gcloud_sdk::google::firestore::v1::{value::ValueType, Value};
-use sqlparser::ast::{Expr, Ident, ObjectName, ObjectNamePart, Statement};
+use sqlparser::ast::{DescribeAlias, Expr, Ident, ObjectName, ObjectNamePart, Statement};
 use sqlparser::tokenizer::Span;
 
 // How deep the translator nests into a statement. sqlparser's recursion limit does not bound a
@@ -59,6 +60,44 @@ impl<'t> FirestoreSqlTranslator<'t> {
     ) -> FirestoreResult<FirestoreSqlStatement> {
         let translated = match statement {
             Statement::Query(query) => FirestoreSqlStatement::Query(self.top_level_query(query)?),
+            Statement::Explain {
+                describe_alias,
+                analyze,
+                verbose,
+                query_plan,
+                estimate,
+                statement,
+                format,
+                options,
+            } => {
+                refuse_set(
+                    &[
+                        (*describe_alias != DescribeAlias::Explain, "DESCRIBE"),
+                        (*verbose, "EXPLAIN VERBOSE"),
+                        (*query_plan, "EXPLAIN QUERY PLAN"),
+                        (*estimate, "EXPLAIN ESTIMATE"),
+                        (format.is_some(), "EXPLAIN FORMAT"),
+                        (options.is_some(), "EXPLAIN (options)"),
+                    ],
+                    None,
+                )?;
+                let Statement::Query(query) = statement.as_ref() else {
+                    return Err(FirestoreError::invalid_sql(
+                        "EXPLAIN",
+                        "EXPLAIN takes a SELECT: Firestore rejects explain on a write, or runs it when it analyses",
+                        None,
+                    ));
+                };
+                let options = if *analyze {
+                    FirestoreExplainOptions::new().with_analyze(true)
+                } else {
+                    FirestoreExplainOptions::new()
+                };
+                FirestoreSqlStatement::Explain(FirestoreSqlExplain::new(
+                    self.top_level_query(query)?,
+                    options,
+                ))
+            }
             Statement::Insert(_)
             | Statement::Update(_)
             | Statement::Delete(_)

@@ -6,13 +6,13 @@ use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::pipeline_stage_builder::FirestorePipelineNestedContext;
 use crate::{
     FirestoreBoolExpr, FirestoreCollectionGroupSource, FirestoreCollectionId,
-    FirestoreCollectionSource, FirestoreDocumentsSource, FirestoreExpr, FirestoreGeoPoint,
-    FirestoreInsertWrite, FirestoreLatLng, FirestoreListCollectionIdsParams, FirestorePipeline,
-    FirestorePipelineSource, FirestorePipelineStage, FirestorePipelineWrite,
+    FirestoreCollectionSource, FirestoreDocumentsSource, FirestoreExplainOptions, FirestoreExpr,
+    FirestoreGeoPoint, FirestoreInsertWrite, FirestoreLatLng, FirestoreListCollectionIdsParams,
+    FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage, FirestorePipelineWrite,
     FirestorePipelineWriteParams, FirestorePipelineWriteTransaction, FirestoreReference,
-    FirestoreResult, FirestoreSelection, FirestoreSqlOptions, FirestoreSqlParameters,
-    FirestoreSqlStatement, FirestoreUnionStage, FirestoreUpdateWrite, FirestoreUpsertWrite,
-    FirestoreWriteCollection,
+    FirestoreResult, FirestoreSelection, FirestoreSqlExplain, FirestoreSqlOptions,
+    FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUnionStage, FirestoreUpdateWrite,
+    FirestoreUpsertWrite, FirestoreWriteCollection,
 };
 
 #[cfg(feature = "admin")]
@@ -2464,4 +2464,74 @@ fn ttl_on_every_field_is_refused() {
     let refusal = refused("ALTER COLLECTION logs SET OPTIONS (ttl = TRUE)");
 
     assert_eq!(refusal.field, "ttl");
+}
+
+#[test]
+fn explain_analyze_carries_the_select_pipeline_and_analyze() {
+    let sql = "SELECT title FROM books WHERE genre = @genre ORDER BY rating DESC LIMIT 10";
+    let parameters = FirestoreSqlParameters::new().param("genre", "Dystopian");
+    let select = translate(sql, &parameters, &FirestoreSqlOptions::new()).unwrap();
+
+    let [plain, analysed] = ["EXPLAIN", "EXPLAIN ANALYZE"].map(|prefix| {
+        translate_statement(
+            &format!("{prefix} {sql}"),
+            &parameters,
+            &FirestoreSqlOptions::new(),
+        )
+        .unwrap_or_else(|error| panic!("{prefix}: {error}"))
+    });
+
+    assert_eq!(
+        plain,
+        FirestoreSqlStatement::Explain(FirestoreSqlExplain::new(
+            select.clone(),
+            FirestoreExplainOptions::new()
+        ))
+    );
+    assert_eq!(
+        analysed,
+        FirestoreSqlStatement::Explain(FirestoreSqlExplain::new(
+            select,
+            FirestoreExplainOptions::new().with_analyze(true)
+        ))
+    );
+}
+
+#[test]
+fn explain_of_a_write_is_refused() {
+    let refusal = refused("EXPLAIN DELETE FROM books WHERE stock = 0");
+
+    assert_eq!(refusal.field, "EXPLAIN");
+}
+
+#[test]
+fn explain_takes_analyze_and_nothing_else() {
+    let refusal = refused("EXPLAIN FORMAT JSON SELECT title FROM books");
+
+    assert_eq!(refusal.field, "EXPLAIN FORMAT");
+}
+
+#[test]
+fn explain_analyze_applies_the_row_cap_of_the_options() {
+    let options = FirestoreSqlOptions::read_only().with_max_rows(5);
+
+    let statement = translate_statement(
+        "EXPLAIN ANALYZE SELECT title FROM books",
+        &FirestoreSqlParameters::new(),
+        &options,
+    )
+    .unwrap();
+
+    let FirestoreSqlStatement::Explain(explain) = statement else {
+        panic!("{statement:?}");
+    };
+    assert_eq!(
+        explain.pipeline,
+        translate(
+            "SELECT title FROM books LIMIT 5",
+            &FirestoreSqlParameters::new(),
+            &FirestoreSqlOptions::new()
+        )
+        .unwrap()
+    );
 }

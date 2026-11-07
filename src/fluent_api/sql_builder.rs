@@ -86,6 +86,10 @@ impl<'a> FirestoreSqlBuilder<'a> {
     /// Runs the statement with Query Explain for its plan only: no document is read or returned,
     /// and the plan arrives in the metadata of the last item of
     /// [`stream_query_with_metadata`](Self::stream_query_with_metadata).
+    ///
+    /// A statement that starts with `EXPLAIN` fails with
+    /// [`InvalidParametersError`](FirestoreError::InvalidParametersError), field `explain`:
+    /// the text and the builder would both set the options.
     pub fn explain(self) -> Self {
         self.explain_with_options(FirestoreExplainOptions::new())
     }
@@ -310,6 +314,12 @@ impl<'a> FirestoreSqlBuilder<'a> {
             FirestoreSqlStatement::Query(pipeline) => Ok(FirestorePipelineParams::new(pipeline)
                 .opt_explain_options(self.explain_options)
                 .opt_request_options(self.request_options)),
+            FirestoreSqlStatement::Explain(_) if self.explain_options.is_some() => {
+                Err(FirestoreError::invalid_parameters(
+                    "explain",
+                    "the statement says EXPLAIN already; leave explain() off the builder",
+                ))
+            }
             FirestoreSqlStatement::Explain(explain) => {
                 Ok(FirestorePipelineParams::new(explain.pipeline)
                     .with_explain_options(explain.options)
@@ -464,6 +474,22 @@ mod tests {
             .await;
 
         assert_eq!(refused_field(refused), "wait");
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    }
+
+    #[tokio::test]
+    async fn explain_text_together_with_explain_options_is_refused() {
+        let fake = refusing_every_request().await;
+
+        let refused = fake
+            .db
+            .fluent()
+            .sql("EXPLAIN SELECT title FROM books")
+            .explain()
+            .query()
+            .await;
+
+        assert_eq!(refused_field(refused), "explain");
         assert!(fake.calls().is_empty(), "{:?}", fake.calls());
     }
 }
