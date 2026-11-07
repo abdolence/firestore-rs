@@ -80,13 +80,9 @@ enum CachedOperand<'a> {
 enum CachedCondition<'a> {
     Not(Box<CachedCondition<'a>>),
     Logical(CachedLogical<'a>),
-    Comparison(CompareOp, Box<[CachedOperand<'a>; 2]>),
-    EqualAny {
-        negated: bool,
-        searched: CachedOperand<'a>,
-        search_space: CachedOperand<'a>,
-    },
-    ArrayContains(CachedArrayContains, Box<[CachedOperand<'a>; 2]>),
+    Comparison(CompareOp, [CachedOperand<'a>; 2]),
+    EqualAny([CachedOperand<'a>; 2]),
+    ArrayContains(CachedArrayContains, [CachedOperand<'a>; 2]),
     Exists(CachedOperand<'a>),
     IsAbsent(CachedOperand<'a>),
     Operand(CachedOperand<'a>),
@@ -295,8 +291,8 @@ impl CachedCollectionSource {
         // database the parent names.
         let path = format!("{documents_path}/{}", source.path_in_database()?);
         let pinned_names = match first_stage {
-            Some(FirestorePipelineStage::Where(stage)) => {
-                Self::pinned_names(&stage.condition.0).map(|names| {
+            Some(FirestorePipelineStage::Where(FirestoreWhereStage { condition })) => {
+                Self::pinned_names(&condition.0).map(|names| {
                     let mut in_collection: Vec<String> = Vec::with_capacity(names.len());
                     for name in names {
                         // A name in another collection matches no document of this one.
@@ -398,12 +394,11 @@ fn by_name(mut documents: Vec<FirestoreDocument>) -> Vec<FirestoreDocument> {
 impl<'a> CachedStage<'a> {
     fn new(stage: &'a FirestorePipelineStage) -> Result<Self, FirestoreCachePipelineMiss> {
         Ok(match stage {
-            FirestorePipelineStage::Where(stage) => {
-                CachedStage::Where(CachedCondition::new(&stage.condition.0)?)
+            FirestorePipelineStage::Where(FirestoreWhereStage { condition }) => {
+                CachedStage::Where(CachedCondition::new(&condition.0)?)
             }
-            FirestorePipelineStage::Sort(stage) => CachedStage::Sort(
-                stage
-                    .orderings
+            FirestorePipelineStage::Sort(FirestoreSortStage { orderings }) => CachedStage::Sort(
+                orderings
                     .iter()
                     .map(|ordering| {
                         Ok(CachedOrdering {
@@ -413,16 +408,16 @@ impl<'a> CachedStage<'a> {
                     })
                     .collect::<Result<_, FirestoreCachePipelineMiss>>()?,
             ),
-            FirestorePipelineStage::Limit(stage) => {
-                CachedStage::Limit(usize::try_from(stage.limit).unwrap_or(usize::MAX))
+            FirestorePipelineStage::Limit(FirestoreLimitStage { limit }) => {
+                CachedStage::Limit(usize::try_from(*limit).unwrap_or(usize::MAX))
             }
-            FirestorePipelineStage::Offset(stage) => {
-                CachedStage::Offset(usize::try_from(stage.offset).unwrap_or(usize::MAX))
+            FirestorePipelineStage::Offset(FirestoreOffsetStage { offset }) => {
+                CachedStage::Offset(usize::try_from(*offset).unwrap_or(usize::MAX))
             }
-            FirestorePipelineStage::Fields(stage) => {
+            FirestorePipelineStage::Fields(FirestoreFieldsStage { fields }) => {
                 let mut keeps_name = false;
-                let mut selections = Vec::with_capacity(stage.fields.len());
-                for selection in &stage.fields {
+                let mut selections = Vec::with_capacity(fields.len());
+                for selection in fields {
                     match CachedSelection::new(selection, "fields")? {
                         CachedSelection {
                             name: DOCUMENT_NAME_FIELD,
@@ -436,30 +431,32 @@ impl<'a> CachedStage<'a> {
                     selections,
                 })
             }
-            FirestorePipelineStage::AddFields(stage) => CachedStage::AddFields(
-                stage
-                    .fields
-                    .iter()
-                    .map(
-                        |selection| match CachedSelection::new(selection, "add_fields")? {
-                            CachedSelection {
-                                name: DOCUMENT_NAME_FIELD,
-                                ..
-                            } => Err(FirestoreCachePipelineMiss::unsupported(
-                                "add_fields of the document name",
-                            )),
-                            selection => Ok(selection),
-                        },
-                    )
-                    .collect::<Result<_, _>>()?,
-            ),
-            FirestorePipelineStage::RemoveFields(stage) => CachedStage::RemoveFields(
-                stage
-                    .fields
-                    .iter()
-                    .map(|path| output_field_name(path))
-                    .collect::<Result<_, _>>()?,
-            ),
+            FirestorePipelineStage::AddFields(FirestoreAddFieldsStage { fields }) => {
+                CachedStage::AddFields(
+                    fields
+                        .iter()
+                        .map(
+                            |selection| match CachedSelection::new(selection, "add_fields")? {
+                                CachedSelection {
+                                    name: DOCUMENT_NAME_FIELD,
+                                    ..
+                                } => Err(FirestoreCachePipelineMiss::unsupported(
+                                    "add_fields of the document name",
+                                )),
+                                selection => Ok(selection),
+                            },
+                        )
+                        .collect::<Result<_, _>>()?,
+                )
+            }
+            FirestorePipelineStage::RemoveFields(FirestoreRemoveFieldsStage { fields }) => {
+                CachedStage::RemoveFields(
+                    fields
+                        .iter()
+                        .map(|path| output_field_name(path))
+                        .collect::<Result<_, _>>()?,
+                )
+            }
             FirestorePipelineStage::Raw(_)
             | FirestorePipelineStage::Aggregate(_)
             | FirestorePipelineStage::Distinct(_)
@@ -714,22 +711,21 @@ impl<'a> CachedCondition<'a> {
         let comparison = |op| match function.args.as_slice() {
             [left, right] => Ok(Self::Comparison(
                 op,
-                Box::new([CachedOperand::new(left)?, CachedOperand::new(right)?]),
+                [CachedOperand::new(left)?, CachedOperand::new(right)?],
             )),
             _ => Err(Self::unknown_function(function)),
         };
-        let membership = |negated| match function.args.as_slice() {
-            [searched, search_space] => Ok(Self::EqualAny {
-                negated,
-                searched: CachedOperand::new(searched)?,
-                search_space: CachedOperand::new(search_space)?,
-            }),
+        let membership = || match function.args.as_slice() {
+            [searched, search_space] => Ok(Self::EqualAny([
+                CachedOperand::new(searched)?,
+                CachedOperand::new(search_space)?,
+            ])),
             _ => Err(Self::unknown_function(function)),
         };
         let array_contains = |kind| match function.args.as_slice() {
             [array, searched] => Ok(Self::ArrayContains(
                 kind,
-                Box::new([CachedOperand::new(array)?, CachedOperand::new(searched)?]),
+                [CachedOperand::new(array)?, CachedOperand::new(searched)?],
             )),
             _ => Err(Self::unknown_function(function)),
         };
@@ -751,8 +747,8 @@ impl<'a> CachedCondition<'a> {
             ("less_than_or_equal", _) => comparison(CompareOp::LessThanOrEqual),
             ("greater_than", _) => comparison(CompareOp::GreaterThan),
             ("greater_than_or_equal", _) => comparison(CompareOp::GreaterThanOrEqual),
-            ("equal_any", _) => membership(false),
-            ("not_equal_any", _) => membership(true),
+            ("equal_any", _) => membership(),
+            ("not_equal_any", _) => Ok(Self::Not(Box::new(membership()?))),
             ("array_contains", _) => array_contains(CachedArrayContains::Element),
             ("array_contains_all", _) => array_contains(CachedArrayContains::All),
             ("array_contains_any", _) => array_contains(CachedArrayContains::Any),
@@ -814,25 +810,19 @@ impl<'a> CachedCondition<'a> {
             Self::Not(condition) => Ok(condition.evaluate(document)?.map(|truth| !truth)),
             Self::Logical(logical) => logical.evaluate(document),
             Self::Comparison(op, operands) => {
-                let [left, right] = &**operands;
+                let [left, right] = operands;
                 Ok(Some(Self::comparison_holds(
                     *op,
                     left.evaluate(document).as_deref(),
                     right.evaluate(document).as_deref(),
                 )?))
             }
-            Self::EqualAny {
-                negated,
-                searched,
-                search_space,
-            } => Ok(Some(
-                Self::is_in(
-                    searched.evaluate(document).as_deref(),
-                    search_space.evaluate(document).as_deref(),
-                )? != *negated,
-            )),
+            Self::EqualAny([searched, search_space]) => Ok(Some(Self::is_in(
+                searched.evaluate(document).as_deref(),
+                search_space.evaluate(document).as_deref(),
+            )?)),
             Self::ArrayContains(kind, operands) => {
-                let [array, searched] = &**operands;
+                let [array, searched] = operands;
                 kind.found(
                     array.evaluate(document).as_deref(),
                     searched.evaluate(document).as_deref(),
