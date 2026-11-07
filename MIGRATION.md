@@ -160,9 +160,14 @@ cached document could hold only the masked fields, and later reads by ID returne
 The cached query engine, used by `query` on preloaded collections, now returns the documents Firestore returns, in the
 order Firestore returns them. Before, these queries returned other documents, in an arbitrary order:
 
-- **Timestamps and numbers.** Timestamps compare by seconds and then nanoseconds; before, the two parts were compared
-  separately, so `1.9 s < 2.1 s` was false. An integer and a double compare by value, so a filter on `1` matches the
-  double `1.0`, and `order_by` sorts them together.
+- **Timestamps and numbers.** Timestamps compare by seconds and then fractions of a second; before, the two parts were
+  compared separately, so `1.9 s < 2.1 s` was false. The fraction is compared at the precision Firestore uses:
+  - `==`, the range operators and `array-contains` compare a timestamp on its own at the nanosecond.
+  - `in`, `not-in` and `array-contains-any` compare at the microsecond that Firestore stores.
+  - A timestamp inside an array or a map compares at the microsecond, whichever operator is used.
+
+  An integer and a double compare by value, so a filter on `1` matches the double `1.0`, and `order_by` sorts them
+  together.
 - **Order and range filters on every type.** `<`, `<=`, `>`, `>=`, `order_by` and cursors follow Firestore's order of
   types (null, booleans, numbers, timestamps, strings, bytes, references, geo points, arrays, vectors, maps) and its
   order within each type. Before, only numbers and timestamps had an order: `<` and `>` on a string matched nothing,
