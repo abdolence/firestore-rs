@@ -27,7 +27,7 @@ With `default-features = false`, either enable the feature next to your TLS feat
 
 ```toml
 [dependencies]
-firestore = { version = "0.58", default-features = false, features = ["tls-webpki-roots", "auth-default-crypto"] }
+firestore = { version = "0.63", default-features = false, features = ["tls-webpki-roots", "auth-default-crypto"] }
 ```
 
 or install a rustls `CryptoProvider` before creating a client.
