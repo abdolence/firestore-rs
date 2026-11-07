@@ -81,9 +81,7 @@ pub struct FirestoreJsonConverter<'a> {
 impl FirestoreDb {
     /// Converts values and documents of this database to and from JSON.
     pub fn json(&self) -> FirestoreJsonConverter<'_> {
-        FirestoreJsonConverter {
-            documents_path: self.get_documents_path(),
-        }
+        FirestoreJsonConverter::new(self.get_documents_path())
     }
 }
 
@@ -153,7 +151,13 @@ impl Failure {
     }
 }
 
-impl FirestoreJsonConverter<'_> {
+impl<'a> FirestoreJsonConverter<'a> {
+    /// Converts values and documents of the database whose documents root is `documents_path`,
+    /// `projects/{project}/databases/{database}/documents`, without a client.
+    pub fn new(documents_path: &'a str) -> Self {
+        Self { documents_path }
+    }
+
     /// Writes `value` in the tagged encoding.
     ///
     /// Fails with `JSON_EXPRESSION_VALUE` on a field reference, variable reference, function or
@@ -265,11 +269,13 @@ impl FirestoreJsonConverter<'_> {
         entries
     }
 
-    fn reference_text<'n>(&self, name: &'n str) -> &'n str {
+    /// The name of a document or reference relative to this database, or the full name when it
+    /// belongs to another database.
+    pub fn relative_name<'n>(&self, name: &'n str) -> &'n str {
         relative_to_documents(self.documents_path, name).unwrap_or(name)
     }
 
-    /// The full name of a reference written by [`reference_text`](Self::reference_text).
+    /// The full name of a reference written by [`relative_name`](Self::relative_name).
     ///
     /// A full name is `projects/{project}/databases/{database}/documents/{path}` with an odd
     /// number of segments. A relative name has an even number, so a document in a collection
@@ -291,7 +297,7 @@ impl FirestoreJsonConverter<'_> {
         if !document.name.is_empty() {
             object.insert(
                 "__name__".to_string(),
-                Json::String(self.reference_text(&document.name).to_string()),
+                Json::String(self.relative_name(&document.name).to_string()),
             );
         }
         if options.metadata {
@@ -366,7 +372,7 @@ impl FirestoreJsonConverter<'_> {
             ValueType::StringValue(string) => Json::String(string.clone()),
             ValueType::BytesValue(bytes) => json!({"$bytes": STANDARD.encode(bytes)}),
             ValueType::TimestampValue(timestamp) => json!({"$timestamp": timestamp.to_string()}),
-            ValueType::ReferenceValue(name) => json!({"$ref": self.reference_text(name)}),
+            ValueType::ReferenceValue(name) => json!({"$ref": self.relative_name(name)}),
             ValueType::GeoPointValue(point) => json!({"$geo": [
                 Self::tagged_double(point.latitude),
                 Self::tagged_double(point.longitude),
@@ -432,7 +438,7 @@ impl FirestoreJsonConverter<'_> {
             ValueType::StringValue(string) => Json::String(string.clone()),
             ValueType::BytesValue(bytes) => Json::String(STANDARD.encode(bytes)),
             ValueType::TimestampValue(timestamp) => Json::String(timestamp.to_string()),
-            ValueType::ReferenceValue(name) => Json::String(self.reference_text(name).to_string()),
+            ValueType::ReferenceValue(name) => Json::String(self.relative_name(name).to_string()),
             ValueType::GeoPointValue(point) => {
                 let mut object = Map::new();
                 object.insert("latitude".to_string(), Self::plain_double(point.latitude));
@@ -639,7 +645,7 @@ mod tests {
     const DOCUMENTS_PATH: &str = "projects/project/databases/database/documents";
 
     fn converter(documents_path: &str) -> FirestoreJsonConverter<'_> {
-        FirestoreJsonConverter { documents_path }
+        FirestoreJsonConverter::new(documents_path)
     }
 
     fn with_metadata() -> FirestoreJsonDocumentOptions {

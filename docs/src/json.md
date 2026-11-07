@@ -3,6 +3,8 @@
 With the `json` cargo feature, `db.json()` converts Firestore values and documents to JSON and back.
 It is meant for tools that move documents out of Firestore and into it again, such as an export and
 an import, and for tools that show documents to a person. It does not send anything.
+`FirestoreJsonConverter::new(documents_path)` builds the same converter from a documents path,
+without a client.
 
 ```toml
 [dependencies]
