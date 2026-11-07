@@ -58,6 +58,9 @@ pub use transaction::*;
 #[cfg(test)]
 mod transaction_read_tests;
 
+#[cfg(all(test, feature = "caching-memory"))]
+mod cache_read_tests;
+
 mod transaction_models;
 pub use transaction_models::*;
 

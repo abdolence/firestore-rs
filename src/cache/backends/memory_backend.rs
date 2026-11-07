@@ -719,6 +719,7 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::TryStreamExt;
     use gcloud_sdk::google::firestore::v1::{
         DocumentChange, DocumentDelete, DocumentRemove, TargetChange,
     };
@@ -1050,5 +1051,683 @@ mod tests {
             .expect("event handled");
 
         assert!(!cached(&backend, "elsewhere", "one").await);
+    }
+
+    async fn seed_documents<const N: usize>(
+        backend: &FirestoreMemoryCacheBackend,
+        documents: [(&str, Vec<(&str, FirestoreValue)>); N],
+    ) {
+        for (id, fields) in documents {
+            let document =
+                FirestoreDb::serialize_map_to_doc(doc_path("a", id), fields).expect("document");
+            backend
+                .update_doc_by_path(&document)
+                .await
+                .expect("seeded document");
+        }
+    }
+
+    async fn seed_values<const N: usize>(
+        backend: &FirestoreMemoryCacheBackend,
+        documents: [(&str, &str, FirestoreValue); N],
+    ) {
+        seed_documents(
+            backend,
+            documents.map(|(id, field, value)| (id, vec![(field, value)])),
+        )
+        .await
+    }
+
+    fn query() -> FirestoreQueryParams {
+        FirestoreQueryParams::new("a".into())
+    }
+
+    fn matching(filter: FirestoreQueryFilterCompare) -> FirestoreQueryParams {
+        query().with_filter(FirestoreQueryFilter::Compare(Some(filter)))
+    }
+
+    fn ordered_by(field: &str, direction: FirestoreQueryDirection) -> FirestoreQueryParams {
+        query().with_order_by(vec![FirestoreQueryOrder::new(field.into(), direction)])
+    }
+
+    /// Runs every query against the seeded collection and compares the ids it returns, in the
+    /// order it returns them.
+    async fn assert_queries_return(
+        backend: &FirestoreMemoryCacheBackend,
+        cases: impl IntoIterator<Item = (FirestoreQueryParams, Vec<&'static str>)>,
+    ) {
+        for (query, expected) in cases {
+            let FirestoreCachedValue::UseCached(stream) = backend
+                .query_docs(&format!("{DOCS}/a"), &query)
+                .await
+                .expect("query")
+            else {
+                panic!("the collection is preloaded, so the query is served from the cache");
+            };
+            let documents: Vec<FirestoreDocument> = stream.try_collect().await.expect("documents");
+            let ids: Vec<&str> = documents
+                .iter()
+                .map(|document| document.name.rsplit('/').next().unwrap())
+                .collect();
+            assert_eq!(ids, expected, "{query:?}");
+        }
+    }
+
+    fn timestamp(instant: &str) -> FirestoreValue {
+        FirestoreTimestamp(instant.parse().expect("instant")).into()
+    }
+
+    fn typed(value_type: gcloud_sdk::google::firestore::v1::value::ValueType) -> FirestoreValue {
+        FirestoreValue::from(gcloud_sdk::google::firestore::v1::Value {
+            value_type: Some(value_type),
+        })
+    }
+
+    fn null() -> FirestoreValue {
+        typed(gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(0))
+    }
+
+    fn bytes(content: &[u8]) -> FirestoreValue {
+        typed(gcloud_sdk::google::firestore::v1::value::ValueType::BytesValue(content.to_vec()))
+    }
+
+    fn reference(path: &str) -> FirestoreValue {
+        FirestoreReference(format!("{DOCS}/{path}")).into()
+    }
+
+    fn geo_point(latitude: f64, longitude: f64) -> FirestoreValue {
+        typed(
+            gcloud_sdk::google::firestore::v1::value::ValueType::GeoPointValue(
+                gcloud_sdk::google::r#type::LatLng {
+                    latitude,
+                    longitude,
+                },
+            ),
+        )
+    }
+
+    fn list(values: impl IntoIterator<Item = FirestoreValue>) -> FirestoreValue {
+        typed(
+            gcloud_sdk::google::firestore::v1::value::ValueType::ArrayValue(
+                gcloud_sdk::google::firestore::v1::ArrayValue {
+                    values: values.into_iter().map(|value| value.value).collect(),
+                },
+            ),
+        )
+    }
+
+    fn vector(components: Vec<f64>) -> FirestoreValue {
+        FirestoreValue::from_map([
+            ("__type__", "__vector__".into()),
+            ("value", components.into()),
+        ])
+    }
+
+    #[tokio::test]
+    async fn timestamps_compare_by_seconds_then_nanoseconds() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("early", "at", timestamp("2026-01-01T00:00:01.9Z")),
+                ("whole", "at", timestamp("2026-01-01T00:00:02Z")),
+                ("late", "at", timestamp("2026-01-01T00:00:02.1Z")),
+            ],
+        )
+        .await;
+        let whole = || timestamp("2026-01-01T00:00:02Z");
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    matching(FirestoreQueryFilterCompare::LessThan("at".into(), whole())),
+                    vec!["early"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::LessThanOrEqual(
+                        "at".into(),
+                        whole(),
+                    )),
+                    vec!["early", "whole"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::GreaterThan(
+                        "at".into(),
+                        whole(),
+                    )),
+                    vec!["late"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::GreaterThanOrEqual(
+                        "at".into(),
+                        whole(),
+                    )),
+                    vec!["whole", "late"],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn integers_and_doubles_compare_by_numeric_value() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("integer-one", "n", 1_i64.into()),
+                ("double-one", "n", 1.0_f64.into()),
+                ("double-one-and-a-half", "n", 1.5_f64.into()),
+                ("integer-two", "n", 2_i64.into()),
+                ("integers", "list", vec![1_i64, 3].into()),
+                ("doubles", "list", vec![1.0_f64, 3.0].into()),
+            ],
+        )
+        .await;
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "n".into(),
+                        1.0_f64.into(),
+                    )),
+                    vec!["double-one", "integer-one"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::Equal("n".into(), 2_i64.into())),
+                    vec!["integer-two"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::NotEqual(
+                        "n".into(),
+                        1_i64.into(),
+                    )),
+                    vec!["double-one-and-a-half", "integer-two"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::LessThan(
+                        "n".into(),
+                        1.5_f64.into(),
+                    )),
+                    vec!["double-one", "integer-one"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::GreaterThanOrEqual(
+                        "n".into(),
+                        1.5_f64.into(),
+                    )),
+                    vec!["double-one-and-a-half", "integer-two"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::ArrayContainsAny(
+                        "list".into(),
+                        vec![3.0_f64].into(),
+                    )),
+                    vec!["doubles", "integers"],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn in_matches_a_scalar_field_equal_to_a_listed_value() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("integer-one", "n", 1_i64.into()),
+                ("double-one", "n", 1.0_f64.into()),
+                ("integer-two", "n", 2_i64.into()),
+                ("text", "n", "x".into()),
+                ("null", "n", null()),
+                ("absent", "other", 1_i64.into()),
+            ],
+        )
+        .await;
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    matching(FirestoreQueryFilterCompare::In(
+                        "n".into(),
+                        serde_json::json!([1, "x"]).into(),
+                    )),
+                    vec!["double-one", "integer-one", "text"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::NotIn(
+                        "n".into(),
+                        serde_json::json!(["x", 2.0]).into(),
+                    )),
+                    vec!["double-one", "integer-one"],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn array_contains_matches_an_array_field_holding_the_value() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("integers", "list", vec![1_i64, 2].into()),
+                ("doubles", "list", vec![1.0_f64, 3.0].into()),
+                ("texts", "list", vec!["x"].into()),
+                ("empty", "list", Vec::<i64>::new().into()),
+                ("scalar", "list", 1_i64.into()),
+                ("absent", "other", 1_i64.into()),
+            ],
+        )
+        .await;
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    matching(FirestoreQueryFilterCompare::ArrayContains(
+                        "list".into(),
+                        1_i64.into(),
+                    )),
+                    vec!["doubles", "integers"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::ArrayContains(
+                        "list".into(),
+                        "x".into(),
+                    )),
+                    vec!["texts"],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn arrays_and_maps_are_equal_when_their_elements_are_equal() {
+        let backend = preloaded(&[("a", 1000)]);
+        let fields =
+            |x: FirestoreValue, y: FirestoreValue| FirestoreValue::from_map([("x", x), ("y", y)]);
+        seed_values(
+            &backend,
+            [
+                ("integers", "v", vec![1_i64, 2].into()),
+                ("doubles", "v", vec![1.0_f64, 2.0].into()),
+                ("reversed", "v", vec![2_i64, 1].into()),
+                ("shorter", "v", vec![1_i64].into()),
+                ("nested", "v", list([vec![1_i64, 2].into(), 3_i64.into()])),
+                ("not-a-number", "v", vec![f64::NAN].into()),
+                ("map-integers", "v", fields(1_i64.into(), 2_i64.into())),
+                ("map-doubles", "v", fields(1.0_f64.into(), 2.0_f64.into())),
+                (
+                    "map-fewer",
+                    "v",
+                    FirestoreValue::from_map([("x", 1_i64.into())]),
+                ),
+                (
+                    "map-nested",
+                    "v",
+                    FirestoreValue::from_map([("x", fields(1_i64.into(), null()))]),
+                ),
+                ("scalar", "v", 1_i64.into()),
+            ],
+        )
+        .await;
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "v".into(),
+                        vec![1_i64, 2].into(),
+                    )),
+                    vec!["doubles", "integers"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::ArrayContains(
+                        "v".into(),
+                        vec![1_i64, 2].into(),
+                    )),
+                    vec!["nested"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "v".into(),
+                        vec![f64::NAN].into(),
+                    )),
+                    vec!["not-a-number"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "v".into(),
+                        fields(1_i64.into(), 2_i64.into()),
+                    )),
+                    vec!["map-doubles", "map-integers"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "v".into(),
+                        FirestoreValue::from_map([("x", fields(1.0_f64.into(), null()))]),
+                    )),
+                    vec!["map-nested"],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn bytes_references_and_geo_points_are_equal_only_to_the_same_value() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("bytes", "v", bytes(&[1, 2, 3])),
+                ("other-bytes", "v", bytes(&[1, 2, 4])),
+                ("text-bytes", "v", "AQID".into()),
+                ("reference", "v", reference("a/target")),
+                ("other-reference", "v", reference("a/elsewhere")),
+                ("text-reference", "v", doc_path("a", "target").into()),
+                ("geo-point", "v", geo_point(1.0, 2.0)),
+                ("other-geo-point", "v", geo_point(1.0, 3.0)),
+            ],
+        )
+        .await;
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "v".into(),
+                        bytes(&[1, 2, 3]),
+                    )),
+                    vec!["bytes"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "v".into(),
+                        reference("a/target"),
+                    )),
+                    vec!["reference"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::Equal(
+                        "v".into(),
+                        geo_point(1.0, 2.0),
+                    )),
+                    vec!["geo-point"],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn null_in_a_filter_value_matches_nothing_and_null_fields_need_the_null_filter() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("null", "v", null()),
+                ("one", "v", 1_i64.into()),
+                ("not-a-number", "v", f64::NAN.into()),
+                ("listed", "v", list([null()])),
+                ("absent", "other", 1_i64.into()),
+            ],
+        )
+        .await;
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    matching(FirestoreQueryFilterCompare::Equal("v".into(), null())),
+                    vec![],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::NotEqual("v".into(), null())),
+                    vec![],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::In(
+                        "v".into(),
+                        list([1_i64.into(), null()]),
+                    )),
+                    vec!["one"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::NotIn(
+                        "v".into(),
+                        list([1_i64.into(), null()]),
+                    )),
+                    vec![],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::ArrayContains(
+                        "v".into(),
+                        null(),
+                    )),
+                    vec![],
+                ),
+                (
+                    query().with_filter(FirestoreQueryFilter::Unary(
+                        FirestoreQueryFilterUnary::IsNull("v".into()),
+                    )),
+                    vec!["null"],
+                ),
+                (
+                    query().with_filter(FirestoreQueryFilter::Unary(
+                        FirestoreQueryFilterUnary::IsNotNan("v".into()),
+                    )),
+                    vec!["one", "listed"],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn values_of_every_type_order_and_compare_in_firestores_type_order() {
+        let backend = preloaded(&[("a", 1000)]);
+        let in_type_order = [
+            ("null", null()),
+            ("false", false.into()),
+            ("true", true.into()),
+            ("nan", f64::NAN.into()),
+            ("minus-one-and-a-half", (-1.5_f64).into()),
+            ("one", 1_i64.into()),
+            ("two", 2.0_f64.into()),
+            ("early", timestamp("2026-01-01T00:00:00Z")),
+            ("late", timestamp("2026-01-01T00:00:01Z")),
+            ("text-a", "a".into()),
+            ("text-ab", "ab".into()),
+            ("text-b", "b".into()),
+            ("text-accented", "\u{e9}".into()),
+            ("bytes-0", bytes(&[0])),
+            ("bytes-0-1", bytes(&[0, 1])),
+            ("bytes-1", bytes(&[1])),
+            ("reference-a", reference("a/one")),
+            ("reference-a-nested", reference("a/one/sub/two")),
+            ("reference-a-b", reference("a-b/one")),
+            ("geo-point-south", geo_point(0.0, 5.0)),
+            ("geo-point-north", geo_point(1.0, 0.0)),
+            ("array-empty", Vec::<i64>::new().into()),
+            ("array-1", vec![1_i64].into()),
+            ("array-1-2", vec![1_i64, 2].into()),
+            ("array-2", vec![2_i64].into()),
+            ("vector-short", vector(vec![5.0, 5.0])),
+            ("vector-long", vector(vec![0.0, 0.0, 0.0])),
+            ("map-a1", FirestoreValue::from_map([("a", 1_i64.into())])),
+            (
+                "map-a1-b2",
+                FirestoreValue::from_map([("a", 1_i64.into()), ("b", 2_i64.into())]),
+            ),
+            ("map-a2", FirestoreValue::from_map([("a", 2_i64.into())])),
+            ("map-b0", FirestoreValue::from_map([("b", 0_i64.into())])),
+        ];
+        let ids: Vec<&'static str> = in_type_order.iter().map(|(id, _)| *id).collect();
+        for (id, value) in in_type_order.into_iter().rev() {
+            seed_values(&backend, [(id, "v", value)]).await;
+        }
+        seed_values(&backend, [("absent", "other", 1_i64.into())]).await;
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    ordered_by("v", FirestoreQueryDirection::Ascending),
+                    ids.clone(),
+                ),
+                (
+                    ordered_by("v", FirestoreQueryDirection::Descending),
+                    ids.iter().rev().copied().collect(),
+                ),
+                (
+                    ordered_by("v", FirestoreQueryDirection::Ascending)
+                        .with_start_at(FirestoreQueryCursor::AfterValue(vec!["ab".into()]))
+                        .with_end_at(FirestoreQueryCursor::BeforeValue(vec![bytes(&[1])])),
+                    vec!["text-b", "text-accented", "bytes-0", "bytes-0-1"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::GreaterThan(
+                        "v".into(),
+                        "a".into(),
+                    )),
+                    vec!["text-ab", "text-b", "text-accented"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::LessThanOrEqual(
+                        "v".into(),
+                        1_i64.into(),
+                    )),
+                    vec!["minus-one-and-a-half", "one"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::GreaterThanOrEqual(
+                        "v".into(),
+                        bytes(&[0, 1]),
+                    )),
+                    vec!["bytes-0-1", "bytes-1"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::LessThan(
+                        "v".into(),
+                        reference("a-b/one"),
+                    )),
+                    vec!["reference-a", "reference-a-nested"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::GreaterThan(
+                        "v".into(),
+                        vec![1_i64].into(),
+                    )),
+                    vec!["array-1-2", "array-2"],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn the_first_order_by_field_that_differs_decides_and_documents_missing_one_are_left_out()
+    {
+        let backend = preloaded(&[("a", 1000)]);
+        let pair = |a: i64, b: FirestoreValue| vec![("a", a.into()), ("b", b)];
+        seed_documents(
+            &backend,
+            [
+                ("p", pair(1, 2_i64.into())),
+                ("q", pair(2, 1_i64.into())),
+                ("r", pair(1, 1_i64.into())),
+                ("s", pair(1, "x".into())),
+                ("same-as-r", pair(1, 1_i64.into())),
+                ("only-a", vec![("a", 1_i64.into())]),
+                ("only-b", vec![("b", 3_i64.into())]),
+            ],
+        )
+        .await;
+        let order = |a, b| {
+            query().with_order_by(vec![
+                FirestoreQueryOrder::new("a".into(), a),
+                FirestoreQueryOrder::new("b".into(), b),
+            ])
+        };
+        use FirestoreQueryDirection::{Ascending, Descending};
+
+        assert_queries_return(
+            &backend,
+            [
+                (
+                    order(Ascending, Ascending),
+                    vec!["r", "same-as-r", "p", "s", "q"],
+                ),
+                (
+                    order(Ascending, Descending),
+                    vec!["s", "p", "same-as-r", "r", "q"],
+                ),
+                (
+                    order(Descending, Ascending),
+                    vec!["q", "r", "same-as-r", "p", "s"],
+                ),
+            ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn cursors_apply_before_offset_and_offset_before_limit() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed_values(
+            &backend,
+            [
+                ("f", "n", 1_i64.into()),
+                ("e", "n", 2_i64.into()),
+                ("d", "n", 3_i64.into()),
+                ("c", "n", 4_i64.into()),
+                ("b", "n", 5_i64.into()),
+                ("a", "n", 6_i64.into()),
+            ],
+        )
+        .await;
+        let ordered = || ordered_by("n", FirestoreQueryDirection::Ascending);
+        let at = |n: i64| vec![n.into()];
+
+        assert_queries_return(
+            &backend,
+            [
+                (ordered().with_offset(1).with_limit(2), vec!["e", "d"]),
+                (
+                    ordered()
+                        .with_start_at(FirestoreQueryCursor::AfterValue(at(2)))
+                        .with_limit(2),
+                    vec!["d", "c"],
+                ),
+                (
+                    ordered()
+                        .with_start_at(FirestoreQueryCursor::BeforeValue(at(2)))
+                        .with_end_at(FirestoreQueryCursor::AfterValue(at(4)))
+                        .with_offset(1),
+                    vec!["d", "c"],
+                ),
+                (
+                    matching(FirestoreQueryFilterCompare::GreaterThan(
+                        "n".into(),
+                        2_i64.into(),
+                    ))
+                    .with_limit(2),
+                    vec!["d", "c"],
+                ),
+                (query().with_limit(2), vec!["a", "b"]),
+            ],
+        )
+        .await;
     }
 }

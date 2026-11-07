@@ -348,6 +348,14 @@ pub struct FirestoreQueryOrder {
 }
 
 impl FirestoreQueryOrder {
+    /// Applies this order's direction to an ordering computed as if it were ascending.
+    pub(crate) fn directed(&self, ascending: std::cmp::Ordering) -> std::cmp::Ordering {
+        match self.direction {
+            FirestoreQueryDirection::Ascending => ascending,
+            FirestoreQueryDirection::Descending => ascending.reverse(),
+        }
+    }
+
     /// Returns a string representation of the order, e.g., "fieldName asc".
     pub fn to_string_format(&self) -> String {
         format!("{} {}", self.field_name, self.direction.to_string())
