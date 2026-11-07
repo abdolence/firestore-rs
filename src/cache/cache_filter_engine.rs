@@ -1,5 +1,7 @@
 use crate::FirestoreQueryFilter;
 use crate::*;
+use gcloud_sdk::google::firestore::v1::value::ValueType;
+use gcloud_sdk::google::firestore::v1::Value;
 use std::cmp::Ordering;
 
 pub struct FirestoreCacheFilterEngine<'a> {
@@ -58,9 +60,10 @@ impl<'a> FirestoreCacheFilterEngine<'a> {
                         gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(
                             double_value,
                         ) => !double_value.is_nan(),
+                        gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(_) => false,
                         _ => true,
                     })
-                    .unwrap_or(true)
+                    .unwrap_or(false)
             }
             FirestoreQueryFilterUnary::IsNull(field_path) => {
                 firestore_doc_get_field_by_path(doc, field_path)
@@ -70,7 +73,7 @@ impl<'a> FirestoreCacheFilterEngine<'a> {
                             gcloud_sdk::google::firestore::v1::value::ValueType::NullValue(_)
                         )
                     })
-                    .unwrap_or(true)
+                    .unwrap_or(false)
             }
             FirestoreQueryFilterUnary::IsNotNull(field_path) => {
                 firestore_doc_get_field_by_path(doc, field_path)
@@ -303,6 +306,44 @@ fn compare_integer_to_double(integer: i64, double: f64) -> Option<Ordering> {
     }
 }
 
+/// Equality of two values as Firestore applies it inside arrays and maps, where, unlike for a
+/// filter on a field, null equals null and NaN equals NaN.
+fn nested_values_equal(a: &ValueType, b: &ValueType) -> bool {
+    match (a, b) {
+        (ValueType::NullValue(_), ValueType::NullValue(_)) => true,
+        (ValueType::DoubleValue(a_val), ValueType::DoubleValue(b_val))
+            if a_val.is_nan() && b_val.is_nan() =>
+        {
+            true
+        }
+        (ValueType::ArrayValue(a_val), ValueType::ArrayValue(b_val)) => {
+            a_val.values.len() == b_val.values.len()
+                && a_val
+                    .values
+                    .iter()
+                    .zip(&b_val.values)
+                    .all(|(a_item, b_item)| nested_items_equal(a_item, b_item))
+        }
+        (ValueType::MapValue(a_val), ValueType::MapValue(b_val)) => {
+            a_val.fields.len() == b_val.fields.len()
+                && a_val.fields.iter().all(|(key, a_item)| {
+                    b_val
+                        .fields
+                        .get(key)
+                        .is_some_and(|b_item| nested_items_equal(a_item, b_item))
+                })
+        }
+        _ => compare_values(CompareOp::Equal, a, b),
+    }
+}
+
+fn nested_items_equal(a: &Value, b: &Value) -> bool {
+    matches!(
+        (&a.value_type, &b.value_type),
+        (Some(a_val), Some(b_val)) if nested_values_equal(a_val, b_val)
+    )
+}
+
 pub(super) fn compare_values(
     op: CompareOp,
     a: &gcloud_sdk::google::firestore::v1::value::ValueType,
@@ -446,6 +487,26 @@ pub(super) fn compare_values(
             gcloud_sdk::google::firestore::v1::value::ValueType::StringValue(b_val),
         ) => a_val != b_val,
 
+        (CompareOp::Equal, a_val @ ValueType::ArrayValue(_), b_val @ ValueType::ArrayValue(_)) => {
+            nested_values_equal(a_val, b_val)
+        }
+
+        (CompareOp::Equal, a_val @ ValueType::MapValue(_), b_val @ ValueType::MapValue(_)) => {
+            nested_values_equal(a_val, b_val)
+        }
+
+        (CompareOp::Equal, ValueType::BytesValue(a_val), ValueType::BytesValue(b_val)) => {
+            a_val == b_val
+        }
+
+        (CompareOp::Equal, ValueType::ReferenceValue(a_val), ValueType::ReferenceValue(b_val)) => {
+            a_val == b_val
+        }
+
+        (CompareOp::Equal, ValueType::GeoPointValue(a_val), ValueType::GeoPointValue(b_val)) => {
+            a_val == b_val
+        }
+
         //  Array Operation
         (
             CompareOp::ArrayContains,
@@ -483,6 +544,16 @@ pub(super) fn compare_values(
             .flat_map(|v| &v.value_type)
             .any(|b_val| compare_values(CompareOp::Equal, a_val, b_val)),
 
+        // Firestore returns nothing for a `not-in` list that holds a null.
+        (CompareOp::NotIn, _, ValueType::ArrayValue(b_val))
+            if b_val
+                .values
+                .iter()
+                .any(|v| matches!(v.value_type, Some(ValueType::NullValue(_)))) =>
+        {
+            false
+        }
+
         // Firestore leaves out documents whose field is null, as it does those without the field.
         (
             CompareOp::NotIn,
@@ -512,6 +583,14 @@ pub(super) fn compare_values(
             gcloud_sdk::google::firestore::v1::value::ValueType::DoubleValue(double),
             gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(integer),
         ) => op.holds_for(compare_integer_to_double(*integer, *double).map(Ordering::reverse)),
+
+        // Whatever its type, an existing field that is not null matches `!=` when it differs from
+        // a value that is not null.
+        (CompareOp::NotEqual, a_val, b_val) => {
+            !matches!(a_val, ValueType::NullValue(_))
+                && !matches!(b_val, ValueType::NullValue(_))
+                && !compare_values(CompareOp::Equal, a_val, b_val)
+        }
 
         // Any other combinations result in false
         _ => false,

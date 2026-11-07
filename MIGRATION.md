@@ -124,7 +124,18 @@ equals the double of the same value in all three. Before, `in` and `array-contai
 value the other way round, so they returned no documents, and `not-in` returned only the documents with an array field.
 `array-contains-any` is unchanged.
 
-An `in` filter that lists an array, to match a field holding that array, still returns no documents from the cache.
+### Cached equality matches arrays, maps, bytes, references and null like Firestore
+
+The cached query engine now matches `==`, `!=`, `in`, `not-in`, `array-contains` and `array-contains-any` against array,
+map, bytes, reference and geo point values. Arrays are equal when their elements are equal in order, and maps when their
+fields are equal by key; inside both, an integer equals the double of the same value, and null and NaN equal themselves.
+Before, the cache never found two of these values equal, so such queries returned other documents than Firestore. `!=`
+now also matches a field of another type, as Firestore does.
+
+A null in a filter value matches nothing, as in Firestore: `== null`, `!= null` and `array-contains` null return no
+documents, a null in an `in` or `array-contains-any` list is ignored, and a `not-in` list that holds a null returns no
+documents. Use `is_null` to find null fields. `is_null` no longer matches documents without the field, and `is_not_nan`
+no longer matches documents where the field is null or absent.
 
 ## 0.62
 
