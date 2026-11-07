@@ -29,8 +29,9 @@ SQL needs a database of the Firestore *Enterprise edition*, as pipelines do. A s
 the same pipeline means in the fluent API: Firestore's semantics, listed in
 [Semantics](#semantics), where a few results differ from those of a SQL database.
 
-A read through a cache session is answered from the cache when the cache evaluates the pipeline
-it translates to, see [Caching pipelines](./caching.md#sql) for the cached shapes.
+A read through a cache session is answered from the cache when the pipeline it translates to only
+filters, sorts and pages cached documents, see [Caching pipelines](./caching.md#sql) for the cached
+shapes.
 
 ## When to use SQL
 

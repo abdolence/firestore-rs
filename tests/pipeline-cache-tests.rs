@@ -831,87 +831,22 @@ async fn logic_matches_firestore() -> TestResult {
         ),
         ("not of a flag", expr.not(flag())),
         ("a flag as the condition", flag()),
+        (
+            "not of and with false",
+            expr.not(expr.and([flag(), expr.constant(true).equal(false)])),
+        ),
+        (
+            "not of or with false",
+            expr.not(expr.or([flag(), expr.constant(true).equal(false)])),
+        ),
+        (
+            "not of and of null and a flag",
+            expr.not(expr.and([FirestoreBoolExpr::unchecked(constant(null())), flag()])),
+        ),
     ] {
         let pipeline = differential.edge_where(without_string_flag(condition));
         differential
             .same(&format!("{case}, booleans only"), Expect::Rows, pipeline)
-            .await;
-    }
-
-    differential.finish().await
-}
-
-/// The value a condition outputs, which tells false from null where a filter cannot.
-#[tokio::test]
-async fn condition_values_match_firestore() -> TestResult {
-    let mut differential = Differential::new().await?;
-    let expr = FirestorePipelineExprBuilder;
-    let flag = || FirestoreBoolExpr::unchecked(field("flag"));
-    let null_condition = || FirestoreBoolExpr::unchecked(constant(null()));
-    let logical = [
-        ("not of a flag", expr.not(flag())),
-        (
-            "and of a flag and true",
-            expr.and([flag(), expr.constant(true).equal(true)]),
-        ),
-        (
-            "and of a flag and false",
-            expr.and([flag(), expr.constant(true).equal(false)]),
-        ),
-        (
-            "or of a flag and true",
-            expr.or([flag(), expr.constant(true).equal(true)]),
-        ),
-        (
-            "or of a flag and false",
-            expr.or([flag(), expr.constant(true).equal(false)]),
-        ),
-        (
-            "and of null and a flag",
-            expr.and([null_condition(), flag()]),
-        ),
-        ("not of null", expr.not(null_condition())),
-    ];
-    for (case, condition) in logical {
-        let pipeline = differential
-            .pipeline()
-            .from(EDGE_CASES_COLLECTION)
-            .filter(|q| q.field("kind").not_equal("bool"))
-            .add_fields(|_| [condition.alias("result")])
-            .into_pipeline();
-        differential.same(case, Expect::Rows, pipeline).await;
-    }
-    let everywhere = [
-        ("array_contains", field("tags").array_contains("a")),
-        (
-            "array_contains_any",
-            field("tags").array_contains_any(constant(array(vec![string("a")]))),
-        ),
-        (
-            "array_contains_all",
-            field("tags").array_contains_all(constant(array(vec![string("a")]))),
-        ),
-        (
-            "equal_any",
-            field("value").equal_any(constant(array(vec![int(1), null()]))),
-        ),
-        (
-            "not_equal_any",
-            field("value").not_equal_any(constant(array(vec![int(1)]))),
-        ),
-        ("equal null", field("value").equal(constant(null()))),
-        ("less_than", field("value").less_than(2)),
-        ("exists", field("value").exists()),
-        ("is_absent", field("value").is_absent()),
-    ];
-    for (case, condition) in everywhere {
-        let pipeline = differential
-            .pipeline()
-            .from(EDGE_CASES_COLLECTION)
-            .add_fields(|_| [condition.alias("result")])
-            .into_pipeline();
-        differential
-            .same(&format!("value of {case}"), Expect::Rows, pipeline)
             .await;
     }
 
@@ -923,6 +858,7 @@ async fn membership_matches_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
     let first = document_reference(&differential.db, EDGE_CASES_COLLECTION, "d01");
     let fifth = document_reference(&differential.db, EDGE_CASES_COLLECTION, "d05");
+    let expr = FirestorePipelineExprBuilder;
     let cases = [
         (
             "equal_any of mixed values",
@@ -981,6 +917,18 @@ async fn membership_matches_firestore() -> TestResult {
             "array_contains_all of an empty array",
             field("tags").array_contains_all(constant(array(vec![]))),
         ),
+        (
+            "not of array_contains",
+            expr.not(field("tags").array_contains("a")),
+        ),
+        (
+            "not of array_contains_any",
+            expr.not(field("tags").array_contains_any(constant(array(vec![string("a")])))),
+        ),
+        (
+            "not of array_contains_all",
+            expr.not(field("tags").array_contains_all(constant(array(vec![string("a")])))),
+        ),
     ];
     for (case, condition) in cases {
         let pipeline = differential.edge_where(condition);
@@ -993,145 +941,6 @@ async fn membership_matches_firestore() -> TestResult {
             Expect::Failure,
             not_an_array,
         )
-        .await;
-
-    differential.finish().await
-}
-
-#[tokio::test]
-async fn arithmetic_matches_firestore() -> TestResult {
-    let mut differential = Differential::new().await?;
-    type Operation = fn(FirestoreExpr) -> FirestoreExpr;
-    // `number` holds i64::MAX and i64::MIN, which overflow, and an integer division by zero fails.
-    let operations: [(&str, Operation, Expect, Expect); 9] = [
-        (
-            "add 1",
-            |number| number.add(1),
-            Expect::Rows,
-            Expect::Failure,
-        ),
-        (
-            "add 0.5",
-            |number| number.add(0.5),
-            Expect::Rows,
-            Expect::Rows,
-        ),
-        (
-            "subtract 1",
-            |number| number.subtract(1),
-            Expect::Rows,
-            Expect::Failure,
-        ),
-        (
-            "multiply 2",
-            |number| number.multiply(2),
-            Expect::Rows,
-            Expect::Failure,
-        ),
-        (
-            "divide 2",
-            |number| number.divide(2),
-            Expect::Rows,
-            Expect::Rows,
-        ),
-        (
-            "divide 2.0",
-            |number| number.divide(2.0),
-            Expect::Rows,
-            Expect::Rows,
-        ),
-        (
-            "divide 0",
-            |number| number.divide(0),
-            Expect::Failure,
-            Expect::Failure,
-        ),
-        (
-            "mod 3",
-            |number| number.modulo(3),
-            Expect::Rows,
-            Expect::Rows,
-        ),
-        (
-            "mod 0.0",
-            |number| number.modulo(0.0),
-            Expect::Rows,
-            Expect::Rows,
-        ),
-    ];
-    for (name, operation, small, every) in operations {
-        let in_range = differential
-            .pipeline()
-            .from(EDGE_CASES_COLLECTION)
-            .filter(|q| q.field("rank").less_than_or_equal(8))
-            .add_fields(|_| [operation(field("number")).alias("result")])
-            .into_pipeline();
-        differential
-            .same(&format!("{name} of small numbers"), small, in_range)
-            .await;
-        let everything = differential
-            .pipeline()
-            .from(EDGE_CASES_COLLECTION)
-            .add_fields(|_| [operation(field("number")).alias("result")])
-            .into_pipeline();
-        differential
-            .same(&format!("{name} of every number"), every, everything)
-            .await;
-    }
-    let of_absent = differential
-        .pipeline()
-        .from(EDGE_CASES_COLLECTION)
-        .add_fields(|_| [field("missing").add(1).alias("result")])
-        .into_pipeline();
-    differential
-        .same("add of an absent field", Expect::Rows, of_absent)
-        .await;
-    let in_filter = differential.edge_where(field("number").multiply(2).greater_than(5));
-    differential
-        .same(
-            "multiply in a filter over every n",
-            Expect::Failure,
-            in_filter,
-        )
-        .await;
-
-    differential.finish().await
-}
-
-#[tokio::test]
-async fn strings_match_firestore() -> TestResult {
-    let mut differential = Differential::new().await?;
-    type Function = fn(FirestoreExpr) -> FirestoreExpr;
-    let functions: [(&str, Function); 9] = [
-        ("to_lower", FirestoreExpr::to_lower),
-        ("to_upper", FirestoreExpr::to_upper),
-        ("char_length", FirestoreExpr::char_length),
-        ("starts_with", |text| text.starts_with("He").into()),
-        ("ends_with", |text| text.ends_with("lo").into()),
-        ("string_contains", |text| text.string_contains("l").into()),
-        ("string_concat", |text| text.string_concat(["!"])),
-        ("concat", |text| text.concat(["!"])),
-        ("concat with null", |text| text.concat([constant(null())])),
-    ];
-    for (name, function) in functions {
-        let strings = differential
-            .pipeline()
-            .from(EDGE_CASES_COLLECTION)
-            .filter(|q| q.field("kind").not_equal("absent"))
-            .add_fields(|_| [function(field("text")).alias("result")])
-            .into_pipeline();
-        differential
-            .same(&format!("{name} of strings"), Expect::Rows, strings)
-            .await;
-    }
-    // `text` holds a number in one document, which every string function fails on.
-    let everything = differential
-        .pipeline()
-        .from(EDGE_CASES_COLLECTION)
-        .add_fields(|_| [field("text").to_lower().alias("result")])
-        .into_pipeline();
-    differential
-        .same("to_lower of every text", Expect::Failure, everything)
         .await;
 
     differential.finish().await
@@ -1179,21 +988,6 @@ async fn stages_match_firestore() -> TestResult {
                 .into_pipeline(),
         ),
         (
-            "sort by a computed value",
-            Expect::RowsInOrder,
-            differential
-                .pipeline()
-                .from(EDGE_CASES_COLLECTION)
-                .filter(|q| q.field("rank").less_than_or_equal(8))
-                .sort(|expr| {
-                    [
-                        expr.field("number").multiply(-1).asc(),
-                        expr.field("rank").asc(),
-                    ]
-                })
-                .into_pipeline(),
-        ),
-        (
             "sort, offset and limit",
             Expect::RowsInOrder,
             differential
@@ -1224,11 +1018,11 @@ async fn stages_match_firestore() -> TestResult {
                     [
                         FirestoreSelection::from(expr.field("value")),
                         expr.field("text").alias("caption"),
-                        expr.field("rank").add(100).alias("shifted"),
+                        expr.field("rank").alias("position"),
                         FirestoreSelection::from(expr.field("missing")),
                     ]
                 })
-                .sort(|expr| [expr.field("shifted").asc()])
+                .sort(|expr| [expr.field("position").asc()])
                 .into_pipeline(),
         ),
         (
@@ -1279,7 +1073,7 @@ async fn stages_match_firestore() -> TestResult {
                 .from(EDGE_CASES_COLLECTION)
                 .add_fields(|expr| {
                     [
-                        expr.field("rank").multiply(10).alias("rank"),
+                        expr.field("text").alias("rank"),
                         expr.field("value").alias("copy"),
                         expr.field("missing").alias("s"),
                     ]
@@ -1523,6 +1317,59 @@ async fn pipelines_the_cache_does_not_evaluate_go_to_firestore() -> TestResult {
                 .into_pipeline(),
         ),
         (
+            "add in add_fields",
+            differential
+                .pipeline()
+                .from(EDGE_CASES_COLLECTION)
+                .add_fields(|expr| [expr.field("rank").add(1).alias("next")])
+                .into_pipeline(),
+        ),
+        (
+            "to_lower in fields",
+            differential
+                .pipeline()
+                .from(EDGE_CASES_COLLECTION)
+                .filter(|q| q.field("kind").equal("string"))
+                .fields(|expr| [expr.field("text").to_lower().alias("lower")])
+                .into_pipeline(),
+        ),
+        (
+            "string_concat in add_fields",
+            differential
+                .pipeline()
+                .from(EDGE_CASES_COLLECTION)
+                .filter(|q| q.field("kind").equal("string"))
+                .add_fields(|expr| [expr.field("text").string_concat(["!"]).alias("shout")])
+                .into_pipeline(),
+        ),
+        (
+            "a constant in add_fields",
+            differential
+                .pipeline()
+                .from(EDGE_CASES_COLLECTION)
+                .add_fields(|expr| [expr.constant(1).alias("one")])
+                .into_pipeline(),
+        ),
+        (
+            "multiply in a filter",
+            differential.edge_where(field("rank").multiply(2).greater_than(5)),
+        ),
+        (
+            "starts_with in a filter",
+            differential.edge_where(FirestorePipelineExprBuilder.and([
+                field("kind").equal("string"),
+                field("text").starts_with("a"),
+            ])),
+        ),
+        (
+            "sort by a computed value",
+            differential
+                .pipeline()
+                .from(EDGE_CASES_COLLECTION)
+                .sort(|expr| [expr.field("rank").multiply(-1).asc()])
+                .into_pipeline(),
+        ),
+        (
             "documents that name one twice",
             differential
                 .pipeline()
@@ -1639,11 +1486,6 @@ async fn sql_reads_match_firestore() -> TestResult {
             Expect::Rows,
         ),
         (
-            "SELECT text, LOWER(text) AS lower, text || '!' AS shout FROM `pipeline-cache-edge` \
-             WHERE kind = 'string'",
-            Expect::Rows,
-        ),
-        (
             "SELECT * EXCEPT (value, tags) FROM `pipeline-cache-edge` WHERE rank <= 3",
             Expect::Rows,
         ),
@@ -1662,12 +1504,14 @@ async fn sql_reads_match_firestore() -> TestResult {
             .same(statement, expect, Query::Sql(statement))
             .await;
     }
-    // `ILIKE` translates to `like` of a lower-cased text, which the cache does not evaluate.
-    let case_insensitive_like =
-        "SELECT * FROM `pipeline-cache-edge` WHERE kind = 'string' AND text ILIKE 'A%'";
-    differential
-        .refused(case_insensitive_like, Query::Sql(case_insensitive_like))
-        .await;
+    for statement in [
+        "SELECT text, LOWER(text) AS lower FROM `pipeline-cache-edge` WHERE kind = 'string'",
+        "SELECT * FROM `pipeline-cache-edge` WHERE rank + 1 > 5",
+        // `ILIKE` translates to `like` of a lower-cased text.
+        "SELECT * FROM `pipeline-cache-edge` WHERE kind = 'string' AND text ILIKE 'A%'",
+    ] {
+        differential.refused(statement, Query::Sql(statement)).await;
+    }
 
     differential.finish().await
 }

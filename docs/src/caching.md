@@ -19,9 +19,10 @@ Caching is opt-in through cargo features:
 
 [Pipelines](./pipelines.md) and [SQL](./sql.md) reads use the cache in the same sessions,
 `read_through_cache` and `read_cached_only`. The cache answers a pipeline on its own when every
-part of it is in the lists below, with the semantics Firestore gives a pipeline. Anything else
-runs on Firestore under `read_through_cache`, and fails with a `CacheError` under
-`read_cached_only`.
+part of it is in the lists below, with the semantics Firestore gives a pipeline. Caching is meant
+for data such as static dictionaries, or sessions read by ID, so the cache filters, sorts and pages
+documents, and leaves computing to Firestore. Anything else runs on Firestore under
+`read_through_cache`, and fails with a `CacheError` under `read_cached_only`.
 
 ```rust,no_run
 # use firestore::*;
@@ -54,8 +55,8 @@ Sources:
 
 Stages: `filter`, `sort`, `limit`, `offset`, `fields`, `add_fields` and `remove_fields`. A `limit`
 or `offset` needs a `sort` before it, since Firestore returns unsorted documents in an order of its
-own. The fields that `fields`, `add_fields` and `remove_fields` output or remove are top-level
-fields.
+own. `fields`, `add_fields` and `remove_fields` take plain fields, with or without an alias, as
+top-level fields. A computed expression in them runs on Firestore.
 
 Functions:
 
@@ -64,17 +65,14 @@ Functions:
   from them;
 - `and`, `or`, `not`, `exists`, `is_absent`;
 - `equal_any`, `not_equal_any`, `array_contains`, `array_contains_all`, `array_contains_any`;
-- `add`, `subtract`, `multiply`, `divide`, `mod`;
-- `to_lower`, `to_upper`, `char_length`, `starts_with`, `ends_with`, `string_contains`,
-  `string_concat`, and `concat` of strings.
 
-Everything else runs on Firestore: aggregates, `distinct`, search, `find_nearest`, `union`,
-`unnest`, subqueries and variables, collection groups, `database()`, `literals`, `force_index`,
-raw stages, writes, `like` and every other function. So do Query Explain and a pipeline in a
-transaction or at a read time. The cache also sends a pipeline to Firestore when it meets a value
-Firestore fails the request on, such as a string function of a number, an integer overflow or a
-division by zero, and when it would have to order arrays, maps, geo points or vectors, in a `sort`
-or a `less_than`.
+Everything else runs on Firestore: arithmetic and string functions, aggregates, `distinct`,
+search, `find_nearest`, `union`, `unnest`, subqueries and variables, collection groups,
+`database()`, `literals`, `force_index`, raw stages, writes, `like` and every other function. So
+do Query Explain and a pipeline in a transaction or at a read time. The cache also sends a
+pipeline to Firestore when it meets a value Firestore fails the request on, such as `not` of a
+string, and when it would have to order arrays, maps, geo points or vectors, in a
+`sort` or a `less_than`.
 
 ### What differs from a pipeline that Firestore runs
 
@@ -102,13 +100,13 @@ collection or `documents(..)`:
 
 - `SELECT` of columns, aliases, `*` and `* EXCEPT (..)`;
 - `WHERE` with comparisons, `AND`, `OR`, `NOT`, `IS [NOT] NULL`, `IS [NOT] DISTINCT FROM`,
-  `[NOT] IN (list)`, `IN UNNEST(array)`, `BETWEEN`, `+ - * / %`, `||`, `LOWER`, `UPPER` and
-  `CHAR_LENGTH`;
+  `[NOT] IN (list)`, `IN UNNEST(array)` and `BETWEEN`;
 - `WHERE __name__ = 'id'` and `WHERE __name__ IN ('id', ..)`, read by ID;
 - `ORDER BY`, and `LIMIT` and `OFFSET` with an `ORDER BY`.
 
 `GROUP BY`, aggregates, `DISTINCT`, `UNION`, joins and subqueries, `collection_group(..)`,
-`database()`, `LIKE`, `ILIKE`, `CASE`, `COALESCE`, `IFNULL`, `SUBSTR` and search run on Firestore.
+`database()`, `+ - * / %`, `||`, `LOWER`, `UPPER`, `CHAR_LENGTH`, `LIKE`, `ILIKE`, `CASE`,
+`COALESCE`, `IFNULL`, `SUBSTR` and search run on Firestore.
 
 ### Enterprise databases
 

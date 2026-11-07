@@ -84,7 +84,6 @@ enum CachedExpr<'a> {
 enum CachedCall<'a> {
     Unary(CachedUnary, Box<CachedExpr<'a>>),
     Binary(CachedBinary, Box<[CachedExpr<'a>; 2]>),
-    StringConcat(Vec<CachedExpr<'a>>),
 }
 
 /// `and` or `or`, which evaluate their conditions in order and only as far as the result is
@@ -105,9 +104,6 @@ enum CachedUnary {
     Not,
     Exists,
     IsAbsent,
-    ToLower,
-    ToUpper,
-    CharLength,
 }
 
 #[derive(Clone, Copy)]
@@ -116,8 +112,6 @@ enum CachedBinary {
     EqualAny,
     NotEqualAny,
     ArrayContains(CachedArrayContains),
-    Arithmetic(CachedArithmetic),
-    TextTest(CachedTextTest),
 }
 
 #[derive(Clone, Copy)]
@@ -135,22 +129,6 @@ enum CachedArrayContains {
     Element,
     All,
     Any,
-}
-
-#[derive(Clone, Copy)]
-enum CachedArithmetic {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Mod,
-}
-
-#[derive(Clone, Copy)]
-enum CachedTextTest {
-    StartsWith,
-    EndsWith,
-    Contains,
 }
 
 /// A value of an expression over one document: `None` for an absent field.
@@ -645,10 +623,13 @@ impl<'a> CachedSelection<'a> {
         match (name, &expr) {
             // `__name__` selects the document's name, not a field.
             (DOCUMENT_NAME_FIELD, CachedExpr::Name) => Ok(Self { name, expr }),
-            (name, _) => Ok(Self {
+            (name, CachedExpr::Name | CachedExpr::Field(_)) => Ok(Self {
                 name: output_field_name(name)?,
                 expr,
             }),
+            _ => Err(FirestoreCachePipelineMiss::unsupported(format!(
+                "a computed expression in {stage}"
+            ))),
         }
     }
 
@@ -783,13 +764,6 @@ impl CachedNumber {
             (Self::Double(left), Self::Integer(right)) => {
                 integer_with_double(right, left).map(Ordering::reverse)
             }
-        }
-    }
-
-    fn as_double(self) -> f64 {
-        match self {
-            Self::Integer(number) => number as f64,
-            Self::Double(number) => number,
         }
     }
 }
@@ -955,12 +929,10 @@ fn is_data(value: &ValueType) -> bool {
 
 impl<'a> CachedCall<'a> {
     fn new(function: &'a FirestoreFunction) -> Result<Self, FirestoreCachePipelineMiss> {
-        use CachedArithmetic::{Add, Divide, Mod, Multiply, Subtract};
         use CachedArrayContains::{All, Any, Element};
         use CachedComparison::{
             Equal, GreaterThan, GreaterThanOrEqual, LessThan, LessThanOrEqual, NotEqual,
         };
-        use CachedTextTest::{Contains, EndsWith, StartsWith};
         let args = function.args.as_slice();
         match (function.name.as_str(), args) {
             ("equal", [left, right]) => Self::binary(CachedBinary::Comparison(Equal), left, right),
@@ -998,32 +970,6 @@ impl<'a> CachedCall<'a> {
             ("array_contains_any", [left, right]) => {
                 Self::binary(CachedBinary::ArrayContains(Any), left, right)
             }
-            ("add", [left, right]) => Self::binary(CachedBinary::Arithmetic(Add), left, right),
-            ("subtract", [left, right]) => {
-                Self::binary(CachedBinary::Arithmetic(Subtract), left, right)
-            }
-            ("multiply", [left, right]) => {
-                Self::binary(CachedBinary::Arithmetic(Multiply), left, right)
-            }
-            ("divide", [left, right]) => {
-                Self::binary(CachedBinary::Arithmetic(Divide), left, right)
-            }
-            ("mod", [left, right]) => Self::binary(CachedBinary::Arithmetic(Mod), left, right),
-            ("to_lower", [arg]) => Self::unary(CachedUnary::ToLower, arg),
-            ("to_upper", [arg]) => Self::unary(CachedUnary::ToUpper, arg),
-            ("char_length", [arg]) => Self::unary(CachedUnary::CharLength, arg),
-            ("starts_with", [left, right]) => {
-                Self::binary(CachedBinary::TextTest(StartsWith), left, right)
-            }
-            ("ends_with", [left, right]) => {
-                Self::binary(CachedBinary::TextTest(EndsWith), left, right)
-            }
-            ("string_contains", [left, right]) => {
-                Self::binary(CachedBinary::TextTest(Contains), left, right)
-            }
-            ("string_concat" | "concat", [_, ..]) => Ok(Self::StringConcat(
-                args.iter().map(CachedExpr::new).collect::<Result<_, _>>()?,
-            )),
             (name, args) => Err(FirestoreCachePipelineMiss::unsupported(format!(
                 "the function `{name}` of {} arguments",
                 args.len()
@@ -1062,20 +1008,6 @@ impl<'a> CachedCall<'a> {
                     right.evaluate(document)?.as_deref(),
                 )
             }
-            Self::StringConcat(args) => {
-                let values = args
-                    .iter()
-                    .map(|arg| arg.evaluate(document))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let texts = values
-                    .iter()
-                    .map(|value| operand(value.as_deref(), as_text, "a string"))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(match texts.into_iter().collect::<Option<Vec<_>>>() {
-                    Some(texts) => ValueType::StringValue(texts.concat()),
-                    None => NULL,
-                })
-            }
         }
     }
 }
@@ -1089,19 +1021,6 @@ impl CachedUnary {
             }),
             Self::Exists => Ok(ValueType::BooleanValue(value.is_some())),
             Self::IsAbsent => Ok(ValueType::BooleanValue(value.is_none())),
-            Self::ToLower => with_text(value, |text| {
-                Ok(ValueType::StringValue(text.to_lowercase()))
-            }),
-            Self::ToUpper => with_text(value, |text| {
-                Ok(ValueType::StringValue(text.to_uppercase()))
-            }),
-            Self::CharLength => with_text(value, |text| {
-                i64::try_from(text.chars().count())
-                    .map(ValueType::IntegerValue)
-                    .map_err(|_| {
-                        FirestoreCachePipelineMiss::unsupported("a string too long to count")
-                    })
-            }),
         }
     }
 }
@@ -1120,22 +1039,6 @@ impl CachedBinary {
                 Some(found) => ValueType::BooleanValue(found),
                 None => NULL,
             },
-            Self::Arithmetic(arithmetic) => {
-                let left = operand(left, CachedNumber::new, "a number")?;
-                let right = operand(right, CachedNumber::new, "a number")?;
-                match (left, right) {
-                    (Some(left), Some(right)) => arithmetic.apply(left, right)?,
-                    _ => NULL,
-                }
-            }
-            Self::TextTest(test) => {
-                let left = operand(left, as_text, "a string")?;
-                let right = operand(right, as_text, "a string")?;
-                match (left, right) {
-                    (Some(text), Some(part)) => ValueType::BooleanValue(test.holds(text, part)),
-                    _ => NULL,
-                }
-            }
         })
     }
 
@@ -1225,53 +1128,6 @@ impl CachedArrayContains {
     }
 }
 
-impl CachedArithmetic {
-    /// Integers stay integers, and Firestore fails the request on an overflow or a division by
-    /// zero. A double on either side makes a double.
-    fn apply(
-        self,
-        left: CachedNumber,
-        right: CachedNumber,
-    ) -> Result<ValueType, FirestoreCachePipelineMiss> {
-        Ok(match (left, right) {
-            (CachedNumber::Integer(left), CachedNumber::Integer(right)) => ValueType::IntegerValue(
-                match self {
-                    Self::Add => left.checked_add(right),
-                    Self::Subtract => left.checked_sub(right),
-                    Self::Multiply => left.checked_mul(right),
-                    Self::Divide => left.checked_div(right),
-                    Self::Mod => left.checked_rem(right),
-                }
-                .ok_or_else(|| {
-                    FirestoreCachePipelineMiss::unsupported(
-                        "an integer overflow or a division by zero",
-                    )
-                })?,
-            ),
-            (left, right) => {
-                let (left, right) = (left.as_double(), right.as_double());
-                ValueType::DoubleValue(match self {
-                    Self::Add => left + right,
-                    Self::Subtract => left - right,
-                    Self::Multiply => left * right,
-                    Self::Divide => left / right,
-                    Self::Mod => left % right,
-                })
-            }
-        })
-    }
-}
-
-impl CachedTextTest {
-    fn holds(self, text: &str, part: &str) -> bool {
-        match self {
-            Self::StartsWith => text.starts_with(part),
-            Self::EndsWith => text.ends_with(part),
-            Self::Contains => text.contains(part),
-        }
-    }
-}
-
 impl CachedLogical<'_> {
     /// True or false when a condition decides it, and otherwise null when a condition is null or
     /// absent: `and` of true and null is null, `and` of false and null is false.
@@ -1296,47 +1152,15 @@ impl CachedLogical<'_> {
     }
 }
 
-/// An operand of a function that takes the type `extract` reads: a null or absent one makes the
-/// function's result null, which is `None` here, and Firestore fails the request on a value of
-/// any other type.
-fn operand<'v, T>(
-    value: Option<&'v ValueType>,
-    extract: impl FnOnce(&'v ValueType) -> Option<T>,
-    expected: &str,
-) -> Result<Option<T>, FirestoreCachePipelineMiss> {
-    match value {
-        Some(ValueType::NullValue(_)) | None => Ok(None),
-        Some(value) => extract(value).map(Some).ok_or_else(|| {
-            FirestoreCachePipelineMiss::unsupported(format!("a value that is not {expected}"))
-        }),
-    }
-}
-
-fn as_text(value: &ValueType) -> Option<&str> {
-    match value {
-        ValueType::StringValue(text) => Some(text),
-        _ => None,
-    }
-}
-
+/// The truth of an operand of `not`, `and` or `or`: a null or absent one is `None`, which is null,
+/// and Firestore fails the request on a value that is not a boolean.
 fn truth(value: Option<&ValueType>) -> Result<Option<bool>, FirestoreCachePipelineMiss> {
-    operand(
-        value,
-        |value| match value {
-            ValueType::BooleanValue(flag) => Some(*flag),
-            _ => None,
-        },
-        "a boolean",
-    )
-}
-
-fn with_text(
-    value: Option<&ValueType>,
-    function: impl FnOnce(&str) -> Result<ValueType, FirestoreCachePipelineMiss>,
-) -> Result<ValueType, FirestoreCachePipelineMiss> {
-    match operand(value, as_text, "a string")? {
-        Some(text) => function(text),
-        None => Ok(NULL),
+    match value {
+        Some(ValueType::BooleanValue(flag)) => Ok(Some(*flag)),
+        Some(ValueType::NullValue(_)) | None => Ok(None),
+        Some(_) => Err(FirestoreCachePipelineMiss::unsupported(
+            "a value that is not a boolean",
+        )),
     }
 }
 
