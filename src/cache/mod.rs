@@ -56,6 +56,7 @@
 //! | `list` a collection | only for **preloaded** collections |
 //! | `query` a collection | only for **preloaded** collections, and only for supported filters |
 //! | Reads in a transaction or at a read time | never: `read_through_cache` reads from Firestore, `read_cached_only` returns an error |
+//! | Pipeline and SQL reads | for **preloaded** collections, and by ID for any cached collection, with the stages and functions the cache evaluates |
 //! | Paged listing, query with metadata, aggregations, writes | never |
 //!
 //! # Preloading, and why listings need it
@@ -230,7 +231,12 @@ use futures::StreamExt;
 use tracing::*;
 
 mod cache_filter_engine;
+mod cache_pipeline_engine;
 mod cache_query_engine;
+
+pub(crate) use cache_pipeline_engine::{
+    FirestoreCachePipeline, FirestoreCachePipelineMiss, FirestoreCachePipelineRows,
+};
 
 /// Manages a cache of Firestore data.
 ///

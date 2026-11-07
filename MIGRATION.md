@@ -198,6 +198,15 @@ order Firestore returns them. Before, these queries returned other documents, in
 The order is that of the Standard edition. Equal values that tie can come back in another order from an Enterprise
 edition database.
 
+### Cache sessions answer pipelines from the cache
+
+A pipeline or SQL read through `read_through_cache` or `read_cached_only` is answered from the cache when the cache
+evaluates every part of it, see the "Pipelines" section of the caching chapter. Before, every pipeline ran on Firestore
+whatever the session. Under `read_through_cache` such a read is now eventually consistent, as Core reads through the
+cache are, and its items carry no `execution_time`. Under `read_cached_only` a pipeline the cache does not answer fails
+with a `CacheError`, where it used to run on Firestore. To keep a pipeline on Firestore, run it on a `FirestoreDb` that
+has no cache attached.
+
 ## 0.62
 
 ### Simple batch writes stop retrying after 60 seconds

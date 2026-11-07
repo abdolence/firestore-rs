@@ -13,4 +13,5 @@ Which operations use the cache:
 | Listing all documents in a collection | only for **preloaded** collections |
 | Querying a collection (filtering, ordering, cursors) | only for **preloaded** collections, and only for supported queries |
 | Reads in a transaction or at a read time | never: `read_through_cache` reads from Firestore, `read_cached_only` returns an error |
+| Pipeline and SQL reads | for **preloaded** collections, and by ID for any cached collection, with the stages and functions in [Pipelines](../caching.md#pipelines) |
 | Paged listing, queries with metadata, aggregations, writes | never |

@@ -110,17 +110,23 @@ impl FirestoreAggregate {
 }
 
 impl FirestoreSelection {
-    /// The expression and the field name it is output under: the alias, or else the field's own
-    /// path. Fails for a computed expression without an alias.
-    pub(super) fn into_named(self, stage: &str) -> FirestoreResult<(String, FirestoreExpr)> {
-        match (self.alias, self.expr) {
-            (Some(alias), expr) => Ok((alias, expr)),
-            (None, FirestoreExpr::Field(path)) => Ok((path.clone(), FirestoreExpr::Field(path))),
+    /// The field name the selection is output under: the alias, or else the field's own path.
+    /// Fails for a computed expression without an alias.
+    pub(crate) fn name(&self, stage: &str) -> FirestoreResult<&str> {
+        match (&self.alias, &self.expr) {
+            (Some(alias), _) => Ok(alias),
+            (None, FirestoreExpr::Field(path)) => Ok(path),
             (None, expr) => Err(FirestoreError::invalid_parameters(
                 stage,
                 format!("a computed expression needs an alias: {expr:?}"),
             )),
         }
+    }
+
+    /// The expression and the field name it is output under, as [`name`](Self::name).
+    pub(super) fn into_named(self, stage: &str) -> FirestoreResult<(String, FirestoreExpr)> {
+        let name = self.name(stage)?.to_string();
+        Ok((name, self.expr))
     }
 }
 

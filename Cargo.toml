@@ -139,6 +139,11 @@ path = "tests/caching_watched_documents_test.rs"
 required-features = ["caching-memory", "caching-persistent"]
 
 [[test]]
+name = "pipeline-cache-tests"
+path = "tests/pipeline-cache-tests.rs"
+required-features = ["caching-memory"]
+
+[[test]]
 name = "pipeline-integration-tests"
 path = "tests/pipeline-integration-tests.rs"
 required-features = ["admin"]

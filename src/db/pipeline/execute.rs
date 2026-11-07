@@ -129,6 +129,21 @@ impl FirestorePipelineSupport for FirestoreDb {
     ) -> FirestoreResult<
         BoxStream<'b, FirestoreResult<FirestoreWithPipelineMetadata<FirestoreDocument>>>,
     > {
+        #[cfg(feature = "caching")]
+        {
+            if let crate::FirestoreCachedValue::UseCached(documents) =
+                self.pipeline_docs_from_cache(&params).await?
+            {
+                return Ok(stream::iter(documents.into_iter().map(|document| {
+                    Ok(FirestoreWithPipelineMetadata {
+                        document: Some(document),
+                        metadata: crate::FirestorePipelineMetadata::new(),
+                    })
+                }))
+                .boxed());
+            }
+        }
+
         let span = span!(
             Level::DEBUG,
             "Firestore Pipeline",
