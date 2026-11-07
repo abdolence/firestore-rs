@@ -1,0 +1,137 @@
+{
+  "fields": [
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/__default__/fields/*",
+      "indexConfig": {
+        "indexes": [
+          {
+            "queryScope": "COLLECTION",
+            "fields": [
+              {
+                "fieldPath": "*",
+                "order": "ASCENDING"
+              }
+            ],
+            "state": "READY"
+          },
+          {
+            "queryScope": "COLLECTION",
+            "fields": [
+              {
+                "fieldPath": "*",
+                "order": "DESCENDING"
+              }
+            ],
+            "state": "READY"
+          },
+          {
+            "queryScope": "COLLECTION",
+            "fields": [
+              {
+                "fieldPath": "*",
+                "arrayConfig": "CONTAINS"
+              }
+            ],
+            "state": "READY"
+          }
+        ]
+      }
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test-childs/fields/another_string",
+      "indexConfig": {
+        "indexes": [
+          {
+            "queryScope": "COLLECTION",
+            "fields": [
+              {
+                "fieldPath": "another_string",
+                "order": "ASCENDING"
+              }
+            ],
+            "state": "READY"
+          },
+          {
+            "queryScope": "COLLECTION",
+            "fields": [
+              {
+                "fieldPath": "another_string",
+                "order": "DESCENDING"
+              }
+            ],
+            "state": "READY"
+          },
+          {
+            "queryScope": "COLLECTION",
+            "fields": [
+              {
+                "fieldPath": "another_string",
+                "arrayConfig": "CONTAINS"
+              }
+            ],
+            "state": "READY"
+          },
+          {
+            "queryScope": "COLLECTION_GROUP",
+            "fields": [
+              {
+                "fieldPath": "another_string",
+                "order": "ASCENDING"
+              }
+            ],
+            "state": "READY"
+          }
+        ],
+        "ancestorField": "projects/latestbit/databases/(default)/collectionGroups/__default__/fields/*"
+      }
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test-partitions/fields/some_string",
+      "indexConfig": {
+        "indexes": [
+          {
+            "queryScope": "COLLECTION",
+            "fields": [
+              {
+                "fieldPath": "some_string",
+                "order": "ASCENDING"
+              }
+            ],
+            "state": "READY"
+          },
+          {
+            "queryScope": "COLLECTION",
+            "fields": [
+              {
+                "fieldPath": "some_string",
+                "order": "DESCENDING"
+              }
+            ],
+            "state": "READY"
+          },
+          {
+            "queryScope": "COLLECTION",
+            "fields": [
+              {
+                "fieldPath": "some_string",
+                "arrayConfig": "CONTAINS"
+              }
+            ],
+            "state": "READY"
+          },
+          {
+            "queryScope": "COLLECTION_GROUP",
+            "fields": [
+              {
+                "fieldPath": "some_string",
+                "order": "ASCENDING"
+              }
+            ],
+            "state": "READY"
+          }
+        ],
+        "ancestorField": "projects/latestbit/databases/(default)/collectionGroups/__default__/fields/*"
+      }
+    }
+  ]
+}

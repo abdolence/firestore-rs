@@ -25,7 +25,8 @@ firestore = { version = "...", features = ["admin"] }
 ```
 
 Nothing runs at `FirestoreDb` construction. An administrative operation only runs when your code
-calls one of its terminals, `.plan()`/`.sync()` for index management.
+calls one of its terminals: `.plan()`/`.sync()` for a declaration, or `.get()`/`.execute()` for
+[one index at a time](#one-index-at-a-time).
 
 ## Declaring a collection group's indexes
 
@@ -434,6 +435,100 @@ separate way to configure that default today.
 A revert can wait the same way for a different sync's write, not this one's own: see
 [Running from several instances](#running-from-several-instances).
 
+## One index at a time
+
+`.plan()` and `.sync()` reconcile a whole declaration. Four calls under `db.fluent().indexes()` do
+one thing each, with no declaration, diff or pruning: `list()`, `create()`, `delete()` and
+`update_field()`. The [SQL index statements](./sql/indexes.md) run through the same calls.
+
+```rust,no_run
+# use firestore::*;
+# use std::time::Duration;
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+let created = db
+    .fluent()
+    .indexes()
+    .create()
+    .collection_group("orders")
+    .index(|i| i.index([i.field("customer_id").asc(), i.field("placed_at").desc()]))
+    .wait_until_ready(Duration::from_secs(900))
+    .execute()
+    .await?;
+
+let listing = db
+    .fluent()
+    .indexes()
+    .list()
+    .collection_group("orders")
+    .get()
+    .await?;
+println!("{} indexes", listing.indexes.len());
+
+db.fluent()
+    .indexes()
+    .update_field()
+    .collection_group("sessions")
+    .field("expires_at")
+    .enable_ttl()
+    .exempt()
+    .wait_until_ready(Duration::from_secs(900))
+    .execute()
+    .await?;
+
+db.fluent().indexes().delete().id(created.id).execute().await?;
+# Ok(())
+# }
+```
+
+- `list()` returns a `FirestoreIndexListing` of the composite indexes and field overrides of every
+  collection group, or of the one that `.collection_group(..)` names. The listing leaves out the
+  groups Firestore reserves, such as `__default__`;
+- `create()` starts the build of one index and returns it as Firestore lists it: `CREATING`, or
+  `READY` after `.wait_until_ready(timeout)`. The `id` of the result is the one Firestore assigned.
+  Creating an index that exists fails with `DataConflictError`, as `.sync()` does not: it counts that
+  answer as done when the listing shows the index. `.if_not_exists()` makes an existing index the
+  result instead, in whatever state it has. With a wait, an index that another caller is still
+  building is polled until it is no longer `CREATING`, under the same deadline and retries as a
+  build of the call's own, and one that ends in `NEEDS_REPAIR` fails with `SystemError`, code
+  `INDEX_NEEDS_REPAIR`. `NEEDS_REPAIR` is the state of an index whose last build failed and left no
+  operation running;
+- `delete()` takes an index by `.id(id)`, by `.collection_group(group).id(id)`, or by
+  `.collection_group(group).index(..)`, the definition that `create()` took, which deletes the one
+  listed index it matches, as `.sync()` matches a declaration. It returns the index as it was listed
+  just before. `.if_exists()` makes an index that is not there, and a definition that matches none,
+  return `None` instead of `DataNotFoundError`;
+- `update_field()` writes one field, or every field without a setting of its own with
+  `.all_fields()`, in one request: `.indexes(..)` or `.exempt()` set its single-field indexes,
+  `.revert_override()` removes the override, and `.enable_ttl()` and `.disable_ttl()` set its TTL.
+  It returns the field as Firestore reads it after the write, or after the wait. An update that
+  changes nothing, and TTL on `.all_fields()`, fail with `InvalidParametersError` before any
+  request.
+
+A delete by ID reads the index before it deletes anything. Firestore ignores the collection group
+in a `DeleteIndex` request, so an ID that belongs to another group would be deleted all the same.
+The library deletes the index only when it belongs to the group the caller named, and fails with
+`DataNotFoundError` otherwise, deleting nothing. Without a group the ID alone names the index: an ID
+is unique within one database.
+
+A delete by definition fails with `DataNotFoundError` when nothing matches, and with
+`DataConflictError`, naming the IDs, when several indexes match. On an Enterprise edition database
+two indexes over the same fields differ by `unique` and density, and the definition tells them apart.
+
+The four calls run no edition rule of their own: Firestore's
+`INVALID_ARGUMENT` answers arrive as `DatabaseError`, and the emulator's `UNIMPLEMENTED`, see
+[The Firestore emulator](#the-firestore-emulator). A reserved group such as `__default__` fails with
+`InvalidParametersError`.
+
+Failures the library finds itself carry a code in the error:
+
+| Case | Error |
+|---|---|
+| `delete()` of an ID that no index has, or of a definition nothing matches | `DataNotFoundError`, code `NO_MATCHING_INDEX` |
+| `delete()` of an ID that belongs to another group than the one named | `DataNotFoundError`, code `INDEX_IN_OTHER_GROUP` |
+| `delete()` of a definition that several indexes match | `DataConflictError`, code `SEVERAL_MATCHING_INDEXES`, naming the IDs |
+| a wait that passes its deadline | `SystemError`, code `OPERATION_WAIT_TIMEOUT` |
+| `create()` with `.if_not_exists()` and a wait, of an index that ends in `NEEDS_REPAIR` | `SystemError`, code `INDEX_NEEDS_REPAIR` |
+
 ## Field paths
 
 Field paths compare in one spelling, so `` `expires_at` `` and `expires_at`, or `` a.`b` `` and
@@ -505,11 +600,20 @@ rather than as "no changes needed" on a project the emulator never actually chec
 `skipped` marker, and log an `info` line saying so, instead of failing, so the same startup code
 runs unmodified against the emulator.
 
+The emulator serves no Firestore Admin API, whatever its edition. `list()`, `create()`, `delete()`
+and `update_field()`, and the SQL index statements, are explicit commands, so they fail with the
+emulator's own `UNIMPLEMENTED`, which arrives as `DatabaseError` and whose message names the admin
+method.
+
 ## IAM roles
 
 `.plan()` needs only `roles/datastore.viewer`. `.sync()` needs `roles/datastore.indexAdmin` too,
 to create, update and delete indexes and fields. Both read the database's edition, through the
 `datastore.databases.getMetadata` permission each of the two roles carries.
+
+`list()` needs `roles/datastore.viewer`, and `create()`, `delete()` and `update_field()` need
+`roles/datastore.indexAdmin`. A delete by definition also lists the group's indexes and reads the
+database's edition.
 
 ## Running the tests against a real project
 
@@ -528,6 +632,16 @@ only run explicitly:
 
 ```bash
 GCP_PROJECT=your-project cargo test --test admin-indexes-tests --features admin -- --ignored --nocapture
+```
+
+With the `sql` feature next to `admin`, the file also runs the [index statements](./sql/indexes.md)
+against the database of `GCP_PROJECT` and against the Enterprise edition database of
+`GCP_ENTERPRISE_DATABASE_ID`. Each of those tests carries `#[ignore]` too, and runs on a collection
+group of its own that it empties again:
+
+```bash
+GCP_PROJECT=your-project GCP_ENTERPRISE_DATABASE_ID=your-enterprise-database \
+  cargo test --test admin-indexes-tests --features admin,sql -- --ignored sql_ --nocapture
 ```
 
 Full examples available

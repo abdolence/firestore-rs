@@ -1,0 +1,155 @@
+{
+  "indexes": [
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test-query-vec/indexes/CICAgOi39IkJ",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "some_vec",
+          "vectorConfig": {
+            "dimension": 3,
+            "flat": {}
+          }
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/versions/indexes/CICAgPigw5IJ",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "articleId.regionCode",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test/indexes/CICAgLjRnZMJ",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "one_more_string",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "some_string",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "some_num",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test/indexes/CICAgOi3voUK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "some_num",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "created_at",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/test-camel-case/indexes/CICAgLiTpokK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "one_more_string",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "someString",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "someNum",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/integration-test-query/indexes/CICAgPj-05MK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "some_string",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "some_num",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/latestbit/databases/(default)/collectionGroups/versions/indexes/CICAgOi36pgK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    }
+  ]
+}

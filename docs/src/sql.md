@@ -4,6 +4,9 @@ The library translates a SQL statement into a [pipeline](./pipelines.md) and run
 for SQL text that comes from outside the program: command line tools, admin scripts, reports
 defined in configuration, LLM agents, and queries ported from a SQL database. Reads return the
 documents of a pipeline, and `INSERT`, `UPDATE` and `DELETE` run as [pipeline writes](./pipeline-writes.md).
+With the `admin` feature it also runs [index statements](./sql/indexes.md): `CREATE INDEX`,
+`DROP INDEX`, `ALTER COLLECTION` and `SHOW INDEXES`. The first three run only when the options say
+`.allow_index_statements()`.
 
 ```rust,no_run
 # use firestore::*;
@@ -26,8 +29,9 @@ let books: Vec<Book> = db
 Full example available [here](https://github.com/abdolence/firestore-rs/blob/master/examples/sql.rs).
 
 SQL needs a database of the Firestore *Enterprise edition*, as pipelines do: a statement sent to a
-Standard edition database fails with `FAILED_PRECONDITION`, unless a cache session answers it. A
-statement means what the same pipeline means in the fluent API: Firestore's semantics, listed in
+Standard edition database fails with `FAILED_PRECONDITION`, unless a cache session answers it.
+The index statements and `SHOW COLLECTIONS` use the Admin and Core APIs, and run on both editions.
+A statement means what the same pipeline means in the fluent API: Firestore's semantics, listed in
 [Semantics](#semantics), where a few results differ from those of a SQL database.
 
 A read through a cache session is answered from the cache when the pipeline it translates to only
@@ -58,11 +62,16 @@ firestore = { version = "...", features = ["sql"] }
 - `.obj::<T>()` deserialises the rows into `T`, as in a pipeline;
 - `query()` returns every row, and `stream_query()`, `stream_query_with_errors()` and
   `stream_query_with_metadata()` stream them;
+- `run()` runs any statement, a `SELECT`, a write, `SHOW` or an index statement, and returns a
+  `FirestoreSqlOutcome` with one variant for each kind of statement, see
+  [Index statements](./sql/indexes.md#running-a-statement);
+- `.wait_until_ready(timeout)` and `.wait_until_ready_with_options(..)`, with the `admin` feature,
+  make `run()` wait for the operation of a `CREATE INDEX` or an `ALTER COLLECTION`;
 - `execute()` and `execute_in_transaction(&mut transaction)` run an `INSERT`, `UPDATE` or
   `DELETE`, see [Writes](#writes);
 - `explain()` and `explain_with_options(..)` return the plan of a `SELECT` in the metadata of the
-  last item of `stream_query_with_metadata()`, see
-  [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline);
+  last item of `stream_query_with_metadata()`, and so does an `EXPLAIN [ANALYZE]` prefix in the
+  text, see [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline);
 - `.request_tags(..)` and `.request_options(..)` attach request options to one statement, as they
   do for a pipeline.
 
@@ -72,7 +81,8 @@ selects `__name__`. An `_firestore_id` field of the result type must be an `Opti
 from its row, and the result type needs an `Option` for it too.
 
 A statement that is a `SELECT` fails from `execute()`, and a write fails from `query()`, with
-`InvalidParametersError` and before any request.
+`InvalidParametersError` and before any request. So does a `SHOW` or an index statement from
+either of them: they run with `run()`.
 
 `FirestoreSqlStatement::translate(&db, text, &parameters, &options)` translates a statement without
 running it. The `Query` variant holds a `FirestorePipeline`, which `from_pipeline(..)` runs:
@@ -176,15 +186,21 @@ let rows = db
 `FirestoreSqlOptions` limits a statement before it runs. A statement that breaks a limit fails at
 translation with `InvalidParametersError`, and no request is sent. `FirestoreSqlOptions::new()`
 allows every statement the translator supports, except [joins and
-subqueries](./sql/reads.md#joins-and-subqueries), and
-`FirestoreSqlOptions::read_only()` starts the set for text from outside the program:
+subqueries](./sql/reads.md#joins-and-subqueries) and the [statements that change an index or a
+field](./sql/indexes.md#options), and `FirestoreSqlOptions::read_only()` starts the set for text
+from outside the program:
 
-- `read_only()` refuses `INSERT`, `UPDATE` and `DELETE`, and the `database()` source;
+- `read_only()` refuses `INSERT`, `UPDATE` and `DELETE`, the `database()` source, and `CREATE`,
+  `DROP` and `ALTER COLLECTION`. It allows `SELECT`, `SHOW` and `EXPLAIN [ANALYZE] SELECT`, which
+  only read;
+- `.allow_index_statements()` allows `CREATE INDEX`, `DROP INDEX` and `ALTER COLLECTION`, which
+  `new()` refuses. `read_only()` still refuses them after it: read-only wins;
 - `.refuse_collection_groups()` refuses `collection_group(..)`, which reads every collection with
   that ID under any document;
 - `.with_collections([BOOKS, REVIEWS])` allows only these `FirestoreCollectionId`s, wherever the
   statement names one: a collection, each collection of a path, a collection group and the paths of
-  `documents(..)`. It refuses `database()` too;
+  `documents(..)`. It refuses `database()` too, and `SHOW COLLECTIONS` and `SHOW INDEXES` without
+  `FROM`, which list names outside the set;
 - `.with_max_rows(1_000)` returns at most that many rows: the `LIMIT` is lowered to it, or one is
   added. The cap counts the rows returned, not the rows read: an `OFFSET` still reads the rows it
   skips, and `ARRAY_AGG(..)` or `ARRAY(SELECT ..)` puts a whole collection into one row;
@@ -224,6 +240,12 @@ write.
 Firestore has no setting that rejects a table scan, and the options do not check for one. A
 statement that filters on an unindexed field scans the collection, as a pipeline does, see
 [Known table scans](./editions/query-plans.md#known-table-scans).
+
+## Index statements
+
+`CREATE INDEX`, `DROP INDEX`, `ALTER COLLECTION`, `SHOW INDEXES` and `SHOW COLLECTIONS` run with
+`run()`, and the first three need `.allow_index_statements()` on the options.
+[Index statements](./sql/indexes.md) lists their forms, outcomes, waits and refusals.
 
 ## Reads, joins and subqueries
 

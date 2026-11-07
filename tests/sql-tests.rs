@@ -1,7 +1,7 @@
 use crate::common::setup_enterprise;
 use firestore::errors::{BackoffError, FirestoreError};
 use firestore::*;
-use futures::FutureExt;
+use futures::{FutureExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -1008,5 +1008,55 @@ async fn a_terminal_of_the_other_kind_fails_before_sending() -> TestResult {
         ),
         "sql"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn show_collections_lists_the_subcollections_of_a_document() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    let FirestoreSqlOutcome::Collections(collections) = db
+        .fluent()
+        .sql("SHOW COLLECTIONS IN `pipeline-restaurants/rest-01`")
+        .run()
+        .await?
+    else {
+        panic!("SHOW COLLECTIONS returns collection IDs");
+    };
+
+    assert_eq!(collections, [FirestoreCollectionId::from_static("reviews")]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn explain_text_returns_the_plan() -> TestResult {
+    let db = setup_enterprise().await?;
+
+    for (prefix, documents) in [("EXPLAIN", 0), ("EXPLAIN ANALYZE", 2)] {
+        let FirestoreSqlOutcome::Rows(rows) = db
+            .fluent()
+            .sql(format!(
+                "{prefix} SELECT title FROM `pipeline-books` WHERE genre = 'Dystopian'"
+            ))
+            .run()
+            .await?
+        else {
+            panic!("{prefix} returns rows");
+        };
+        let mut items: Vec<_> = rows.try_collect().await?;
+
+        let closing = items
+            .pop()
+            .expect("a document-less item must close the stream");
+        assert_eq!(items.len(), documents, "{prefix}");
+        assert!(closing.document.is_none(), "{prefix}");
+        assert!(
+            closing
+                .metadata
+                .explain_stats
+                .is_some_and(|stats| !stats.text.is_empty()),
+            "{prefix}"
+        );
+    }
     Ok(())
 }

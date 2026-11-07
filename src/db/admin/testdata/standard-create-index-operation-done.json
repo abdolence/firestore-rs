@@ -1,0 +1,33 @@
+{
+  "name": "projects/latestbit/databases/(default)/operations/S280ei1qUGdBQ0lDDCoDIGU2YWI5ZGJjYjYwNC04M2FiLWYzNjQtM2E0Ny02ZWVjNmI1YiQac2VuaWxlcGlwCQpBEg",
+  "metadata": {
+    "@type": "type.googleapis.com/google.firestore.admin.v1.IndexOperationMetadata",
+    "startTime": "2026-11-07T16:29:38.416203Z",
+    "endTime": "2026-11-07T16:35:29.050844Z",
+    "index": "projects/latestbit/databases/(default)/collectionGroups/sql-ddl-capture/indexes/CICAgPj-z4oK",
+    "state": "SUCCESSFUL",
+    "progressDocuments": {}
+  },
+  "done": true,
+  "response": {
+    "@type": "type.googleapis.com/google.firestore.admin.v1.Index",
+    "name": "projects/latestbit/databases/(default)/collectionGroups/sql-ddl-capture/indexes/CICAgPj-z4oK",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "customer_id",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "placed_at",
+        "order": "DESCENDING"
+      },
+      {
+        "fieldPath": "__name__",
+        "order": "DESCENDING"
+      }
+    ],
+    "state": "READY",
+    "density": "SPARSE_ALL"
+  }
+}

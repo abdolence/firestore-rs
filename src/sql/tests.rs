@@ -6,14 +6,25 @@ use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::pipeline_stage_builder::FirestorePipelineNestedContext;
 use crate::{
     FirestoreBoolExpr, FirestoreCollectionGroupSource, FirestoreCollectionId,
-    FirestoreCollectionSource, FirestoreDocumentsSource, FirestoreExpr, FirestoreGeoPoint,
-    FirestoreInsertWrite, FirestoreLatLng, FirestorePipeline, FirestorePipelineSource,
-    FirestorePipelineStage, FirestorePipelineWrite, FirestorePipelineWriteParams,
-    FirestorePipelineWriteTransaction, FirestoreReference, FirestoreResult, FirestoreSelection,
-    FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUnionStage,
-    FirestoreUpdateWrite, FirestoreUpsertWrite, FirestoreWriteCollection,
+    FirestoreCollectionSource, FirestoreDocumentsSource, FirestoreExplainOptions, FirestoreExpr,
+    FirestoreGeoPoint, FirestoreInsertWrite, FirestoreLatLng, FirestoreListCollectionIdsParams,
+    FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage, FirestorePipelineWrite,
+    FirestorePipelineWriteParams, FirestorePipelineWriteTransaction, FirestoreReference,
+    FirestoreResult, FirestoreSelection, FirestoreSqlExplain, FirestoreSqlOptions,
+    FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUnionStage, FirestoreUpdateWrite,
+    FirestoreUpsertWrite, FirestoreWriteCollection,
 };
 
+#[cfg(feature = "admin")]
+use crate::{
+    FirestoreCompositeIndex, FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget,
+    FirestoreFieldOverrideUpdate, FirestoreFieldTtlUpdate, FirestoreFieldUpdate,
+    FirestoreGeoIndexConfig, FirestoreIndexDefinition, FirestoreIndexDeleteTarget,
+    FirestoreIndexDensity, FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexId,
+    FirestoreIndexIdTarget, FirestoreIndexQueryScope, FirestoreQueryDirection,
+    FirestoreSearchIndexOptions, FirestoreSqlCreateIndex, FirestoreSqlDropIndex,
+    FirestoreVectorIndexConfig,
+};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -35,7 +46,7 @@ fn translate(
 ) -> FirestoreResult<FirestorePipeline> {
     match translate_statement(sql, parameters, options)? {
         FirestoreSqlStatement::Query(pipeline) => Ok(pipeline),
-        FirestoreSqlStatement::Write(write) => panic!("{sql}: {write:?}"),
+        other => panic!("{sql}: {other:?}"),
     }
 }
 
@@ -2076,5 +2087,502 @@ fn a_table_alias_matches_without_regard_to_case() {
         )
         .field,
         "REST"
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn show_indexes_is_allowed_by_read_only_options() {
+    let statement = translate_statement(
+        "SHOW INDEXES FROM orders",
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::read_only(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        statement,
+        FirestoreSqlStatement::ShowIndexes(Some(FirestoreCollectionId::from_static("orders")))
+    );
+}
+
+#[test]
+fn show_collections_in_a_document_resolves_against_the_documents_root() {
+    let statement = translate_statement(
+        "SHOW COLLECTIONS IN `users/alice`",
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::new(),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(
+        statement,
+        FirestoreSqlStatement::ShowCollections(
+            FirestoreListCollectionIdsParams::new().with_parent(format!("{DOCUMENTS}/users/alice"))
+        )
+    );
+}
+
+const INDEX_STATEMENTS: [&str; 3] = [
+    "CREATE INDEX ON orders (customer_id, placed_at DESC)",
+    "DROP INDEX `CICAgPj-z4oK`",
+    "ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = TRUE)",
+];
+
+#[test]
+fn read_only_options_refuse_index_statements() {
+    let refusal = refused_with(
+        "DROP INDEX `CICAgPj-z4oK`",
+        &FirestoreSqlParameters::new(),
+        &FirestoreSqlOptions::read_only(),
+    );
+
+    assert_eq!(refusal.field, "read_only");
+}
+
+#[test]
+fn new_options_refuse_the_statements_that_change_an_index_or_a_field() {
+    for sql in INDEX_STATEMENTS {
+        let refusal = refused(sql);
+        assert_eq!(refusal.field, "allow_index_statements", "{sql}");
+    }
+}
+
+#[test]
+fn read_only_wins_over_allow_index_statements() {
+    let options = FirestoreSqlOptions::read_only().allow_index_statements();
+
+    for sql in INDEX_STATEMENTS {
+        let refusal = refused_with(sql, &FirestoreSqlParameters::new(), &options);
+        assert_eq!(refusal.field, "read_only", "{sql}");
+    }
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn allow_index_statements_accepts_create_drop_and_alter() {
+    let [create, drop, alter] = INDEX_STATEMENTS;
+
+    translated_create_index(create);
+    translated_drop_index(drop);
+    translated_field_update(alter);
+}
+
+/// The options of a statement that changes an index or a field.
+fn index_options() -> FirestoreSqlOptions {
+    FirestoreSqlOptions::new().allow_index_statements()
+}
+
+fn refused_index_statement(sql: &str) -> FirestoreInvalidParametersPublicDetails {
+    refused_with(sql, &FirestoreSqlParameters::new(), &index_options())
+}
+
+#[cfg(feature = "admin")]
+fn translated_create_index(sql: &str) -> FirestoreSqlCreateIndex {
+    match translate_statement(sql, &FirestoreSqlParameters::new(), &index_options()) {
+        Ok(FirestoreSqlStatement::CreateIndex(create)) => create,
+        other => panic!("{sql}: {other:?}"),
+    }
+}
+
+#[cfg(feature = "admin")]
+fn translated_drop_index(sql: &str) -> FirestoreSqlDropIndex {
+    match translate_statement(sql, &FirestoreSqlParameters::new(), &index_options()) {
+        Ok(FirestoreSqlStatement::DropIndex(drop)) => drop,
+        other => panic!("{sql}: {other:?}"),
+    }
+}
+
+#[cfg(feature = "admin")]
+fn index_field(path: &str, mode: FirestoreIndexFieldMode) -> FirestoreIndexField {
+    FirestoreIndexField::new(path.to_string(), mode)
+}
+
+#[cfg(feature = "admin")]
+fn ordered(path: &str, direction: FirestoreQueryDirection) -> FirestoreIndexField {
+    index_field(path, FirestoreIndexFieldMode::Order(direction))
+}
+
+#[cfg(feature = "admin")]
+fn index_definition(
+    group: &'static str,
+    index: FirestoreCompositeIndex,
+) -> FirestoreIndexDefinition {
+    FirestoreIndexDefinition::new(FirestoreCollectionId::from_static(group), index)
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn if_not_exists_and_if_exists_are_read_as_part_of_the_statement() {
+    let create = translated_create_index("CREATE INDEX IF NOT EXISTS ON orders (customer_id, at)");
+    assert!(create.if_not_exists);
+    assert!(!translated_create_index("CREATE INDEX ON orders (customer_id, at)").if_not_exists);
+
+    for sql in [
+        "DROP INDEX IF EXISTS CICAgJim14AK",
+        "DROP UNIQUE INDEX IF EXISTS ON users (email)",
+    ] {
+        assert!(translated_drop_index(sql).if_exists, "{sql}");
+    }
+    assert!(!translated_drop_index("DROP INDEX CICAgJim14AK").if_exists);
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_index_maps_columns_to_field_modes() {
+    let create = translated_create_index(
+        "CREATE INDEX ON collection_group('orders') (tags CONTAINS, placed_at)",
+    );
+
+    assert_eq!(
+        create.definition,
+        index_definition(
+            "orders",
+            FirestoreCompositeIndex::new(vec![
+                index_field("tags", FirestoreIndexFieldMode::ArrayContains),
+                ordered("placed_at", FirestoreQueryDirection::Ascending),
+            ])
+            .all_descendants()
+        )
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_unique_index_carries_unique_and_density() {
+    let create = translated_create_index(
+        "CREATE UNIQUE INDEX ON users (email DESC) OPTIONS (density = 'SPARSE_ANY')",
+    );
+
+    assert_eq!(
+        create.definition,
+        index_definition(
+            "users",
+            FirestoreCompositeIndex::new(vec![ordered(
+                "email",
+                FirestoreQueryDirection::Descending
+            )])
+            .unique()
+            .density(FirestoreIndexDensity::SparseAny)
+        )
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_search_index_reads_bare_columns_as_text_and_geo_columns_as_geo() {
+    let create = translated_create_index(
+        "CREATE SEARCH INDEX ON restaurants (menu, location GEO) \
+         OPTIONS (text_language = 'en', text_language_override_field_path = 'lang')",
+    );
+
+    assert_eq!(
+        create.definition,
+        index_definition(
+            "restaurants",
+            FirestoreCompositeIndex::new(vec![
+                index_field("menu", FirestoreIndexFieldMode::Text),
+                index_field(
+                    "location",
+                    FirestoreIndexFieldMode::Geo(FirestoreGeoIndexConfig::new())
+                ),
+            ])
+            .search_options(
+                FirestoreSearchIndexOptions::new()
+                    .with_text_language("en".to_string())
+                    .with_text_language_override_field_path("lang".to_string())
+            )
+        )
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_vector_index_makes_the_last_column_the_vector_field() {
+    let create = translated_create_index(
+        "CREATE VECTOR INDEX ON books (genre, embedding) OPTIONS (dimension = 768)",
+    );
+
+    assert_eq!(
+        create.definition,
+        index_definition(
+            "books",
+            FirestoreCompositeIndex::new(vec![
+                ordered("genre", FirestoreQueryDirection::Ascending),
+                index_field(
+                    "embedding",
+                    FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(768))
+                ),
+            ])
+        )
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_vector_index_without_a_dimension_is_refused() {
+    assert_eq!(
+        refused_index_statement("CREATE VECTOR INDEX ON books (genre, embedding)").field,
+        "dimension"
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_index_if_exists_is_not_read_as_a_name() {
+    assert_eq!(
+        refused_index_statement("CREATE INDEX IF EXISTS ON orders (a, b)").field,
+        "CREATE INDEX"
+    );
+}
+
+#[cfg(not(feature = "admin"))]
+#[test]
+fn a_statement_without_the_admin_feature_is_named_only_when_it_is_an_index_statement() {
+    assert_eq!(
+        [
+            refused_index_statement("DROP TABLE orders").field,
+            refused_index_statement("ALTER TABLE orders ADD a INT").field,
+            refused_index_statement("CREATE UNIQUE INDEX ON orders (a)").field,
+            refused_index_statement("ALTER COLLECTION orders SET OPTIONS (indexes = [])").field,
+        ],
+        ["statement", "statement", "CREATE INDEX", "ALTER COLLECTION"]
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn create_index_on_a_collection_path_is_refused() {
+    assert_eq!(
+        refused_index_statement("CREATE INDEX ON `users/alice/orders` (placed_at DESC, total)")
+            .field,
+        "collection_group"
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn drop_index_reads_a_backticked_id() {
+    let drop = translated_drop_index("DROP INDEX `CICAgPj-z4oK`");
+
+    assert_eq!(
+        drop.target,
+        FirestoreIndexDeleteTarget::Id(FirestoreIndexIdTarget::new(
+            FirestoreIndexId::new("CICAgPj-z4oK").unwrap()
+        ))
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn drop_index_by_definition_matches_the_create_definition() {
+    let columns = "ON users (email) OPTIONS (density = 'SPARSE_ANY')";
+
+    let created = translated_create_index(&format!("CREATE UNIQUE INDEX {columns}")).definition;
+    let dropped = translated_drop_index(&format!("DROP UNIQUE INDEX {columns}")).target;
+
+    assert_eq!(dropped, FirestoreIndexDeleteTarget::Definition(created));
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn collection_allowlist_applies_to_index_statements() {
+    let options = index_options().with_collections([FirestoreCollectionId::from_static("orders")]);
+
+    for sql in [
+        "CREATE INDEX ON secrets (a, b)",
+        "DROP INDEX ON secrets (a, b)",
+        "DROP INDEX CICAgJim14AK ON secrets",
+        "DROP INDEX CICAgJim14AK",
+    ] {
+        let refusal = refused_with(sql, &FirestoreSqlParameters::new(), &options);
+        assert_eq!(refusal.field, "collections", "{sql}");
+    }
+
+    translate_statement(
+        "DROP INDEX CICAgJim14AK ON orders",
+        &FirestoreSqlParameters::new(),
+        &options,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn refused_collection_groups_apply_to_index_definitions() {
+    let options = index_options().refuse_collection_groups();
+
+    for sql in [
+        "CREATE INDEX ON collection_group('orders') (a, b)",
+        "DROP INDEX ON collection_group('orders') (a, b)",
+    ] {
+        let refusal = refused_with(sql, &FirestoreSqlParameters::new(), &options);
+        assert_eq!(refusal.field, "collection_group", "{sql}");
+    }
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn a_parameter_in_an_index_statement_is_refused() {
+    let density = FirestoreSqlParameters::new().param("density", "DENSE");
+    let id = FirestoreSqlParameters::new().param("id", "CICAgJim14AK");
+
+    let option = refused_with(
+        "CREATE INDEX ON orders (customer_id, at) OPTIONS (density = @density)",
+        &density,
+        &index_options(),
+    );
+    let index_id = refused_with("DROP INDEX @id", &id, &index_options());
+
+    assert_eq!(
+        (option.field.as_str(), index_id.field.as_str()),
+        ("@density", "@id")
+    );
+}
+
+#[cfg(feature = "admin")]
+fn translated_field_update(sql: &str) -> FirestoreFieldUpdate {
+    match translate_statement(sql, &FirestoreSqlParameters::new(), &index_options()) {
+        Ok(FirestoreSqlStatement::AlterCollection(update)) => update,
+        other => panic!("{sql}: {other:?}"),
+    }
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn alter_column_combines_ttl_and_exemption_in_one_update() {
+    let update = translated_field_update(
+        "ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = TRUE, indexes = [])",
+    );
+
+    assert_eq!(
+        update,
+        FirestoreFieldUpdate::new(
+            FirestoreCollectionId::new("sessions").unwrap(),
+            FirestoreFieldOverrideTarget::Field("expires_at".to_string()),
+        )
+        .with_index_override(FirestoreFieldOverrideUpdate::Set(Vec::new()))
+        .with_ttl(FirestoreFieldTtlUpdate::Enable)
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn alter_collection_set_options_targets_every_field_with_scoped_indexes() {
+    let update = translated_field_update(
+        "ALTER COLLECTION orders SET OPTIONS (indexes = ['contains', 'COLLECTION_GROUP DESC'])",
+    );
+
+    assert_eq!(
+        update,
+        FirestoreFieldUpdate::new(
+            FirestoreCollectionId::new("orders").unwrap(),
+            FirestoreFieldOverrideTarget::AllFields,
+        )
+        .with_index_override(FirestoreFieldOverrideUpdate::Set(vec![
+            FirestoreFieldOverrideIndex {
+                query_scope: FirestoreIndexQueryScope::Collection,
+                mode: FirestoreIndexFieldMode::ArrayContains,
+            },
+            FirestoreFieldOverrideIndex {
+                query_scope: FirestoreIndexQueryScope::AllDescendants,
+                mode: FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Descending),
+            },
+        ]))
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn alter_column_indexes_null_reverts_the_override() {
+    let update = translated_field_update(
+        "ALTER COLLECTION orders ALTER address.city SET OPTIONS (indexes = NULL)",
+    );
+
+    assert_eq!(
+        update,
+        FirestoreFieldUpdate::new(
+            FirestoreCollectionId::new("orders").unwrap(),
+            FirestoreFieldOverrideTarget::Field("address.city".to_string()),
+        )
+        .with_index_override(FirestoreFieldOverrideUpdate::Revert)
+    );
+}
+
+#[cfg(feature = "admin")]
+#[test]
+fn ttl_on_every_field_is_refused() {
+    let refusal = refused_index_statement("ALTER COLLECTION logs SET OPTIONS (ttl = TRUE)");
+
+    assert_eq!(refusal.field, "ttl");
+}
+
+#[test]
+fn explain_analyze_carries_the_select_pipeline_and_analyze() {
+    let sql = "SELECT title FROM books WHERE genre = @genre ORDER BY rating DESC LIMIT 10";
+    let parameters = FirestoreSqlParameters::new().param("genre", "Dystopian");
+    let select = translate(sql, &parameters, &FirestoreSqlOptions::new()).unwrap();
+
+    let [plain, analysed] = ["EXPLAIN", "EXPLAIN ANALYZE"].map(|prefix| {
+        translate_statement(
+            &format!("{prefix} {sql}"),
+            &parameters,
+            &FirestoreSqlOptions::new(),
+        )
+        .unwrap_or_else(|error| panic!("{prefix}: {error}"))
+    });
+
+    assert_eq!(
+        plain,
+        FirestoreSqlStatement::Explain(FirestoreSqlExplain::new(
+            select.clone(),
+            FirestoreExplainOptions::new()
+        ))
+    );
+    assert_eq!(
+        analysed,
+        FirestoreSqlStatement::Explain(FirestoreSqlExplain::new(
+            select,
+            FirestoreExplainOptions::new().with_analyze(true)
+        ))
+    );
+}
+
+#[test]
+fn explain_of_a_write_is_refused() {
+    let refusal = refused("EXPLAIN DELETE FROM books WHERE stock = 0");
+
+    assert_eq!(refusal.field, "EXPLAIN");
+}
+
+#[test]
+fn explain_takes_analyze_and_nothing_else() {
+    let refusal = refused("EXPLAIN FORMAT JSON SELECT title FROM books");
+
+    assert_eq!(refusal.field, "EXPLAIN FORMAT");
+}
+
+#[test]
+fn explain_analyze_applies_the_row_cap_of_the_options() {
+    let options = FirestoreSqlOptions::read_only().with_max_rows(5);
+
+    let statement = translate_statement(
+        "EXPLAIN ANALYZE SELECT title FROM books",
+        &FirestoreSqlParameters::new(),
+        &options,
+    )
+    .unwrap();
+
+    let FirestoreSqlStatement::Explain(explain) = statement else {
+        panic!("{statement:?}");
+    };
+    assert_eq!(
+        explain.pipeline,
+        translate(
+            "SELECT title FROM books LIMIT 5",
+            &FirestoreSqlParameters::new(),
+            &FirestoreSqlOptions::new()
+        )
+        .unwrap()
     );
 }

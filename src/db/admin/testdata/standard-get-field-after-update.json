@@ -1,0 +1,9 @@
+{
+  "name": "projects/latestbit/databases/(default)/collectionGroups/sql-ddl-capture/fields/expires_at",
+  "indexConfig": {
+    "ancestorField": "projects/latestbit/databases/(default)/collectionGroups/__default__/fields/*"
+  },
+  "ttlConfig": {
+    "state": "CREATING"
+  }
+}

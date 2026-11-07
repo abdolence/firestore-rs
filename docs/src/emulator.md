@@ -16,7 +16,9 @@ configured to develop against it. Specifying credentials explicitly, with
 
 The emulator implements neither [bulk delete](./bulk-delete.md), which fails with
 `BULK_DELETE_UNAVAILABLE_ON_EMULATOR`, nor [index management](./index-management.md#the-firestore-emulator),
-which skips its run.
+which skips its run. The index calls `list()`, `create()`, `delete()` and `update_field()`, and the
+[SQL index statements](./sql/indexes.md), fail with the emulator's `UNIMPLEMENTED`. `SHOW COLLECTIONS`
+works on the emulator.
 
 ## On the Enterprise edition
 
@@ -33,3 +35,7 @@ Start the emulator with `--edition=enterprise` to run pipelines and SQL against 
 Standard emulator answers them with `INVALID_ARGUMENT`, and neither edition of the emulator
 supports bulk delete. Core inserts and queries run on an emulator of either edition, and Core
 aggregations, transactions and listeners run on the Enterprise one as on a live database.
+
+The Enterprise emulator runs SQL and pipelines, and ignores Query Explain: an `EXPLAIN` or
+`EXPLAIN ANALYZE` statement, and `.explain()`, return the rows and no plan. Check the plan of a
+query against a live database, see [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline).

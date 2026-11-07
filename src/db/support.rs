@@ -577,6 +577,56 @@ pub trait FirestoreIndexSupport {
         params: FirestoreIndexParams,
         options: FirestoreIndexSyncOptions,
     ) -> FirestoreResult<FirestoreIndexSyncReport>;
+
+    /// Lists the composite indexes and field resources of `collection_group`, or of every group
+    /// but the ones Firestore reserves, such as `__default__`, when it is `None`.
+    async fn list_indexes(
+        &self,
+        collection_group: Option<FirestoreCollectionId>,
+    ) -> FirestoreResult<FirestoreIndexListing>;
+
+    /// Starts building `definition`'s index and returns it as Firestore lists it once the build
+    /// has started, or, with `wait`, once the build has finished. An index that already exists
+    /// fails with [`DataConflictError`](crate::errors::FirestoreError::DataConflictError), unless
+    /// `if_not_exists` is set.
+    ///
+    /// With `if_not_exists`, the one index of the group that `definition` matches is the outcome,
+    /// and an `ALREADY_EXISTS` for an index the listing does not show stays an error. Such an
+    /// index is returned as listed, or, with `wait`, once it has left `CREATING`, polled under the
+    /// same deadline as a build this call started. With `wait`, an index that ends in
+    /// `NEEDS_REPAIR` fails the call, as a failed build of its own does. Any other error stays an
+    /// error.
+    async fn create_index(
+        &self,
+        definition: FirestoreIndexDefinition,
+        wait: Option<FirestoreOperationWaitOptions>,
+        if_not_exists: bool,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex>;
+
+    /// Deletes the one index `target` names and returns it as it was listed just before.
+    /// Deletes nothing and fails with
+    /// [`DataNotFoundError`](crate::errors::FirestoreError::DataNotFoundError) when no index
+    /// matches or the index belongs to another group than the target names, and with
+    /// [`DataConflictError`](crate::errors::FirestoreError::DataConflictError) when a definition
+    /// matches more than one.
+    ///
+    /// With `if_exists`, an ID nothing has and a definition nothing matches delete nothing and
+    /// return `None`; an index in another group than the target names, several matches and every
+    /// other error stay errors. Without it the result is always `Some`.
+    async fn delete_index(
+        &self,
+        target: FirestoreIndexDeleteTarget,
+        if_exists: bool,
+    ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>>;
+
+    /// Sends `update` as one `UpdateField` write and returns the field as Firestore reads it right
+    /// after the write, or, with `wait`, once the write has finished. Writes to one field are not
+    /// sequenced: Firestore accepts a second while the first is in progress.
+    async fn update_field(
+        &self,
+        update: FirestoreFieldUpdate,
+        wait: Option<FirestoreOperationWaitOptions>,
+    ) -> FirestoreResult<FirestoreListedField>;
 }
 
 /// Deletes every document in one or more collection groups, at any depth, across the whole

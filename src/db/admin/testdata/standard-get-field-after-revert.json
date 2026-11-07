@@ -1,0 +1,39 @@
+{
+  "name": "projects/latestbit/databases/(default)/collectionGroups/sql-ddl-capture/fields/expires_at",
+  "indexConfig": {
+    "indexes": [
+      {
+        "queryScope": "COLLECTION",
+        "fields": [
+          {
+            "fieldPath": "expires_at",
+            "order": "ASCENDING"
+          }
+        ],
+        "state": "READY"
+      },
+      {
+        "queryScope": "COLLECTION",
+        "fields": [
+          {
+            "fieldPath": "expires_at",
+            "order": "DESCENDING"
+          }
+        ],
+        "state": "READY"
+      },
+      {
+        "queryScope": "COLLECTION",
+        "fields": [
+          {
+            "fieldPath": "expires_at",
+            "arrayConfig": "CONTAINS"
+          }
+        ],
+        "state": "READY"
+      }
+    ],
+    "usesAncestorConfig": true,
+    "ancestorField": "projects/latestbit/databases/(default)/collectionGroups/__default__/fields/*"
+  }
+}

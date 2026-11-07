@@ -1,0 +1,9 @@
+{
+  "name": "projects/latestbit/databases/(default)/operations/S280ei1qUGdBQ0lDDCoDIGU2YWI5ZGJjYjYwNC04M2FiLWYzNjQtM2E0Ny02ZWVjNmI1YiQac2VuaWxlcGlwCQpBEg",
+  "metadata": {
+    "@type": "type.googleapis.com/google.firestore.admin.v1.IndexOperationMetadata",
+    "startTime": "2026-11-07T16:29:38.416203Z",
+    "index": "projects/latestbit/databases/(default)/collectionGroups/sql-ddl-capture/indexes/CICAgPj-z4oK",
+    "state": "INITIALIZING"
+  }
+}

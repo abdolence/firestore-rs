@@ -1,0 +1,92 @@
+{
+  "name": "projects/latestbit/databases/(default)/operations/AyBhMWE5OGNkNzY0MjQtZWY4OS05Zjg0LWI0ZWYtOGRkY2Y1MGUkGnNlbmlsZXBpcAkKMxI",
+  "metadata": {
+    "@type": "type.googleapis.com/google.firestore.admin.v1.FieldOperationMetadata",
+    "startTime": "2026-11-07T16:37:26.734545Z",
+    "endTime": "2026-11-07T16:43:34.155900Z",
+    "field": "projects/latestbit/databases/(default)/collectionGroups/sql-ddl-capture/fields/expires_at",
+    "indexConfigDeltas": [
+      {
+        "changeType": "ADD",
+        "index": {
+          "queryScope": "COLLECTION",
+          "fields": [
+            {
+              "fieldPath": "expires_at",
+              "order": "ASCENDING"
+            }
+          ]
+        }
+      },
+      {
+        "changeType": "ADD",
+        "index": {
+          "queryScope": "COLLECTION",
+          "fields": [
+            {
+              "fieldPath": "expires_at",
+              "order": "DESCENDING"
+            }
+          ]
+        }
+      },
+      {
+        "changeType": "ADD",
+        "index": {
+          "queryScope": "COLLECTION",
+          "fields": [
+            {
+              "fieldPath": "expires_at",
+              "arrayConfig": "CONTAINS"
+            }
+          ]
+        }
+      }
+    ],
+    "state": "SUCCESSFUL",
+    "progressDocuments": {},
+    "ttlConfigDelta": {
+      "changeType": "REMOVE"
+    }
+  },
+  "done": true,
+  "response": {
+    "@type": "type.googleapis.com/google.firestore.admin.v1.Field",
+    "name": "projects/latestbit/databases/(default)/collectionGroups/sql-ddl-capture/fields/expires_at",
+    "indexConfig": {
+      "indexes": [
+        {
+          "queryScope": "COLLECTION",
+          "fields": [
+            {
+              "fieldPath": "expires_at",
+              "order": "ASCENDING"
+            }
+          ],
+          "state": "READY"
+        },
+        {
+          "queryScope": "COLLECTION",
+          "fields": [
+            {
+              "fieldPath": "expires_at",
+              "order": "DESCENDING"
+            }
+          ],
+          "state": "READY"
+        },
+        {
+          "queryScope": "COLLECTION",
+          "fields": [
+            {
+              "fieldPath": "expires_at",
+              "arrayConfig": "CONTAINS"
+            }
+          ],
+          "state": "READY"
+        }
+      ],
+      "ancestorField": "projects/latestbit/databases/(default)/collectionGroups/__default__/fields/*"
+    }
+  }
+}

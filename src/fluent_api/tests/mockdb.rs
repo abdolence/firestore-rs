@@ -652,6 +652,38 @@ impl FirestoreIndexSupport for MockIndexDatabase {
         *self.captured.lock().unwrap() = Some((params, options));
         Ok(FirestoreIndexSyncReport::default())
     }
+
+    async fn list_indexes(
+        &self,
+        _collection_group: Option<FirestoreCollectionId>,
+    ) -> FirestoreResult<FirestoreIndexListing> {
+        unreachable!()
+    }
+
+    async fn create_index(
+        &self,
+        _definition: FirestoreIndexDefinition,
+        _wait: Option<FirestoreOperationWaitOptions>,
+        _if_not_exists: bool,
+    ) -> FirestoreResult<FirestoreListedCompositeIndex> {
+        unreachable!()
+    }
+
+    async fn delete_index(
+        &self,
+        _target: FirestoreIndexDeleteTarget,
+        _if_exists: bool,
+    ) -> FirestoreResult<Option<FirestoreListedCompositeIndex>> {
+        unreachable!()
+    }
+
+    async fn update_field(
+        &self,
+        _update: FirestoreFieldUpdate,
+        _wait: Option<FirestoreOperationWaitOptions>,
+    ) -> FirestoreResult<FirestoreListedField> {
+        unreachable!()
+    }
 }
 
 /// A mock that records the params a `db.fluent().delete().bulk()...` chain builds, instead of

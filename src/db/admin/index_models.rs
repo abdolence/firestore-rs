@@ -6,7 +6,7 @@
 
 use crate::errors::FirestoreError;
 use crate::field_path_segment;
-use crate::{FirestoreCollectionId, FirestoreQueryDirection, FirestoreResult};
+use crate::{FirestoreCollectionId, FirestoreIndexId, FirestoreQueryDirection, FirestoreResult};
 use rsb_derive::Builder;
 use std::collections::HashSet;
 use std::fmt::{self, Display, Formatter};
@@ -250,33 +250,10 @@ pub(crate) const ALL_FIELDS_PATH: &str = "*";
 pub(crate) struct CanonicalFieldPath(String);
 
 impl CanonicalFieldPath {
-    /// The field path of a listed field resource,
-    /// `projects/{p}/databases/{d}/collectionGroups/{group}/fields/{path}`.
-    ///
-    /// Anchored on the `/collectionGroups/{group}/fields/` markers rather than split on the last
-    /// `/`, because a quoted segment such as `` `a/b` `` can itself contain `/`, and a database ID
-    /// can contain the word `fields`.
-    ///
-    /// # Errors
-    /// [`FirestoreError::InvalidParametersError`] naming `name` when it is not a field resource
-    /// name of that shape.
-    pub(crate) fn from_field_resource_name(name: &str) -> FirestoreResult<Self> {
-        const COLLECTION_GROUPS_MARKER: &str = "/collectionGroups/";
-        const FIELDS_MARKER: &str = "fields/";
-
-        name.find(COLLECTION_GROUPS_MARKER)
-            .and_then(|groups_at| {
-                let after_groups = &name[groups_at + COLLECTION_GROUPS_MARKER.len()..];
-                let group_end = after_groups.find('/')?;
-                after_groups[group_end + 1..].strip_prefix(FIELDS_MARKER)
-            })
-            .map(Self::from)
-            .ok_or_else(|| {
-                FirestoreError::invalid_parameters(
-                    "name",
-                    format!("not a field resource name: {name}"),
-                )
-            })
+    /// The resource name of this field in the collection group at `group_path`, the name an
+    /// `UpdateField` request carries.
+    pub(crate) fn field_resource_name(&self, group_path: &str) -> String {
+        format!("{group_path}/fields/{self}")
     }
 
     pub(crate) fn as_str(&self) -> &str {
@@ -351,6 +328,31 @@ impl Display for CanonicalFieldPath {
     }
 }
 
+/// The parts of a resource name under a collection group,
+/// `projects/{p}/databases/{d}/collectionGroups/{group}/{kind}/{item}`.
+///
+/// Anchored on the first `/collectionGroups/` rather than split on the last `/`: a quoted field
+/// path such as `` `a/b` `` can itself contain `/`, and a database ID can contain the word
+/// `fields`, but neither a database ID nor a group ID contains `/`.
+pub(crate) struct CollectionGroupResourceName<'n> {
+    pub(crate) collection_group: &'n str,
+    pub(crate) item: &'n str,
+}
+
+impl<'n> CollectionGroupResourceName<'n> {
+    pub(crate) fn parse(name: &'n str, kind: &str) -> Option<Self> {
+        const COLLECTION_GROUPS_MARKER: &str = "/collectionGroups/";
+        let groups_at = name.find(COLLECTION_GROUPS_MARKER)?;
+        let (collection_group, rest) =
+            name[groups_at + COLLECTION_GROUPS_MARKER.len()..].split_once('/')?;
+        let item = rest.strip_prefix(kind)?.strip_prefix('/')?;
+        Some(Self {
+            collection_group,
+            item,
+        })
+    }
+}
+
 /// What a [`FirestoreFieldOverride`] applies to: one named field, or every field in the owned
 /// collection group.
 ///
@@ -421,11 +423,16 @@ pub enum FirestoreFieldTtlState {
     NeedsRepair,
 }
 
-/// One composite index Firestore has listed for the owned collection group.
+/// One composite index as Firestore lists it.
 #[derive(Debug, PartialEq, Clone)]
 pub struct FirestoreListedCompositeIndex {
     /// The resource name Firestore assigned this index, for logging or a delete call.
     pub name: String,
+    /// The collection group the index belongs to, parsed from `name`.
+    pub collection_group: FirestoreCollectionId,
+    /// The ID Firestore assigned the index, parsed from `name`. Unique in its database, and the
+    /// ID a pipeline's [`force_index`](crate::FirestoreIndexHint::Index) hint takes.
+    pub id: FirestoreIndexId,
     /// The index's current lifecycle state.
     pub state: FirestoreIndexState,
     /// The index in the same shape a declaration would take.
@@ -481,12 +488,14 @@ pub enum FirestoreFieldTtlOutcome {
     Unrecognised(String),
 }
 
-/// One field resource Firestore has listed for the owned collection group, because it carries an
-/// explicit single-field index override, a TTL configuration, or both.
+/// One field resource as Firestore lists it: one that carries an explicit single-field index
+/// override, a TTL configuration, or both, or the one field a field update read back.
 #[derive(Debug, PartialEq, Clone)]
 pub struct FirestoreListedField {
     /// The resource name Firestore assigned this field, for logging or an update call.
     pub name: String,
+    /// The collection group the field belongs to, parsed from `name`.
+    pub collection_group: FirestoreCollectionId,
     /// The field's path within a document, parsed from `name`.
     pub field_path: String,
     /// The field's single-field index configuration, or `None` when the field carries no
@@ -511,6 +520,119 @@ pub struct FirestoreUnrecognisedIndexItem {
     pub name: String,
     /// Why this crate could not convert it into a domain value.
     pub reason: String,
+}
+
+/// The composite indexes, field resources and unrecognised items of one listing, each converted
+/// into the domain model once.
+///
+/// A listed index or field the domain model cannot represent is carried in `unrecognised`
+/// rather than dropped. A listed field converts whenever its resource name has the field shape,
+/// because each of its halves carries its own outcome (see [`FirestoreListedField`]).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct FirestoreIndexListing {
+    /// The listed composite indexes.
+    pub indexes: Vec<FirestoreListedCompositeIndex>,
+    /// The listed field resources that carry an explicit single-field index override, a TTL
+    /// configuration, or both.
+    pub fields: Vec<FirestoreListedField>,
+    /// The listed indexes and fields this crate's domain model cannot represent.
+    pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
+}
+
+/// A composite index and the collection group it belongs to.
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreIndexDefinition {
+    /// The collection group the index belongs to, whatever its query scope.
+    pub collection_group: FirestoreCollectionId,
+    /// The index itself.
+    pub index: FirestoreCompositeIndex,
+}
+
+/// Which index a delete removes.
+#[derive(Debug, PartialEq, Clone)]
+pub enum FirestoreIndexDeleteTarget {
+    /// The index with this ID; an ID is unique in its database.
+    Id(FirestoreIndexIdTarget),
+    /// The one listed index this definition matches, as `.sync()` matches a declaration.
+    Definition(FirestoreIndexDefinition),
+}
+
+/// An index named by its ID, for a delete.
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreIndexIdTarget {
+    /// The ID Firestore assigned the index.
+    pub id: FirestoreIndexId,
+    /// When set, the delete fails unless the index belongs to this group.
+    pub collection_group: Option<FirestoreCollectionId>,
+}
+
+/// One `UpdateField` write: a field's single-field index override, its TTL, or both.
+#[derive(Debug, PartialEq, Clone, Builder)]
+pub struct FirestoreFieldUpdate {
+    /// The collection group the field belongs to.
+    pub collection_group: FirestoreCollectionId,
+    /// The field written, or every field of the group without its own override.
+    pub target: FirestoreFieldOverrideTarget,
+    /// The change to the field's single-field indexes, `None` to leave them as they are.
+    pub index_override: Option<FirestoreFieldOverrideUpdate>,
+    /// The change to the field's TTL, `None` to leave it as it is.
+    pub ttl: Option<FirestoreFieldTtlUpdate>,
+}
+
+/// The change a [`FirestoreFieldUpdate`] makes to a field's single-field indexes.
+#[derive(Debug, PartialEq, Clone)]
+pub enum FirestoreFieldOverrideUpdate {
+    /// Replaces the field's single-field indexes with exactly these; empty exempts the field.
+    Set(Vec<FirestoreFieldOverrideIndex>),
+    /// Removes the override, so the field inherits its ancestor's configuration.
+    Revert,
+}
+
+/// The change a [`FirestoreFieldUpdate`] makes to a field's TTL.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum FirestoreFieldTtlUpdate {
+    /// Expires each document at the timestamp the field holds.
+    Enable,
+    /// Stops expiring documents by the field.
+    Disable,
+}
+
+impl FirestoreFieldUpdate {
+    /// Checks the update before it is sent: its group must not be one Firestore reserves, its
+    /// target must be a named field or [`AllFields`](FirestoreFieldOverrideTarget::AllFields),
+    /// it must change something, and TTL applies to a named field only.
+    ///
+    /// # Errors
+    /// [`FirestoreError::InvalidParametersError`] for each of those cases, and for a
+    /// [`Set`](FirestoreFieldOverrideUpdate::Set) that `.sync()` would refuse in a declared
+    /// override.
+    pub(crate) fn validate(&self) -> FirestoreResult<()> {
+        validate_collection_group(&self.collection_group)?;
+        let indexes = match &self.index_override {
+            Some(FirestoreFieldOverrideUpdate::Set(indexes)) => indexes.clone(),
+            Some(FirestoreFieldOverrideUpdate::Revert) | None => Vec::new(),
+        };
+        validate_field_overrides(&[FirestoreFieldOverride {
+            target: self.target.clone(),
+            indexes,
+        }])?;
+        match (&self.index_override, self.ttl, &self.target) {
+            (None, None, _) => Err(FirestoreError::invalid_parameters(
+                "field_update",
+                format!(
+                    "the update of {} changes neither its single-field indexes nor its TTL",
+                    self.target
+                ),
+            )),
+            (_, Some(_), FirestoreFieldOverrideTarget::AllFields) => {
+                Err(FirestoreError::invalid_parameters(
+                    "ttl",
+                    "TTL applies to one named field, not to every field of a collection group",
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// One collection group's declared composite indexes, single-field overrides and TTL policy.
@@ -1458,15 +1580,14 @@ mod tests {
     }
 
     #[test]
-    fn a_field_resource_name_yields_its_canonical_field_path() {
+    fn a_field_resource_name_yields_its_group_and_field_path() {
         let name = "projects/p/databases/fields/collectionGroups/users/fields/`a/b`.`c`";
+        let resource = CollectionGroupResourceName::parse(name, "fields").unwrap();
         assert_eq!(
-            CanonicalFieldPath::from_field_resource_name(name)
-                .unwrap()
-                .as_str(),
-            "`a/b`.c"
+            (resource.collection_group, resource.item),
+            ("users", "`a/b`.`c`")
         );
-        assert!(CanonicalFieldPath::from_field_resource_name("projects/p/other/x").is_err());
+        assert!(CollectionGroupResourceName::parse("projects/p/other/x", "fields").is_none());
     }
 
     fn field(path: &str, mode: FirestoreIndexFieldMode) -> FirestoreIndexField {

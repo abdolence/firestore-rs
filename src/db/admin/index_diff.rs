@@ -6,15 +6,16 @@
 //! already fetched and never performs I/O of its own.
 
 use crate::db::admin::index_models::{
-    validate_index_params_for_edition, CanonicalFieldPath, FirestoreDatabaseEdition,
-    IMPLIED_NAME_FIELD,
+    validate_index_params_for_edition, CanonicalFieldPath, CollectionGroupResourceName,
+    FirestoreDatabaseEdition, IMPLIED_NAME_FIELD,
 };
 use crate::errors::FirestoreError;
 use crate::{
-    FirestoreCompositeIndex, FirestoreExplicitFieldOverride, FirestoreFieldOverride,
-    FirestoreFieldOverrideIndex, FirestoreFieldOverrideOutcome, FirestoreFieldTtlOutcome,
-    FirestoreFieldTtlState, FirestoreGeoIndexConfig, FirestoreIndexDensity, FirestoreIndexField,
-    FirestoreIndexFieldMode, FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexQueryScope,
+    FirestoreCollectionId, FirestoreCompositeIndex, FirestoreExplicitFieldOverride,
+    FirestoreFieldOverride, FirestoreFieldOverrideIndex, FirestoreFieldOverrideOutcome,
+    FirestoreFieldTtlOutcome, FirestoreFieldTtlState, FirestoreGeoIndexConfig,
+    FirestoreIndexDensity, FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexId,
+    FirestoreIndexListing, FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexQueryScope,
     FirestoreIndexState, FirestoreListedCompositeIndex, FirestoreListedField,
     FirestoreQueryDirection, FirestoreResult, FirestoreSearchIndexOptions,
     FirestoreUnrecognisedIndexItem, FirestoreVectorIndexConfig,
@@ -52,20 +53,6 @@ pub(crate) struct FirestoreIndexExistingState {
     /// The collection group's field resources that carry an explicit index override, a TTL
     /// configuration, or both.
     pub fields: Vec<ProtoField>,
-}
-
-/// The owned group's listing converted into the domain model, once, for both the existing-state
-/// log and [`plan_index_changes`].
-///
-/// A listed composite index or field the domain model cannot represent is carried in
-/// `unrecognised` rather than dropped. A listed field converts whenever its resource name
-/// has the field shape, because each of its halves carries its own outcome (see
-/// [`FirestoreListedField`]).
-#[derive(Debug, Default, Clone, PartialEq)]
-pub(crate) struct FirestoreIndexListing {
-    pub indexes: Vec<FirestoreListedCompositeIndex>,
-    pub fields: Vec<FirestoreListedField>,
-    pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
 }
 
 impl From<FirestoreIndexExistingState> for FirestoreIndexListing {
@@ -443,13 +430,27 @@ impl TryFrom<ProtoIndex> for FirestoreCompositeIndex {
     }
 }
 
-/// Converts a listed index resource: its resource name and lifecycle state, plus the composite
-/// index itself.
+/// Converts a listed index resource: its resource name, the group and ID that name holds, and
+/// its lifecycle state, plus the composite index itself.
+///
+/// # Errors
+/// Fails, among the reasons [`TryFrom<ProtoIndex> for FirestoreCompositeIndex`] gives, when the
+/// resource name does not have the `.../collectionGroups/{group}/indexes/{id}` shape.
 impl TryFrom<ProtoIndex> for FirestoreListedCompositeIndex {
     type Error = FirestoreError;
 
     fn try_from(index: ProtoIndex) -> Result<Self, Self::Error> {
         let name = index.name.clone();
+        let resource = CollectionGroupResourceName::parse(&name, "indexes")
+            .filter(|resource| !resource.item.contains('/'))
+            .ok_or_else(|| {
+                FirestoreError::invalid_parameters(
+                    "name",
+                    format!("not an index resource name: {name}"),
+                )
+            })?;
+        let collection_group = FirestoreCollectionId::new(resource.collection_group)?;
+        let id = FirestoreIndexId::new(resource.item)?;
         let state =
             FirestoreIndexState::try_from(ProtoState::try_from(index.state).map_err(|_| {
                 FirestoreError::invalid_parameters(
@@ -458,7 +459,13 @@ impl TryFrom<ProtoIndex> for FirestoreListedCompositeIndex {
                 )
             })?)?;
         let index = FirestoreCompositeIndex::try_from(index)?;
-        Ok(FirestoreListedCompositeIndex { name, state, index })
+        Ok(FirestoreListedCompositeIndex {
+            name,
+            collection_group,
+            id,
+            state,
+            index,
+        })
     }
 }
 
@@ -633,10 +640,19 @@ impl TryFrom<ProtoField> for FirestoreListedField {
     type Error = FirestoreError;
 
     fn try_from(field: ProtoField) -> Result<Self, Self::Error> {
-        let field_path = CanonicalFieldPath::from_field_resource_name(&field.name)?;
+        let resource =
+            CollectionGroupResourceName::parse(&field.name, "fields").ok_or_else(|| {
+                FirestoreError::invalid_parameters(
+                    "name",
+                    format!("not a field resource name: {}", field.name),
+                )
+            })?;
+        let collection_group = FirestoreCollectionId::new(resource.collection_group)?;
+        let field_path = CanonicalFieldPath::from(resource.item).to_string();
         Ok(FirestoreListedField {
             name: field.name,
-            field_path: field_path.to_string(),
+            collection_group,
+            field_path,
             index_override: field.index_config.map(Into::into),
             ttl: field.ttl_config.map(Into::into),
         })
@@ -849,7 +865,7 @@ impl FirestoreError {
     /// Describes this error the way an unrecognised listed item's `reason` should read: a plain
     /// description of what was wrong with the server data, not a client-facing "invalid
     /// parameters" message (the item was never a parameter the caller supplied).
-    fn unrecognised_reason(&self) -> String {
+    pub(super) fn unrecognised_reason(&self) -> String {
         match self {
             FirestoreError::InvalidParametersError(details) => details.public.error.clone(),
             other => other.to_string(),

@@ -113,6 +113,11 @@ name = "sql"
 path = "examples/sql.rs"
 required-features = ["sql"]
 
+[[example]]
+name = "sql-indexes"
+path = "examples/sql-indexes.rs"
+required-features = ["sql", "admin"]
+
 [[test]]
 name = "caching_memory_test"
 path = "tests/caching_memory_test.rs"

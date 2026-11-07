@@ -1,23 +1,30 @@
 use crate::errors::FirestoreError;
 use crate::{
-    FirestoreDb, FirestoreDocument, FirestoreExplainOptions, FirestorePipelineParams,
-    FirestorePipelineSupport, FirestorePipelineWriteParams, FirestorePipelineWriteResult,
-    FirestoreRequestOptions, FirestoreRequestTag, FirestoreResult, FirestoreSqlOptions,
+    FirestoreCollectionId, FirestoreDb, FirestoreDocument, FirestoreExplainOptions,
+    FirestoreListingSupport, FirestorePipelineParams, FirestorePipelineSupport,
+    FirestorePipelineWriteParams, FirestorePipelineWriteResult, FirestoreRequestOptions,
+    FirestoreRequestTag, FirestoreResult, FirestoreSqlOptions, FirestoreSqlOutcome,
     FirestoreSqlParameters, FirestoreSqlStatement, FirestoreTransaction,
     FirestoreWithPipelineMetadata,
 };
+#[cfg(feature = "admin")]
+use crate::{FirestoreIndexSupport, FirestoreOperationWaitOptions};
 use futures::stream::BoxStream;
+use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+#[cfg(feature = "admin")]
+use std::time::Duration;
 
 /// A SQL statement, the values of its parameters and the options it runs with. It is translated
 /// when it runs, so an error in the text arrives from the terminal method, before any request is
 /// sent.
 ///
-/// A `SELECT` runs with `query` or one of its streaming variants. An `INSERT`, `UPDATE` or
-/// `DELETE` runs with [`execute`](Self::execute) or
-/// [`execute_in_transaction`](Self::execute_in_transaction), and fails from the other terminals,
-/// as a `SELECT` does from these two.
+/// [`run`](Self::run) runs every statement. A `SELECT` or an `EXPLAIN [ANALYZE] SELECT` also runs
+/// with `query` or one of its streaming variants. An `INSERT`, `UPDATE` or `DELETE` also runs with
+/// [`execute`](Self::execute) or [`execute_in_transaction`](Self::execute_in_transaction), and
+/// fails from the other terminals, as a `SELECT` does from these two. `SHOW` and the index
+/// statements run with `run` alone.
 ///
 /// Created by [`FirestoreExprBuilder::sql()`](crate::FirestoreExprBuilder::sql).
 #[derive(Clone, Debug)]
@@ -28,6 +35,8 @@ pub struct FirestoreSqlBuilder<'a> {
     options: FirestoreSqlOptions,
     explain_options: Option<FirestoreExplainOptions>,
     request_options: Option<FirestoreRequestOptions>,
+    #[cfg(feature = "admin")]
+    wait: Option<FirestoreOperationWaitOptions>,
 }
 
 impl<'a> FirestoreSqlBuilder<'a> {
@@ -39,6 +48,8 @@ impl<'a> FirestoreSqlBuilder<'a> {
             options: FirestoreSqlOptions::new(),
             explain_options: None,
             request_options: None,
+            #[cfg(feature = "admin")]
+            wait: None,
         }
     }
 
@@ -67,7 +78,9 @@ impl<'a> FirestoreSqlBuilder<'a> {
     }
 
     /// Checks the statement against `options`, such as
-    /// [`read_only`](FirestoreSqlOptions::read_only) for text from outside the program.
+    /// [`read_only`](FirestoreSqlOptions::read_only) for text from outside the program. The index
+    /// statements run only with
+    /// [`allow_index_statements`](FirestoreSqlOptions::allow_index_statements).
     pub fn options(self, options: FirestoreSqlOptions) -> Self {
         Self { options, ..self }
     }
@@ -75,6 +88,11 @@ impl<'a> FirestoreSqlBuilder<'a> {
     /// Runs the statement with Query Explain for its plan only: no document is read or returned,
     /// and the plan arrives in the metadata of the last item of
     /// [`stream_query_with_metadata`](Self::stream_query_with_metadata).
+    ///
+    /// A statement that starts with `EXPLAIN` fails with
+    /// [`InvalidParametersError`](FirestoreError::InvalidParametersError), field `explain`:
+    /// the text and the builder would both set the options. So does `SHOW` or an index
+    /// statement, which have no plan.
     pub fn explain(self) -> Self {
         self.explain_with_options(FirestoreExplainOptions::new())
     }
@@ -88,7 +106,29 @@ impl<'a> FirestoreSqlBuilder<'a> {
         }
     }
 
-    /// Attaches request options to this statement.
+    /// Waits for the operation a `CREATE .. INDEX` or an `ALTER COLLECTION` starts to finish
+    /// before [`run`](Self::run) returns, polling at the default interval. `timeout` bounds the
+    /// whole call: see [`FirestoreOperationWaitOptions`]. Any other statement fails with
+    /// [`InvalidParametersError`](FirestoreError::InvalidParametersError) before any request:
+    /// `DROP INDEX` finishes at once.
+    #[cfg(feature = "admin")]
+    pub fn wait_until_ready(self, timeout: Duration) -> Self {
+        self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))
+    }
+
+    /// Like [`wait_until_ready`](Self::wait_until_ready), with the poll interval set too.
+    #[cfg(feature = "admin")]
+    pub fn wait_until_ready_with_options(self, options: FirestoreOperationWaitOptions) -> Self {
+        Self {
+            wait: Some(options),
+            ..self
+        }
+    }
+
+    /// Attaches request options to this statement. `SHOW INDEXES` and the index statements go to
+    /// the Admin API, which takes none: they fail with
+    /// [`InvalidParametersError`](FirestoreError::InvalidParametersError), field
+    /// `request_options`, before any request.
     pub fn request_options(self, options: FirestoreRequestOptions) -> Self {
         Self {
             request_options: Some(options),
@@ -96,8 +136,8 @@ impl<'a> FirestoreSqlBuilder<'a> {
         }
     }
 
-    /// Attaches request tags to this statement. They override any session wide default
-    /// configured with
+    /// Attaches request tags to this statement, as [`request_options`](Self::request_options). They
+    /// override any session wide default configured with
     /// [`FirestoreDb::clone_with_request_tags()`](crate::FirestoreDb::clone_with_request_tags).
     pub fn request_tags<I>(self, tags: I) -> Self
     where
@@ -118,6 +158,56 @@ impl<'a> FirestoreSqlBuilder<'a> {
             builder: self,
             _pd: PhantomData,
         }
+    }
+
+    /// Runs any statement and returns its outcome, one variant per kind of statement.
+    pub async fn run<'b>(self) -> FirestoreResult<FirestoreSqlOutcome<'b>> {
+        let db = self.db;
+        let statement = self.statement()?;
+        Ok(match statement {
+            statement @ (FirestoreSqlStatement::Query(_) | FirestoreSqlStatement::Explain(_)) => {
+                FirestoreSqlOutcome::Rows(
+                    db.stream_pipeline_doc_with_metadata(self.query_params(statement)?)
+                        .await?,
+                )
+            }
+            statement @ FirestoreSqlStatement::Write(_) => FirestoreSqlOutcome::Written(
+                db.execute_pipeline_write(self.write_params(statement)?)
+                    .await?,
+            ),
+            FirestoreSqlStatement::ShowCollections(params) => {
+                let collection_ids: Vec<String> = db
+                    .stream_list_collection_ids_with_errors(
+                        params.opt_request_options(self.request_options),
+                    )
+                    .await?
+                    .try_collect()
+                    .await?;
+                FirestoreSqlOutcome::Collections(
+                    collection_ids
+                        .into_iter()
+                        .map(FirestoreCollectionId::new)
+                        .collect::<FirestoreResult<_>>()?,
+                )
+            }
+            #[cfg(feature = "admin")]
+            FirestoreSqlStatement::ShowIndexes(collection_group) => {
+                FirestoreSqlOutcome::Indexes(db.list_indexes(collection_group).await?)
+            }
+            #[cfg(feature = "admin")]
+            FirestoreSqlStatement::CreateIndex(create) => FirestoreSqlOutcome::IndexCreated(
+                db.create_index(create.definition, self.wait, create.if_not_exists)
+                    .await?,
+            ),
+            #[cfg(feature = "admin")]
+            FirestoreSqlStatement::DropIndex(drop) => FirestoreSqlOutcome::IndexDropped(
+                db.delete_index(drop.target, drop.if_exists).await?,
+            ),
+            #[cfg(feature = "admin")]
+            FirestoreSqlStatement::AlterCollection(update) => {
+                FirestoreSqlOutcome::FieldUpdated(db.update_field(update, self.wait).await?)
+            }
+        })
     }
 
     /// Runs the statement and returns every row.
@@ -185,22 +275,97 @@ impl<'a> FirestoreSqlBuilder<'a> {
             .await
     }
 
-    fn into_params(self) -> FirestoreResult<FirestorePipelineParams> {
-        match FirestoreSqlStatement::translate(self.db, &self.sql, &self.parameters, &self.options)?
+    /// Translates the statement, and refuses what the builder holds that the statement has no use
+    /// for: an explain on anything but a `SELECT` or a write, request options on a statement that
+    /// goes to the Admin API, and a wait on one that starts no operation to wait for.
+    fn statement(&self) -> FirestoreResult<FirestoreSqlStatement> {
+        let statement =
+            FirestoreSqlStatement::translate(self.db, &self.sql, &self.parameters, &self.options)?;
+        if self.explain_options.is_some()
+            && !matches!(
+                statement,
+                FirestoreSqlStatement::Query(_)
+                    | FirestoreSqlStatement::Explain(_)
+                    | FirestoreSqlStatement::Write(_)
+            )
         {
+            return Err(FirestoreError::invalid_parameters(
+                "explain",
+                "only a SELECT runs with Query Explain",
+            ));
+        }
+        #[cfg(feature = "admin")]
+        if self.request_options.is_some()
+            && matches!(
+                statement,
+                FirestoreSqlStatement::ShowIndexes(_)
+                    | FirestoreSqlStatement::CreateIndex(_)
+                    | FirestoreSqlStatement::DropIndex(_)
+                    | FirestoreSqlStatement::AlterCollection(_)
+            )
+        {
+            return Err(FirestoreError::invalid_parameters(
+                "request_options",
+                "SHOW INDEXES and the index statements go to the Admin API, which takes no request options",
+            ));
+        }
+        #[cfg(feature = "admin")]
+        if self.wait.is_some()
+            && !matches!(
+                statement,
+                FirestoreSqlStatement::CreateIndex(_) | FirestoreSqlStatement::AlterCollection(_)
+            )
+        {
+            return Err(FirestoreError::invalid_parameters(
+                "wait",
+                "only CREATE .. INDEX and ALTER COLLECTION start an operation to wait for",
+            ));
+        }
+        Ok(statement)
+    }
+
+    fn into_params(self) -> FirestoreResult<FirestorePipelineParams> {
+        let statement = self.statement()?;
+        self.query_params(statement)
+    }
+
+    fn into_write_params(self) -> FirestoreResult<FirestorePipelineWriteParams> {
+        let statement = self.statement()?;
+        self.write_params(statement)
+    }
+
+    fn query_params(
+        self,
+        statement: FirestoreSqlStatement,
+    ) -> FirestoreResult<FirestorePipelineParams> {
+        match statement {
             FirestoreSqlStatement::Query(pipeline) => Ok(FirestorePipelineParams::new(pipeline)
                 .opt_explain_options(self.explain_options)
                 .opt_request_options(self.request_options)),
+            FirestoreSqlStatement::Explain(_) if self.explain_options.is_some() => {
+                Err(FirestoreError::invalid_parameters(
+                    "explain",
+                    "the statement says EXPLAIN already; leave explain() off the builder",
+                ))
+            }
+            FirestoreSqlStatement::Explain(explain) => {
+                Ok(FirestorePipelineParams::new(explain.pipeline)
+                    .with_explain_options(explain.options)
+                    .opt_request_options(self.request_options))
+            }
             FirestoreSqlStatement::Write(_) => Err(FirestoreError::invalid_parameters(
                 "sql",
                 "an INSERT, UPDATE or DELETE runs with execute() or execute_in_transaction(), and returns a count rather than rows",
             )),
+            _ => Err(FirestoreError::sql_runs_with_run()),
         }
     }
 
-    fn into_write_params(self) -> FirestoreResult<FirestorePipelineWriteParams> {
-        match FirestoreSqlStatement::translate(self.db, &self.sql, &self.parameters, &self.options)?
-        {
+    fn write_params(
+        self,
+        statement: FirestoreSqlStatement,
+    ) -> FirestoreResult<FirestorePipelineWriteParams> {
+        match statement {
             FirestoreSqlStatement::Write(_) if self.explain_options.is_some() => {
                 Err(FirestoreError::invalid_parameters(
                     "explain",
@@ -210,10 +375,13 @@ impl<'a> FirestoreSqlBuilder<'a> {
             FirestoreSqlStatement::Write(write) => {
                 Ok(write.opt_request_options(self.request_options))
             }
-            FirestoreSqlStatement::Query(_) => Err(FirestoreError::invalid_parameters(
-                "sql",
-                "a SELECT runs with query() or one of its streaming variants, and returns rows rather than a count",
-            )),
+            FirestoreSqlStatement::Query(_) | FirestoreSqlStatement::Explain(_) => {
+                Err(FirestoreError::invalid_parameters(
+                    "sql",
+                    "a SELECT runs with query() or one of its streaming variants, and returns rows rather than a count",
+                ))
+            }
+            _ => Err(FirestoreError::sql_runs_with_run()),
         }
     }
 }
@@ -289,5 +457,113 @@ where
         let db = self.builder.db;
         db.stream_pipeline_obj_with_metadata(self.builder.into_params()?)
             .await
+    }
+}
+
+#[cfg(all(test, feature = "admin"))]
+mod tests {
+    use crate::db::fake_firestore::FakeFirestore;
+    use crate::errors::FirestoreError;
+    use crate::{FirestoreResult, FirestoreSqlOptions};
+    use std::time::Duration;
+
+    async fn refusing_every_request() -> FakeFirestore {
+        FakeFirestore::start(|method, _| panic!("no request may be sent: {method}")).await
+    }
+
+    fn refused_field<T>(result: FirestoreResult<T>) -> String {
+        match result {
+            Err(FirestoreError::InvalidParametersError(error)) => error.public.field,
+            Err(other) => panic!("{other:?}"),
+            Ok(_) => panic!("the statement ran"),
+        }
+    }
+
+    #[tokio::test]
+    async fn query_refuses_an_index_statement_before_any_request() {
+        let fake = refusing_every_request().await;
+
+        let refused = fake.db.fluent().sql("SHOW INDEXES").query().await;
+
+        assert_eq!(refused_field(refused), "sql");
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    }
+
+    #[tokio::test]
+    async fn wait_until_ready_on_a_statement_without_an_operation_is_refused() {
+        let fake = refusing_every_request().await;
+
+        let refused = fake
+            .db
+            .fluent()
+            .sql("SHOW INDEXES FROM orders")
+            .wait_until_ready(Duration::from_secs(60))
+            .run()
+            .await;
+
+        assert_eq!(refused_field(refused), "wait");
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    }
+
+    const INDEX_STATEMENTS: [&str; 5] = [
+        "SHOW INDEXES",
+        "CREATE INDEX ON orders (customer_id, placed_at DESC)",
+        "DROP INDEX CICAgJim14AK",
+        "ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = TRUE)",
+        "SHOW COLLECTIONS",
+    ];
+
+    #[tokio::test]
+    async fn explain_on_a_statement_without_a_plan_is_refused() {
+        let fake = refusing_every_request().await;
+
+        for sql in INDEX_STATEMENTS {
+            let refused = fake
+                .db
+                .fluent()
+                .sql(sql)
+                .options(FirestoreSqlOptions::new().allow_index_statements())
+                .explain()
+                .run()
+                .await;
+
+            assert_eq!(refused_field(refused), "explain", "{sql}");
+        }
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    }
+
+    #[tokio::test]
+    async fn request_options_on_an_admin_statement_are_refused() {
+        let fake = refusing_every_request().await;
+
+        for sql in &INDEX_STATEMENTS[..4] {
+            let refused = fake
+                .db
+                .fluent()
+                .sql(*sql)
+                .options(FirestoreSqlOptions::new().allow_index_statements())
+                .request_tags(["a-tag"])
+                .run()
+                .await;
+
+            assert_eq!(refused_field(refused), "request_options", "{sql}");
+        }
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
+    }
+
+    #[tokio::test]
+    async fn explain_text_together_with_explain_options_is_refused() {
+        let fake = refusing_every_request().await;
+
+        let refused = fake
+            .db
+            .fluent()
+            .sql("EXPLAIN SELECT title FROM books")
+            .explain()
+            .query()
+            .await;
+
+        assert_eq!(refused_field(refused), "explain");
+        assert!(fake.calls().is_empty(), "{:?}", fake.calls());
     }
 }

@@ -40,6 +40,7 @@ a row where both behave the same. A number points to the notes under the table.
 | Index density[^density] | Admin | `SparseAll` only | `Dense` by default, or `SparseAny`[^search-sparse-any] |
 | `__name__` appended to an index | Admin | yes | no |
 | TTL policy | Admin | yes | yes |
+| [Index statements](./sql/indexes.md) | SQL | yes | yes |
 | [Bulk delete](./bulk-delete.md) | Admin | yes | yes |
 | [Firestore emulator](./emulator.md) | Any | the default emulator | started with `--edition=enterprise` |
 | Billing | Any | per document read, written and deleted | read units and write units[^realtime-billing] |

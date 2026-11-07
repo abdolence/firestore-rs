@@ -1,26 +1,26 @@
-//! [`FirestoreIndexSupport`] for [`FirestoreDb`]: lists, plans, applies, prunes and waits on one
-//! collection group's composite indexes, single-field overrides and TTL policy against the
-//! Firestore Admin API, on the same authenticated channel the data API uses
-//! ([`GoogleApiClient::get_with`](gcloud_sdk::GoogleApiClient::get_with)).
+//! Lists, plans, applies, prunes and waits on one collection group's composite indexes,
+//! single-field overrides and TTL policy against the Firestore Admin API, on the same
+//! authenticated channel the data API uses
+//! ([`GoogleApiClient::get_with`](gcloud_sdk::GoogleApiClient::get_with)), for the
+//! [`FirestoreIndexSupport`](crate::db::support::FirestoreIndexSupport) implementation in
+//! [`index_admin`](super::index_admin).
 
 use crate::db::admin::index_diff::{
-    composite_index_matches, plan_index_changes, FirestoreIndexExistingState, FirestoreIndexListing,
+    composite_index_matches, plan_index_changes, FirestoreIndexExistingState,
 };
 use crate::db::admin::index_models::{
-    validate_collection_group, write_section, CanonicalFieldPath, FirestoreDatabaseEdition,
+    validate_collection_group, write_section, CanonicalFieldPath, CollectionGroupResourceName,
+    FirestoreDatabaseEdition,
 };
 use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
-use crate::db::support::FirestoreIndexSupport;
 use crate::errors::FirestoreError;
 use crate::{
     FirestoreCollectionId, FirestoreCompositeIndex, FirestoreDb, FirestoreExplicitFieldOverride,
-    FirestoreFieldOverride, FirestoreFieldOverrideOutcome, FirestoreIndexDeletesWithheld,
-    FirestoreIndexDeletesWithheldReason, FirestoreIndexParams, FirestoreIndexPlan,
-    FirestoreIndexSyncOptions, FirestoreIndexSyncReport, FirestoreIndexSyncSkipReason,
-    FirestoreIndexSyncTimings, FirestoreInstant, FirestoreListedCompositeIndex,
-    FirestoreListedField, FirestoreOperationWaitOptions, FirestoreResult,
+    FirestoreFieldOverride, FirestoreFieldOverrideOutcome, FirestoreFieldUpdate,
+    FirestoreIndexDeletesWithheld, FirestoreIndexDeletesWithheldReason, FirestoreIndexListing,
+    FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexSyncReport, FirestoreInstant,
+    FirestoreListedCompositeIndex, FirestoreListedField, FirestoreResult,
 };
-use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field as proto_field;
 use gcloud_sdk::google::firestore::admin::v1::firestore_admin_client::FirestoreAdminClient;
 use gcloud_sdk::google::firestore::admin::v1::{
@@ -29,6 +29,7 @@ use gcloud_sdk::google::firestore::admin::v1::{
     UpdateFieldRequest,
 };
 use gcloud_sdk::google::longrunning::operations_client::OperationsClient;
+use gcloud_sdk::google::longrunning::Operation;
 use gcloud_sdk::prost_types::FieldMask;
 use gcloud_sdk::tonic::{Code, Status};
 use gcloud_sdk::RequestTimeouts;
@@ -39,19 +40,20 @@ use tracing::*;
 /// One write `.sync()` sends for the owned collection group, holding the declared or listed
 /// item it writes. `Display` is the text every log line and wait error uses for the write, such as
 /// `enable TTL on expires_at`, so the two never disagree on what an operation was for.
-enum IndexAction {
+pub(super) enum IndexAction {
     CreateIndex(FirestoreCompositeIndex),
     UpdateFieldOverride(FirestoreFieldOverride),
     EnableTtl(String),
     RevertFieldOverride(FirestoreListedField),
     DisableTtl(FirestoreListedField),
     DeleteIndex(FirestoreListedCompositeIndex),
+    UpdateField(FirestoreFieldUpdate),
 }
 
 impl IndexAction {
     /// What the action writes: the index definition for a create, the index resource name for
     /// a delete, and the field path for a field write.
-    fn target(&self) -> String {
+    pub(super) fn target(&self) -> String {
         match self {
             IndexAction::CreateIndex(index) => index.to_string(),
             IndexAction::UpdateFieldOverride(declared) => declared.target.as_str().to_string(),
@@ -60,6 +62,7 @@ impl IndexAction {
                 listed.field_path.clone()
             }
             IndexAction::DeleteIndex(listed) => listed.name.clone(),
+            IndexAction::UpdateField(update) => update.target.as_str().to_string(),
         }
     }
 }
@@ -132,6 +135,7 @@ impl OperationAction for IndexAction {
             IndexAction::RevertFieldOverride(_) => "revert_field_override",
             IndexAction::DisableTtl(_) => "disable_ttl",
             IndexAction::DeleteIndex(_) => "delete_index",
+            IndexAction::UpdateField(_) => "update_field",
         }
     }
 }
@@ -149,11 +153,12 @@ impl std::fmt::Display for IndexAction {
             }
             IndexAction::DisableTtl(listed) => write!(f, "disable TTL on {}", listed.field_path),
             IndexAction::DeleteIndex(listed) => write!(f, "delete index {listed}"),
+            IndexAction::UpdateField(update) => write!(f, "update field {}", update.target),
         }
     }
 }
 
-type PendingOperation = StartedOperation<IndexAction>;
+pub(super) type PendingOperation = StartedOperation<IndexAction>;
 
 /// The result of [`FirestoreDb::apply_create_index`]: whether the create actually started a
 /// build, or another writer created the index since the plan was made, which `.sync()` reports
@@ -173,8 +178,8 @@ enum FieldWriteOutcome {
 
 /// An `UpdateField` request Firestore refused, with the action it was for, so the caller decides
 /// whether the refusal is an error.
-struct RefusedFieldWrite {
-    action: IndexAction,
+pub(super) struct RefusedFieldWrite {
+    action: Box<IndexAction>,
     status: Status,
 }
 
@@ -193,7 +198,7 @@ impl RefusedFieldWrite {
     /// failure returns. The two steps are only ever taken together, through this method: [`From`]
     /// alone never logs, because [`FirestoreDb::settle_refused_field_write`] may still resolve a
     /// refusal without treating it as a failure, and must not log one it ends up not failing on.
-    fn into_logged_error(self) -> FirestoreError {
+    pub(super) fn into_logged_error(self) -> FirestoreError {
         self.log();
         self.into()
     }
@@ -205,10 +210,9 @@ impl From<RefusedFieldWrite> for FirestoreError {
     }
 }
 
-/// The owned group's existing state as one grouped block, reusing the per-item `Display` impls
-/// the plan and report use (via [`write_section`]), so this listing and those never disagree on
-/// how an item reads. A listed index the domain model cannot represent is left out here; the plan
-/// lists it, with its reason, under `unrecognised`.
+/// The listing as one grouped block, each item printed as the plan and the sync report print it.
+/// A listed item the domain model cannot represent is left out here; the plan lists it, with its
+/// reason, under `unrecognised`.
 impl std::fmt::Display for FirestoreIndexListing {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let field_overrides: Vec<&FirestoreListedField> = self.field_overrides().collect();
@@ -278,19 +282,13 @@ fn log_plan(group: &FirestoreCollectionId, plan: &FirestoreIndexPlan) {
 
 /// The one collection group a statement owns: its ID, its resource path in the database, and the
 /// edition of that database.
-struct OwnedGroup<'a> {
+pub(super) struct OwnedGroup<'a> {
     id: &'a FirestoreCollectionId,
     path: String,
-    edition: FirestoreDatabaseEdition,
+    pub(super) edition: FirestoreDatabaseEdition,
 }
 
 impl OwnedGroup<'_> {
-    /// The resource name of field `path` in this group, the name an `UpdateField` request
-    /// carries.
-    fn field_resource(&self, path: &CanonicalFieldPath) -> String {
-        format!("{}/fields/{path}", self.path)
-    }
-
     /// Refuses to touch a resource that is not under this group, independent of the filtering
     /// `list_existing_state` already applies to what it reports as undeclared in the first place.
     ///
@@ -300,7 +298,7 @@ impl OwnedGroup<'_> {
     /// to trust it with `prune_undeclared()`. A group Firestore reserves, such as `__default__`,
     /// owns nothing this crate may touch, even though validation already rejects a statement
     /// naming one.
-    fn ensure_owns(&self, kind: &str, name: &str) -> FirestoreResult<()> {
+    pub(super) fn ensure_owns(&self, kind: &str, name: &str) -> FirestoreResult<()> {
         validate_collection_group(self.id)?;
         let prefix = format!("{}/{kind}/", self.path);
         if name.starts_with(prefix.as_str()) {
@@ -321,7 +319,7 @@ impl OwnedGroup<'_> {
 /// between dependent writes (see [`FirestoreDb::apply_plan`]): long enough for a composite index
 /// build or a field override's single-field index build, so such a sync only fails when a write
 /// it depends on is stuck.
-const SEQUENCING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+pub(super) const SEQUENCING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// The operations one sync has started, which of them are known to have finished, and which one
 /// last wrote each field.
@@ -368,9 +366,15 @@ impl FirestoreDb {
         self.inner.client.get_with(OperationsClient::new)
     }
 
+    /// The resource path of collection group `group` in this database; `-` stands for every
+    /// group.
+    pub(super) fn collection_group_path(&self, group: &str) -> String {
+        format!("{}/collectionGroups/{group}", self.inner.database_path)
+    }
+
     /// The group a statement naming `group` owns, with the database's edition read once, so every
     /// step of a call validates, matches and writes under the same edition.
-    async fn read_owned_group<'a>(
+    pub(super) async fn read_owned_group<'a>(
         &self,
         group: &'a FirestoreCollectionId,
     ) -> FirestoreResult<OwnedGroup<'a>> {
@@ -394,11 +398,7 @@ impl FirestoreDb {
         span.record("/firestore/response_time", elapsed.as_millis());
         Ok(OwnedGroup {
             id: group,
-            path: format!(
-                "{}/collectionGroups/{}",
-                self.inner.database_path,
-                group.as_str()
-            ),
+            path: self.collection_group_path(group.as_str()),
             edition: database.database_edition().into(),
         })
     }
@@ -460,23 +460,25 @@ impl FirestoreDb {
         Ok(items)
     }
 
-    /// Lists the owned group's composite indexes and field resources, merging a field that
-    /// carries both a listed index override and a listed TTL configuration into one entry.
+    /// Lists the composite indexes and field resources of `group`, or of every group but the
+    /// ones Firestore reserves when `group` is `None`, merging a field that carries both a listed
+    /// index override and a listed TTL configuration into one entry.
     ///
     /// `ListFields` also answers with `collectionGroups/__default__/fields/*` alongside the owned
     /// group's own fields, so membership is decided by a
     /// fixed-prefix match on `{group_path}/fields/` rather than by splitting each resource name on
     /// its last `/`: a backtick-quoted field path can itself contain `/`, and a last-slash split
     /// would cut such a path at the wrong point and either drop it from its group or truncate it.
-    async fn list_existing_state(
+    pub(super) async fn list_existing_state(
         &self,
-        group: &OwnedGroup<'_>,
+        group: Option<&FirestoreCollectionId>,
     ) -> FirestoreResult<FirestoreIndexListing> {
-        let group_path = &group.path;
+        let group_id = group.map_or("-", FirestoreCollectionId::as_str);
+        let group_path = &self.collection_group_path(group_id);
         let span = span!(
             Level::INFO,
             "Firestore Index List",
-            "/firestore/collection_group" = group.id.as_str(),
+            "/firestore/collection_group" = group_id,
             "/firestore/list_indexes_ms" = field::Empty,
             "/firestore/list_field_overrides_ms" = field::Empty,
             "/firestore/list_ttl_fields_ms" = field::Empty,
@@ -523,12 +525,19 @@ impl FirestoreDb {
             // indexes belonging to other groups in the same database. Membership is decided
             // here, the same way as for fields below, rather than trusted from the request
             // scope - `sync()`'s prune path must never reach an index this crate did not itself
-            // confirm belongs to the owned group.
-            let indexes_prefix = format!("{group_path}/indexes/");
+            // confirm belongs to the owned group. A resource whose name has no group is kept
+            // across every group, to be reported as unrecognised.
+            let in_scope = |name: &str, kind: &str| match group {
+                Some(_) => name.starts_with(&format!("{group_path}/{kind}/")),
+                None => CollectionGroupResourceName::parse(name, kind).is_none_or(|resource| {
+                    FirestoreCollectionId::new(resource.collection_group)
+                        .is_ok_and(|listed| validate_collection_group(&listed).is_ok())
+                }),
+            };
             let total_indexes = all_indexes.len();
             let indexes: Vec<ProtoIndex> = all_indexes
                 .into_iter()
-                .filter(|index| index.name.starts_with(indexes_prefix.as_str()))
+                .filter(|index| in_scope(&index.name, "indexes"))
                 .collect();
             let skipped_indexes = total_indexes - indexes.len();
 
@@ -542,11 +551,10 @@ impl FirestoreDb {
                     .and_modify(|existing| existing.ttl_config = f.ttl_config)
                     .or_insert(f);
             }
-            let fields_prefix = format!("{group_path}/fields/");
             let total_fields = merged.len();
             let mut fields: Vec<ProtoField> = merged
                 .into_values()
-                .filter(|f| f.name.starts_with(fields_prefix.as_str()))
+                .filter(|f| in_scope(&f.name, "fields"))
                 .collect();
             fields.sort_by(|a, b| a.name.cmp(&b.name));
             let skipped_fields = total_fields - fields.len();
@@ -574,14 +582,14 @@ impl FirestoreDb {
     /// Lists the owned group's existing state, logs it, computes the plan, and logs it - the
     /// step `.plan()` and `.sync()` share, so a plan made with the same `prune` is exactly what
     /// the sync applies.
-    async fn plan_against_server(
+    pub(super) async fn plan_against_server(
         &self,
         params: &FirestoreIndexParams,
         group: &OwnedGroup<'_>,
         prune: bool,
     ) -> FirestoreResult<(FirestoreIndexPlan, Duration)> {
         let list_started = Instant::now();
-        let listing = self.list_existing_state(group).await?;
+        let listing = self.list_existing_state(Some(group.id)).await?;
         let list_elapsed = list_started.elapsed();
         log_existing_state(&params.collection_group, &listing);
 
@@ -600,80 +608,61 @@ impl FirestoreDb {
         Ok((plan, list_elapsed))
     }
 
+    /// The listed indexes of `group` that `index` matches under the group's edition.
+    pub(super) async fn listed_matches(
+        &self,
+        group: &OwnedGroup<'_>,
+        index: &FirestoreCompositeIndex,
+    ) -> FirestoreResult<Vec<FirestoreListedCompositeIndex>> {
+        let listing = self.list_existing_state(Some(group.id)).await?;
+        Ok(listing
+            .indexes
+            .into_iter()
+            .filter(|listed| composite_index_matches(index, &listed.index, group.edition))
+            .collect())
+    }
+
     async fn apply_create_index(
         &self,
         group: &OwnedGroup<'_>,
         index: &FirestoreCompositeIndex,
     ) -> FirestoreResult<CreateIndexOutcome> {
         let action = IndexAction::CreateIndex(index.clone());
-        let span = span!(
-            Level::INFO,
-            "Create Index",
-            "/firestore/action" = action.kind(),
-            "/firestore/target" = action.target().as_str(),
-            "/firestore/operation" = field::Empty,
-            "/firestore/response_time" = field::Empty,
-        );
-        let began = FirestoreInstant::now();
         let proto = ProtoIndex::try_from(index.clone())?;
-        let outcome = async {
-            let request = CreateIndexRequest {
-                parent: group.path.clone(),
-                index: Some(proto),
-            };
-            let request = self.request_with_timeout(request, RequestTimeouts::with_total);
-            match self.admin_client().create_index(request).await {
-                Ok(response) => {
-                    let operation = response.into_inner();
-                    span.record("/firestore/operation", operation.name.as_str());
-                    info!(
-                        operation = operation.name.as_str(),
+        match self
+            .run_create_index(group.path.clone(), proto, &action)
+            .await
+        {
+            Ok(operation) => Ok(CreateIndexOutcome::Created(StartedOperation {
+                name: operation.name,
+                action,
+            })),
+            // Another deployment may have created the index since the plan listed it. The
+            // answer alone does not show that: Firestore keeps answering ALREADY_EXISTS for an
+            // index deleted minutes ago, while its listing no longer shows it. `apply_plan`
+            // withholds its deletes in the first case.
+            Err(status) if status.code() == Code::AlreadyExists => {
+                if self.listed_matches(group, index).await?.is_empty() {
+                    error!(
                         action = action.kind(),
                         index = %index,
-                        "Created a composite index.",
+                        "Firestore answered ALREADY_EXISTS for a declared index its listing does not show.",
                     );
-                    Ok(CreateIndexOutcome::Created(StartedOperation {
-                        name: operation.name,
-                        action,
-                    }))
-                }
-                // Another deployment may have created the index since the plan listed it. The
-                // answer alone does not show that: Firestore keeps answering ALREADY_EXISTS for an
-                // index deleted minutes ago, while its listing no longer shows it. `apply_plan`
-                // withholds its deletes in the first case.
-                Err(status) if status.code() == Code::AlreadyExists => {
-                    let listing = self.list_existing_state(group).await?;
-                    if listing
-                        .indexes
-                        .iter()
-                        .any(|listed| composite_index_matches(index, &listed.index, group.edition))
-                    {
-                        warn!(
-                            action = action.kind(),
-                            index = %index,
-                            "A declared index was created since the plan was made; counting it as unchanged and withholding every index delete of this sync.",
-                        );
-                        Ok(CreateIndexOutcome::AlreadyExists)
-                    } else {
-                        error!(
-                            action = action.kind(),
-                            index = %index,
-                            "Firestore answered ALREADY_EXISTS for a declared index its listing does not show.",
-                        );
-                        Err(FirestoreError::from(status))
-                    }
-                }
-                Err(status) => {
-                    error!(error = %status, action = action.kind(), index = %index, "Failed to create a composite index.");
                     Err(FirestoreError::from(status))
+                } else {
+                    warn!(
+                        action = action.kind(),
+                        index = %index,
+                        "A declared index was created since the plan was made; counting it as unchanged and withholding every index delete of this sync.",
+                    );
+                    Ok(CreateIndexOutcome::AlreadyExists)
                 }
             }
+            Err(status) => {
+                error!(error = %status, action = action.kind(), index = %index, "Failed to create a composite index.");
+                Err(FirestoreError::from(status))
+            }
         }
-        .instrument(span.clone())
-        .await;
-        let elapsed = FirestoreInstant::now().duration_since(began);
-        span.record("/firestore/response_time", elapsed.as_millis());
-        outcome
     }
 
     async fn apply_delete_index(
@@ -683,8 +672,77 @@ impl FirestoreDb {
     ) -> FirestoreResult<()> {
         group.ensure_owns("indexes", &listed.name)?;
         let action = IndexAction::DeleteIndex(listed.clone());
-        // DeleteIndex answers directly rather than with a long-running operation, so this span
-        // has no `/firestore/operation`.
+        match self.run_delete_index(&listed.name, &action).await {
+            Ok(()) => Ok(()),
+            // A concurrent sync, or a retry of this one after a prior response was lost, may
+            // have deleted this index already; counting it as deleted rather than failing lets
+            // a rolling deployment's overlapping syncs converge on the same end state.
+            Err(status) if status.code() == Code::NotFound => {
+                info!(action = action.kind(), index = %listed, "Index was already deleted, likely by a concurrent sync.");
+                Ok(())
+            }
+            Err(status) => {
+                error!(error = %status, action = action.kind(), index = %listed, "Failed to delete a composite index.");
+                Err(FirestoreError::from(status))
+            }
+        }
+    }
+
+    /// Runs one `CreateIndex` request under `parent` in a `Create Index` span built from
+    /// `action`, recording its response time and logging an accepted build. A refusal is returned
+    /// unlogged: the caller decides whether `ALREADY_EXISTS` is final or settles it against the
+    /// listing, as `.sync()` and `create_index` each do.
+    pub(super) async fn run_create_index(
+        &self,
+        parent: String,
+        index: ProtoIndex,
+        action: &IndexAction,
+    ) -> Result<Operation, Status> {
+        let span = span!(
+            Level::INFO,
+            "Create Index",
+            "/firestore/action" = action.kind(),
+            "/firestore/target" = action.target().as_str(),
+            "/firestore/operation" = field::Empty,
+            "/firestore/response_time" = field::Empty,
+        );
+        let began = FirestoreInstant::now();
+        let request = CreateIndexRequest {
+            parent,
+            index: Some(index),
+        };
+        let request = self.request_with_timeout(request, RequestTimeouts::with_total);
+        let outcome = self
+            .admin_client()
+            .create_index(request)
+            .instrument(span.clone())
+            .await
+            .map(|response| response.into_inner());
+        let elapsed = FirestoreInstant::now().duration_since(began);
+        span.record("/firestore/response_time", elapsed.as_millis());
+        if let Ok(operation) = &outcome {
+            span.record("/firestore/operation", operation.name.as_str());
+            span.in_scope(|| {
+                info!(
+                    operation = operation.name.as_str(),
+                    action = action.kind(),
+                    label = %action,
+                    "Created a composite index.",
+                )
+            });
+        }
+        outcome
+    }
+
+    /// Runs one `DeleteIndex` request for the index `name` in a `Delete Index` span built from
+    /// `action`, recording its response time and logging a deleted index. `DeleteIndex` answers
+    /// directly rather than with a long-running operation, so the span has no
+    /// `/firestore/operation`. A refusal is returned unlogged, for the caller to decide.
+    pub(super) async fn run_delete_index(
+        &self,
+        name: &str,
+        action: &IndexAction,
+    ) -> Result<(), Status> {
         let span = span!(
             Level::INFO,
             "Delete Index",
@@ -693,33 +751,27 @@ impl FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
-        let outcome = async {
-            let request = DeleteIndexRequest {
-                name: listed.name.clone(),
-            };
-            let request = self.request_with_timeout(request, RequestTimeouts::with_total);
-            match self.admin_client().delete_index(request).await {
-                Ok(_) => {
-                    info!(action = action.kind(), index = %listed, "Deleted an undeclared composite index.");
-                    Ok(())
-                }
-                // A concurrent sync, or a retry of this one after a prior response was lost, may
-                // have deleted this index already; counting it as deleted rather than failing lets
-                // a rolling deployment's overlapping syncs converge on the same end state.
-                Err(status) if status.code() == Code::NotFound => {
-                    info!(action = action.kind(), index = %listed, "Index was already deleted, likely by a concurrent sync.");
-                    Ok(())
-                }
-                Err(status) => {
-                    error!(error = %status, action = action.kind(), index = %listed, "Failed to delete a composite index.");
-                    Err(FirestoreError::from(status))
-                }
-            }
-        }
-        .instrument(span.clone())
-        .await;
+        let request = DeleteIndexRequest {
+            name: name.to_string(),
+        };
+        let request = self.request_with_timeout(request, RequestTimeouts::with_total);
+        let outcome = self
+            .admin_client()
+            .delete_index(request)
+            .instrument(span.clone())
+            .await
+            .map(|_| ());
         let elapsed = FirestoreInstant::now().duration_since(began);
         span.record("/firestore/response_time", elapsed.as_millis());
+        if outcome.is_ok() {
+            span.in_scope(|| {
+                info!(
+                    action = action.kind(),
+                    label = %action,
+                    "Deleted a composite index.",
+                )
+            });
+        }
         outcome
     }
 
@@ -728,7 +780,7 @@ impl FirestoreDb {
     /// decides whether it is final (see [`RefusedFieldWrite::into_logged_error`]) or one
     /// [`FirestoreDb::settle_refused_field_write`] may still resolve without treating it as a
     /// failure.
-    async fn run_update_field(
+    pub(super) async fn run_update_field(
         &self,
         request: UpdateFieldRequest,
         action: IndexAction,
@@ -759,7 +811,10 @@ impl FirestoreDb {
                         action,
                     })
                 }
-                Err(status) => Err(RefusedFieldWrite { action, status }),
+                Err(status) => Err(RefusedFieldWrite {
+                    action: Box::new(action),
+                    status,
+                }),
             }
         }
         .instrument(span.clone())
@@ -775,7 +830,8 @@ impl FirestoreDb {
         declared: &FirestoreFieldOverride,
     ) -> FirestoreResult<PendingOperation> {
         let action = IndexAction::UpdateFieldOverride(declared.clone());
-        let name = group.field_resource(&CanonicalFieldPath::from(declared.target.as_str()));
+        let name =
+            CanonicalFieldPath::from(declared.target.as_str()).field_resource_name(&group.path);
         let index_config = proto_field::IndexConfig::try_from(declared.clone())?;
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
@@ -798,7 +854,7 @@ impl FirestoreDb {
         field_path: &str,
     ) -> FirestoreResult<PendingOperation> {
         let action = IndexAction::EnableTtl(field_path.to_string());
-        let name = group.field_resource(&CanonicalFieldPath::from(field_path));
+        let name = CanonicalFieldPath::from(field_path).field_resource_name(&group.path);
         let request = UpdateFieldRequest {
             field: Some(ProtoField {
                 name,
@@ -1035,7 +1091,7 @@ impl FirestoreDb {
     ///
     /// Returns the report of what was applied, even when a write or a wait failed, and either
     /// that failure or the started operations not already waited for.
-    async fn apply_plan(
+    pub(super) async fn apply_plan(
         &self,
         group: &OwnedGroup<'_>,
         plan: &FirestoreIndexPlan,
@@ -1170,7 +1226,7 @@ impl FirestoreDb {
 
     /// Waits for every operation `.sync()` started and has not already waited for (see
     /// [`FirestoreDb::wait_for_operations`]), in a `Firestore Index Wait` span.
-    async fn wait_for_index_operations(
+    pub(super) async fn wait_for_index_operations(
         &self,
         pending: &[PendingOperation],
         deadline: &OperationDeadline,
@@ -1232,131 +1288,8 @@ impl FirestoreIndexPlan {
     }
 }
 
-#[async_trait]
-impl FirestoreIndexSupport for FirestoreDb {
-    async fn plan_indexes(
-        &self,
-        params: FirestoreIndexParams,
-        options: FirestoreIndexSyncOptions,
-    ) -> FirestoreResult<FirestoreIndexPlan> {
-        crate::validate_index_params(&params)?;
-        if self.inner.is_emulator {
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "Skipping index plan: the Firestore emulator does not implement the admin API.",
-            );
-            return Ok(FirestoreIndexPlan {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                ..Default::default()
-            });
-        }
-
-        let root = span!(
-            Level::INFO,
-            "Firestore Index Plan",
-            "/firestore/collection_group" = params.collection_group.as_str(),
-            "/firestore/prune" = options.prune,
-            "/firestore/response_time" = field::Empty,
-        );
-        let began = FirestoreInstant::now();
-        let plan = async {
-            let group = self.read_owned_group(&params.collection_group).await?;
-            let (plan, _) = self
-                .plan_against_server(&params, &group, options.prune)
-                .await?;
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "plan() reports what sync() would change; nothing was applied.",
-            );
-            Ok::<_, FirestoreError>(plan)
-        }
-        .instrument(root.clone())
-        .await?;
-        let elapsed = FirestoreInstant::now().duration_since(began);
-        root.record("/firestore/response_time", elapsed.as_millis());
-        Ok(plan)
-    }
-
-    async fn sync_indexes(
-        &self,
-        params: FirestoreIndexParams,
-        options: FirestoreIndexSyncOptions,
-    ) -> FirestoreResult<FirestoreIndexSyncReport> {
-        let started = Instant::now();
-        crate::validate_index_params(&params)?;
-        if self.inner.is_emulator {
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "Skipping index sync: the Firestore emulator does not implement the admin API.",
-            );
-            return Ok(FirestoreIndexSyncReport {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                timings: FirestoreIndexSyncTimings {
-                    total: started.elapsed(),
-                    list: None,
-                    apply: None,
-                    wait: None,
-                },
-                ..Default::default()
-            });
-        }
-
-        let root = span!(
-            Level::INFO,
-            "Firestore Index Sync",
-            "/firestore/collection_group" = params.collection_group.as_str(),
-            "/firestore/prune" = options.prune,
-            "/firestore/wait" = options.wait.is_some(),
-            "/firestore/response_time" = field::Empty,
-        );
-        let implicit_wait = FirestoreOperationWaitOptions::new(SEQUENCING_TIMEOUT);
-        let deadline = OperationDeadline::from_now(options.wait.as_ref().unwrap_or(&implicit_wait));
-        let began = FirestoreInstant::now();
-        let report = async {
-            let group = self.read_owned_group(&params.collection_group).await?;
-            let (plan, list_elapsed) = self
-                .plan_against_server(&params, &group, options.prune)
-                .await?;
-            let apply_started = Instant::now();
-            let (mut report, applied) = self.apply_plan(&group, &plan, &deadline).await;
-            report.timings.list = Some(list_elapsed);
-            report.timings.apply = Some(apply_started.elapsed());
-            let finished = match (applied, &options.wait) {
-                (Ok(pending_operations), Some(_)) => {
-                    let wait_started = Instant::now();
-                    let waited = self
-                        .wait_for_index_operations(&pending_operations, &deadline)
-                        .await;
-                    report.timings.wait = Some(wait_started.elapsed());
-                    waited
-                }
-                (Ok(_), None) => Ok(()),
-                (Err(err), _) => Err(err),
-            };
-            report.timings.total = started.elapsed();
-            if let Err(err) = finished {
-                warn!(
-                    collection_group = params.collection_group.as_str(),
-                    "The sync failed after it started writing; what it applied before that: {report}",
-                );
-                return Err(err);
-            }
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "{report}"
-            );
-            Ok::<_, FirestoreError>(report)
-        }
-        .instrument(root.clone())
-        .await?;
-        let elapsed = FirestoreInstant::now().duration_since(began);
-        root.record("/firestore/response_time", elapsed.as_millis());
-        Ok(report)
-    }
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::db::admin::index_diff::tests::{
         field_resource, is_invalid_parameter, listed_index, order_field, USERS_GROUP_PATH,
@@ -1367,11 +1300,13 @@ mod tests {
         list_fields_response, list_indexes_response, pending_operation_response, FakeFirestore,
         FakeResponse,
     };
+    use crate::db::support::FirestoreIndexSupport;
     use crate::db::FirestoreDbInner;
     use crate::{
         FirestoreCollectionId, FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget,
         FirestoreGeoIndexConfig, FirestoreIndexDensity, FirestoreIndexField,
-        FirestoreIndexFieldMode, FirestoreQueryDirection, FirestoreSearchIndexOptions,
+        FirestoreIndexFieldMode, FirestoreIndexSyncOptions, FirestoreIndexSyncSkipReason,
+        FirestoreOperationWaitOptions, FirestoreQueryDirection, FirestoreSearchIndexOptions,
         FirestoreVectorIndexConfig,
     };
     use gcloud_sdk::google::firestore::admin::v1::database::DatabaseEdition;
@@ -1386,13 +1321,13 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc as StdArc, Mutex};
 
-    const LIST_INDEXES: &str = "/google.firestore.admin.v1.FirestoreAdmin/ListIndexes";
-    const CREATE_INDEX: &str = "/google.firestore.admin.v1.FirestoreAdmin/CreateIndex";
-    const DELETE_INDEX: &str = "/google.firestore.admin.v1.FirestoreAdmin/DeleteIndex";
-    const LIST_FIELDS: &str = "/google.firestore.admin.v1.FirestoreAdmin/ListFields";
-    const UPDATE_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/UpdateField";
-    const GET_OPERATION: &str = "/google.longrunning.Operations/GetOperation";
-    const GET_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/GetField";
+    pub(crate) const LIST_INDEXES: &str = "/google.firestore.admin.v1.FirestoreAdmin/ListIndexes";
+    pub(crate) const CREATE_INDEX: &str = "/google.firestore.admin.v1.FirestoreAdmin/CreateIndex";
+    pub(crate) const DELETE_INDEX: &str = "/google.firestore.admin.v1.FirestoreAdmin/DeleteIndex";
+    pub(crate) const LIST_FIELDS: &str = "/google.firestore.admin.v1.FirestoreAdmin/ListFields";
+    pub(crate) const UPDATE_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/UpdateField";
+    pub(crate) const GET_OPERATION: &str = "/google.longrunning.Operations/GetOperation";
+    pub(crate) const GET_FIELD: &str = "/google.firestore.admin.v1.FirestoreAdmin/GetField";
     const GET_DATABASE: &str = "/google.firestore.admin.v1.FirestoreAdmin/GetDatabase";
 
     const GROUP_PATH: &str = USERS_GROUP_PATH;
@@ -1457,7 +1392,7 @@ mod tests {
 
     /// [`FakeFirestore::start`] on a database of `edition`: `GetDatabase` is answered with it,
     /// and every other call goes to `handler`.
-    async fn start_on<F>(edition: DatabaseEdition, handler: F) -> FakeFirestore
+    pub(crate) async fn start_on<F>(edition: DatabaseEdition, handler: F) -> FakeFirestore
     where
         F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
     {
@@ -4182,50 +4117,155 @@ mod tests {
         }
     }
 
+    /// A captured resource name, rewritten from the project and database it was captured under
+    /// to [`FakeFirestore`]'s fixed `fake-firestore` project and its `(default)` database, so the
+    /// fixture lines up with the group path the code under test computes.
+    fn captured_name(value: &serde_json::Value, key: &str) -> String {
+        json_str(value, key)
+            .replace(
+                "projects/latestbit/databases/firestore-rs-enterprise/",
+                "projects/fake-firestore/databases/(default)/",
+            )
+            .replace("projects/latestbit/", "projects/fake-firestore/")
+    }
+
     /// Decodes a captured `ListIndexesResponse` REST JSON body into the wire types, translating
-    /// its camelCase field names to the ones the proto messages use. Resource names are rewritten
-    /// from the project they were captured under to [`FakeFirestore`]'s fixed `fake-firestore`
-    /// project, so the fixture lines up with the group path the code under test computes.
-    fn decode_captured_indexes(json: &str) -> Vec<ProtoIndex> {
+    /// its camelCase field names to the ones the proto messages use.
+    pub(crate) fn decode_captured_indexes(json: &str) -> Vec<ProtoIndex> {
         let value: serde_json::Value = serde_json::from_str(json).unwrap();
         value
             .get("indexes")
             .and_then(|v| v.as_array())
             .into_iter()
             .flatten()
-            .map(|index| ProtoIndex {
-                name: json_str(index, "name")
-                    .replace("projects/latestbit/", "projects/fake-firestore/"),
-                query_scope: decode_captured_query_scope(json_str(index, "queryScope")),
-                api_scope: ApiScope::from_str_name(json_str(index, "apiScope"))
-                    .unwrap_or(ApiScope::AnyApi)
-                    .into(),
-                fields: index
-                    .get("fields")
+            .map(decode_captured_index)
+            .collect()
+    }
+
+    /// Decodes one captured `Index` REST JSON value, as [`decode_captured_indexes`] decodes each
+    /// of a listing's.
+    pub(crate) fn decode_captured_index(index: &serde_json::Value) -> ProtoIndex {
+        ProtoIndex {
+            name: captured_name(index, "name"),
+            query_scope: decode_captured_query_scope(json_str(index, "queryScope")),
+            api_scope: ApiScope::from_str_name(json_str(index, "apiScope"))
+                .unwrap_or(ApiScope::AnyApi)
+                .into(),
+            fields: index
+                .get("fields")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .map(decode_captured_index_field)
+                .collect(),
+            state: decode_captured_index_state(json_str(index, "state")),
+            density: Density::from_str_name(json_str(index, "density"))
+                .unwrap_or(Density::Unspecified)
+                .into(),
+            multikey: json_bool(index, "multikey"),
+            shard_count: 0,
+            unique: json_bool(index, "unique"),
+            search_index_options: index.get("searchIndexOptions").map(|options| {
+                SearchIndexOptions {
+                    text_language: json_str(options, "textLanguage").to_string(),
+                    text_language_override_field_path: json_str(
+                        options,
+                        "textLanguageOverrideFieldPath",
+                    )
+                    .to_string(),
+                }
+            }),
+        }
+    }
+
+    /// Decodes a captured `ListFieldsResponse` REST JSON body into the wire types.
+    pub(crate) fn decode_captured_fields(json: &str) -> Vec<ProtoField> {
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        value
+            .get("fields")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(decode_captured_field)
+            .collect()
+    }
+
+    /// Decodes one captured `Field` REST JSON value.
+    pub(crate) fn decode_captured_field(field: &serde_json::Value) -> ProtoField {
+        use gcloud_sdk::google::firestore::admin::v1::field::{ttl_config, IndexConfig, TtlConfig};
+        ProtoField {
+            name: captured_name(field, "name"),
+            index_config: field.get("indexConfig").map(|config| IndexConfig {
+                indexes: config
+                    .get("indexes")
                     .and_then(|v| v.as_array())
                     .into_iter()
                     .flatten()
-                    .map(decode_captured_index_field)
+                    .map(decode_captured_index)
                     .collect(),
-                state: decode_captured_index_state(json_str(index, "state")),
-                density: Density::from_str_name(json_str(index, "density"))
-                    .unwrap_or(Density::Unspecified)
+                uses_ancestor_config: json_bool(config, "usesAncestorConfig"),
+                ancestor_field: captured_name(config, "ancestorField"),
+                reverting: json_bool(config, "reverting"),
+            }),
+            ttl_config: field.get("ttlConfig").map(|config| TtlConfig {
+                state: ttl_config::State::from_str_name(json_str(config, "state"))
+                    .unwrap_or(ttl_config::State::Unspecified)
                     .into(),
-                multikey: json_bool(index, "multikey"),
-                shard_count: 0,
-                unique: json_bool(index, "unique"),
-                search_index_options: index.get("searchIndexOptions").map(|options| {
-                    SearchIndexOptions {
-                        text_language: json_str(options, "textLanguage").to_string(),
-                        text_language_override_field_path: json_str(
-                            options,
-                            "textLanguageOverrideFieldPath",
-                        )
-                        .to_string(),
-                    }
-                }),
-            })
-            .collect()
+                expiration_offset: None,
+            }),
+        }
+    }
+
+    /// Decodes a captured long-running `Operation` REST JSON value. Its metadata and response
+    /// are re-encoded as the messages their `@type` names, an `IndexOperationMetadata` with the
+    /// index and state it names or a `FieldOperationMetadata` with the field and state, and an
+    /// `Index` or a `Field`.
+    pub(crate) fn decode_captured_operation(
+        json: &str,
+    ) -> gcloud_sdk::google::longrunning::Operation {
+        use gcloud_sdk::google::firestore::admin::v1::{
+            FieldOperationMetadata, IndexOperationMetadata, OperationState,
+        };
+        use gcloud_sdk::google::longrunning::{operation, Operation};
+        use gcloud_sdk::prost_types::Any;
+
+        const TYPE_PREFIX: &str = "type.googleapis.com/google.firestore.admin.v1.";
+        let encoded = |value: &serde_json::Value| {
+            let type_url = json_str(value, "@type").to_string();
+            let state = OperationState::from_str_name(json_str(value, "state"))
+                .unwrap_or(OperationState::Unspecified)
+                .into();
+            let encoded = match type_url.strip_prefix(TYPE_PREFIX) {
+                Some("IndexOperationMetadata") => IndexOperationMetadata {
+                    index: captured_name(value, "index"),
+                    state,
+                    ..Default::default()
+                }
+                .encode_to_vec(),
+                Some("FieldOperationMetadata") => FieldOperationMetadata {
+                    field: captured_name(value, "field"),
+                    state,
+                    ..Default::default()
+                }
+                .encode_to_vec(),
+                Some("Index") => decode_captured_index(value).encode_to_vec(),
+                Some("Field") => decode_captured_field(value).encode_to_vec(),
+                _ => panic!("fixture carries an unexpected message type {type_url}"),
+            };
+            Any {
+                type_url,
+                value: encoded,
+            }
+        };
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        Operation {
+            name: captured_name(&value, "name"),
+            metadata: value.get("metadata").map(encoded),
+            done: json_bool(&value, "done"),
+            result: value
+                .get("response")
+                .map(|response| operation::Result::Response(encoded(response))),
+        }
     }
 
     fn enterprise_indexes() -> Vec<ProtoIndex> {

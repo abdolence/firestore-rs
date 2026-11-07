@@ -41,6 +41,7 @@
 - [SQL](./sql.md)
     - [Reads, joins and subqueries](./sql/reads.md)
     - [Writes and ON CONFLICT](./sql/writes.md)
+    - [Index statements](./sql/indexes.md)
 
 # Data modelling
 
