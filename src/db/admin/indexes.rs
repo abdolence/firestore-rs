@@ -7,7 +7,7 @@ use crate::db::admin::index_diff::{
     composite_index_matches, plan_index_changes, FirestoreIndexExistingState, FirestoreIndexListing,
 };
 use crate::db::admin::index_models::{
-    validate_collection_group, write_section, CanonicalFieldPath,
+    validate_collection_group, write_section, CanonicalFieldPath, FirestoreDatabaseEdition,
 };
 use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
 use crate::db::support::FirestoreIndexSupport;
@@ -21,7 +21,6 @@ use crate::{
     FirestoreListedField, FirestoreOperationWaitOptions, FirestoreResult,
 };
 use async_trait::async_trait;
-use gcloud_sdk::google::firestore::admin::v1::database::DatabaseEdition;
 use gcloud_sdk::google::firestore::admin::v1::field as proto_field;
 use gcloud_sdk::google::firestore::admin::v1::firestore_admin_client::FirestoreAdminClient;
 use gcloud_sdk::google::firestore::admin::v1::{
@@ -277,10 +276,12 @@ fn log_plan(group: &FirestoreCollectionId, plan: &FirestoreIndexPlan) {
     }
 }
 
-/// The one collection group a statement owns: its ID, and its resource path in the database.
+/// The one collection group a statement owns: its ID, its resource path in the database, and the
+/// edition of that database.
 struct OwnedGroup<'a> {
     id: &'a FirestoreCollectionId,
     path: String,
+    edition: FirestoreDatabaseEdition,
 }
 
 impl OwnedGroup<'_> {
@@ -367,15 +368,39 @@ impl FirestoreDb {
         self.inner.client.get_with(OperationsClient::new)
     }
 
-    fn owned_group<'a>(&self, group: &'a FirestoreCollectionId) -> OwnedGroup<'a> {
-        OwnedGroup {
+    /// The group a statement naming `group` owns, with the database's edition read once, so every
+    /// step of a call validates, matches and writes under the same edition.
+    async fn owned_group<'a>(
+        &self,
+        group: &'a FirestoreCollectionId,
+    ) -> FirestoreResult<OwnedGroup<'a>> {
+        let span = span!(
+            Level::INFO,
+            "Firestore Index Edition",
+            "/firestore/response_time" = field::Empty,
+        );
+        let began = FirestoreInstant::now();
+        let request = GetDatabaseRequest {
+            name: self.inner.database_path.clone(),
+        };
+        let database = self
+            .admin_client()
+            .get_database(self.request_with_timeout(request, RequestTimeouts::with_total))
+            .instrument(span.clone())
+            .await
+            .map_err(FirestoreError::from)?
+            .into_inner();
+        let elapsed = FirestoreInstant::now().duration_since(began);
+        span.record("/firestore/response_time", elapsed.as_millis());
+        Ok(OwnedGroup {
             id: group,
             path: format!(
                 "{}/collectionGroups/{}",
                 self.inner.database_path,
                 group.as_str()
             ),
-        }
+            edition: database.database_edition().into(),
+        })
     }
 
     async fn list_all_indexes(&self, group_path: &str) -> FirestoreResult<Vec<ProtoIndex>> {
@@ -567,42 +592,13 @@ impl FirestoreDb {
             "/firestore/response_time" = field::Empty,
         );
         let began = FirestoreInstant::now();
-        let plan = diff_span.in_scope(|| plan_index_changes(params, &listing, prune))?;
+        let plan =
+            diff_span.in_scope(|| plan_index_changes(params, &listing, group.edition, prune))?;
         let elapsed = FirestoreInstant::now().duration_since(began);
         diff_span.record("/firestore/response_time", elapsed.as_millis());
 
         log_plan(&params.collection_group, &plan);
-        if !plan.update_fields.is_empty() {
-            self.ensure_field_overrides_writable().await?;
-        }
         Ok((plan, list_elapsed))
-    }
-
-    /// Refuses field override writes to an Enterprise edition database before anything is sent.
-    /// Enterprise answers every override `UpdateField` with `INVALID_ARGUMENT`, and a sync sends
-    /// its index creates before its field writes, so the server's refusal would come only after
-    /// part of the sync was applied.
-    async fn ensure_field_overrides_writable(&self) -> FirestoreResult<()> {
-        let request = GetDatabaseRequest {
-            name: self.inner.database_path.clone(),
-        };
-        let database = self
-            .admin_client()
-            .get_database(self.request_with_timeout(request, RequestTimeouts::with_total))
-            .await
-            .map_err(FirestoreError::from)?
-            .into_inner();
-        if database.database_edition() == DatabaseEdition::Enterprise {
-            return Err(FirestoreError::invalid_parameters(
-                "field_overrides",
-                format!(
-                    "{} is an Enterprise edition database, which has no single-field index \
-                     overrides",
-                    self.inner.database_path
-                ),
-            ));
-        }
-        Ok(())
     }
 
     async fn apply_create_index(
@@ -651,7 +647,7 @@ impl FirestoreDb {
                     if listing
                         .indexes
                         .iter()
-                        .any(|listed| composite_index_matches(index, &listed.index))
+                        .any(|listed| composite_index_matches(index, &listed.index, group.edition))
                     {
                         warn!(
                             action = action.kind(),
@@ -1274,7 +1270,7 @@ impl FirestoreIndexSupport for FirestoreDb {
         );
         let began = FirestoreInstant::now();
         let plan = async {
-            let group = self.owned_group(&params.collection_group);
+            let group = self.owned_group(&params.collection_group).await?;
             let (plan, _) = self
                 .plan_against_server(&params, &group, options.prune)
                 .await?;
@@ -1327,7 +1323,7 @@ impl FirestoreIndexSupport for FirestoreDb {
         let deadline = OperationDeadline::from_now(options.wait.as_ref().unwrap_or(&implicit_wait));
         let began = FirestoreInstant::now();
         let report = async {
-            let group = self.owned_group(&params.collection_group);
+            let group = self.owned_group(&params.collection_group).await?;
             let (plan, list_elapsed) = self
                 .plan_against_server(&params, &group, options.prune)
                 .await?;
@@ -1375,6 +1371,7 @@ mod tests {
     use crate::db::admin::index_diff::tests::{
         field_resource, listed_index, order_field, USERS_GROUP_PATH,
     };
+    use crate::db::admin::index_models::IMPLIED_NAME_FIELD;
     use crate::db::fake_firestore::{
         done_operation_response, failed_operation_response, list_fields_response,
         list_indexes_response, pending_operation_response, FakeFirestore, FakeResponse,
@@ -1382,13 +1379,15 @@ mod tests {
     use crate::db::FirestoreDbInner;
     use crate::{
         FirestoreCollectionId, FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget,
-        FirestoreGeoIndexConfig, FirestoreIndexField, FirestoreIndexFieldMode,
-        FirestoreQueryDirection, FirestoreSearchIndexOptions, FirestoreVectorIndexConfig,
+        FirestoreGeoIndexConfig, FirestoreIndexDensity, FirestoreIndexField,
+        FirestoreIndexFieldMode, FirestoreQueryDirection, FirestoreSearchIndexOptions,
+        FirestoreVectorIndexConfig,
     };
+    use gcloud_sdk::google::firestore::admin::v1::database::DatabaseEdition;
     use gcloud_sdk::google::firestore::admin::v1::index::index_field::SearchConfig;
     use gcloud_sdk::google::firestore::admin::v1::index::{
-        ApiScope, IndexField as ProtoIndexField, QueryScope as ProtoQueryScope, SearchIndexOptions,
-        State as ProtoState,
+        ApiScope, Density, IndexField as ProtoIndexField, QueryScope as ProtoQueryScope,
+        SearchIndexOptions, State as ProtoState,
     };
     use gcloud_sdk::google::firestore::admin::v1::Database;
     use gcloud_sdk::prost::Message as _;
@@ -1456,15 +1455,35 @@ mod tests {
         panic!("unexpected write RPC in a read-only scenario: {method}")
     }
 
-    fn database_response(edition: DatabaseEdition) -> (String, FakeResponse) {
-        let database = Database {
-            database_edition: edition.into(),
-            ..Default::default()
-        };
-        (
-            "GetDatabase".to_string(),
-            FakeResponse::Message(database.encode_to_vec()),
-        )
+    /// [`start_on`] a Standard edition database, the edition every test here runs on unless it
+    /// names another.
+    async fn start_standard<F>(handler: F) -> FakeFirestore
+    where
+        F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
+    {
+        start_on(DatabaseEdition::Standard, handler).await
+    }
+
+    /// [`FakeFirestore::start`] on a database of `edition`: `GetDatabase` is answered with it,
+    /// and every other call goes to `handler`.
+    async fn start_on<F>(edition: DatabaseEdition, handler: F) -> FakeFirestore
+    where
+        F: Fn(&str, &[u8]) -> (String, FakeResponse) + Send + Sync + 'static,
+    {
+        FakeFirestore::start(move |method, bytes| match method {
+            GET_DATABASE => {
+                let database = Database {
+                    database_edition: edition.into(),
+                    ..Default::default()
+                };
+                (
+                    "GetDatabase".to_string(),
+                    FakeResponse::Message(database.encode_to_vec()),
+                )
+            }
+            other => handler(other, bytes),
+        })
+        .await
     }
 
     /// Serializes every test in this module against every other. `tracing`'s per-callsite
@@ -1480,7 +1499,7 @@ mod tests {
     #[tokio::test]
     async fn missing_index_is_created() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => {
@@ -1508,7 +1527,7 @@ mod tests {
     #[tokio::test]
     async fn unchanged_index_causes_no_writes() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![listed_declared_index(
@@ -1532,10 +1551,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn field_overrides_on_an_enterprise_database_are_refused_before_any_write() {
+    async fn a_field_override_index_list_on_an_enterprise_database_is_refused_before_any_write() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
-            GET_DATABASE => database_response(DatabaseEdition::Enterprise),
+        let fake = start_on(DatabaseEdition::Enterprise, |method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             other => recording_writes(other, bytes),
@@ -1543,7 +1561,9 @@ mod tests {
         .await;
         let params = params_with_index().with_field_overrides(vec![FirestoreFieldOverride {
             target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
-            indexes: vec![],
+            indexes: vec![FirestoreFieldOverrideIndex::new(
+                FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending),
+            )],
         }]);
 
         let err = fake
@@ -1564,9 +1584,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_exemption_on_an_enterprise_database_is_already_satisfied() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let fake = start_on(DatabaseEdition::Enterprise, |method, bytes| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
+            other => recording_writes(other, bytes),
+        })
+        .await;
+        let params = FirestoreIndexParams::new(group()).with_field_overrides(vec![
+            FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::AllFields,
+                indexes: vec![],
+            },
+            FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
+                indexes: vec![],
+            },
+        ]);
+
+        let report = fake
+            .db
+            .sync_indexes(params, FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+
+        assert!(report.updated_fields.is_empty(), "{report}");
+        assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
+    }
+
+    #[tokio::test]
     async fn an_already_active_declared_ttl_is_reported_unchanged() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -1589,7 +1639,7 @@ mod tests {
     #[tokio::test]
     async fn the_report_carries_the_time_of_each_phase_that_ran() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -1634,7 +1684,7 @@ mod tests {
     #[tokio::test]
     async fn without_prune_undeclared_index_is_kept_and_reported() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![listed_declared_index(
@@ -1661,7 +1711,7 @@ mod tests {
     #[tokio::test]
     async fn with_prune_undeclared_index_is_deleted() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![listed_declared_index(
@@ -1692,7 +1742,7 @@ mod tests {
     #[tokio::test]
     async fn not_found_on_delete_counts_index_as_already_deleted() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![listed_declared_index(
@@ -1761,7 +1811,7 @@ mod tests {
     #[tokio::test]
     async fn a_plan_with_prune_lists_what_a_pruning_sync_would_remove() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| undeclared_items_listing(method)).await;
+        let fake = start_standard(|method, _| undeclared_items_listing(method)).await;
 
         let pruning = fake
             .db
@@ -1831,7 +1881,6 @@ mod tests {
                 let id = request.name.rsplit('/').next().unwrap().to_string();
                 (format!("DeleteIndex({id})"), FakeResponse::empty())
             }
-            GET_DATABASE => database_response(DatabaseEdition::Standard),
             other => panic!("unexpected RPC: {other}"),
         }
     }
@@ -1920,7 +1969,7 @@ mod tests {
     {
         let reads = StdArc::new(AtomicU32::new(0));
         let counted = reads.clone();
-        let fake = FakeFirestore::start(move |method, _| match method {
+        let fake = start_standard(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -2043,7 +2092,7 @@ mod tests {
     #[tokio::test]
     async fn a_refused_revert_still_in_progress_at_the_deadline_names_the_refusal() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -2185,7 +2234,7 @@ mod tests {
         listed: ProtoField,
         write_status: Code,
     ) -> (FirestoreResult<FirestoreIndexSyncReport>, Duration) {
-        let fake = FakeFirestore::start(move |method, _| match method {
+        let fake = start_standard(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -2402,7 +2451,7 @@ mod tests {
     ) -> Vec<gcloud_sdk::google::firestore::admin::v1::UpdateFieldRequest> {
         let captured: CapturedUpdateFieldRequests = StdArc::new(Mutex::new(Vec::new()));
         let captured_in_handler = captured.clone();
-        let fake = FakeFirestore::start(move |method, bytes| match method {
+        let fake = start_standard(move |method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -2485,7 +2534,7 @@ mod tests {
     #[tokio::test]
     async fn a_ttl_move_disables_the_old_field_and_waits_before_enabling_the_new_one() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -2517,7 +2566,7 @@ mod tests {
     #[tokio::test]
     async fn a_write_to_a_field_waits_for_that_fields_previous_write_only() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             other => recording_writes(other, bytes),
@@ -2558,7 +2607,7 @@ mod tests {
     #[tokio::test]
     async fn a_pruning_sync_sends_its_writes_in_one_fixed_order() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![listed_index(
@@ -2612,6 +2661,7 @@ mod tests {
         OwnedGroup {
             id: users,
             path: GROUP_PATH.to_string(),
+            edition: FirestoreDatabaseEdition::Standard,
         }
     }
 
@@ -2636,6 +2686,7 @@ mod tests {
                 path: format!(
                     "projects/fake-firestore/databases/(default)/collectionGroups/{reserved}"
                 ),
+                edition: FirestoreDatabaseEdition::Standard,
             };
             let name = format!("{}/fields/*", owned.path);
             assert!(
@@ -2648,7 +2699,7 @@ mod tests {
     #[tokio::test]
     async fn applying_a_plan_refuses_every_prune_target_outside_the_owned_group() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| no_writes_allowed(method)).await;
+        let fake = start_standard(|method, _| no_writes_allowed(method)).await;
         let foreign = "projects/fake-firestore/databases/(default)/collectionGroups/other";
         let foreign_index: FirestoreListedCompositeIndex =
             listed_declared_index(&format!("{foreign}/indexes/x"), ProtoState::Ready)
@@ -2707,7 +2758,7 @@ mod tests {
             ListFieldsRequest, ListFieldsResponse, ListIndexesRequest, ListIndexesResponse,
         };
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => {
                 let token = ListIndexesRequest::decode(bytes).unwrap().page_token;
                 let (id, next_page_token) = match token.as_str() {
@@ -2793,7 +2844,7 @@ mod tests {
     #[tokio::test]
     async fn only_the_owned_group_is_ever_listed() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => {
                 let request =
                     gcloud_sdk::google::firestore::admin::v1::ListIndexesRequest::decode(bytes)
@@ -2829,7 +2880,7 @@ mod tests {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let polls = StdArc::new(AtomicU32::new(0));
         let polls_in_handler = polls.clone();
-        let fake = FakeFirestore::start(move |method, _| match method {
+        let fake = start_standard(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -2867,7 +2918,7 @@ mod tests {
     #[tokio::test]
     async fn wait_timeout_returns_an_error_naming_the_operation() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -2949,7 +3000,7 @@ mod tests {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let polls = StdArc::new(AtomicU32::new(0));
         let polls_in_handler = polls.clone();
-        let fake = FakeFirestore::start(move |method, _| match method {
+        let fake = start_standard(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -2991,7 +3042,7 @@ mod tests {
     #[tokio::test]
     async fn a_non_retryable_poll_error_ends_the_wait_at_once() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -3029,7 +3080,7 @@ mod tests {
     #[tokio::test]
     async fn every_pending_operation_is_polled_and_only_the_unfinished_one_times_out() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| {
+        let fake = start_standard(|method, bytes| {
             if let Some(answer) = two_creates(method, bytes) {
                 return answer;
             }
@@ -3082,7 +3133,7 @@ mod tests {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let polls_of_b = StdArc::new(AtomicU32::new(0));
         let polls_of_b_in_handler = polls_of_b.clone();
-        let fake = FakeFirestore::start(move |method, bytes| {
+        let fake = start_standard(move |method, bytes| {
             if let Some(answer) = two_creates(method, bytes) {
                 return answer;
             }
@@ -3134,7 +3185,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_wait_logs_the_report_of_what_was_applied() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -3174,7 +3225,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_operation_surfaces_as_an_error() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -3212,7 +3263,7 @@ mod tests {
     #[tokio::test]
     async fn already_exists_on_create_of_an_index_the_listing_does_not_show_fails() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -3238,7 +3289,7 @@ mod tests {
     async fn already_exists_on_create_of_an_index_a_fresh_listing_shows_counts_as_unchanged() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let listings = AtomicU32::new(0);
-        let fake = FakeFirestore::start(move |method, _| match method {
+        let fake = start_standard(move |method, _| match method {
             LIST_INDEXES => {
                 let created_by_another_writer = listings.fetch_add(1, Ordering::SeqCst) > 0;
                 (
@@ -3326,7 +3377,7 @@ mod tests {
         // Another deployment creates the declared index between the plan's listing and this
         // sync's create.
         let listings = AtomicU32::new(0);
-        let fake = FakeFirestore::start(move |method, bytes| match method {
+        let fake = start_standard(move |method, bytes| match method {
             LIST_INDEXES => {
                 let created_by_another_writer = listings.fetch_add(1, Ordering::SeqCst) > 0;
                 let mut listed = vec![listed_undeclared_index()];
@@ -3388,7 +3439,7 @@ mod tests {
     async fn a_pruning_sync_deletes_only_after_its_creates_finish_building() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let polls = AtomicU32::new(0);
-        let fake = FakeFirestore::start(move |method, bytes| match method {
+        let fake = start_standard(move |method, bytes| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![listed_undeclared_index()]),
@@ -3435,7 +3486,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_create_withholds_every_index_delete() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![listed_undeclared_index()]),
@@ -3478,7 +3529,7 @@ mod tests {
     #[tokio::test]
     async fn a_create_still_building_at_the_deadline_withholds_every_index_delete() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![listed_undeclared_index()]),
@@ -3522,7 +3573,7 @@ mod tests {
     #[tokio::test]
     async fn a_failed_dependent_wait_logs_the_report_of_what_was_applied() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -3559,7 +3610,7 @@ mod tests {
     async fn dependent_waits_and_the_final_wait_share_one_deadline() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let poll = done_after(Duration::from_millis(400));
-        let fake = FakeFirestore::start(move |method, bytes| match method {
+        let fake = start_standard(move |method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -3601,7 +3652,7 @@ mod tests {
     async fn dependent_waits_poll_at_the_callers_interval() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let polls = AtomicU32::new(0);
-        let fake = FakeFirestore::start(move |method, bytes| match method {
+        let fake = start_standard(move |method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -3645,7 +3696,7 @@ mod tests {
     #[tokio::test]
     async fn a_ttl_disable_with_nothing_to_enable_is_not_waited_for() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -3672,7 +3723,7 @@ mod tests {
     #[tokio::test]
     async fn a_revert_waits_for_the_previous_write_to_its_field() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -3713,7 +3764,7 @@ mod tests {
     #[tokio::test]
     async fn the_final_wait_polls_only_operations_not_yet_settled() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -3749,7 +3800,7 @@ mod tests {
     #[tokio::test]
     async fn writes_to_one_field_spelled_two_ways_are_still_sequenced() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| match method {
+        let fake = start_standard(|method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             other => recording_writes(other, bytes),
@@ -3784,7 +3835,7 @@ mod tests {
         poll: impl Fn(u32) -> FakeResponse + Send + Sync + 'static,
     ) -> (FakeFirestore, FirestoreResult<FirestoreIndexSyncReport>) {
         let polls = AtomicU32::new(0);
-        let fake = FakeFirestore::start(move |method, _| match method {
+        let fake = start_standard(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -3902,7 +3953,7 @@ mod tests {
     #[tokio::test]
     async fn every_operation_polled_in_a_round_is_judged_before_a_failure_returns() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| {
+        let fake = start_standard(|method, bytes| {
             if let Some(answer) = two_creates(method, bytes) {
                 return answer;
             }
@@ -3954,7 +4005,7 @@ mod tests {
     #[tokio::test]
     async fn an_operation_left_pending_by_a_failure_is_recorded_abandoned() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, bytes| {
+        let fake = start_standard(|method, bytes| {
             if let Some(answer) = two_creates(method, bytes) {
                 return answer;
             }
@@ -4003,7 +4054,7 @@ mod tests {
     #[tokio::test]
     async fn the_emulator_skips_index_management_entirely() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| no_writes_allowed(method)).await;
+        let fake = start_standard(|method, _| no_writes_allowed(method)).await;
 
         let emulator_db = FirestoreDb {
             inner: StdArc::new(FirestoreDbInner {
@@ -4058,6 +4109,10 @@ mod tests {
 
     fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
         value.get(key).and_then(|v| v.as_str()).unwrap_or_default()
+    }
+
+    fn json_bool(value: &serde_json::Value, key: &str) -> bool {
+        value.get(key).and_then(|v| v.as_bool()).unwrap_or_default()
     }
 
     fn decode_captured_query_scope(scope: &str) -> i32 {
@@ -4159,7 +4214,9 @@ mod tests {
                 name: json_str(index, "name")
                     .replace("projects/latestbit/", "projects/fake-firestore/"),
                 query_scope: decode_captured_query_scope(json_str(index, "queryScope")),
-                api_scope: ApiScope::AnyApi as i32,
+                api_scope: ApiScope::from_str_name(json_str(index, "apiScope"))
+                    .unwrap_or(ApiScope::AnyApi)
+                    .into(),
                 fields: index
                     .get("fields")
                     .and_then(|v| v.as_array())
@@ -4168,10 +4225,12 @@ mod tests {
                     .map(decode_captured_index_field)
                     .collect(),
                 state: decode_captured_index_state(json_str(index, "state")),
-                density: 0,
-                multikey: false,
+                density: Density::from_str_name(json_str(index, "density"))
+                    .unwrap_or(Density::Unspecified)
+                    .into(),
+                multikey: json_bool(index, "multikey"),
                 shard_count: 0,
-                unique: false,
+                unique: json_bool(index, "unique"),
                 search_index_options: index.get("searchIndexOptions").map(|options| {
                     SearchIndexOptions {
                         text_language: json_str(options, "textLanguage").to_string(),
@@ -4219,7 +4278,8 @@ mod tests {
         assert_eq!(
             listed,
             vec![
-                FirestoreCompositeIndex::new(vec![asc("genre"), desc("rating")]),
+                FirestoreCompositeIndex::new(vec![asc("genre"), desc("rating")])
+                    .density(FirestoreIndexDensity::Dense),
                 FirestoreCompositeIndex::new(vec![
                     index_field("menu", FirestoreIndexFieldMode::Text),
                     index_field("description", FirestoreIndexFieldMode::Text),
@@ -4229,15 +4289,18 @@ mod tests {
                         FirestoreSearchIndexOptions::DEFAULT_TEXT_LANGUAGE_OVERRIDE_FIELD_PATH
                             .to_string()
                     )
-                ),
+                )
+                .density(FirestoreIndexDensity::SparseAny),
                 FirestoreCompositeIndex::new(vec![index_field(
                     "embedding",
                     FirestoreIndexFieldMode::Vector(FirestoreVectorIndexConfig::new(3)),
-                )]),
+                )])
+                .density(FirestoreIndexDensity::Dense),
                 FirestoreCompositeIndex::new(vec![index_field(
                     "location",
                     FirestoreIndexFieldMode::Geo(FirestoreGeoIndexConfig::new()),
-                )]),
+                )])
+                .density(FirestoreIndexDensity::SparseAny),
             ]
         );
 
@@ -4246,6 +4309,7 @@ mod tests {
             let sent = ProtoIndex::try_from(listed.index).unwrap();
             assert_eq!(sent.fields, captured.fields);
             assert_eq!(sent.search_index_options, captured.search_index_options);
+            assert_eq!(sent.density, captured.density);
         }
     }
 
@@ -4291,7 +4355,13 @@ mod tests {
             };
             let params = FirestoreIndexParams::new(FirestoreCollectionId::from_static(group))
                 .with_composite_indexes(declared.clone());
-            let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+            let plan = plan_index_changes(
+                &params,
+                &existing.into(),
+                FirestoreDatabaseEdition::Enterprise,
+                true,
+            )
+            .unwrap();
             assert_eq!(plan.unchanged, declared, "{plan}");
             assert!(plan.create_indexes.is_empty(), "{plan}");
             assert!(plan.delete_indexes.is_empty(), "{plan}");
@@ -4317,11 +4387,159 @@ mod tests {
             FirestoreIndexParams::new(FirestoreCollectionId::from_static("fixes-index-probe"))
                 .with_composite_indexes(vec![declared.clone()]);
 
-        let plan = plan_index_changes(&params, &existing.into(), true).unwrap();
+        let plan = plan_index_changes(
+            &params,
+            &existing.into(),
+            FirestoreDatabaseEdition::Enterprise,
+            true,
+        )
+        .unwrap();
 
         assert_eq!(plan.pending, vec![declared], "{plan}");
         assert!(plan.create_indexes.is_empty(), "{plan}");
         assert!(plan.delete_indexes.is_empty(), "{plan}");
+    }
+
+    /// The `admin-audit-opts` group of a captured Enterprise listing: a unique `[u1]`, a sparse
+    /// and a dense `[p1, p2]`, a multikey `[m1, m2]`, a one-field `[s1]`, and `[w1, w2]` beside
+    /// `[w1, w2, __name__]`, every one of them `READY`.
+    fn enterprise_options_listing() -> FirestoreIndexListing {
+        FirestoreIndexListing::from(FirestoreIndexExistingState {
+            indexes: decode_captured_indexes(include_str!(
+                "testdata/enterprise-list-indexes-options.json"
+            ))
+            .into_iter()
+            .filter(|index| index.name.contains("/collectionGroups/admin-audit-opts/"))
+            .collect(),
+            fields: vec![],
+        })
+    }
+
+    fn options_group_params(indexes: Vec<FirestoreCompositeIndex>) -> FirestoreIndexParams {
+        FirestoreIndexParams::new(FirestoreCollectionId::from_static("admin-audit-opts"))
+            .with_composite_indexes(indexes)
+    }
+
+    #[test]
+    fn a_one_field_index_is_planned_on_enterprise_and_refused_on_standard() {
+        let one_field = FirestoreCompositeIndex::new(vec![asc("s1")]);
+        let params = options_group_params(vec![one_field.clone()]);
+
+        let plan = plan_index_changes(
+            &params,
+            &enterprise_options_listing(),
+            FirestoreDatabaseEdition::Enterprise,
+            false,
+        )
+        .unwrap();
+        assert_eq!(plan.unchanged, vec![one_field], "{plan}");
+
+        let err = plan_index_changes(
+            &params,
+            &FirestoreIndexListing::default(),
+            FirestoreDatabaseEdition::Standard,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                FirestoreError::InvalidParametersError(invalid)
+                    if invalid.public.field == "composite_indexes"
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn unique_and_density_tell_indexes_over_the_same_fields_apart() {
+        let unique = FirestoreCompositeIndex::new(vec![asc("u1")]).unique();
+        let not_unique = FirestoreCompositeIndex::new(vec![asc("u1")]);
+        let sparse = FirestoreCompositeIndex::new(vec![asc("p1"), asc("p2")])
+            .density(FirestoreIndexDensity::SparseAny);
+        let dense_by_default = FirestoreCompositeIndex::new(vec![asc("p1"), asc("p2")]);
+        let params = options_group_params(vec![
+            unique.clone(),
+            not_unique.clone(),
+            sparse.clone(),
+            dense_by_default.clone(),
+        ]);
+
+        let plan = plan_index_changes(
+            &params,
+            &enterprise_options_listing(),
+            FirestoreDatabaseEdition::Enterprise,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.unchanged,
+            vec![unique, sparse, dense_by_default],
+            "{plan}"
+        );
+        assert_eq!(plan.create_indexes, vec![not_unique], "{plan}");
+    }
+
+    #[test]
+    fn a_listed_index_with_an_option_the_model_cannot_express_is_never_pruned() {
+        let plan = plan_index_changes(
+            &options_group_params(vec![]),
+            &enterprise_options_listing(),
+            FirestoreDatabaseEdition::Enterprise,
+            true,
+        )
+        .unwrap();
+
+        const MULTIKEY_INDEX: &str = "/collectionGroups/admin-audit-opts/indexes/CICAgOi3kJAK";
+        assert!(
+            plan.unrecognised
+                .iter()
+                .any(|item| item.name.ends_with(MULTIKEY_INDEX)),
+            "{plan}"
+        );
+        assert!(
+            !plan
+                .delete_indexes
+                .iter()
+                .any(|listed| listed.name.ends_with(MULTIKEY_INDEX)),
+            "{plan}"
+        );
+    }
+
+    #[test]
+    fn on_enterprise_an_index_without_name_differs_from_one_ending_in_name() {
+        let without_name = FirestoreCompositeIndex::new(vec![asc("w1"), asc("w2")]);
+        let with_name =
+            FirestoreCompositeIndex::new(vec![asc("w1"), asc("w2"), asc(IMPLIED_NAME_FIELD)]);
+
+        let both = plan_index_changes(
+            &options_group_params(vec![without_name.clone(), with_name.clone()]),
+            &enterprise_options_listing(),
+            FirestoreDatabaseEdition::Enterprise,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            both.unchanged,
+            vec![without_name.clone(), with_name.clone()],
+            "{both}"
+        );
+
+        let pruning = plan_index_changes(
+            &options_group_params(vec![without_name]),
+            &enterprise_options_listing(),
+            FirestoreDatabaseEdition::Enterprise,
+            true,
+        )
+        .unwrap();
+        assert!(
+            pruning
+                .delete_indexes
+                .iter()
+                .any(|listed| listed.index.fields == with_name.fields),
+            "{pruning}"
+        );
     }
 
     #[tokio::test]
@@ -4334,7 +4552,7 @@ mod tests {
             "fixture sanity check: 8 real indexes were captured, spanning six other groups"
         );
 
-        let fake = FakeFirestore::start(move |method, _| match method {
+        let fake = start_standard(move |method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(indexes.clone()),
@@ -4383,7 +4601,7 @@ mod tests {
     async fn prune_never_deletes_anything_outside_the_owned_group() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let indexes = decode_captured_indexes(include_str!("testdata/latestbit-list-indexes.json"));
-        let fake = FakeFirestore::start(move |method, bytes| match method {
+        let fake = start_standard(move |method, bytes| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(indexes.clone()),
@@ -4451,7 +4669,13 @@ mod tests {
             indexes: vec![replayed],
             fields: vec![],
         };
-        let plan = plan_index_changes(&params, &existing.into(), false).unwrap();
+        let plan = plan_index_changes(
+            &params,
+            &existing.into(),
+            FirestoreDatabaseEdition::Standard,
+            false,
+        )
+        .unwrap();
         assert_eq!(plan.unchanged, vec![declared]);
         assert!(plan.kept_undeclared_indexes.is_empty());
     }
@@ -4491,7 +4715,7 @@ mod tests {
             }),
         );
 
-        let fake = FakeFirestore::start(move |method, bytes| match method {
+        let fake = start_standard(move |method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => {
                 let request =
@@ -4555,7 +4779,7 @@ mod tests {
             ),
             ttl_config: None,
         };
-        let fake = FakeFirestore::start(move |method, _| match method {
+        let fake = start_standard(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => (
                 "ListFields".to_string(),
@@ -4586,7 +4810,7 @@ mod tests {
 
         let stored_for_fields = stored.clone();
         let stored_for_update = stored.clone();
-        let fake = FakeFirestore::start(move |method, bytes| match method {
+        let fake = start_standard(move |method, bytes| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => {
                 let existing = stored_for_fields.lock().unwrap().clone();
@@ -4612,7 +4836,6 @@ mod tests {
                     done_operation_response(&format!("{GROUP_PATH}/operations/op-field")),
                 )
             }
-            GET_DATABASE => database_response(DatabaseEdition::Standard),
             other => panic!("unexpected RPC: {other}"),
         })
         .await;
@@ -4700,7 +4923,7 @@ mod tests {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let polls = StdArc::new(AtomicU32::new(0));
         let polls_in_handler = polls.clone();
-        let fake = FakeFirestore::start(move |method, _| match method {
+        let fake = start_standard(move |method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             CREATE_INDEX => (
@@ -4820,7 +5043,7 @@ mod tests {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         // Two listed indexes, neither declared: enough items in one category to tell "one event
         // holding N items" apart from "N events".
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![
@@ -4869,7 +5092,7 @@ mod tests {
     #[tokio::test]
     async fn the_plan_event_lists_each_unrecognised_item_with_its_reason() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => {
                 let mut mongodb = listed_declared_index(
                     &format!("{GROUP_PATH}/indexes/mongodb"),
@@ -4907,7 +5130,7 @@ mod tests {
     #[tokio::test]
     async fn needs_repair_items_get_their_own_warning() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => (
                 "ListIndexes".to_string(),
                 list_indexes_response(vec![listed_declared_index(
@@ -4941,7 +5164,7 @@ mod tests {
     #[tokio::test]
     async fn plan_logs_no_execution() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| match method {
+        let fake = start_standard(|method, _| match method {
             LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
             LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
             other => no_writes_allowed(other),

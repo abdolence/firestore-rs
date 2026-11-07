@@ -2,6 +2,74 @@
 
 ## 0.63
 
+### Composite indexes gain `unique` and `density`
+
+`FirestoreCompositeIndex` gains the fields `unique` and `density`, and `FirestoreIndexDensity` is new, with the
+variants `SparseAll`, `SparseAny` and `Dense`. Adding the fields breaks code that builds `FirestoreCompositeIndex` with
+a struct literal: set `unique` to `false` and `density` to `None` for the defaults. `FirestoreCompositeIndex::new`
+and the fluent builder are unaffected, and add `.unique()` and `.density(..)` for the new options.
+
+```rust,ignore
+let index = FirestoreCompositeIndex {
+    fields,
+    query_scope: FirestoreIndexQueryScope::Collection,
+    search_options: None,
+    unique: false,
+    density: None,
+};
+```
+
+Both options take part in matching a declaration with a listed index. An index that is unique is a different index
+from one over the same fields that is not, and so are two indexes with different densities, a declaration without a
+density meaning the database's default: `SparseAll` on Standard, `Dense` on Enterprise and `SparseAny` for a text or
+geo search index there. A listed index that differs from its declaration in either is reported as undeclared, and
+`.prune_undeclared()` deletes it. The index in each `FirestoreListedCompositeIndex` now carries the listed `unique`
+and `density`.
+
+A write that a unique index refuses returns `DataConflictError`.
+
+### Index management reads the database edition
+
+`.plan()` and `.sync()` call `GetDatabase` once to read the edition of the database. Before, only a sync that had to
+write a field override made the call. The caller needs the `datastore.databases.getMetadata` permission, which
+`roles/datastore.viewer` and `roles/datastore.indexAdmin` carry. A `.plan()` run with a narrower custom role fails
+until the permission is added.
+
+### Edition rules are checked before any write
+
+`.plan()` and `.sync()` fail with `InvalidParametersError` before anything is written when a declaration breaks a rule
+of the database's edition. Before, Firestore refused it at the write, after the sync had applied part of the
+statement.
+
+- On a Standard edition database, a composite index may not be unique, may not be a text or geo search index, and
+  may not have a single field unless it is a vector field;
+- on an Enterprise edition database, a field override may not list single-field indexes. An `.exempt()` there is
+  already satisfied, so it is never written and no longer fails. A composite index of one field takes its place;
+- a density is accepted only where the edition builds it: `SparseAll` alone on Standard; `SparseAny` and `Dense` on
+  Enterprise, with `SparseAny` alone for a text or geo search index;
+- a composite index may hold at most one `.array_contains()` field, on either edition.
+
+The 0.62 check that refused every field override on Enterprise is narrowed to an override that lists indexes.
+
+### Enterprise indexes keep their `__name__` as declared
+
+An Enterprise edition database appends no `__name__` field to an index. A declaration there matches only a listed
+index with exactly its fields, so `[a, b]` and `[a, b, __name__]` are two indexes and one statement can declare both.
+The 100 field limit counts the declared fields only; on Standard it counts the appended `__name__` too.
+
+### A second TTL field is refused at plan time
+
+Declaring a `.ttl()` field while the collection group lists another TTL field fails `.plan()` and `.sync()` with
+`InvalidParametersError`, unless `.prune_undeclared()` is set and disables the listed field. Before, the sync sent its
+other writes and Firestore refused the second enable with `RESOURCE_EXHAUSTED`.
+To move the TTL to another field, declare the new field and set `.prune_undeclared()`.
+
+### Multikey and sharded indexes are reported as unrecognised
+
+A listed index that is multikey or sharded has no declaration that can express it. It is now reported in
+`unrecognised` with the reason, and is never matched, replaced or deleted, even with `.prune_undeclared()`. Before, such
+an index was read as an ordinary one and could be matched against a declaration or pruned as undeclared.
+
 ### Invalid parameters errors carry a SQL location
 
 `FirestoreInvalidParametersPublicDetails` gains a public `location` field of type `Option<FirestoreSqlLocation>`. An error
