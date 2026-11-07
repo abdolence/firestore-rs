@@ -198,6 +198,20 @@ pub(crate) fn cache_consistency_selector_error() -> FirestoreError {
     ))
 }
 
+/// Builds the error returned when a `read_cached_only` session reads a document with a field mask.
+///
+/// The cache holds whole documents and does not apply a mask, so serving the read from it would
+/// return fields the caller left out, and `read_cached_only` cannot fall back to Firestore.
+pub(crate) fn cache_field_mask_error() -> FirestoreError {
+    FirestoreError::CacheError(FirestoreCacheError::new(
+        FirestoreErrorPublicGenericDetails::new("CacheFieldMaskUnsupported".into()),
+        "A read with a field mask cannot be served from the cache, and `read_cached_only` never \
+         contacts Firestore. Read with `db.read_through_cache(&cache)` to have Firestore answer \
+         it, or read without a field mask."
+            .to_string(),
+    ))
+}
+
 mod options;
 pub use options::*;
 

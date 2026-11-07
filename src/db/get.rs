@@ -553,9 +553,11 @@ impl FirestoreDb {
         &self,
         collection_id: &str,
         document_path: &str,
-        _return_only_fields: &Option<Vec<String>>,
+        return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<FirestoreCachedValue<FirestoreDocument>> {
-        if self.skips_cache_for_consistency_selector()? {
+        if self.skips_cache_for_consistency_selector()?
+            || self.skips_cache_for_field_mask(return_only_fields)?
+        {
             return Ok(FirestoreCachedValue::SkipCache);
         }
         if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache)
@@ -614,11 +616,13 @@ impl FirestoreDb {
         &self,
         collection_id: &str,
         full_doc_ids: &[String],
-        _return_only_fields: &Option<Vec<String>>,
+        return_only_fields: &Option<Vec<String>>,
     ) -> FirestoreResult<
         FirestoreCachedValue<BoxStream<'_, FirestoreResult<(String, Option<Document>)>>>,
     > {
-        if self.skips_cache_for_consistency_selector()? {
+        if self.skips_cache_for_consistency_selector()?
+            || self.skips_cache_for_field_mask(return_only_fields)?
+        {
             return Ok(FirestoreCachedValue::SkipCache);
         }
         if let FirestoreDbSessionCacheMode::ReadThroughCache(ref cache)
@@ -702,6 +706,24 @@ impl FirestoreDb {
             (None, _) => Ok(false),
             (Some(_), FirestoreDbSessionCacheMode::ReadCachedOnly(_)) => {
                 Err(crate::cache_consistency_selector_error())
+            }
+            (Some(_), _) => Ok(true),
+        }
+    }
+
+    /// Whether this read goes to Firestore because it carries a field mask.
+    ///
+    /// The cache holds whole documents and applies no mask. A `ReadCachedOnly` session cannot fall
+    /// back to Firestore, so it fails.
+    #[cfg(feature = "caching")]
+    pub(crate) fn skips_cache_for_field_mask(
+        &self,
+        return_only_fields: &Option<Vec<String>>,
+    ) -> FirestoreResult<bool> {
+        match (return_only_fields, &self.session_params.cache_mode) {
+            (None, _) => Ok(false),
+            (Some(_), FirestoreDbSessionCacheMode::ReadCachedOnly(_)) => {
+                Err(crate::cache_field_mask_error())
             }
             (Some(_), _) => Ok(true),
         }

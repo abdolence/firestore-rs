@@ -57,8 +57,15 @@ impl FirestoreCacheQueryEngine {
         order_by
     }
 
+    /// Whether the engine honours every part of the query.
+    ///
+    /// A query asking for a projection, a nearest-neighbour search or an execution plan would get
+    /// plain documents from the engine, so the cache must leave it to Firestore.
     pub fn params_supported(&self) -> bool {
         self.query.all_descendants.iter().all(|x| !*x)
+            && self.query.return_only_fields.is_none()
+            && self.query.find_nearest.is_none()
+            && self.query.explain_options.is_none()
     }
 
     pub fn matches_doc(&self, doc: &FirestoreDocument) -> bool {

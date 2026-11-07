@@ -264,3 +264,121 @@ async fn a_batch_get_with_a_field_mask_does_not_write_the_cache() {
         .unwrap()
         .is_some());
 }
+
+/// Reads a document the cache holds, in a way the cache cannot answer faithfully, and checks that
+/// `read_through_cache` has Firestore answer it with a single call, and that `read_cached_only`
+/// fails with `cached_only_code` without contacting Firestore.
+async fn assert_read_bypasses_the_cache<Read, Pending>(read: Read, cached_only_code: &str)
+where
+    Read: Fn(FirestoreDb) -> Pending,
+    Pending: std::future::Future<Output = FirestoreResult<Document>>,
+{
+    let (server, cache) = cached_document_fixture().await;
+
+    let calls_before = server.calls().len();
+    let document = read(server.db.read_through_cache(&cache)).await.unwrap();
+    assert_eq!(source(&document), FROM_FIRESTORE);
+    assert_eq!(server.calls().len(), calls_before + 1);
+
+    let calls_before = server.calls().len();
+    let FirestoreError::CacheError(error) =
+        read(server.db.read_cached_only(&cache)).await.unwrap_err()
+    else {
+        panic!("the cached-only read did not fail with a cache error");
+    };
+    assert_eq!(error.public.code, cached_only_code);
+    assert_eq!(server.calls().len(), calls_before);
+}
+
+async fn first_queried(db: FirestoreDb, params: FirestoreQueryParams) -> FirestoreResult<Document> {
+    Ok(db
+        .stream_query_doc_with_errors(params)
+        .await?
+        .try_next()
+        .await?
+        .unwrap())
+}
+
+#[tokio::test]
+async fn a_find_nearest_query_is_not_answered_from_the_cache() {
+    assert_read_bypasses_the_cache(
+        |db| {
+            first_queried(
+                db,
+                FirestoreQueryParams::new(COLLECTION.into()).with_find_nearest(
+                    FirestoreFindNearestOptions::new(
+                        "embedding".into(),
+                        FirestoreVector(vec![1.0, 2.0]),
+                        FirestoreFindNearestDistanceMeasure::Euclidean,
+                        1,
+                    ),
+                ),
+            )
+        },
+        "CacheIncompleteCollection",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_query_with_a_field_projection_is_not_answered_from_the_cache() {
+    assert_read_bypasses_the_cache(
+        |db| {
+            first_queried(
+                db,
+                FirestoreQueryParams::new(COLLECTION.into())
+                    .with_return_only_fields(vec!["source".into()]),
+            )
+        },
+        "CacheIncompleteCollection",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_query_with_explain_options_is_not_answered_from_the_cache() {
+    assert_read_bypasses_the_cache(
+        |db| {
+            first_queried(
+                db,
+                FirestoreQueryParams::new(COLLECTION.into())
+                    .with_explain_options(FirestoreExplainOptions::new()),
+            )
+        },
+        "CacheIncompleteCollection",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_get_with_a_field_mask_is_not_answered_from_the_cache() {
+    assert_read_bypasses_the_cache(
+        |db| async move {
+            db.get_doc(COLLECTION, CACHED_DOCUMENT, Some(vec!["source".into()]))
+                .await
+        },
+        "CacheFieldMaskUnsupported",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_batch_get_with_a_field_mask_is_not_answered_from_the_cache() {
+    assert_read_bypasses_the_cache(
+        |db| async move {
+            Ok(db
+                .batch_stream_get_docs_with_errors(
+                    COLLECTION,
+                    [CACHED_DOCUMENT],
+                    Some(vec!["source".into()]),
+                )
+                .await?
+                .try_next()
+                .await?
+                .and_then(|(_, document)| document)
+                .unwrap())
+        },
+        "CacheFieldMaskUnsupported",
+    )
+    .await;
+}

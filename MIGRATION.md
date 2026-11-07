@@ -138,6 +138,11 @@ order Firestore returns them. Before, these queries returned other documents, in
   none of them, leaving out documents where the field is null or absent, and `array-contains` an array field holding
   the value. Before, `in` and `array-contains` expected the field and the filter value the other way round, so they
   returned no documents, and `not-in` returned only the documents with an array field.
+- **`find_nearest`, `return_only_fields` and `explain_options`.** The cached engine applies none of them, so a query that
+  sets one is answered by Firestore under `read_through_cache`, and fails with `CacheIncompleteCollection` under
+  `read_cached_only`. Before, it returned the filtered documents without the nearest-neighbour search, projection or
+  plan. A `get` or batch get with `.fields(..)` follows the same rule, and fails with `CacheFieldMaskUnsupported`; before,
+  it returned the whole cached document.
 - **Equality on arrays, maps, bytes, references and geo points.** `==`, `!=`, `in`, `not-in`, `array-contains` and
   `array-contains-any` match these values. Arrays are equal when their elements are equal in order, and maps when their
   fields are equal by key; inside both, an integer equals the double of the same value, and null and NaN equal
