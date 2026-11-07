@@ -19,8 +19,7 @@ use crate::{
 pub struct FirestorePipelineNestedContext;
 
 impl FirestorePipelineInitialBuilder<FirestorePipelineNestedContext> {
-    /// Reads the collection `collection_id` under the current document of the enclosing
-    /// pipeline. Preview: Firestore has announced joins without a launch stage.
+    /// Reads the collection `collection_id` under the current document of the enclosing pipeline.
     ///
     /// It starts a subquery or a `union` branch. A top-level pipeline cannot start with it, and
     /// does not compile:
@@ -230,7 +229,7 @@ where
 
     /// Defines variables for the stages that follow, which read them with
     /// [`variable`](FirestorePipelineExprBuilder::variable). The wire stage is `let`, which is a
-    /// Rust keyword. Preview: Firestore has announced joins without a launch stage.
+    /// Rust keyword.
     #[doc(alias = "define")]
     #[doc(alias = "let")]
     pub fn define_variables<FN, I>(
@@ -252,9 +251,8 @@ impl FirestorePipelineExprBuilder {
     /// The results of a pipeline run for each document, as an array: empty when it finds
     /// nothing. Each result is a map, or just the value when the pipeline outputs a single field.
     ///
-    /// Preview: Firestore has announced joins without a launch stage. Variables defined with
-    /// `define_variables` before this expression are visible inside it. Give the expression an alias to
-    /// select it.
+    /// Variables defined with `define_variables` before this expression are visible inside it.
+    /// Give the expression an alias to select it.
     pub fn array_subquery<FN, R>(&self, subquery: FN) -> FirestoreExpr
     where
         FN: FnOnce(FirestorePipelineInitialBuilder<FirestorePipelineNestedContext>) -> R,
@@ -267,8 +265,7 @@ impl FirestorePipelineExprBuilder {
     /// the value of the field when it outputs a single one. A pipeline that finds several
     /// results fails the request as `INVALID_ARGUMENT`.
     ///
-    /// Preview: Firestore has announced joins without a launch stage. Variables defined with
-    /// `define_variables` before this expression are visible inside it.
+    /// Variables defined with `define_variables` before this expression are visible inside it.
     pub fn scalar_subquery<FN, R>(&self, subquery: FN) -> FirestoreExpr
     where
         FN: FnOnce(FirestorePipelineInitialBuilder<FirestorePipelineNestedContext>) -> R,
