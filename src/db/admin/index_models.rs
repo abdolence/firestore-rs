@@ -1424,6 +1424,7 @@ impl Display for FirestoreIndexSyncTimings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::admin::index_diff::tests::is_invalid_parameter;
 
     #[test]
     fn a_field_path_has_one_canonical_spelling() {
@@ -1485,18 +1486,10 @@ mod tests {
             .with_composite_indexes(indexes)
     }
 
-    fn is_composite_indexes_error(err: &FirestoreError) -> bool {
-        matches!(
-            err,
-            FirestoreError::InvalidParametersError(invalid)
-                if invalid.public.field == "composite_indexes"
-        )
-    }
-
     #[test]
     fn composite_index_without_fields_is_rejected() {
         let err = validate_composite_indexes(&[FirestoreCompositeIndex::new(vec![])]).unwrap_err();
-        assert!(is_composite_indexes_error(&err), "{err:?}");
+        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
     }
 
     #[test]
@@ -1506,7 +1499,7 @@ mod tests {
             field("labels", FirestoreIndexFieldMode::ArrayContains),
         ]);
         let err = validate_composite_indexes(&[index]).unwrap_err();
-        assert!(is_composite_indexes_error(&err), "{err:?}");
+        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
     }
 
     #[test]
@@ -1519,7 +1512,7 @@ mod tests {
             let err =
                 validate_index_params_for_edition(&params, FirestoreDatabaseEdition::Standard)
                     .unwrap_err();
-            assert!(is_composite_indexes_error(&err), "{err:?}");
+            assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
             assert!(validate_index_params_for_edition(
                 &params,
                 FirestoreDatabaseEdition::Enterprise
@@ -1552,7 +1545,10 @@ mod tests {
         for (edition, index) in refused {
             let err =
                 validate_index_params_for_edition(&users_params(vec![index]), edition).unwrap_err();
-            assert!(is_composite_indexes_error(&err), "{edition:?}: {err:?}");
+            assert!(
+                is_invalid_parameter(&err, "composite_indexes"),
+                "{edition:?}: {err:?}"
+            );
         }
 
         let accepted = [
@@ -1656,14 +1652,7 @@ mod tests {
             asc("rating"),
         ]);
         let err = validate_composite_indexes(&[index]).unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                FirestoreError::InvalidParametersError(invalid)
-                    if invalid.public.field == "composite_indexes"
-            ),
-            "{err:?}"
-        );
+        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
     }
 
     #[test]
@@ -1788,7 +1777,7 @@ mod tests {
         let params = users_params(vec![FirestoreCompositeIndex::new(fields)]);
         let err = validate_index_params_for_edition(&params, FirestoreDatabaseEdition::Standard)
             .unwrap_err();
-        assert!(is_composite_indexes_error(&err), "{err:?}");
+        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
     }
 
     #[test]
@@ -1808,7 +1797,7 @@ mod tests {
             FirestoreDatabaseEdition::Standard,
         )
         .unwrap_err();
-        assert!(is_composite_indexes_error(&err), "{err:?}");
+        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
     }
 
     #[test]

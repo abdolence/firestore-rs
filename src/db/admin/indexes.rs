@@ -370,7 +370,7 @@ impl FirestoreDb {
 
     /// The group a statement naming `group` owns, with the database's edition read once, so every
     /// step of a call validates, matches and writes under the same edition.
-    async fn owned_group<'a>(
+    async fn read_owned_group<'a>(
         &self,
         group: &'a FirestoreCollectionId,
     ) -> FirestoreResult<OwnedGroup<'a>> {
@@ -1261,7 +1261,7 @@ impl FirestoreIndexSupport for FirestoreDb {
         );
         let began = FirestoreInstant::now();
         let plan = async {
-            let group = self.owned_group(&params.collection_group).await?;
+            let group = self.read_owned_group(&params.collection_group).await?;
             let (plan, _) = self
                 .plan_against_server(&params, &group, options.prune)
                 .await?;
@@ -1314,7 +1314,7 @@ impl FirestoreIndexSupport for FirestoreDb {
         let deadline = OperationDeadline::from_now(options.wait.as_ref().unwrap_or(&implicit_wait));
         let began = FirestoreInstant::now();
         let report = async {
-            let group = self.owned_group(&params.collection_group).await?;
+            let group = self.read_owned_group(&params.collection_group).await?;
             let (plan, list_elapsed) = self
                 .plan_against_server(&params, &group, options.prune)
                 .await?;
@@ -1360,7 +1360,7 @@ impl FirestoreIndexSupport for FirestoreDb {
 mod tests {
     use super::*;
     use crate::db::admin::index_diff::tests::{
-        field_resource, listed_index, order_field, USERS_GROUP_PATH,
+        field_resource, is_invalid_parameter, listed_index, order_field, USERS_GROUP_PATH,
     };
     use crate::db::admin::index_models::IMPLIED_NAME_FIELD;
     use crate::db::fake_firestore::{
@@ -1563,14 +1563,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(
-            matches!(
-                &err,
-                FirestoreError::InvalidParametersError(invalid)
-                    if invalid.public.field == "field_overrides"
-            ),
-            "{err:?}"
-        );
+        assert!(is_invalid_parameter(&err, "field_overrides"), "{err:?}");
         assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
     }
 
@@ -4432,14 +4425,7 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert!(
-            matches!(
-                &err,
-                FirestoreError::InvalidParametersError(invalid)
-                    if invalid.public.field == "composite_indexes"
-            ),
-            "{err:?}"
-        );
+        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
     }
 
     #[test]
