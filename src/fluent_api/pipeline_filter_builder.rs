@@ -52,7 +52,7 @@ impl FirestorePipelineFilterBuilder {
     pub fn for_all<I>(&self, conditions: I) -> Option<FirestoreBoolExpr>
     where
         I: IntoIterator,
-        I::Item: FirestorePipelineConditionExpr,
+        I::Item: Into<Option<FirestoreBoolExpr>>,
     {
         self.connect_present("and", conditions)
     }
@@ -63,7 +63,7 @@ impl FirestorePipelineFilterBuilder {
     pub fn for_any<I>(&self, conditions: I) -> Option<FirestoreBoolExpr>
     where
         I: IntoIterator,
-        I::Item: FirestorePipelineConditionExpr,
+        I::Item: Into<Option<FirestoreBoolExpr>>,
     {
         self.connect_present("or", conditions)
     }
@@ -71,31 +71,11 @@ impl FirestorePipelineFilterBuilder {
     fn connect_present<I>(&self, function: &str, conditions: I) -> Option<FirestoreBoolExpr>
     where
         I: IntoIterator,
-        I::Item: FirestorePipelineConditionExpr,
+        I::Item: Into<Option<FirestoreBoolExpr>>,
     {
-        let present: Vec<FirestoreBoolExpr> = conditions
-            .into_iter()
-            .filter_map(FirestorePipelineConditionExpr::build_condition)
-            .collect();
+        let present: Vec<FirestoreBoolExpr> =
+            conditions.into_iter().filter_map(Into::into).collect();
         (!present.is_empty()).then(|| self.values().connect(function, present))
-    }
-}
-
-/// A condition, or an `Option` of one, as the list forms `for_all` and `for_any` take them.
-pub trait FirestorePipelineConditionExpr {
-    /// The condition, or `None` for an item that stands for no condition.
-    fn build_condition(self) -> Option<FirestoreBoolExpr>;
-}
-
-impl FirestorePipelineConditionExpr for FirestoreBoolExpr {
-    fn build_condition(self) -> Option<FirestoreBoolExpr> {
-        Some(self)
-    }
-}
-
-impl<C: FirestorePipelineConditionExpr> FirestorePipelineConditionExpr for Option<C> {
-    fn build_condition(self) -> Option<FirestoreBoolExpr> {
-        self.and_then(FirestorePipelineConditionExpr::build_condition)
     }
 }
 

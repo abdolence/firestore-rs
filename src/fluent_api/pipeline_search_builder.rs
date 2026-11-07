@@ -38,10 +38,10 @@ impl FirestorePipelineSearchBuilder {
     pub fn text<FN, Q>(self, query: FN) -> FirestorePipelineSearchQueryBuilder<FirestoreTextSearch>
     where
         FN: FnOnce(FirestoreTextQueryBuilder) -> Q,
-        Q: FirestoreTextQueryInput,
+        Q: Into<FirestoreTextQuery>,
     {
         FirestorePipelineSearchQueryBuilder::new(FirestoreTextSearch::new(
-            query(FirestoreTextQueryBuilder).build_query(),
+            query(FirestoreTextQueryBuilder).into(),
         ))
     }
 
@@ -180,72 +180,10 @@ impl FirestoreTextQueryBuilder {
     pub fn for_all<I>(&self, clauses: I) -> Option<FirestoreTextQuery>
     where
         I: IntoIterator,
-        I::Item: FirestoreTextQueryItem,
+        I::Item: Into<Option<FirestoreTextQueryClause>>,
     {
-        let present: Vec<FirestoreTextQueryClause> = clauses
-            .into_iter()
-            .filter_map(FirestoreTextQueryItem::build_clause)
-            .collect();
+        let present: Vec<FirestoreTextQueryClause> =
+            clauses.into_iter().filter_map(Into::into).collect();
         (!present.is_empty()).then(|| FirestoreTextQuery::from_clauses(present))
-    }
-}
-
-/// A clause, or an `Option` of one, as [`for_all`](FirestoreTextQueryBuilder::for_all) takes
-/// them.
-pub trait FirestoreTextQueryItem {
-    /// The clause, or `None` for an item that stands for no clause.
-    fn build_clause(self) -> Option<FirestoreTextQueryClause>;
-}
-
-impl FirestoreTextQueryItem for FirestoreTextQueryClause {
-    fn build_clause(self) -> Option<FirestoreTextQueryClause> {
-        Some(self)
-    }
-}
-
-impl<C: FirestoreTextQueryItem> FirestoreTextQueryItem for Option<C> {
-    fn build_clause(self) -> Option<FirestoreTextQueryClause> {
-        self.and_then(FirestoreTextQueryItem::build_clause)
-    }
-}
-
-/// What the closure of [`text`](FirestorePipelineSearchBuilder::text) may return: a string, which
-/// is sent as written, a query or a clause, or an `Option` of one of them. A `None` stands for a
-/// query without a clause, which fails when the pipeline is converted.
-pub trait FirestoreTextQueryInput {
-    /// The query this value stands for.
-    fn build_query(self) -> FirestoreTextQuery;
-}
-
-impl FirestoreTextQueryInput for &str {
-    fn build_query(self) -> FirestoreTextQuery {
-        self.into()
-    }
-}
-
-impl FirestoreTextQueryInput for String {
-    fn build_query(self) -> FirestoreTextQuery {
-        self.into()
-    }
-}
-
-impl FirestoreTextQueryInput for FirestoreTextQuery {
-    fn build_query(self) -> FirestoreTextQuery {
-        self
-    }
-}
-
-impl FirestoreTextQueryInput for FirestoreTextQueryClause {
-    fn build_query(self) -> FirestoreTextQuery {
-        self.into()
-    }
-}
-
-impl<Q: FirestoreTextQueryInput> FirestoreTextQueryInput for Option<Q> {
-    fn build_query(self) -> FirestoreTextQuery {
-        self.map_or_else(
-            FirestoreTextQuery::without_clauses,
-            FirestoreTextQueryInput::build_query,
-        )
     }
 }

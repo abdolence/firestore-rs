@@ -124,6 +124,18 @@ impl From<FirestoreTextQueryClause> for FirestoreTextQuery {
     }
 }
 
+impl From<Option<FirestoreTextQueryClause>> for FirestoreTextQuery {
+    fn from(clause: Option<FirestoreTextQueryClause>) -> Self {
+        clause.map_or_else(Self::without_clauses, Self::from)
+    }
+}
+
+impl From<Option<FirestoreTextQuery>> for FirestoreTextQuery {
+    fn from(query: Option<FirestoreTextQuery>) -> Self {
+        query.unwrap_or_else(Self::without_clauses)
+    }
+}
+
 impl Display for FirestoreTextQuery {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
