@@ -40,6 +40,9 @@ tls-webpki-roots = ["gcloud-sdk/tls-webpki-roots"]
 admin = ["gcloud-sdk/google-firestore-admin-v1"]
 sql = ["dep:sqlparser"]
 codegen = ["sql", "dep:syn", "dep:prettyplease", "dep:heck"]
+# serde_json parses a float one unit in the last place off about once in six embedding-like values
+# unless `float_roundtrip` is on, which would break the lossless tagged form.
+json = ["dep:base64", "serde_json/float_roundtrip"]
 
 [dependencies]
 tracing = "0.1"
@@ -66,6 +69,7 @@ sqlparser = { version = "0.63", default-features = false, features = ["std"], op
 syn = { version = "2", default-features = false, features = ["full", "parsing"], optional = true }
 prettyplease = { version = "0.2", optional = true }
 heck = { version = "0.5", optional = true }
+base64 = { version = "0.23", optional = true }
 
 [dev-dependencies]
 base64 = "0.23"

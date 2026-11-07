@@ -1,6 +1,6 @@
 use super::{FirestoreSqlArgument, CODEGEN_DOCUMENTS_PATH};
+use crate::db::relative_to_documents;
 use crate::errors::FirestoreError;
-use crate::sql::translator::FirestoreSqlTranslator;
 use crate::{
     FirestoreAggregateSelection, FirestoreAggregateStage, FirestoreCollectionGroupSource,
     FirestoreCollectionSource, FirestoreDistinctStage, FirestoreExpr, FirestoreFieldsStage,
@@ -258,9 +258,7 @@ impl<'a> FirestoreSqlEmitter<'a> {
     // `.parent(..)` of the document `parent`, built from the snippet's own `db`. The translator
     // wrote `parent` below the codegen documents path, as a document path.
     fn parent(parent: &str) -> String {
-        let relative =
-            FirestoreSqlTranslator::relative_to_documents(CODEGEN_DOCUMENTS_PATH, parent)
-                .unwrap_or(parent);
+        let relative = relative_to_documents(CODEGEN_DOCUMENTS_PATH, parent).unwrap_or(parent);
         let segments: Vec<&str> = relative.split('/').collect();
         let documents: Vec<String> = segments
             .iter()
@@ -698,7 +696,7 @@ fn integer(value: i64) -> String {
 // The reference `path`, in the database of the snippet's own `db` when the translator wrote it
 // in the codegen database.
 fn reference(path: &str) -> String {
-    match FirestoreSqlTranslator::relative_to_documents(CODEGEN_DOCUMENTS_PATH, path) {
+    match relative_to_documents(CODEGEN_DOCUMENTS_PATH, path) {
         Some(relative) => {
             let template = format!("{{}}/{}", relative.replace('{', "{{").replace('}', "}}"));
             format!("FirestoreReference::new(format!({template:?}, db.get_documents_path()))")

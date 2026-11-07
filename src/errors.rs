@@ -36,9 +36,11 @@ pub enum FirestoreError {
     DataNotFoundError(FirestoreDataNotFoundError),
     /// An error due to invalid parameters provided by the client for an operation.
     InvalidParametersError(FirestoreInvalidParametersError),
-    /// An error that occurred during the serialization of data to be sent to Firestore.
+    /// An error that occurred during the serialisation of data to be sent to Firestore, or
+    /// while converting it to JSON.
     SerializeError(FirestoreSerializationError),
-    /// An error that occurred during the deserialization of data received from Firestore.
+    /// An error that occurred during the deserialisation of data received from Firestore, or
+    /// while converting it from JSON.
     DeserializeError(FirestoreSerializationError),
     /// An error related to network connectivity or communication with the Firestore service.
     NetworkError(FirestoreNetworkError),
@@ -677,6 +679,20 @@ pub struct FirestoreSerializationError {
 }
 
 impl FirestoreSerializationError {
+    /// Builds the error of a JSON conversion, with `code`.
+    #[cfg(feature = "json")]
+    pub(crate) fn json(
+        code: &str,
+        message: impl Into<String>,
+        document_path: Option<&str>,
+    ) -> Self {
+        FirestoreSerializationError::new(
+            FirestoreErrorPublicGenericDetails::new(code.to_string()),
+            message.into(),
+        )
+        .opt_document_path(document_path.map(str::to_string))
+    }
+
     /// Creates a `FirestoreSerializationError` from a message string.
     pub fn from_message<S: AsRef<str>>(message: S) -> FirestoreSerializationError {
         let message_str = message.as_ref().to_string();

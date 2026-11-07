@@ -1,0 +1,453 @@
+{
+  "captured": "2026-11-07",
+  "database": "projects/latestbit/databases/(default)",
+  "description": "One document per Firestore value type, written over gRPC and read back with GetDocument, standard edition",
+  "documents": [
+    {
+      "createTime": "2026-11-07T22:22:15.486645Z",
+      "fields": {
+        "value": {
+          "nullValue": null
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/null",
+      "updateTime": "2026-11-07T22:22:15.486645Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:15.554478Z",
+      "fields": {
+        "no": {
+          "booleanValue": false
+        },
+        "yes": {
+          "booleanValue": true
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/boolean",
+      "updateTime": "2026-11-07T22:22:15.554478Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:15.626891Z",
+      "fields": {
+        "beyond_safe": {
+          "integerValue": "9007199254740993"
+        },
+        "i64_max": {
+          "integerValue": "9223372036854775807"
+        },
+        "i64_min": {
+          "integerValue": "-9223372036854775808"
+        },
+        "negative": {
+          "integerValue": "-42"
+        },
+        "safe_max": {
+          "integerValue": "9007199254740991"
+        },
+        "safe_min": {
+          "integerValue": "-9007199254740991"
+        },
+        "small": {
+          "integerValue": "42"
+        },
+        "two_pow_53": {
+          "integerValue": "9007199254740992"
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/integer",
+      "updateTime": "2026-11-07T22:22:15.626891Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:15.698915Z",
+      "fields": {
+        "fraction": {
+          "doubleValue": 1.5
+        },
+        "full_precision": {
+          "doubleValue": 0.9996868371963501
+        },
+        "large": {
+          "doubleValue": 1e+300
+        },
+        "negative_zero": {
+          "doubleValue": -0.0
+        },
+        "subnormal": {
+          "doubleValue": 5e-324
+        },
+        "tenth": {
+          "doubleValue": 0.1
+        },
+        "whole": {
+          "doubleValue": 3.0
+        },
+        "whole_large": {
+          "doubleValue": 1e+16
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/double",
+      "updateTime": "2026-11-07T22:22:15.698915Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:15.783199Z",
+      "fields": {
+        "infinity": {
+          "doubleValue": "Infinity"
+        },
+        "nan": {
+          "doubleValue": "NaN"
+        },
+        "negative_infinity": {
+          "doubleValue": "-Infinity"
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/double_non_finite",
+      "updateTime": "2026-11-07T22:22:15.783199Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:15.854846Z",
+      "fields": {
+        "empty": {
+          "stringValue": ""
+        },
+        "looks_like_timestamp": {
+          "stringValue": "2023-11-14T22:13:20Z"
+        },
+        "looks_like_wrapper": {
+          "stringValue": "$timestamp"
+        },
+        "plain": {
+          "stringValue": "Dune"
+        },
+        "unicode": {
+          "stringValue": "naïve — 東京 🚀"
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/string",
+      "updateTime": "2026-11-07T22:22:15.854846Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:15.919237Z",
+      "fields": {
+        "empty": {
+          "bytesValue": ""
+        },
+        "value": {
+          "bytesValue": "AAEC/w=="
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/bytes",
+      "updateTime": "2026-11-07T22:22:15.919237Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:15.992603Z",
+      "fields": {
+        "micros": {
+          "timestampValue": "2023-11-14T22:13:20.123456Z"
+        },
+        "millis": {
+          "timestampValue": "2023-11-14T22:13:20.500Z"
+        },
+        "nanos_near_next_second": {
+          "timestampValue": "2023-11-14T22:13:20.999999Z"
+        },
+        "nanos_written": {
+          "timestampValue": "2023-11-14T22:13:20.123456Z"
+        },
+        "whole_second": {
+          "timestampValue": "2023-11-14T22:13:20Z"
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/timestamp",
+      "updateTime": "2026-11-07T22:22:15.992603Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.059229Z",
+      "fields": {
+        "before_epoch": {
+          "timestampValue": "1969-12-31T23:59:59.999999Z"
+        },
+        "max": {
+          "timestampValue": "9999-12-31T23:59:59.999999Z"
+        },
+        "min": {
+          "timestampValue": "0001-01-01T00:00:00Z"
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/timestamp_range",
+      "updateTime": "2026-11-07T22:22:16.059229Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.122500Z",
+      "fields": {
+        "collection_named_projects": {
+          "referenceValue": "projects/latestbit/databases/(default)/documents/projects/p/databases/d/documents/x"
+        },
+        "nested": {
+          "referenceValue": "projects/latestbit/databases/(default)/documents/books/dune/reviews/r1"
+        },
+        "same_database": {
+          "referenceValue": "projects/latestbit/databases/(default)/documents/books/dune"
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/reference",
+      "updateTime": "2026-11-07T22:22:16.122500Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.181573Z",
+      "fields": {
+        "value": {
+          "referenceValue": "projects/latestbit/databases/firestore-rs-enterprise/documents/books/dune"
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/reference_other_database",
+      "updateTime": "2026-11-07T22:22:16.181573Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.237862Z",
+      "fields": {
+        "value": {
+          "geoPointValue": {
+            "latitude": 51.5,
+            "longitude": -0.12
+          }
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/geo_point",
+      "updateTime": "2026-11-07T22:22:16.237862Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.292495Z",
+      "fields": {
+        "empty": {
+          "arrayValue": {
+            "values": []
+          }
+        },
+        "value": {
+          "arrayValue": {
+            "values": [
+              {
+                "integerValue": "1"
+              },
+              {
+                "stringValue": "two"
+              },
+              {
+                "doubleValue": 3.0
+              },
+              {
+                "nullValue": null
+              },
+              {
+                "mapValue": {
+                  "fields": {
+                    "inner": {
+                      "arrayValue": {
+                        "values": [
+                          {
+                            "integerValue": "1"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/array",
+      "updateTime": "2026-11-07T22:22:16.292495Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.352976Z",
+      "fields": {
+        "empty": {
+          "mapValue": {
+            "fields": {}
+          }
+        },
+        "value": {
+          "mapValue": {
+            "fields": {
+              "address": {
+                "mapValue": {
+                  "fields": {
+                    "city": {
+                      "stringValue": "London"
+                    }
+                  }
+                }
+              },
+              "title": {
+                "stringValue": "Dune"
+              }
+            }
+          }
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/map",
+      "updateTime": "2026-11-07T22:22:16.352976Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.415488Z",
+      "fields": {
+        "dollar_alone": {
+          "mapValue": {
+            "fields": {
+              "$": {
+                "booleanValue": true
+              }
+            }
+          }
+        },
+        "nested": {
+          "mapValue": {
+            "fields": {
+              "outer": {
+                "mapValue": {
+                  "fields": {
+                    "$bytes": {
+                      "integerValue": "7"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "single_map_key": {
+          "mapValue": {
+            "fields": {
+              "$map": {
+                "integerValue": "1"
+              }
+            }
+          }
+        },
+        "single_unknown_key": {
+          "mapValue": {
+            "fields": {
+              "$set": {
+                "integerValue": "1"
+              }
+            }
+          }
+        },
+        "single_wrapper_key": {
+          "mapValue": {
+            "fields": {
+              "$timestamp": {
+                "stringValue": "not a timestamp"
+              }
+            }
+          }
+        },
+        "two_keys": {
+          "mapValue": {
+            "fields": {
+              "$ref": {
+                "stringValue": "x"
+              },
+              "other": {
+                "integerValue": "1"
+              }
+            }
+          }
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/dollar_map",
+      "updateTime": "2026-11-07T22:22:16.415488Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.467451Z",
+      "fields": {
+        "$top_level": {
+          "integerValue": "1"
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/dollar_field",
+      "updateTime": "2026-11-07T22:22:16.467451Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.523514Z",
+      "fields": {
+        "value": {
+          "mapValue": {
+            "fields": {
+              "__type__": {
+                "stringValue": "__vector__"
+              },
+              "value": {
+                "arrayValue": {
+                  "values": [
+                    {
+                      "doubleValue": 1.0
+                    },
+                    {
+                      "doubleValue": 2.5
+                    },
+                    {
+                      "doubleValue": -3.0
+                    },
+                    {
+                      "doubleValue": 0.9996868371963501
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/vector",
+      "updateTime": "2026-11-07T22:22:16.523514Z"
+    },
+    {
+      "createTime": "2026-11-07T22:22:16.785316Z",
+      "fields": {
+        "value": {
+          "referenceValue": "projects/other-project/databases/(default)/documents/books/dune"
+        }
+      },
+      "name": "projects/latestbit/databases/(default)/documents/json-conversion-capture/probe-ref-other-project",
+      "updateTime": "2026-11-07T22:22:16.785316Z"
+    }
+  ],
+  "writes": {
+    "array": "accepted",
+    "boolean": "accepted",
+    "bytes": "accepted",
+    "dollar_field": "accepted",
+    "dollar_map": "accepted",
+    "double": "accepted",
+    "double_non_finite": "accepted",
+    "geo_point": "accepted",
+    "integer": "accepted",
+    "map": "accepted",
+    "null": "accepted",
+    "probe-field-reference": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Value type is not supported: FIELD_REFERENCE_VALUE\". Retry possibility: false",
+    "probe-geo-out-of-range": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Geo point latitude '91.0' outside permitted range -90.0 to 90.0.\". Retry possibility: false",
+    "probe-no-type": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Cannot convert firestore.v1.Value with type unset.\". Retry possibility: false",
+    "probe-ref-collection": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Document parent name \\\"projects/latestbit/databases/(default)/documents/books\\\" lacks \\\"/\\\" at index 54.\". Retry possibility: false",
+    "probe-ref-other-project": "accepted",
+    "probe-ref-relative": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Document parent name \\\"books/dune\\\" lacks \\\"projects\\\" at index 0.\". Retry possibility: false",
+    "probe-reserved-create-time": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"field name __create_time__ is reserved\". Retry possibility: false",
+    "probe-reserved-name": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"field name __name__ is reserved\". Retry possibility: false",
+    "probe-reserved-other": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"field name __foo__ is reserved\". Retry possibility: false",
+    "probe-timestamp-beyond-max": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Timestamp seconds exceeds limit for field.\". Retry possibility: false",
+    "probe-vector-empty": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Cannot have a zero length vector.\". Retry possibility: false",
+    "probe-vector-extra-key": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Vector value map has extraneous entries.\". Retry possibility: false",
+    "probe-vector-integers": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Vector must only contain values of type 'double'\". Retry possibility: false",
+    "probe-vector-nan": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Vector cannot contain NaN values.\". Retry possibility: false",
+    "probe-vector-not-array": "refused: Database general error occurred: Error code: InvalidArgument. code: 'Client specified an invalid argument', message: \"Vector value type must be an array.\". Retry possibility: false",
+    "reference": "accepted",
+    "reference_other_database": "accepted",
+    "string": "accepted",
+    "timestamp": "accepted",
+    "timestamp_range": "accepted",
+    "vector": "accepted"
+  }
+}

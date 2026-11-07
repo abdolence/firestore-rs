@@ -38,7 +38,7 @@ pub use listen_changes::*;
 mod listen_changes_state_storage;
 pub use listen_changes_state_storage::*;
 
-mod pipeline;
+pub(crate) mod pipeline;
 pub use pipeline::*;
 
 use crate::*;
@@ -731,6 +731,14 @@ pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
         Some(split_pos) => (&path[..split_pos], &path[split_pos + 1..]),
         None => ("", path),
     }
+}
+
+/// The path below `documents_path`, the documents root of a database, or `None` when `path` is
+/// not inside it.
+#[cfg(any(feature = "sql", feature = "json"))]
+pub(crate) fn relative_to_documents<'p>(documents_path: &str, path: &'p str) -> Option<&'p str> {
+    path.strip_prefix(documents_path)
+        .and_then(|path| path.strip_prefix('/'))
 }
 
 /// Ends `stream` at its first error, without polling it again, and returns `None` from then on.

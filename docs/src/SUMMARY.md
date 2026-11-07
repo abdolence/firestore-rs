@@ -50,6 +50,7 @@
 - [Document metadata as struct fields](./document-metadata.md)
 - [Explicit null value serialisation](./null-serialization.md)
 - [Document and collection IDs](./document-collection-ids.md)
+- [JSON conversion](./json.md)
 
 # Caching
 

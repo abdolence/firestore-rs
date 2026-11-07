@@ -78,6 +78,7 @@
 //! | Realtime changes | [`FirestoreDb::create_listener`], [`FirestoreListener`] |
 //! | Timestamps | [`FirestoreTimestamp`], [`FirestoreInstant`], [`serialize_as_timestamp`] |
 //! | Schemaless documents | [`FirestoreDb::serialize_map_to_doc`], [`FirestoreValue`] |
+//! | JSON export, import and display (`json` feature) | `FirestoreDb::json` |
 //! | Errors | [`errors`] |
 //!
 #![cfg_attr(
@@ -97,6 +98,7 @@
 //! | `admin` | Declarative index management and bulk delete: composite indexes, vector indexes, single-field overrides, TTL policy, and `BulkDeleteDocuments` |
 //! | `sql` | SQL statements in the BigQuery (GoogleSQL) dialect, translated into pipelines: see `FirestoreExprBuilder::sql` |
 //! | `codegen` | The fluent pipeline code of a SQL `SELECT` as Rust source, to port a statement to application code: see `FirestoreSqlStatement::fluent_rust` |
+//! | `json` | Converts values and documents to and from JSON: a lossless tagged form for export and import, and a plain form for display |
 //!
 //! Runnable examples for every topic:
 //! <https://github.com/abdolence/firestore-rs/tree/master/examples>
@@ -252,6 +254,12 @@ pub use fluent_api::*;
 /// Re-exported because those macros expand to paths into it, so a caller cannot use them
 /// without it being in scope.
 pub extern crate struct_path;
+
+#[cfg(feature = "json")]
+mod firestore_json;
+
+#[cfg(feature = "json")]
+pub use firestore_json::*;
 
 #[cfg(feature = "sql")]
 mod sql;

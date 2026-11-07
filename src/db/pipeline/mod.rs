@@ -32,4 +32,4 @@ mod write;
 pub use write::*;
 
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;

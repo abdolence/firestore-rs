@@ -49,7 +49,7 @@ where
 
 /// Whether `map` is a vector: a map with a marker field, whose components are in its `value`
 /// field.
-#[cfg(any(feature = "caching", feature = "codegen"))]
+#[cfg(any(feature = "caching", feature = "codegen", feature = "json"))]
 pub(crate) fn is_vector(map: &gcloud_sdk::google::firestore::v1::MapValue) -> bool {
     matches!(
         map.fields.get("__type__").and_then(|marker| marker.value_type.as_ref()),
