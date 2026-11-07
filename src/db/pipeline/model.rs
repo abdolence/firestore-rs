@@ -61,6 +61,26 @@ pub struct FirestoreCollectionSource {
     pub search: Option<FirestoreSearch>,
 }
 
+impl FirestoreCollectionSource {
+    /// The collection's path below the database's documents root: its parent document's path,
+    /// when it has one, then its ID.
+    pub(crate) fn path_in_database(&self) -> FirestoreResult<String> {
+        match &self.parent {
+            Some(parent) => {
+                let parent = FirestoreReference(parent.clone());
+                let parent_path = parent.parse().map_err(|_| {
+                    FirestoreError::invalid_parameters(
+                        "parent",
+                        format!("{} is not a full document path", parent.as_str()),
+                    )
+                })?;
+                Ok(format!("{}/{}", parent_path.path(), self.collection_id))
+            }
+            None => Ok(self.collection_id.clone()),
+        }
+    }
+}
+
 /// The documents of every collection with this ID, anywhere in the database.
 ///
 /// Unlike a Core collection-group query, it cannot be limited to the descendants of one
@@ -343,19 +363,7 @@ impl TryFrom<FirestoreCollectionSource> for Vec<Stage> {
     fn try_from(source: FirestoreCollectionSource) -> Result<Self, Self::Error> {
         // The collection ID is joined into a path, where a slash would name another collection.
         FirestoreCollectionId::validate_str(&source.collection_id)?;
-        let path = match source.parent {
-            Some(parent) => {
-                let parent = FirestoreReference(parent);
-                let parent_path = parent.parse().map_err(|_| {
-                    FirestoreError::invalid_parameters(
-                        "parent",
-                        format!("{} is not a full document path", parent.as_str()),
-                    )
-                })?;
-                format!("/{}/{}", parent_path.path(), source.collection_id)
-            }
-            None => format!("/{}", source.collection_id),
-        };
+        let path = format!("/{}", source.path_in_database()?);
         let mut stages = vec![collection_stage(
             "collection",
             vec![wire_value(ValueType::ReferenceValue(path))],

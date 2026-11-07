@@ -17,8 +17,14 @@ impl FirestoreDb {
             FirestoreDbSessionCacheMode::ReadThroughCache(cache) => (cache, false),
             FirestoreDbSessionCacheMode::ReadCachedOnly(cache) => (cache, true),
         };
+        let FirestorePipelineParams {
+            pipeline,
+            explain_options,
+            // Request tags only label the requests sent to Firestore.
+            request_options: _,
+        } = params;
         // A pipeline Firestore would refuse fails the same way from the cache.
-        Pipeline::try_from(params.pipeline.clone())?;
+        Pipeline::try_from(pipeline.clone())?;
 
         let span = span!(
             Level::DEBUG,
@@ -35,7 +41,19 @@ impl FirestoreDb {
             }
         };
 
-        let pipeline = match self.cacheable_pipeline(params) {
+        let compiled = if explain_options.is_some() {
+            Err(FirestoreCachePipelineMiss::unsupported(
+                "Query Explain runs on Firestore",
+            ))
+        } else if self.session_params.consistency_selector.is_some() {
+            // What a transaction or a read time sees is not what the cache holds.
+            Err(FirestoreCachePipelineMiss::unsupported(
+                "the session reads in a transaction or at a read time",
+            ))
+        } else {
+            FirestoreCachePipeline::new(pipeline, self.get_documents_path())
+        };
+        let pipeline = match compiled {
             Ok(pipeline) => pipeline,
             Err(miss) => return missed(miss),
         };
@@ -56,29 +74,5 @@ impl FirestoreDb {
             }
             Err(miss) => missed(miss),
         }
-    }
-
-    fn cacheable_pipeline<'a>(
-        &self,
-        params: &'a FirestorePipelineParams,
-    ) -> Result<FirestoreCachePipeline<'a>, FirestoreCachePipelineMiss> {
-        let FirestorePipelineParams {
-            pipeline,
-            explain_options,
-            // Request tags only label the requests sent to Firestore.
-            request_options: _,
-        } = params;
-        if explain_options.is_some() {
-            return Err(FirestoreCachePipelineMiss::unsupported(
-                "Query Explain runs on Firestore",
-            ));
-        }
-        // What a transaction or a read time sees is not what the cache holds.
-        if self.session_params.consistency_selector.is_some() {
-            return Err(FirestoreCachePipelineMiss::unsupported(
-                "the session reads in a transaction or at a read time",
-            ));
-        }
-        FirestoreCachePipeline::new(pipeline, self.get_documents_path())
     }
 }

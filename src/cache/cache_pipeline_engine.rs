@@ -18,7 +18,6 @@ pub(crate) struct FirestoreCachePipeline<'a> {
     stages: Vec<CachedStage<'a>>,
 }
 
-/// Why the cache leaves a pipeline to Firestore.
 #[derive(Debug)]
 pub(crate) enum FirestoreCachePipelineMiss {
     /// The pipeline, or a value it meets, needs Firestore to evaluate it.
@@ -27,17 +26,15 @@ pub(crate) enum FirestoreCachePipelineMiss {
     IncompleteCollection(String),
 }
 
-/// The documents a pipeline's source reads from the cache.
 pub(crate) enum FirestoreCachePipelineRows {
-    /// Every document the source reads.
     All(Vec<FirestoreDocument>),
-    /// The documents named by the source that the cache holds, without those it does not.
+    /// The named documents the cache holds; the cache cannot tell whether it lacks the others or
+    /// they do not exist.
     Held(Vec<FirestoreDocument>),
 }
 
 enum CachedSource {
     Collection(CachedCollectionSource),
-    /// The documents at these full paths.
     Documents(Vec<String>),
 }
 
@@ -77,16 +74,17 @@ struct CachedSelection<'a> {
 enum CachedExpr<'a> {
     /// `__name__`: the document's name, as a reference.
     Name,
-    /// A field by its dotted path.
     Field(&'a str),
     Constant(&'a ValueType),
     Call(CachedCall<'a>),
     Logical(CachedLogical<'a>),
 }
 
-struct CachedCall<'a> {
-    function: CachedFunction,
-    args: Vec<CachedExpr<'a>>,
+/// A call of a function, shaped by the number of arguments the function takes.
+enum CachedCall<'a> {
+    Unary(CachedUnary, Box<CachedExpr<'a>>),
+    Binary(CachedBinary, Box<[CachedExpr<'a>; 2]>),
+    StringConcat(Vec<CachedExpr<'a>>),
 }
 
 /// `and` or `or`, which evaluate their conditions in order and only as far as the result is
@@ -103,40 +101,64 @@ enum CachedLogicalOperator {
 }
 
 #[derive(Clone, Copy)]
-enum CachedFunction {
+enum CachedUnary {
+    Not,
+    Exists,
+    IsAbsent,
+    ToLower,
+    ToUpper,
+    CharLength,
+}
+
+#[derive(Clone, Copy)]
+enum CachedBinary {
+    Comparison(CachedComparison),
+    EqualAny,
+    NotEqualAny,
+    ArrayContains(CachedArrayContains),
+    Arithmetic(CachedArithmetic),
+    TextTest(CachedTextTest),
+}
+
+#[derive(Clone, Copy)]
+enum CachedComparison {
     Equal,
     NotEqual,
     LessThan,
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
-    Not,
-    Exists,
-    IsAbsent,
-    EqualAny,
-    NotEqualAny,
-    ArrayContains,
-    ArrayContainsAll,
-    ArrayContainsAny,
+}
+
+#[derive(Clone, Copy)]
+enum CachedArrayContains {
+    Element,
+    All,
+    Any,
+}
+
+#[derive(Clone, Copy)]
+enum CachedArithmetic {
     Add,
     Subtract,
     Multiply,
     Divide,
     Mod,
-    ToLower,
-    ToUpper,
-    CharLength,
+}
+
+#[derive(Clone, Copy)]
+enum CachedTextTest {
     StartsWith,
     EndsWith,
-    StringContains,
-    Like,
-    StringConcat,
+    Contains,
 }
 
 /// A value of an expression over one document: `None` for an absent field.
 type Evaluated<'d> = Option<Cow<'d, ValueType>>;
 
 const DOCUMENT_NAME_FIELD: &str = "__name__";
+
+const NULL: ValueType = ValueType::NullValue(0);
 
 impl FirestoreCachePipelineMiss {
     pub(crate) fn unsupported(reason: impl Into<String>) -> Self {
@@ -153,6 +175,13 @@ impl Display for FirestoreCachePipelineMiss {
                 "the cache does not hold every document of `{collection_path}`"
             ),
         }
+    }
+}
+
+/// A pipeline that does not convert to a request is left to Firestore, which reports the error.
+impl From<FirestoreError> for FirestoreCachePipelineMiss {
+    fn from(error: FirestoreError) -> Self {
+        Self::Unsupported(error.to_string())
     }
 }
 
@@ -290,8 +319,9 @@ impl CachedCollectionSource {
         first_stage: Option<&FirestorePipelineStage>,
     ) -> Result<Self, FirestoreCachePipelineMiss> {
         let FirestoreCollectionSource {
-            collection_id,
-            parent,
+            // The path is built from these two.
+            collection_id: _,
+            parent: _,
             force_index,
             search,
         } = source;
@@ -307,16 +337,7 @@ impl CachedCollectionSource {
         }
         // The pipeline reads the collection of the database it runs on, whichever project and
         // database the parent names.
-        let path = match parent {
-            Some(parent) => {
-                let parent = FirestoreReference(parent.clone());
-                let parsed = parent.parse().map_err(|_| {
-                    FirestoreCachePipelineMiss::unsupported("the parent is not a document path")
-                })?;
-                format!("{documents_path}/{}/{collection_id}", parsed.path())
-            }
-            None => format!("{documents_path}/{collection_id}"),
-        };
+        let path = format!("{documents_path}/{}", source.path_in_database()?);
         let pinned_names = match first_stage {
             Some(FirestorePipelineStage::Where(stage)) => {
                 Self::pinned_names(&stage.condition.0).map(|names| {
@@ -414,7 +435,7 @@ async fn held_documents(
 
 /// Documents in the order Firestore returns them from a source without a sort: by name.
 fn by_name(mut documents: Vec<FirestoreDocument>) -> Vec<FirestoreDocument> {
-    documents.sort_by(|left, right| left.name.split('/').cmp(right.name.split('/')));
+    documents.sort_by(|left, right| ReferenceName(&left.name).cmp(&ReferenceName(&right.name)));
     documents
 }
 
@@ -446,7 +467,7 @@ impl<'a> CachedStage<'a> {
                 let mut keeps_name = false;
                 let mut selections = Vec::with_capacity(stage.fields.len());
                 for selection in &stage.fields {
-                    match CachedSelection::new(selection)? {
+                    match CachedSelection::new(selection, "fields")? {
                         CachedSelection {
                             name: DOCUMENT_NAME_FIELD,
                             ..
@@ -463,15 +484,17 @@ impl<'a> CachedStage<'a> {
                 stage
                     .fields
                     .iter()
-                    .map(|selection| match CachedSelection::new(selection)? {
-                        CachedSelection {
-                            name: DOCUMENT_NAME_FIELD,
-                            ..
-                        } => Err(FirestoreCachePipelineMiss::unsupported(
-                            "add_fields of the document name",
-                        )),
-                        selection => Ok(selection),
-                    })
+                    .map(
+                        |selection| match CachedSelection::new(selection, "add_fields")? {
+                            CachedSelection {
+                                name: DOCUMENT_NAME_FIELD,
+                                ..
+                            } => Err(FirestoreCachePipelineMiss::unsupported(
+                                "add_fields of the document name",
+                            )),
+                            selection => Ok(selection),
+                        },
+                    )
                     .collect::<Result<_, _>>()?,
             ),
             FirestorePipelineStage::RemoveFields(stage) => CachedStage::RemoveFields(
@@ -513,34 +536,13 @@ impl<'a> CachedStage<'a> {
                 Ok(kept)
             }
             CachedStage::Sort(orderings) => {
-                let mut keyed = documents
+                let order = Self::sorted_order(orderings, &documents)?;
+                let mut slots: Vec<Option<FirestoreDocument>> =
+                    documents.into_iter().map(Some).collect();
+                Ok(order
                     .into_iter()
-                    .map(|document| {
-                        let keys = orderings
-                            .iter()
-                            .map(|ordering| {
-                                CachedSortKey::try_from(
-                                    ordering.expr.evaluate(&document)?.as_deref(),
-                                )
-                            })
-                            .collect::<Result<Vec<_>, _>>()?;
-                        Ok((keys, document))
-                    })
-                    .collect::<Result<Vec<_>, FirestoreCachePipelineMiss>>()?;
-                // Stable, so that documents with equal keys keep the order the source read them
-                // in.
-                keyed.sort_by(|(left, _), (right, _)| {
-                    orderings
-                        .iter()
-                        .zip(left.iter().zip(right))
-                        .map(|(ordering, (left, right))| match ordering.direction {
-                            FirestoreQueryDirection::Ascending => left.cmp(right),
-                            FirestoreQueryDirection::Descending => right.cmp(left),
-                        })
-                        .find(|ordering| ordering.is_ne())
-                        .unwrap_or(Ordering::Equal)
-                });
-                Ok(keyed.into_iter().map(|(_, document)| document).collect())
+                    .filter_map(|index| slots[index].take())
+                    .collect())
             }
             CachedStage::Limit(limit) => {
                 documents.truncate(*limit);
@@ -593,19 +595,52 @@ impl<'a> CachedStage<'a> {
                 .collect()),
         }
     }
+
+    /// The indexes of `documents` in sort order. The sort is stable, so that documents with equal
+    /// keys keep the order the source read them in.
+    fn sorted_order(
+        orderings: &[CachedOrdering<'_>],
+        documents: &[FirestoreDocument],
+    ) -> Result<Vec<usize>, FirestoreCachePipelineMiss> {
+        let values = documents
+            .iter()
+            .map(|document| {
+                orderings
+                    .iter()
+                    .map(|ordering| ordering.expr.evaluate(document))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let keys = values
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|value| CachedSortKey::try_from(value.as_deref()))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut order: Vec<usize> = (0..documents.len()).collect();
+        order.sort_by(|&left, &right| {
+            orderings
+                .iter()
+                .zip(keys[left].iter().zip(&keys[right]))
+                .map(|(ordering, (left, right))| match ordering.direction {
+                    FirestoreQueryDirection::Ascending => left.cmp(right),
+                    FirestoreQueryDirection::Descending => right.cmp(left),
+                })
+                .find(|ordering| ordering.is_ne())
+                .unwrap_or(Ordering::Equal)
+        });
+        Ok(order)
+    }
 }
 
 impl<'a> CachedSelection<'a> {
-    fn new(selection: &'a FirestoreSelection) -> Result<Self, FirestoreCachePipelineMiss> {
-        let name = match (&selection.alias, &selection.expr) {
-            (Some(alias), _) => alias.as_str(),
-            (None, FirestoreExpr::Field(path)) => path.as_str(),
-            (None, _) => {
-                return Err(FirestoreCachePipelineMiss::unsupported(
-                    "a computed expression without an alias",
-                ))
-            }
-        };
+    fn new(
+        selection: &'a FirestoreSelection,
+        stage: &str,
+    ) -> Result<Self, FirestoreCachePipelineMiss> {
+        let name = selection.name(stage)?;
         let expr = CachedExpr::new(&selection.expr)?;
         match (name, &expr) {
             // `__name__` selects the document's name, not a field.
@@ -648,39 +683,74 @@ fn output_field_name(name: &str) -> Result<&str, FirestoreCachePipelineMiss> {
 /// A value as `sort` orders it: absent and null first, then booleans, numbers with NaN first,
 /// timestamps, strings, bytes and references. The cache does not order the other types.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-enum CachedSortKey {
+enum CachedSortKey<'v> {
     Null,
     Boolean(bool),
     Number(CachedNumber),
-    Timestamp((i64, i32)),
-    String(String),
-    Bytes(Vec<u8>),
-    Reference(Vec<String>),
+    Timestamp(i64),
+    String(&'v str),
+    Bytes(&'v [u8]),
+    Reference(ReferenceName<'v>),
 }
 
-impl TryFrom<Option<&ValueType>> for CachedSortKey {
-    type Error = FirestoreCachePipelineMiss;
-
-    fn try_from(value: Option<&ValueType>) -> Result<Self, Self::Error> {
-        Ok(match value {
-            None | Some(ValueType::NullValue(_)) => Self::Null,
-            Some(ValueType::BooleanValue(flag)) => Self::Boolean(*flag),
-            Some(ValueType::TimestampValue(timestamp)) => Self::Timestamp(microseconds(timestamp)),
-            Some(ValueType::StringValue(text)) => Self::String(text.clone()),
-            Some(ValueType::BytesValue(bytes)) => Self::Bytes(bytes.clone()),
-            Some(ValueType::ReferenceValue(name)) => {
-                Self::Reference(name.split('/').map(str::to_string).collect())
-            }
-            Some(value) => Self::Number(CachedNumber::new(value).ok_or_else(|| {
-                FirestoreCachePipelineMiss::unsupported(
-                    "a sort by an array, map, geo point or vector",
-                )
-            })?),
+impl<'v> CachedSortKey<'v> {
+    fn new(value: &'v ValueType) -> Option<Self> {
+        Some(match value {
+            ValueType::NullValue(_) => Self::Null,
+            ValueType::BooleanValue(flag) => Self::Boolean(*flag),
+            ValueType::TimestampValue(timestamp) => Self::Timestamp(microseconds(timestamp)),
+            ValueType::StringValue(text) => Self::String(text),
+            ValueType::BytesValue(bytes) => Self::Bytes(bytes),
+            ValueType::ReferenceValue(name) => Self::Reference(ReferenceName(name)),
+            value => Self::Number(CachedNumber::new(value)?),
         })
+    }
+
+    /// How two keys order, or `None` when Firestore finds them incomparable: keys of different
+    /// types, or NaN with another number.
+    fn compare(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (Self::Number(left), Self::Number(right)) => left.compare(*right),
+            _ if std::mem::discriminant(self) == std::mem::discriminant(other) => {
+                Some(self.cmp(other))
+            }
+            _ => None,
+        }
     }
 }
 
-/// An integer or a double, compared by value as Firestore compares them.
+impl<'v> TryFrom<Option<&'v ValueType>> for CachedSortKey<'v> {
+    type Error = FirestoreCachePipelineMiss;
+
+    /// An absent value sorts as null.
+    fn try_from(value: Option<&'v ValueType>) -> Result<Self, Self::Error> {
+        match value {
+            None => Ok(Self::Null),
+            Some(value) => Self::new(value).ok_or_else(|| {
+                FirestoreCachePipelineMiss::unsupported(
+                    "a sort by an array, map, geo point or vector",
+                )
+            }),
+        }
+    }
+}
+
+/// A reference, ordered by its path segments.
+#[derive(PartialEq, Eq)]
+struct ReferenceName<'v>(&'v str);
+
+impl Ord for ReferenceName<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.split('/').cmp(other.0.split('/'))
+    }
+}
+
+impl PartialOrd for ReferenceName<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 #[derive(Clone, Copy)]
 enum CachedNumber {
     Integer(i64),
@@ -716,7 +786,6 @@ impl CachedNumber {
         }
     }
 
-    /// The number as a double, an integer rounded to the nearest one.
     fn as_double(self) -> f64 {
         match self {
             Self::Integer(number) => number as f64,
@@ -886,149 +955,319 @@ fn is_data(value: &ValueType) -> bool {
 
 impl<'a> CachedCall<'a> {
     fn new(function: &'a FirestoreFunction) -> Result<Self, FirestoreCachePipelineMiss> {
-        use CachedFunction::*;
-        let args = function.args.as_slice();
-        let cached = match (function.name.as_str(), args) {
-            ("equal", [_, _]) => Equal,
-            ("not_equal", [_, _]) => NotEqual,
-            ("less_than", [_, _]) => LessThan,
-            ("less_than_or_equal", [_, _]) => LessThanOrEqual,
-            ("greater_than", [_, _]) => GreaterThan,
-            ("greater_than_or_equal", [_, _]) => GreaterThanOrEqual,
-            ("not", [_]) => Not,
-            // Firestore accepts only a field here.
-            ("exists", [FirestoreExpr::Field(_)]) => Exists,
-            ("is_absent", [FirestoreExpr::Field(_)]) => IsAbsent,
-            ("equal_any", [_, _]) => EqualAny,
-            ("not_equal_any", [_, _]) => NotEqualAny,
-            ("array_contains", [_, _]) => ArrayContains,
-            ("array_contains_all", [_, _]) => ArrayContainsAll,
-            ("array_contains_any", [_, _]) => ArrayContainsAny,
-            ("add", [_, _]) => Add,
-            ("subtract", [_, _]) => Subtract,
-            ("multiply", [_, _]) => Multiply,
-            ("divide", [_, _]) => Divide,
-            ("mod", [_, _]) => Mod,
-            ("to_lower", [_]) => ToLower,
-            ("to_upper", [_]) => ToUpper,
-            ("char_length", [_]) => CharLength,
-            ("starts_with", [_, _]) => StartsWith,
-            ("ends_with", [_, _]) => EndsWith,
-            ("string_contains", [_, _]) => StringContains,
-            ("like", [_, _]) => Like,
-            ("string_concat" | "concat", [_, ..]) => StringConcat,
-            (name, args) => {
-                return Err(FirestoreCachePipelineMiss::unsupported(format!(
-                    "the function `{name}` of {} arguments",
-                    args.len()
-                )))
-            }
+        use CachedArithmetic::{Add, Divide, Mod, Multiply, Subtract};
+        use CachedArrayContains::{All, Any, Element};
+        use CachedComparison::{
+            Equal, GreaterThan, GreaterThanOrEqual, LessThan, LessThanOrEqual, NotEqual,
         };
-        Ok(Self {
-            function: cached,
-            args: args.iter().map(CachedExpr::new).collect::<Result<_, _>>()?,
-        })
+        use CachedTextTest::{Contains, EndsWith, StartsWith};
+        let args = function.args.as_slice();
+        match (function.name.as_str(), args) {
+            ("equal", [left, right]) => Self::binary(CachedBinary::Comparison(Equal), left, right),
+            ("not_equal", [left, right]) => {
+                Self::binary(CachedBinary::Comparison(NotEqual), left, right)
+            }
+            ("less_than", [left, right]) => {
+                Self::binary(CachedBinary::Comparison(LessThan), left, right)
+            }
+            ("less_than_or_equal", [left, right]) => {
+                Self::binary(CachedBinary::Comparison(LessThanOrEqual), left, right)
+            }
+            ("greater_than", [left, right]) => {
+                Self::binary(CachedBinary::Comparison(GreaterThan), left, right)
+            }
+            ("greater_than_or_equal", [left, right]) => {
+                Self::binary(CachedBinary::Comparison(GreaterThanOrEqual), left, right)
+            }
+            ("not", [arg]) => Self::unary(CachedUnary::Not, arg),
+            // Firestore accepts only a field here.
+            ("exists", [arg @ FirestoreExpr::Field(_)]) => Self::unary(CachedUnary::Exists, arg),
+            ("is_absent", [arg @ FirestoreExpr::Field(_)]) => {
+                Self::unary(CachedUnary::IsAbsent, arg)
+            }
+            ("equal_any", [left, right]) => Self::binary(CachedBinary::EqualAny, left, right),
+            ("not_equal_any", [left, right]) => {
+                Self::binary(CachedBinary::NotEqualAny, left, right)
+            }
+            ("array_contains", [left, right]) => {
+                Self::binary(CachedBinary::ArrayContains(Element), left, right)
+            }
+            ("array_contains_all", [left, right]) => {
+                Self::binary(CachedBinary::ArrayContains(All), left, right)
+            }
+            ("array_contains_any", [left, right]) => {
+                Self::binary(CachedBinary::ArrayContains(Any), left, right)
+            }
+            ("add", [left, right]) => Self::binary(CachedBinary::Arithmetic(Add), left, right),
+            ("subtract", [left, right]) => {
+                Self::binary(CachedBinary::Arithmetic(Subtract), left, right)
+            }
+            ("multiply", [left, right]) => {
+                Self::binary(CachedBinary::Arithmetic(Multiply), left, right)
+            }
+            ("divide", [left, right]) => {
+                Self::binary(CachedBinary::Arithmetic(Divide), left, right)
+            }
+            ("mod", [left, right]) => Self::binary(CachedBinary::Arithmetic(Mod), left, right),
+            ("to_lower", [arg]) => Self::unary(CachedUnary::ToLower, arg),
+            ("to_upper", [arg]) => Self::unary(CachedUnary::ToUpper, arg),
+            ("char_length", [arg]) => Self::unary(CachedUnary::CharLength, arg),
+            ("starts_with", [left, right]) => {
+                Self::binary(CachedBinary::TextTest(StartsWith), left, right)
+            }
+            ("ends_with", [left, right]) => {
+                Self::binary(CachedBinary::TextTest(EndsWith), left, right)
+            }
+            ("string_contains", [left, right]) => {
+                Self::binary(CachedBinary::TextTest(Contains), left, right)
+            }
+            ("string_concat" | "concat", [_, ..]) => Ok(Self::StringConcat(
+                args.iter().map(CachedExpr::new).collect::<Result<_, _>>()?,
+            )),
+            (name, args) => Err(FirestoreCachePipelineMiss::unsupported(format!(
+                "the function `{name}` of {} arguments",
+                args.len()
+            ))),
+        }
+    }
+
+    fn unary(
+        function: CachedUnary,
+        arg: &'a FirestoreExpr,
+    ) -> Result<Self, FirestoreCachePipelineMiss> {
+        Ok(Self::Unary(function, Box::new(CachedExpr::new(arg)?)))
+    }
+
+    fn binary(
+        function: CachedBinary,
+        left: &'a FirestoreExpr,
+        right: &'a FirestoreExpr,
+    ) -> Result<Self, FirestoreCachePipelineMiss> {
+        Ok(Self::Binary(
+            function,
+            Box::new([CachedExpr::new(left)?, CachedExpr::new(right)?]),
+        ))
     }
 
     fn evaluate(
         &self,
         document: &FirestoreDocument,
     ) -> Result<ValueType, FirestoreCachePipelineMiss> {
-        use CachedFunction::*;
-        let args: Vec<Evaluated<'_>> = self
-            .args
-            .iter()
-            .map(|arg| arg.evaluate(document))
-            .collect::<Result<_, _>>()?;
-        let function = self.function;
-        Ok(match (function, args.as_slice()) {
-            (
-                Equal | NotEqual | LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual,
-                [left, right],
-            ) => ValueType::BooleanValue(function.compares(left.as_deref(), right.as_deref())?),
-            (Not, [condition]) => match truth(condition.as_deref())? {
+        match self {
+            Self::Unary(function, arg) => function.evaluate(arg.evaluate(document)?.as_deref()),
+            Self::Binary(function, args) => {
+                let [left, right] = &**args;
+                function.evaluate(
+                    left.evaluate(document)?.as_deref(),
+                    right.evaluate(document)?.as_deref(),
+                )
+            }
+            Self::StringConcat(args) => {
+                let values = args
+                    .iter()
+                    .map(|arg| arg.evaluate(document))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let texts = values
+                    .iter()
+                    .map(|value| operand(value.as_deref(), as_text, "a string"))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(match texts.into_iter().collect::<Option<Vec<_>>>() {
+                    Some(texts) => ValueType::StringValue(texts.concat()),
+                    None => NULL,
+                })
+            }
+        }
+    }
+}
+
+impl CachedUnary {
+    fn evaluate(self, value: Option<&ValueType>) -> Result<ValueType, FirestoreCachePipelineMiss> {
+        match self {
+            Self::Not => Ok(match truth(value)? {
                 Some(truth) => ValueType::BooleanValue(!truth),
-                None => ValueType::NullValue(0),
+                None => NULL,
+            }),
+            Self::Exists => Ok(ValueType::BooleanValue(value.is_some())),
+            Self::IsAbsent => Ok(ValueType::BooleanValue(value.is_none())),
+            Self::ToLower => with_text(value, |text| {
+                Ok(ValueType::StringValue(text.to_lowercase()))
+            }),
+            Self::ToUpper => with_text(value, |text| {
+                Ok(ValueType::StringValue(text.to_uppercase()))
+            }),
+            Self::CharLength => with_text(value, |text| {
+                i64::try_from(text.chars().count())
+                    .map(ValueType::IntegerValue)
+                    .map_err(|_| {
+                        FirestoreCachePipelineMiss::unsupported("a string too long to count")
+                    })
+            }),
+        }
+    }
+}
+
+impl CachedBinary {
+    fn evaluate(
+        self,
+        left: Option<&ValueType>,
+        right: Option<&ValueType>,
+    ) -> Result<ValueType, FirestoreCachePipelineMiss> {
+        Ok(match self {
+            Self::Comparison(comparison) => ValueType::BooleanValue(comparison.holds(left, right)?),
+            Self::EqualAny => ValueType::BooleanValue(Self::is_in(left, right)?),
+            Self::NotEqualAny => ValueType::BooleanValue(!Self::is_in(left, right)?),
+            Self::ArrayContains(kind) => match kind.found(left, right)? {
+                Some(found) => ValueType::BooleanValue(found),
+                None => NULL,
             },
-            (Exists, [field]) => ValueType::BooleanValue(field.is_some()),
-            (IsAbsent, [field]) => ValueType::BooleanValue(field.is_none()),
-            (EqualAny | NotEqualAny, [searched, search_space]) => {
-                let Some(ValueType::ArrayValue(search_space)) = search_space.as_deref() else {
-                    return Err(FirestoreCachePipelineMiss::unsupported(
-                        "equal_any of a search space that is not an array",
-                    ));
-                };
-                let found = match searched.as_deref() {
-                    Some(searched) => contains(&search_space.values, searched)?,
-                    None => false,
-                };
-                ValueType::BooleanValue(found == matches!(function, EqualAny))
-            }
-            (ArrayContains | ArrayContainsAll | ArrayContainsAny, [array, searched]) => {
-                match function.array_contains(array.as_deref(), searched.as_deref())? {
-                    Some(found) => ValueType::BooleanValue(found),
-                    None => ValueType::NullValue(0),
+            Self::Arithmetic(arithmetic) => {
+                let left = operand(left, CachedNumber::new, "a number")?;
+                let right = operand(right, CachedNumber::new, "a number")?;
+                match (left, right) {
+                    (Some(left), Some(right)) => arithmetic.apply(left, right)?,
+                    _ => NULL,
                 }
             }
-            (Add | Subtract | Multiply | Divide | Mod, [left, right]) => {
-                match (Operand::from(left), Operand::from(right)) {
-                    (Operand::Number(left), Operand::Number(right)) => {
-                        function.arithmetic(left, right)?
-                    }
-                    (Operand::NotANumber, _) | (_, Operand::NotANumber) => {
-                        return Err(FirestoreCachePipelineMiss::unsupported(
-                            "arithmetic of a value that is not a number",
-                        ))
-                    }
-                    _ => ValueType::NullValue(0),
+            Self::TextTest(test) => {
+                let left = operand(left, as_text, "a string")?;
+                let right = operand(right, as_text, "a string")?;
+                match (left, right) {
+                    (Some(text), Some(part)) => ValueType::BooleanValue(test.holds(text, part)),
+                    _ => NULL,
                 }
             }
-            (
-                ToLower | ToUpper | CharLength | StartsWith | EndsWith | StringContains | Like
-                | StringConcat,
-                args,
-            ) => {
-                let mut texts = Vec::with_capacity(args.len());
-                let mut null = false;
-                for arg in args {
-                    match arg.as_deref() {
-                        Some(ValueType::StringValue(text)) => texts.push(text.as_str()),
-                        Some(ValueType::NullValue(_)) | None => null = true,
-                        Some(_) => {
-                            return Err(FirestoreCachePipelineMiss::unsupported(
-                                "a string function of a value that is not a string",
-                            ))
-                        }
-                    }
-                }
-                if null {
-                    ValueType::NullValue(0)
-                } else {
-                    function.text(&texts)?
-                }
-            }
-            _ => {
-                return Err(FirestoreCachePipelineMiss::unsupported(
-                    "a function with another number of arguments",
-                ))
+        })
+    }
+
+    fn is_in(
+        searched: Option<&ValueType>,
+        search_space: Option<&ValueType>,
+    ) -> Result<bool, FirestoreCachePipelineMiss> {
+        let Some(ValueType::ArrayValue(search_space)) = search_space else {
+            return Err(FirestoreCachePipelineMiss::unsupported(
+                "equal_any of a search space that is not an array",
+            ));
+        };
+        match searched {
+            Some(searched) => contains(&search_space.values, searched),
+            None => Ok(false),
+        }
+    }
+}
+
+impl CachedComparison {
+    /// Absent equals absent and nothing else, null equals null, and values of different types are
+    /// unequal and incomparable.
+    fn holds(
+        self,
+        left: Option<&ValueType>,
+        right: Option<&ValueType>,
+    ) -> Result<bool, FirestoreCachePipelineMiss> {
+        let ordering = match (left, right) {
+            (None, None) => Some(Ordering::Equal),
+            (None, Some(_)) | (Some(_), None) => None,
+            (Some(left), Some(right)) => match self {
+                Self::Equal | Self::NotEqual => equal(left, right)?.then_some(Ordering::Equal),
+                Self::LessThan
+                | Self::LessThanOrEqual
+                | Self::GreaterThan
+                | Self::GreaterThanOrEqual => ordered(left, right)?,
+            },
+        };
+        Ok(match self {
+            Self::Equal => ordering == Some(Ordering::Equal),
+            Self::NotEqual => ordering != Some(Ordering::Equal),
+            Self::LessThan => ordering == Some(Ordering::Less),
+            Self::LessThanOrEqual => matches!(ordering, Some(Ordering::Less | Ordering::Equal)),
+            Self::GreaterThan => ordering == Some(Ordering::Greater),
+            Self::GreaterThanOrEqual => {
+                matches!(ordering, Some(Ordering::Greater | Ordering::Equal))
             }
         })
     }
 }
 
-/// An operand of an arithmetic function: a null or absent one makes the result null, and
-/// Firestore fails the request on any other value that is not a number.
-enum Operand {
-    Number(CachedNumber),
-    Null,
-    NotANumber,
+impl CachedArrayContains {
+    /// False for a value that is not an array, and `None`, which is null, for a null or absent
+    /// one.
+    fn found(
+        self,
+        array: Option<&ValueType>,
+        searched: Option<&ValueType>,
+    ) -> Result<Option<bool>, FirestoreCachePipelineMiss> {
+        let array = match array {
+            Some(ValueType::ArrayValue(array)) => &array.values,
+            Some(ValueType::NullValue(_)) | None => return Ok(None),
+            Some(_) => return Ok(Some(false)),
+        };
+        let found =
+            match (self, searched) {
+                (Self::Element, Some(searched)) => contains(array, searched)?,
+                (Self::All, Some(ValueType::ArrayValue(searched))) => {
+                    let mut all = true;
+                    for searched in &searched.values {
+                        all &= contains(array, data(searched)?)?;
+                    }
+                    all
+                }
+                (Self::Any, Some(ValueType::ArrayValue(searched))) => {
+                    let mut any = false;
+                    for searched in &searched.values {
+                        any |= contains(array, data(searched)?)?;
+                    }
+                    any
+                }
+                _ => return Err(FirestoreCachePipelineMiss::unsupported(
+                    "array_contains of an absent value, or of search values that are not an array",
+                )),
+            };
+        Ok(Some(found))
+    }
 }
 
-impl From<&Evaluated<'_>> for Operand {
-    fn from(value: &Evaluated<'_>) -> Self {
-        match value.as_deref() {
-            Some(ValueType::NullValue(_)) | None => Operand::Null,
-            Some(value) => CachedNumber::new(value).map_or(Operand::NotANumber, Operand::Number),
+impl CachedArithmetic {
+    /// Integers stay integers, and Firestore fails the request on an overflow or a division by
+    /// zero. A double on either side makes a double.
+    fn apply(
+        self,
+        left: CachedNumber,
+        right: CachedNumber,
+    ) -> Result<ValueType, FirestoreCachePipelineMiss> {
+        Ok(match (left, right) {
+            (CachedNumber::Integer(left), CachedNumber::Integer(right)) => ValueType::IntegerValue(
+                match self {
+                    Self::Add => left.checked_add(right),
+                    Self::Subtract => left.checked_sub(right),
+                    Self::Multiply => left.checked_mul(right),
+                    Self::Divide => left.checked_div(right),
+                    Self::Mod => left.checked_rem(right),
+                }
+                .ok_or_else(|| {
+                    FirestoreCachePipelineMiss::unsupported(
+                        "an integer overflow or a division by zero",
+                    )
+                })?,
+            ),
+            (left, right) => {
+                let (left, right) = (left.as_double(), right.as_double());
+                ValueType::DoubleValue(match self {
+                    Self::Add => left + right,
+                    Self::Subtract => left - right,
+                    Self::Multiply => left * right,
+                    Self::Divide => left / right,
+                    Self::Mod => left % right,
+                })
+            }
+        })
+    }
+}
+
+impl CachedTextTest {
+    fn holds(self, text: &str, part: &str) -> bool {
+        match self {
+            Self::StartsWith => text.starts_with(part),
+            Self::EndsWith => text.ends_with(part),
+            Self::Contains => text.contains(part),
         }
     }
 }
@@ -1050,165 +1289,72 @@ impl CachedLogical<'_> {
             }
         }
         Ok(if undetermined {
-            ValueType::NullValue(0)
+            NULL
         } else {
             ValueType::BooleanValue(!decisive)
         })
     }
 }
 
-impl CachedFunction {
-    /// A comparison: absent equals absent and nothing else, null equals null, and values of
-    /// different types are unequal and incomparable.
-    fn compares(
-        self,
-        left: Option<&ValueType>,
-        right: Option<&ValueType>,
-    ) -> Result<bool, FirestoreCachePipelineMiss> {
-        let ordering = match (self, left, right) {
-            (_, None, None) => Some(Ordering::Equal),
-            (_, None, Some(_)) | (_, Some(_), None) => None,
-            (Self::Equal | Self::NotEqual, Some(left), Some(right)) => {
-                equal(left, right)?.then_some(Ordering::Equal)
-            }
-            (_, Some(left), Some(right)) => ordered(left, right)?,
-        };
-        Ok(match self {
-            Self::Equal => ordering == Some(Ordering::Equal),
-            Self::NotEqual => ordering != Some(Ordering::Equal),
-            Self::LessThan => ordering == Some(Ordering::Less),
-            Self::LessThanOrEqual => matches!(ordering, Some(Ordering::Less | Ordering::Equal)),
-            Self::GreaterThan => ordering == Some(Ordering::Greater),
-            _ => matches!(ordering, Some(Ordering::Greater | Ordering::Equal)),
-        })
-    }
-
-    /// `array_contains`, `_all` and `_any`: false for a value that is not an array, and `None`,
-    /// which is null, for a null or absent one.
-    fn array_contains(
-        self,
-        array: Option<&ValueType>,
-        searched: Option<&ValueType>,
-    ) -> Result<Option<bool>, FirestoreCachePipelineMiss> {
-        let array = match array {
-            Some(ValueType::ArrayValue(array)) => &array.values,
-            Some(ValueType::NullValue(_)) | None => return Ok(None),
-            Some(_) => return Ok(Some(false)),
-        };
-        let found =
-            match (self, searched) {
-                (Self::ArrayContains, Some(searched)) => contains(array, searched)?,
-                (Self::ArrayContainsAll, Some(ValueType::ArrayValue(searched))) => {
-                    let mut all = true;
-                    for searched in &searched.values {
-                        all &= contains(array, data(searched)?)?;
-                    }
-                    all
-                }
-                (Self::ArrayContainsAny, Some(ValueType::ArrayValue(searched))) => {
-                    let mut any = false;
-                    for searched in &searched.values {
-                        any |= contains(array, data(searched)?)?;
-                    }
-                    any
-                }
-                _ => return Err(FirestoreCachePipelineMiss::unsupported(
-                    "array_contains of an absent value, or of search values that are not an array",
-                )),
-            };
-        Ok(Some(found))
-    }
-
-    /// Integers stay integers, and Firestore fails the request on an overflow or a division by
-    /// zero. A double on either side makes a double.
-    fn arithmetic(
-        self,
-        left: CachedNumber,
-        right: CachedNumber,
-    ) -> Result<ValueType, FirestoreCachePipelineMiss> {
-        Ok(match (left, right) {
-            (CachedNumber::Integer(left), CachedNumber::Integer(right)) => ValueType::IntegerValue(
-                match self {
-                    Self::Add => left.checked_add(right),
-                    Self::Subtract => left.checked_sub(right),
-                    Self::Multiply => left.checked_mul(right),
-                    Self::Divide => left.checked_div(right),
-                    _ => left.checked_rem(right),
-                }
-                .ok_or_else(|| {
-                    FirestoreCachePipelineMiss::unsupported(
-                        "an integer overflow or a division by zero",
-                    )
-                })?,
-            ),
-            (left, right) => {
-                let (left, right) = (left.as_double(), right.as_double());
-                ValueType::DoubleValue(match self {
-                    Self::Add => left + right,
-                    Self::Subtract => left - right,
-                    Self::Multiply => left * right,
-                    Self::Divide => left / right,
-                    _ => left % right,
-                })
-            }
-        })
-    }
-
-    fn text(self, texts: &[&str]) -> Result<ValueType, FirestoreCachePipelineMiss> {
-        Ok(match (self, texts) {
-            (Self::ToLower, [text]) => ValueType::StringValue(text.to_lowercase()),
-            (Self::ToUpper, [text]) => ValueType::StringValue(text.to_uppercase()),
-            (Self::CharLength, [text]) => {
-                ValueType::IntegerValue(i64::try_from(text.chars().count()).map_err(|_| {
-                    FirestoreCachePipelineMiss::unsupported("a string too long to count")
-                })?)
-            }
-            (Self::StartsWith, [text, prefix]) => ValueType::BooleanValue(text.starts_with(prefix)),
-            (Self::EndsWith, [text, suffix]) => ValueType::BooleanValue(text.ends_with(suffix)),
-            (Self::StringContains, [text, part]) => ValueType::BooleanValue(text.contains(part)),
-            (Self::Like, [text, pattern]) => ValueType::BooleanValue(like(text, pattern)?),
-            (Self::StringConcat, texts) => ValueType::StringValue(texts.concat()),
-            _ => {
-                return Err(FirestoreCachePipelineMiss::unsupported(
-                    "a string function with another number of arguments",
-                ))
-            }
-        })
-    }
-}
-
-/// A condition's truth: `None` for null or absent. Firestore fails the request on any other
-/// value.
-fn truth(value: Option<&ValueType>) -> Result<Option<bool>, FirestoreCachePipelineMiss> {
+/// An operand of a function that takes the type `extract` reads: a null or absent one makes the
+/// function's result null, which is `None` here, and Firestore fails the request on a value of
+/// any other type.
+fn operand<'v, T>(
+    value: Option<&'v ValueType>,
+    extract: impl FnOnce(&'v ValueType) -> Option<T>,
+    expected: &str,
+) -> Result<Option<T>, FirestoreCachePipelineMiss> {
     match value {
-        Some(ValueType::BooleanValue(value)) => Ok(Some(*value)),
         Some(ValueType::NullValue(_)) | None => Ok(None),
-        Some(_) => Err(FirestoreCachePipelineMiss::unsupported(
-            "a logical function of a value that is not a boolean",
-        )),
+        Some(value) => extract(value).map(Some).ok_or_else(|| {
+            FirestoreCachePipelineMiss::unsupported(format!("a value that is not {expected}"))
+        }),
     }
 }
 
-/// A timestamp as Firestore stores and compares it, to the microsecond.
-fn microseconds(timestamp: &gcloud_sdk::prost_types::Timestamp) -> (i64, i32) {
-    (timestamp.seconds, timestamp.nanos / 1_000)
+fn as_text(value: &ValueType) -> Option<&str> {
+    match value {
+        ValueType::StringValue(text) => Some(text),
+        _ => None,
+    }
+}
+
+fn truth(value: Option<&ValueType>) -> Result<Option<bool>, FirestoreCachePipelineMiss> {
+    operand(
+        value,
+        |value| match value {
+            ValueType::BooleanValue(flag) => Some(*flag),
+            _ => None,
+        },
+        "a boolean",
+    )
+}
+
+fn with_text(
+    value: Option<&ValueType>,
+    function: impl FnOnce(&str) -> Result<ValueType, FirestoreCachePipelineMiss>,
+) -> Result<ValueType, FirestoreCachePipelineMiss> {
+    match operand(value, as_text, "a string")? {
+        Some(text) => function(text),
+        None => Ok(NULL),
+    }
+}
+
+/// A timestamp as Firestore stores and compares it, as a count of microseconds.
+fn microseconds(timestamp: &gcloud_sdk::prost_types::Timestamp) -> i64 {
+    timestamp
+        .seconds
+        .saturating_mul(1_000_000)
+        .saturating_add(i64::from(timestamp.nanos / 1_000))
 }
 
 /// Firestore's `equal` of two present values: numbers by value, NaN equal to NaN, null equal to
 /// null, and values of different types unequal.
 fn equal(left: &ValueType, right: &ValueType) -> Result<bool, FirestoreCachePipelineMiss> {
-    if let (Some(left), Some(right)) = (CachedNumber::new(left), CachedNumber::new(right)) {
-        return Ok(left.compare(right) == Some(Ordering::Equal));
+    if let (Some(left), Some(right)) = (CachedSortKey::new(left), CachedSortKey::new(right)) {
+        return Ok(left.compare(&right) == Some(Ordering::Equal));
     }
     Ok(match (left, right) {
-        (ValueType::NullValue(_), ValueType::NullValue(_)) => true,
-        (ValueType::BooleanValue(left), ValueType::BooleanValue(right)) => left == right,
-        (ValueType::TimestampValue(left), ValueType::TimestampValue(right)) => {
-            microseconds(left) == microseconds(right)
-        }
-        (ValueType::StringValue(left), ValueType::StringValue(right)) => left == right,
-        (ValueType::BytesValue(left), ValueType::BytesValue(right)) => left == right,
-        (ValueType::ReferenceValue(left), ValueType::ReferenceValue(right)) => left == right,
         (ValueType::GeoPointValue(left), ValueType::GeoPointValue(right)) => {
             left.latitude == right.latitude && left.longitude == right.longitude
         }
@@ -1245,20 +1391,10 @@ fn ordered(
     left: &ValueType,
     right: &ValueType,
 ) -> Result<Option<Ordering>, FirestoreCachePipelineMiss> {
-    if let (Some(left), Some(right)) = (CachedNumber::new(left), CachedNumber::new(right)) {
-        return Ok(left.compare(right));
+    if let (Some(left), Some(right)) = (CachedSortKey::new(left), CachedSortKey::new(right)) {
+        return Ok(left.compare(&right));
     }
     Ok(match (left, right) {
-        (ValueType::NullValue(_), ValueType::NullValue(_)) => Some(Ordering::Equal),
-        (ValueType::BooleanValue(left), ValueType::BooleanValue(right)) => Some(left.cmp(right)),
-        (ValueType::TimestampValue(left), ValueType::TimestampValue(right)) => {
-            Some(microseconds(left).cmp(&microseconds(right)))
-        }
-        (ValueType::StringValue(left), ValueType::StringValue(right)) => Some(left.cmp(right)),
-        (ValueType::BytesValue(left), ValueType::BytesValue(right)) => Some(left.cmp(right)),
-        (ValueType::ReferenceValue(left), ValueType::ReferenceValue(right)) => {
-            Some(left.split('/').cmp(right.split('/')))
-        }
         (ValueType::ArrayValue(_), ValueType::ArrayValue(_))
         | (ValueType::MapValue(_), ValueType::MapValue(_))
         | (ValueType::GeoPointValue(_), ValueType::GeoPointValue(_)) => {
@@ -1287,56 +1423,4 @@ fn contains(values: &[Value], searched: &ValueType) -> Result<bool, FirestoreCac
         }
     }
     Ok(false)
-}
-
-/// Firestore's `like`: `%` matches any run of characters, `_` one character, and a backslash
-/// makes the `%`, `_` or backslash after it literal. Firestore fails on a pattern that ends in a
-/// backslash, and the cache leaves a backslash before any other character to Firestore.
-fn like(text: &str, pattern: &str) -> Result<bool, FirestoreCachePipelineMiss> {
-    enum Token {
-        Any,
-        One,
-        Literal(char),
-    }
-    let mut tokens = Vec::new();
-    let mut pattern = pattern.chars();
-    while let Some(character) = pattern.next() {
-        tokens.push(match character {
-            '%' => Token::Any,
-            '_' => Token::One,
-            '\\' => match pattern.next() {
-                Some(escaped @ ('%' | '_' | '\\')) => Token::Literal(escaped),
-                _ => {
-                    return Err(FirestoreCachePipelineMiss::unsupported(
-                        "a like pattern with a backslash that escapes no wildcard",
-                    ))
-                }
-            },
-            character => Token::Literal(character),
-        });
-    }
-    let text: Vec<char> = text.chars().collect();
-    // matched[i]: the tokens so far match the first i characters.
-    let mut matched = vec![false; text.len() + 1];
-    matched[0] = true;
-    for token in &tokens {
-        let mut next = vec![false; text.len() + 1];
-        match token {
-            Token::Any => {
-                let mut reached = false;
-                for (index, slot) in next.iter_mut().enumerate() {
-                    reached |= matched[index];
-                    *slot = reached;
-                }
-            }
-            Token::One => next[1..].copy_from_slice(&matched[..text.len()]),
-            Token::Literal(character) => {
-                for (index, slot) in next[1..].iter_mut().enumerate() {
-                    *slot = matched[index] && text[index] == *character;
-                }
-            }
-        }
-        matched = next;
-    }
-    Ok(matched[text.len()])
 }

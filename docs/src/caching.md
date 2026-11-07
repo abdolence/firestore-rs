@@ -65,20 +65,24 @@ Functions:
 - `and`, `or`, `not`, `exists`, `is_absent`;
 - `equal_any`, `not_equal_any`, `array_contains`, `array_contains_all`, `array_contains_any`;
 - `add`, `subtract`, `multiply`, `divide`, `mod`;
-- `to_lower`, `to_upper`, `char_length`, `starts_with`, `ends_with`, `string_contains`, `like`,
+- `to_lower`, `to_upper`, `char_length`, `starts_with`, `ends_with`, `string_contains`,
   `string_concat`, and `concat` of strings.
 
 Everything else runs on Firestore: aggregates, `distinct`, search, `find_nearest`, `union`,
 `unnest`, subqueries and variables, collection groups, `database()`, `literals`, `force_index`,
-raw stages, writes and every other function. So do Query Explain and a pipeline in a transaction
-or at a read time. The cache also sends a pipeline to Firestore when it meets a value Firestore
-fails the request on, such as `like` of a number, an integer overflow or a division by zero, and
-when it would have to order arrays, maps, geo points or vectors, in a `sort` or a `less_than`.
+raw stages, writes, `like` and every other function. So do Query Explain and a pipeline in a
+transaction or at a read time. The cache also sends a pipeline to Firestore when it meets a value
+Firestore fails the request on, such as a string function of a number, an integer overflow or a
+division by zero, and when it would have to order arrays, maps, geo points or vectors, in a `sort`
+or a `less_than`.
 
 ### What differs from a pipeline that Firestore runs
 
 - Results are eventually consistent, as for Core reads, see
   [How the cache is updated](./caching/updates.md).
+- The cache does not check the edition of the database. On a Standard edition database, where
+  Firestore fails every pipeline with `FAILED_PRECONDITION`, a pipeline the cache answers
+  succeeds, and one it does not answer fails as on Firestore.
 - A result from the cache has no `execution_time` in its metadata, and an empty result has no
   item without a document.
 - A read by ID that names a document the cache does not hold runs on Firestore under
@@ -98,13 +102,13 @@ collection or `documents(..)`:
 
 - `SELECT` of columns, aliases, `*` and `* EXCEPT (..)`;
 - `WHERE` with comparisons, `AND`, `OR`, `NOT`, `IS [NOT] NULL`, `IS [NOT] DISTINCT FROM`,
-  `[NOT] IN (list)`, `IN UNNEST(array)`, `BETWEEN`, `LIKE`, `ILIKE`, `+ - * / %`, `||`, `LOWER`,
-  `UPPER` and `CHAR_LENGTH`;
+  `[NOT] IN (list)`, `IN UNNEST(array)`, `BETWEEN`, `+ - * / %`, `||`, `LOWER`, `UPPER` and
+  `CHAR_LENGTH`;
 - `WHERE __name__ = 'id'` and `WHERE __name__ IN ('id', ..)`, read by ID;
 - `ORDER BY`, and `LIMIT` and `OFFSET` with an `ORDER BY`.
 
 `GROUP BY`, aggregates, `DISTINCT`, `UNION`, joins and subqueries, `collection_group(..)`,
-`database()`, `CASE`, `COALESCE`, `IFNULL`, `SUBSTR` and search run on Firestore.
+`database()`, `LIKE`, `ILIKE`, `CASE`, `COALESCE`, `IFNULL`, `SUBSTR` and search run on Firestore.
 
 ### Enterprise databases
 

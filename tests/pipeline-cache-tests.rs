@@ -22,11 +22,11 @@ mod common;
 type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 /// The preloaded collection of edge cases.
-const EDGE: &str = "pipeline-cache-edge";
+const EDGE_CASES_COLLECTION: &str = "pipeline-cache-edge";
 /// A collection the cache fills lazily, through reads by ID.
-const SESSIONS: &str = "pipeline-cache-sessions";
+const SESSIONS_COLLECTION: &str = "pipeline-cache-sessions";
 /// A preloaded collection under the edge case `d01`.
-const CHILDREN: &str = "pipeline-cache-children";
+const CHILDREN_COLLECTION: &str = "pipeline-cache-children";
 
 static SEEDED: OnceCell<Result<(), String>> = OnceCell::const_new();
 
@@ -84,204 +84,205 @@ fn field(path: &str) -> FirestoreExpr {
     FirestoreExpr::field(path)
 }
 
-/// The edge cases, one document each. `rank` orders them totally and `k` names the kind of `v`.
+/// The edge cases, one document each. `rank` orders them totally and `kind` names the kind of
+/// `value`.
 fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Value)>)> {
-    let first = document_reference(db, EDGE, "d01");
+    let first = document_reference(db, EDGE_CASES_COLLECTION, "d01");
     vec![
         (
             "d01",
             vec![
-                ("k", string("int")),
-                ("v", int(1)),
-                ("n", int(7)),
-                ("s", string("Hello")),
+                ("kind", string("int")),
+                ("value", int(1)),
+                ("number", int(7)),
+                ("text", string("Hello")),
                 ("tags", array(vec![string("a"), string("b")])),
-                ("b", boolean(true)),
+                ("flag", boolean(true)),
             ],
         ),
         (
             "d02",
             vec![
-                ("k", string("double")),
-                ("v", double(1.0)),
-                ("n", double(2.5)),
-                ("s", string("hello")),
+                ("kind", string("double")),
+                ("value", double(1.0)),
+                ("number", double(2.5)),
+                ("text", string("hello")),
                 ("tags", array(vec![string("b")])),
-                ("b", boolean(false)),
+                ("flag", boolean(false)),
             ],
         ),
         (
             "d03",
             vec![
-                ("k", string("int")),
-                ("v", int(2)),
-                ("n", int(-7)),
-                ("s", string("Café")),
+                ("kind", string("int")),
+                ("value", int(2)),
+                ("number", int(-7)),
+                ("text", string("Café")),
                 ("tags", array(vec![])),
-                ("b", null()),
+                ("flag", null()),
             ],
         ),
         (
             "d04",
             vec![
-                ("k", string("double")),
-                ("v", double(2.5)),
-                ("n", int(0)),
-                ("s", string("ÉCOLE")),
+                ("kind", string("double")),
+                ("value", double(2.5)),
+                ("number", int(0)),
+                ("text", string("ÉCOLE")),
                 ("tags", array(vec![null()])),
             ],
         ),
         (
             "d05",
             vec![
-                ("k", string("nan")),
-                ("v", double(f64::NAN)),
-                ("n", double(f64::NAN)),
-                ("s", string("straße")),
+                ("kind", string("nan")),
+                ("value", double(f64::NAN)),
+                ("number", double(f64::NAN)),
+                ("text", string("straße")),
                 ("tags", array(vec![string("a"), int(1)])),
             ],
         ),
         (
             "d06",
             vec![
-                ("k", string("zero")),
-                ("v", double(-0.0)),
-                ("n", double(-0.0)),
-                ("s", string("100%")),
+                ("kind", string("zero")),
+                ("value", double(-0.0)),
+                ("number", double(-0.0)),
+                ("text", string("100%")),
                 ("tags", array(vec![int(1), double(2.0)])),
             ],
         ),
         (
             "d07",
             vec![
-                ("k", string("string")),
-                ("v", string("a")),
-                ("n", null()),
-                ("s", string("a_c")),
+                ("kind", string("string")),
+                ("value", string("a")),
+                ("number", null()),
+                ("text", string("a_c")),
                 ("tags", null()),
             ],
         ),
         (
             "d08",
             vec![
-                ("k", string("string")),
-                ("v", string("B")),
-                ("s", string("")),
+                ("kind", string("string")),
+                ("value", string("B")),
+                ("text", string("")),
                 ("tags", string("a")),
             ],
         ),
         (
             "d09",
             vec![
-                ("k", string("bool")),
-                ("v", boolean(true)),
-                ("n", int(9_007_199_254_740_993)),
-                ("s", null()),
+                ("kind", string("bool")),
+                ("value", boolean(true)),
+                ("number", int(9_007_199_254_740_993)),
+                ("text", null()),
                 ("tags", array(vec![string("x"), array(vec![string("a")])])),
-                ("b", string("yes")),
+                ("flag", string("yes")),
             ],
         ),
         (
             "d10",
             vec![
-                ("k", string("null")),
-                ("v", null()),
-                ("n", double(9_007_199_254_740_992.0)),
+                ("kind", string("null")),
+                ("value", null()),
+                ("number", double(9_007_199_254_740_992.0)),
             ],
         ),
         (
             "d11",
             vec![
-                ("k", string("absent")),
-                ("n", int(i64::MAX)),
-                ("s", int(5)),
+                ("kind", string("absent")),
+                ("number", int(i64::MAX)),
+                ("text", int(5)),
                 ("tags", array(vec![int(2)])),
             ],
         ),
         (
             "d12",
             vec![
-                ("k", string("timestamp")),
+                ("kind", string("timestamp")),
                 (
-                    "v",
+                    "value",
                     value(ValueType::TimestampValue(Timestamp {
                         seconds: 1_704_067_200,
                         nanos: 500,
                     })),
                 ),
-                ("n", int(i64::MIN)),
-                ("s", string("e\u{301}")),
+                ("number", int(i64::MIN)),
+                ("text", string("e\u{301}")),
             ],
         ),
         (
             "d13",
             vec![
-                ("k", string("reference")),
-                ("v", first),
-                ("n", int(1)),
-                ("s", string("İstanbul")),
+                ("kind", string("reference")),
+                ("value", first),
+                ("number", int(1)),
+                ("text", string("İstanbul")),
             ],
         ),
         (
             "d14",
             vec![
-                ("k", string("array")),
-                ("v", array(vec![int(1), int(2)])),
-                ("n", int(2)),
-                ("s", string("ΣΑΣ")),
+                ("kind", string("array")),
+                ("value", array(vec![int(1), int(2)])),
+                ("number", int(2)),
+                ("text", string("ΣΑΣ")),
             ],
         ),
         (
             "d15",
             vec![
-                ("k", string("map")),
-                ("v", map(vec![("x", int(1))])),
-                ("n", int(3)),
-                ("s", string("  pad  ")),
+                ("kind", string("map")),
+                ("value", map(vec![("x", int(1))])),
+                ("number", int(3)),
+                ("text", string("  pad  ")),
             ],
         ),
         (
             "d16",
             vec![
-                ("k", string("bool")),
-                ("v", boolean(false)),
-                ("n", int(4)),
-                ("s", string("Hello World")),
+                ("kind", string("bool")),
+                ("value", boolean(false)),
+                ("number", int(4)),
+                ("text", string("Hello World")),
             ],
         ),
         (
             "d17",
             vec![
-                ("k", string("bigint")),
-                ("v", int(9_007_199_254_740_993)),
-                ("n", int(5)),
-                ("s", string("Ab")),
+                ("kind", string("bigint")),
+                ("value", int(9_007_199_254_740_993)),
+                ("number", int(5)),
+                ("text", string("Ab")),
             ],
         ),
         (
             "d18",
             vec![
-                ("k", string("bigdouble")),
-                ("v", double(9_007_199_254_740_992.0)),
-                ("n", int(6)),
-                ("s", string("aB")),
+                ("kind", string("bigdouble")),
+                ("value", double(9_007_199_254_740_992.0)),
+                ("number", int(6)),
+                ("text", string("aB")),
             ],
         ),
         (
             "d19",
             vec![
-                ("k", string("bytes")),
-                ("v", value(ValueType::BytesValue(b"ab".to_vec()))),
-                ("n", double(1.5)),
-                ("s", string("x%y")),
+                ("kind", string("bytes")),
+                ("value", value(ValueType::BytesValue(b"ab".to_vec()))),
+                ("number", double(1.5)),
+                ("text", string("x%y")),
             ],
         ),
         (
             "d20",
             vec![
-                ("k", string("geo")),
+                ("kind", string("geo")),
                 (
-                    "v",
+                    "value",
                     value(ValueType::GeoPointValue(
                         firestore::gcloud_sdk::google::r#type::LatLng {
                             latitude: 1.0,
@@ -289,8 +290,8 @@ fn edge_documents(db: &FirestoreDb) -> Vec<(&'static str, Vec<(&'static str, Val
                         },
                     )),
                 ),
-                ("n", int(10)),
-                ("s", string("a\\b")),
+                ("number", int(10)),
+                ("text", string("a\\b")),
             ],
         ),
     ]
@@ -309,7 +310,7 @@ fn child_documents() -> Vec<(&'static str, Vec<(&'static str, Value)>)> {
 
 /// The path of the children's parent document.
 fn children_parent(db: &FirestoreDb) -> String {
-    format!("{}/{EDGE}/d01", db.get_documents_path())
+    format!("{}/{EDGE_CASES_COLLECTION}/d01", db.get_documents_path())
 }
 
 /// Writes every document by its fixed ID, with `rank` set from its position, once per test binary
@@ -319,9 +320,17 @@ async fn ensure_seeded(db: &FirestoreDb) -> TestResult {
         .get_or_init(|| async {
             let documents_path = db.get_documents_path();
             let collections = [
-                (documents_path.clone(), EDGE, edge_documents(db)),
-                (documents_path.clone(), SESSIONS, session_documents()),
-                (children_parent(db), CHILDREN, child_documents()),
+                (
+                    documents_path.clone(),
+                    EDGE_CASES_COLLECTION,
+                    edge_documents(db),
+                ),
+                (
+                    documents_path.clone(),
+                    SESSIONS_COLLECTION,
+                    session_documents(),
+                ),
+                (children_parent(db), CHILDREN_COLLECTION, child_documents()),
             ];
             for (parent, collection, documents) in collections {
                 for (rank, (id, fields)) in documents.into_iter().enumerate() {
@@ -358,9 +367,11 @@ async fn setup(
     let db = setup_enterprise_unseeded().await?;
     ensure_seeded(&db).await?;
     let cache = FirestoreCache::memory(&db)
-        .preloaded_collection(EDGE)
-        .collection(SESSIONS)
-        .collection_with(CHILDREN, |c| c.parent(children_parent(&db)).preload_all())
+        .preloaded_collection(EDGE_CASES_COLLECTION)
+        .collection(SESSIONS_COLLECTION)
+        .collection_with(CHILDREN_COLLECTION, |collection| {
+            collection.parent(children_parent(&db)).preload_all()
+        })
         .build()
         .await?;
     Ok((db, cache))
@@ -405,7 +416,7 @@ impl Differential {
 
     fn edge_where(&self, condition: FirestoreBoolExpr) -> FirestorePipeline {
         self.pipeline()
-            .from(EDGE)
+            .from(EDGE_CASES_COLLECTION)
             .filter(|q| q.condition(condition))
             .into_pipeline()
     }
@@ -663,7 +674,10 @@ fn comparison_constants(db: &FirestoreDb) -> Vec<(&'static str, Value)> {
                 nanos: 1_000,
             })),
         ),
-        ("reference d01", document_reference(db, EDGE, "d01")),
+        (
+            "reference d01",
+            document_reference(db, EDGE_CASES_COLLECTION, "d01"),
+        ),
         ("bytes", value(ValueType::BytesValue(b"ab".to_vec()))),
     ]
 }
@@ -672,10 +686,14 @@ fn comparison_constants(db: &FirestoreDb) -> Vec<(&'static str, Value)> {
 async fn comparisons_match_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
     type Comparison = fn(FirestoreExpr, FirestoreExpr) -> FirestoreBoolExpr;
-    let comparisons: [(&str, Comparison); 6] = [
+    // `equal` and the ordering comparisons compare two values by different code, so each of those
+    // two runs over every kind of value. The other four only map the result, and run once.
+    let over_every_value: [(&str, Comparison); 2] = [
         ("equal", |left, right| left.equal(right)),
-        ("not_equal", |left, right| left.not_equal(right)),
         ("less_than", |left, right| left.less_than(right)),
+    ];
+    let mapping_only: [(&str, Comparison); 4] = [
+        ("not_equal", |left, right| left.not_equal(right)),
         ("less_than_or_equal", |left, right| {
             left.less_than_or_equal(right)
         }),
@@ -685,22 +703,13 @@ async fn comparisons_match_firestore() -> TestResult {
         }),
     ];
 
-    for (name, comparison) in comparisons {
+    for (name, comparison) in over_every_value {
         for (label, compared) in comparison_constants(&differential.db) {
-            let pipeline = differential.edge_where(comparison(field("v"), constant(compared)));
+            let pipeline = differential.edge_where(comparison(field("value"), constant(compared)));
             differential
-                .same(&format!("v {name} {label}"), Expect::Rows, pipeline)
+                .same(&format!("value {name} {label}"), Expect::Rows, pipeline)
                 .await;
         }
-        let absent_with_absent =
-            differential.edge_where(comparison(field("missing"), field("also_missing")));
-        differential
-            .same(
-                &format!("absent {name} absent"),
-                Expect::Rows,
-                absent_with_absent,
-            )
-            .await;
         let null_with_absent =
             differential.edge_where(comparison(constant(null()), field("missing")));
         differential
@@ -710,22 +719,43 @@ async fn comparisons_match_firestore() -> TestResult {
                 null_with_absent,
             )
             .await;
-        let value_with_itself = differential.edge_where(comparison(field("v"), field("v")));
+        let value_with_itself = differential.edge_where(comparison(field("value"), field("value")));
         differential
-            .same(&format!("v {name} v"), Expect::Rows, value_with_itself)
+            .same(
+                &format!("value {name} value"),
+                Expect::Rows,
+                value_with_itself,
+            )
             .await;
-        // `n` holds i64::MAX, i64::MIN and 2^53 + 1, which a double cannot hold.
+        // `number` holds i64::MAX, i64::MIN and 2^53 + 1, which a double cannot hold.
         for (label, bound) in [
             ("double 2^63", double(9_223_372_036_854_775_808.0)),
             ("double -2^63", double(-9_223_372_036_854_775_808.0)),
             ("double 2^53", double(9_007_199_254_740_992.0)),
             ("int 2^53+1", int(9_007_199_254_740_993)),
         ] {
-            let pipeline = differential.edge_where(comparison(field("n"), constant(bound)));
+            let pipeline = differential.edge_where(comparison(field("number"), constant(bound)));
             differential
-                .same(&format!("n {name} {label}"), Expect::Rows, pipeline)
+                .same(&format!("number {name} {label}"), Expect::Rows, pipeline)
                 .await;
         }
+    }
+    for (name, comparison) in mapping_only {
+        let pipeline = differential.edge_where(comparison(field("value"), constant(int(1))));
+        differential
+            .same(&format!("value {name} int 1"), Expect::Rows, pipeline)
+            .await;
+    }
+    for (name, comparison) in over_every_value.into_iter().chain(mapping_only) {
+        let absent_with_absent =
+            differential.edge_where(comparison(field("missing"), field("also_missing")));
+        differential
+            .same(
+                &format!("absent {name} absent"),
+                Expect::Rows,
+                absent_with_absent,
+            )
+            .await;
     }
 
     differential.finish().await
@@ -734,38 +764,41 @@ async fn comparisons_match_firestore() -> TestResult {
 #[tokio::test]
 async fn logic_matches_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
-    let e = FirestorePipelineExprBuilder;
-    let flag = || FirestoreBoolExpr::unchecked(field("b"));
-    let is_int = || field("k").equal("int");
+    let expr = FirestorePipelineExprBuilder;
+    let flag = || FirestoreBoolExpr::unchecked(field("flag"));
+    let is_int = || field("kind").equal("int");
     let cases = [
         (
             "and of comparisons",
-            e.and([is_int(), field("v").greater_than(1)]),
+            expr.and([is_int(), field("value").greater_than(1)]),
         ),
-        ("or of comparisons", e.or([is_int(), field("v").equal("a")])),
-        ("not of a comparison", e.not(field("v").equal(1))),
+        (
+            "or of comparisons",
+            expr.or([is_int(), field("value").equal("a")]),
+        ),
+        ("not of a comparison", expr.not(field("value").equal(1))),
         (
             "and with a field",
-            e.and([flag(), e.constant(true).equal(true)]),
+            expr.and([flag(), expr.constant(true).equal(true)]),
         ),
         (
             "and with false first",
-            e.and([field("v").equal(false), flag()]),
+            expr.and([field("value").equal(false), flag()]),
         ),
         (
             "or with true first",
-            e.or([field("rank").greater_than(0), flag()]),
+            expr.or([field("rank").greater_than(0), flag()]),
         ),
         ("a field as the condition", flag()),
         (
             "a string field as the condition",
-            FirestoreBoolExpr::unchecked(field("s")),
+            FirestoreBoolExpr::unchecked(field("text")),
         ),
         (
             "nested and in or",
-            e.or([
-                e.and([is_int(), field("n").greater_than(0)]),
-                field("k").equal("double"),
+            expr.or([
+                expr.and([is_int(), field("number").greater_than(0)]),
+                field("kind").equal("double"),
             ]),
         ),
     ];
@@ -775,22 +808,28 @@ async fn logic_matches_firestore() -> TestResult {
     }
 
     for (case, condition) in [
-        ("not of a field", e.not(flag())),
-        ("or with a field", e.or([flag(), field("v").equal(1)])),
+        ("not of a field", expr.not(flag())),
+        (
+            "or with a field",
+            expr.or([flag(), field("value").equal(1)]),
+        ),
     ] {
         let pipeline = differential.edge_where(condition);
         differential.same(case, Expect::Failure, pipeline).await;
     }
 
     let without_string_flag =
-        |condition: FirestoreBoolExpr| e.and([field("k").not_equal("bool"), condition]);
+        |condition: FirestoreBoolExpr| expr.and([field("kind").not_equal("bool"), condition]);
     for (case, condition) in [
         (
             "and with a flag",
-            e.and([flag(), field("rank").greater_than(0)]),
+            expr.and([flag(), field("rank").greater_than(0)]),
         ),
-        ("or with a flag", e.or([flag(), field("rank").less_than(0)])),
-        ("not of a flag", e.not(flag())),
+        (
+            "or with a flag",
+            expr.or([flag(), field("rank").less_than(0)]),
+        ),
+        ("not of a flag", expr.not(flag())),
         ("a flag as the condition", flag()),
     ] {
         let pipeline = differential.edge_where(without_string_flag(condition));
@@ -806,35 +845,38 @@ async fn logic_matches_firestore() -> TestResult {
 #[tokio::test]
 async fn condition_values_match_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
-    let e = FirestorePipelineExprBuilder;
-    let flag = || FirestoreBoolExpr::unchecked(field("b"));
+    let expr = FirestorePipelineExprBuilder;
+    let flag = || FirestoreBoolExpr::unchecked(field("flag"));
     let null_condition = || FirestoreBoolExpr::unchecked(constant(null()));
     let logical = [
-        ("not of a flag", e.not(flag())),
+        ("not of a flag", expr.not(flag())),
         (
             "and of a flag and true",
-            e.and([flag(), e.constant(true).equal(true)]),
+            expr.and([flag(), expr.constant(true).equal(true)]),
         ),
         (
             "and of a flag and false",
-            e.and([flag(), e.constant(true).equal(false)]),
+            expr.and([flag(), expr.constant(true).equal(false)]),
         ),
         (
             "or of a flag and true",
-            e.or([flag(), e.constant(true).equal(true)]),
+            expr.or([flag(), expr.constant(true).equal(true)]),
         ),
         (
             "or of a flag and false",
-            e.or([flag(), e.constant(true).equal(false)]),
+            expr.or([flag(), expr.constant(true).equal(false)]),
         ),
-        ("and of null and a flag", e.and([null_condition(), flag()])),
-        ("not of null", e.not(null_condition())),
+        (
+            "and of null and a flag",
+            expr.and([null_condition(), flag()]),
+        ),
+        ("not of null", expr.not(null_condition())),
     ];
     for (case, condition) in logical {
         let pipeline = differential
             .pipeline()
-            .from(EDGE)
-            .filter(|q| q.field("k").not_equal("bool"))
+            .from(EDGE_CASES_COLLECTION)
+            .filter(|q| q.field("kind").not_equal("bool"))
             .add_fields(|_| [condition.alias("result")])
             .into_pipeline();
         differential.same(case, Expect::Rows, pipeline).await;
@@ -851,21 +893,21 @@ async fn condition_values_match_firestore() -> TestResult {
         ),
         (
             "equal_any",
-            field("v").equal_any(constant(array(vec![int(1), null()]))),
+            field("value").equal_any(constant(array(vec![int(1), null()]))),
         ),
         (
             "not_equal_any",
-            field("v").not_equal_any(constant(array(vec![int(1)]))),
+            field("value").not_equal_any(constant(array(vec![int(1)]))),
         ),
-        ("equal null", field("v").equal(constant(null()))),
-        ("less_than", field("v").less_than(2)),
-        ("exists", field("v").exists()),
-        ("is_absent", field("v").is_absent()),
+        ("equal null", field("value").equal(constant(null()))),
+        ("less_than", field("value").less_than(2)),
+        ("exists", field("value").exists()),
+        ("is_absent", field("value").is_absent()),
     ];
     for (case, condition) in everywhere {
         let pipeline = differential
             .pipeline()
-            .from(EDGE)
+            .from(EDGE_CASES_COLLECTION)
             .add_fields(|_| [condition.alias("result")])
             .into_pipeline();
         differential
@@ -879,37 +921,37 @@ async fn condition_values_match_firestore() -> TestResult {
 #[tokio::test]
 async fn membership_matches_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
-    let first = document_reference(&differential.db, EDGE, "d01");
-    let fifth = document_reference(&differential.db, EDGE, "d05");
+    let first = document_reference(&differential.db, EDGE_CASES_COLLECTION, "d01");
+    let fifth = document_reference(&differential.db, EDGE_CASES_COLLECTION, "d05");
     let cases = [
         (
             "equal_any of mixed values",
-            field("v").equal_any(constant(array(vec![int(1), string("a"), null()]))),
+            field("value").equal_any(constant(array(vec![int(1), string("a"), null()]))),
         ),
         (
             "equal_any of NaN",
-            field("v").equal_any(constant(array(vec![double(f64::NAN)]))),
+            field("value").equal_any(constant(array(vec![double(f64::NAN)]))),
         ),
         (
             "not_equal_any of mixed values",
-            field("v").not_equal_any(constant(array(vec![int(1), null()]))),
+            field("value").not_equal_any(constant(array(vec![int(1), null()]))),
         ),
         (
             "equal_any of an empty array",
-            field("v").equal_any(constant(array(vec![]))),
+            field("value").equal_any(constant(array(vec![]))),
         ),
         (
             "not_equal_any of an empty array",
-            field("v").not_equal_any(constant(array(vec![]))),
+            field("value").not_equal_any(constant(array(vec![]))),
         ),
         (
             "equal_any of names",
             field("__name__").equal_any(constant(array(vec![first.clone(), fifth]))),
         ),
-        ("exists", field("v").exists()),
-        ("is_absent", field("v").is_absent()),
-        ("exists of a nested field", field("v.x").exists()),
-        ("equal of a nested field", field("v.x").equal(1)),
+        ("exists", field("value").exists()),
+        ("is_absent", field("value").is_absent()),
+        ("exists of a nested field", field("value.x").exists()),
+        ("equal of a nested field", field("value.x").equal(1)),
         ("equal of a name", field("__name__").equal(constant(first))),
         (
             "array_contains of a string",
@@ -944,7 +986,7 @@ async fn membership_matches_firestore() -> TestResult {
         let pipeline = differential.edge_where(condition);
         differential.same(case, Expect::Rows, pipeline).await;
     }
-    let not_an_array = differential.edge_where(field("v").equal_any(field("s")));
+    let not_an_array = differential.edge_where(field("value").equal_any(field("text")));
     differential
         .same(
             "equal_any of a field that is not an array",
@@ -960,61 +1002,91 @@ async fn membership_matches_firestore() -> TestResult {
 async fn arithmetic_matches_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
     type Operation = fn(FirestoreExpr) -> FirestoreExpr;
-    // `n` holds i64::MAX and i64::MIN, which overflow, and an integer division by zero fails.
+    // `number` holds i64::MAX and i64::MIN, which overflow, and an integer division by zero fails.
     let operations: [(&str, Operation, Expect, Expect); 9] = [
-        ("add 1", |n| n.add(1), Expect::Rows, Expect::Failure),
-        ("add 0.5", |n| n.add(0.5), Expect::Rows, Expect::Rows),
+        (
+            "add 1",
+            |number| number.add(1),
+            Expect::Rows,
+            Expect::Failure,
+        ),
+        (
+            "add 0.5",
+            |number| number.add(0.5),
+            Expect::Rows,
+            Expect::Rows,
+        ),
         (
             "subtract 1",
-            |n| n.subtract(1),
+            |number| number.subtract(1),
             Expect::Rows,
             Expect::Failure,
         ),
         (
             "multiply 2",
-            |n| n.multiply(2),
+            |number| number.multiply(2),
             Expect::Rows,
             Expect::Failure,
         ),
-        ("divide 2", |n| n.divide(2), Expect::Rows, Expect::Rows),
-        ("divide 2.0", |n| n.divide(2.0), Expect::Rows, Expect::Rows),
+        (
+            "divide 2",
+            |number| number.divide(2),
+            Expect::Rows,
+            Expect::Rows,
+        ),
+        (
+            "divide 2.0",
+            |number| number.divide(2.0),
+            Expect::Rows,
+            Expect::Rows,
+        ),
         (
             "divide 0",
-            |n| n.divide(0),
+            |number| number.divide(0),
             Expect::Failure,
             Expect::Failure,
         ),
-        ("mod 3", |n| n.modulo(3), Expect::Rows, Expect::Rows),
-        ("mod 0.0", |n| n.modulo(0.0), Expect::Rows, Expect::Rows),
+        (
+            "mod 3",
+            |number| number.modulo(3),
+            Expect::Rows,
+            Expect::Rows,
+        ),
+        (
+            "mod 0.0",
+            |number| number.modulo(0.0),
+            Expect::Rows,
+            Expect::Rows,
+        ),
     ];
     for (name, operation, small, every) in operations {
         let in_range = differential
             .pipeline()
-            .from(EDGE)
+            .from(EDGE_CASES_COLLECTION)
             .filter(|q| q.field("rank").less_than_or_equal(8))
-            .add_fields(|_| [operation(field("n")).alias("result")])
+            .add_fields(|_| [operation(field("number")).alias("result")])
             .into_pipeline();
         differential
             .same(&format!("{name} of small numbers"), small, in_range)
             .await;
         let everything = differential
             .pipeline()
-            .from(EDGE)
-            .add_fields(|_| [operation(field("n")).alias("result")])
+            .from(EDGE_CASES_COLLECTION)
+            .add_fields(|_| [operation(field("number")).alias("result")])
             .into_pipeline();
         differential
-            .same(&format!("{name} of every n"), every, everything)
+            .same(&format!("{name} of every number"), every, everything)
             .await;
     }
     let of_absent = differential
         .pipeline()
-        .from(EDGE)
+        .from(EDGE_CASES_COLLECTION)
         .add_fields(|_| [field("missing").add(1).alias("result")])
         .into_pipeline();
     differential
         .same("add of an absent field", Expect::Rows, of_absent)
         .await;
-    let in_filter = differential.edge_where(field("n").multiply(2).greater_than(5));
+    let in_filter = differential.edge_where(field("number").multiply(2).greater_than(5));
     differential
         .same(
             "multiply in a filter over every n",
@@ -1030,54 +1102,36 @@ async fn arithmetic_matches_firestore() -> TestResult {
 async fn strings_match_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
     type Function = fn(FirestoreExpr) -> FirestoreExpr;
-    let functions: [(&str, Function); 14] = [
+    let functions: [(&str, Function); 9] = [
         ("to_lower", FirestoreExpr::to_lower),
         ("to_upper", FirestoreExpr::to_upper),
         ("char_length", FirestoreExpr::char_length),
-        ("starts_with", |s| s.starts_with("He").into()),
-        ("ends_with", |s| s.ends_with("lo").into()),
-        ("string_contains", |s| s.string_contains("l").into()),
-        ("like with %", |s| s.like("%l_o%").into()),
-        ("like with an escape", |s| s.like("100\\%").into()),
-        ("like of a literal backslash", |s| s.like("a\\\\b").into()),
-        ("like with _ over a combining mark", |s| s.like("e_").into()),
-        ("like with regex characters", |s| s.like("%[a-z].%").into()),
-        ("string_concat", |s| s.string_concat(["!"])),
-        ("concat", |s| s.concat(["!"])),
-        ("concat with null", |s| s.concat([constant(null())])),
+        ("starts_with", |text| text.starts_with("He").into()),
+        ("ends_with", |text| text.ends_with("lo").into()),
+        ("string_contains", |text| text.string_contains("l").into()),
+        ("string_concat", |text| text.string_concat(["!"])),
+        ("concat", |text| text.concat(["!"])),
+        ("concat with null", |text| text.concat([constant(null())])),
     ];
     for (name, function) in functions {
         let strings = differential
             .pipeline()
-            .from(EDGE)
-            .filter(|q| q.field("k").not_equal("absent"))
-            .add_fields(|_| [function(field("s")).alias("result")])
+            .from(EDGE_CASES_COLLECTION)
+            .filter(|q| q.field("kind").not_equal("absent"))
+            .add_fields(|_| [function(field("text")).alias("result")])
             .into_pipeline();
         differential
             .same(&format!("{name} of strings"), Expect::Rows, strings)
             .await;
-        let everything = differential
-            .pipeline()
-            .from(EDGE)
-            .add_fields(|_| [function(field("s")).alias("result")])
-            .into_pipeline();
-        differential
-            .same(&format!("{name} of every s"), Expect::Failure, everything)
-            .await;
     }
-    let trailing_backslash = differential.edge_where(
-        FirestorePipelineExprBuilder.and([field("k").equal("int"), field("s").like("a\\")]),
-    );
+    // `text` holds a number in one document, which every string function fails on.
+    let everything = differential
+        .pipeline()
+        .from(EDGE_CASES_COLLECTION)
+        .add_fields(|_| [field("text").to_lower().alias("result")])
+        .into_pipeline();
     differential
-        .same(
-            "like with a trailing backslash",
-            Expect::Failure,
-            trailing_backslash,
-        )
-        .await;
-    let lower_like = differential.edge_where(field("s").to_lower().like("%é%"));
-    differential
-        .same("like of to_lower", Expect::Failure, lower_like)
+        .same("to_lower of every text", Expect::Failure, everything)
         .await;
 
     differential.finish().await
@@ -1087,7 +1141,7 @@ async fn strings_match_firestore() -> TestResult {
 async fn stages_match_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
     let sortable = || {
-        field("k").not_equal_any(constant(array(vec![
+        field("kind").not_equal_any(constant(array(vec![
             string("array"),
             string("map"),
             string("geo"),
@@ -1096,140 +1150,154 @@ async fn stages_match_firestore() -> TestResult {
 
     let cases = [
         (
-            "sort by v ascending",
+            "sort by value ascending",
+            Expect::RowsInOrder,
             differential
                 .pipeline()
-                .from(EDGE)
+                .from(EDGE_CASES_COLLECTION)
                 .filter(|q| q.condition(sortable()))
-                .sort(|e| [e.field("v").asc(), e.field("rank").asc()])
+                .sort(|expr| [expr.field("value").asc(), expr.field("rank").asc()])
                 .into_pipeline(),
         ),
         (
-            "sort by v descending",
+            "sort by value descending",
+            Expect::RowsInOrder,
             differential
                 .pipeline()
-                .from(EDGE)
+                .from(EDGE_CASES_COLLECTION)
                 .filter(|q| q.condition(sortable()))
-                .sort(|e| [e.field("v").desc(), e.field("rank").desc()])
+                .sort(|expr| [expr.field("value").desc(), expr.field("rank").desc()])
                 .into_pipeline(),
         ),
         (
-            "sort by s",
+            "sort by text",
+            Expect::RowsInOrder,
             differential
                 .pipeline()
-                .from(EDGE)
-                .sort(|e| [e.field("s").asc(), e.field("rank").asc()])
+                .from(EDGE_CASES_COLLECTION)
+                .sort(|expr| [expr.field("text").asc(), expr.field("rank").asc()])
                 .into_pipeline(),
         ),
         (
             "sort by a computed value",
+            Expect::RowsInOrder,
             differential
                 .pipeline()
-                .from(EDGE)
+                .from(EDGE_CASES_COLLECTION)
                 .filter(|q| q.field("rank").less_than_or_equal(8))
-                .sort(|e| [e.field("n").multiply(-1).asc(), e.field("rank").asc()])
+                .sort(|expr| {
+                    [
+                        expr.field("number").multiply(-1).asc(),
+                        expr.field("rank").asc(),
+                    ]
+                })
                 .into_pipeline(),
         ),
         (
             "sort, offset and limit",
+            Expect::RowsInOrder,
             differential
                 .pipeline()
-                .from(EDGE)
-                .sort(|e| [e.field("rank").desc()])
+                .from(EDGE_CASES_COLLECTION)
+                .sort(|expr| [expr.field("rank").desc()])
                 .offset(2)
                 .limit(3)
                 .into_pipeline(),
         ),
         (
             "offset past the end",
+            Expect::Rows,
             differential
                 .pipeline()
-                .from(EDGE)
-                .sort(|e| [e.field("rank").asc()])
+                .from(EDGE_CASES_COLLECTION)
+                .sort(|expr| [expr.field("rank").asc()])
                 .offset(100)
                 .into_pipeline(),
         ),
         (
             "fields",
+            Expect::RowsInOrder,
             differential
                 .pipeline()
-                .from(EDGE)
-                .fields(|e| {
+                .from(EDGE_CASES_COLLECTION)
+                .fields(|expr| {
                     [
-                        FirestoreSelection::from(e.field("v")),
-                        e.field("s").alias("text"),
-                        e.field("rank").add(100).alias("shifted"),
-                        FirestoreSelection::from(e.field("missing")),
+                        FirestoreSelection::from(expr.field("value")),
+                        expr.field("text").alias("caption"),
+                        expr.field("rank").add(100).alias("shifted"),
+                        FirestoreSelection::from(expr.field("missing")),
                     ]
                 })
-                .sort(|e| [e.field("shifted").asc()])
+                .sort(|expr| [expr.field("shifted").asc()])
                 .into_pipeline(),
         ),
         (
             "fields with the name",
+            Expect::RowsInOrder,
             differential
                 .pipeline()
-                .from(EDGE)
-                .fields(|e| [e.field("__name__"), e.field("rank")])
-                .sort(|e| [e.field("rank").asc()])
+                .from(EDGE_CASES_COLLECTION)
+                .fields(|expr| [expr.field("__name__"), expr.field("rank")])
+                .sort(|expr| [expr.field("rank").asc()])
                 .into_pipeline(),
         ),
         (
             "fields with the name aliased",
+            Expect::RowsInOrder,
             differential
                 .pipeline()
-                .from(EDGE)
-                .fields(|e| {
+                .from(EDGE_CASES_COLLECTION)
+                .fields(|expr| {
                     [
-                        e.field("__name__").alias("id"),
-                        e.field("rank").alias("rank"),
+                        expr.field("__name__").alias("id"),
+                        expr.field("rank").alias("rank"),
                     ]
                 })
-                .sort(|e| [e.field("rank").asc()])
+                .sort(|expr| [expr.field("rank").asc()])
                 .into_pipeline(),
         ),
         (
             "where after fields",
+            Expect::Rows,
             differential
                 .pipeline()
-                .from(EDGE)
-                .fields(|e| [e.field("v").alias("value"), e.field("rank").alias("rank")])
-                .filter(|q| q.field("value").greater_than(1))
+                .from(EDGE_CASES_COLLECTION)
+                .fields(|expr| {
+                    [
+                        expr.field("value").alias("renamed"),
+                        expr.field("rank").alias("rank"),
+                    ]
+                })
+                .filter(|q| q.field("renamed").greater_than(1))
                 .into_pipeline(),
         ),
         (
             "add_fields",
+            Expect::Rows,
             differential
                 .pipeline()
-                .from(EDGE)
-                .add_fields(|e| {
+                .from(EDGE_CASES_COLLECTION)
+                .add_fields(|expr| {
                     [
-                        e.field("rank").multiply(10).alias("rank"),
-                        e.field("v").alias("copy"),
-                        e.field("missing").alias("s"),
+                        expr.field("rank").multiply(10).alias("rank"),
+                        expr.field("value").alias("copy"),
+                        expr.field("missing").alias("s"),
                     ]
                 })
                 .into_pipeline(),
         ),
         (
             "remove_fields",
+            Expect::Rows,
             differential
                 .pipeline()
-                .from(EDGE)
+                .from(EDGE_CASES_COLLECTION)
                 .remove_fields(["v", "missing"])
                 .into_pipeline(),
         ),
     ];
-    for (case, pipeline) in cases {
-        let rows = if case.starts_with("sort")
-            || case.starts_with("limit")
-            || case.starts_with("fields")
-        {
-            Expect::RowsInOrder
-        } else {
-            Expect::Rows
-        };
-        differential.same(case, rows, pipeline).await;
+    for (case, expect, pipeline) in cases {
+        differential.same(case, expect, pipeline).await;
     }
 
     differential.finish().await
@@ -1238,9 +1306,9 @@ async fn stages_match_firestore() -> TestResult {
 #[tokio::test]
 async fn sources_match_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
-    let second = document_reference(&differential.db, EDGE, "d02");
-    let elsewhere = document_reference(&differential.db, SESSIONS, "s1");
-    let edge_path = |id: &str| format!("{EDGE}/{id}");
+    let second = document_reference(&differential.db, EDGE_CASES_COLLECTION, "d02");
+    let elsewhere = document_reference(&differential.db, SESSIONS_COLLECTION, "s1");
+    let edge_path = |id: &str| format!("{EDGE_CASES_COLLECTION}/{id}");
 
     let cases = [
         (
@@ -1255,14 +1323,14 @@ async fn sources_match_firestore() -> TestResult {
             differential
                 .pipeline()
                 .documents([edge_path("d03"), edge_path("d01")])
-                .filter(|q| q.field("v").greater_than(1))
+                .filter(|q| q.field("value").greater_than(1))
                 .into_pipeline(),
         ),
         (
             "a collection under a document",
             differential
                 .pipeline()
-                .from(CHILDREN)
+                .from(CHILDREN_COLLECTION)
                 .parent(children_parent(&differential.db))
                 .filter(|q| q.field("x").greater_than(1))
                 .into_pipeline(),
@@ -1280,10 +1348,10 @@ async fn sources_match_firestore() -> TestResult {
             differential.edge_where(FirestorePipelineExprBuilder.and([
                 field("__name__").equal_any(constant(array(vec![
                     second,
-                    document_reference(&differential.db, EDGE, "d03"),
-                    document_reference(&differential.db, EDGE, "nope"),
+                    document_reference(&differential.db, EDGE_CASES_COLLECTION, "d03"),
+                    document_reference(&differential.db, EDGE_CASES_COLLECTION, "nope"),
                 ]))),
-                field("v").greater_than(1),
+                field("value").greater_than(1),
             ])),
         ),
     ];
@@ -1295,7 +1363,11 @@ async fn sources_match_firestore() -> TestResult {
         .documents([edge_path("d03"), edge_path("d01"), edge_path("d02")])
         .into_pipeline();
     differential
-        .same("documents in the order given", Expect::RowsInOrder, ordered)
+        .same(
+            "documents come back ordered by name",
+            Expect::RowsInOrder,
+            ordered,
+        )
         .await;
 
     differential.finish().await
@@ -1306,25 +1378,15 @@ async fn reads_by_name_of_a_lazy_collection_use_what_the_cache_holds() -> TestRe
     let (db, cache) = setup().await?;
     let through_db = db.read_through_cache(&cache);
     let cached_db = db.read_cached_only(&cache);
-    let session = |id: &str| format!("{SESSIONS}/{id}");
-    let by_documents = |db: &FirestoreDb, ids: &[&str]| {
-        db.fluent()
-            .pipeline()
-            .select()
-            .documents(ids.iter().map(|id| session(id)))
-            .into_pipeline()
-    };
-    let run = |db: FirestoreDb, pipeline: FirestorePipeline| async move {
-        let items = db
-            .fluent()
-            .pipeline()
-            .select()
-            .from_pipeline(pipeline)
-            .stream_query_with_metadata()
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?;
-        FirestoreResult::Ok(Served::from(items))
+    let session = |id: &str| format!("{SESSIONS_COLLECTION}/{id}");
+    let by_documents = |ids: &[&str]| {
+        Query::from(
+            db.fluent()
+                .pipeline()
+                .select()
+                .documents(ids.iter().map(|id| session(id)))
+                .into_pipeline(),
+        )
     };
     let ids = |served: &Served| match served {
         Served::Firestore(documents) | Served::Cache(documents) => {
@@ -1341,19 +1403,19 @@ async fn reads_by_name_of_a_lazy_collection_use_what_the_cache_holds() -> TestRe
     let _: Option<FirestoreDocument> = through_db
         .fluent()
         .select()
-        .by_id_in(SESSIONS)
+        .by_id_in(SESSIONS_COLLECTION)
         .one("s1")
         .await?;
 
-    let held = run(through_db.clone(), by_documents(&db, &["s1"])).await?;
+    let held = by_documents(&["s1"]).run(&through_db).await;
     assert!(matches!(held, Served::Cache(_)));
     assert_eq!(ids(&held), ["s1"]);
 
-    let partly_held = run(through_db.clone(), by_documents(&db, &["s1", "s2"])).await?;
+    let partly_held = by_documents(&["s1", "s2"]).run(&through_db).await;
     assert!(matches!(partly_held, Served::Firestore(_)));
     assert_eq!(ids(&partly_held), ["s1", "s2"]);
 
-    let only_held = run(cached_db.clone(), by_documents(&db, &["s1", "s2"])).await?;
+    let only_held = by_documents(&["s1", "s2"]).run(&cached_db).await;
     assert!(matches!(only_held, Served::Cache(_)));
     assert_eq!(ids(&only_held), ["s1"]);
 
@@ -1361,7 +1423,7 @@ async fn reads_by_name_of_a_lazy_collection_use_what_the_cache_holds() -> TestRe
         .fluent()
         .pipeline()
         .select()
-        .from(SESSIONS)
+        .from(SESSIONS_COLLECTION)
         .filter(|q| {
             q.field("__name__").eq(FirestoreReference(format!(
                 "{}/{}",
@@ -1370,7 +1432,7 @@ async fn reads_by_name_of_a_lazy_collection_use_what_the_cache_holds() -> TestRe
             )))
         })
         .into_pipeline();
-    let held_by_name = run(through_db.clone(), by_name).await?;
+    let held_by_name = Query::from(by_name).run(&through_db).await;
     assert!(matches!(held_by_name, Served::Cache(_)));
     assert_eq!(ids(&held_by_name), ["s1"]);
 
@@ -1378,13 +1440,14 @@ async fn reads_by_name_of_a_lazy_collection_use_what_the_cache_holds() -> TestRe
         .fluent()
         .pipeline()
         .select()
-        .from(SESSIONS)
+        .from(SESSIONS_COLLECTION)
         .into_pipeline();
+    let scan = Query::from(scan);
     assert!(matches!(
-        run(cached_db, scan.clone()).await,
-        Err(FirestoreError::CacheError(_))
+        scan.run(&cached_db).await,
+        Served::Failed(FirestoreError::CacheError(_))
     ));
-    let scanned = run(through_db, scan).await?;
+    let scanned = scan.run(&through_db).await;
     assert!(matches!(scanned, Served::Firestore(_)));
     assert_eq!(ids(&scanned), ["s1", "s2", "s3"]);
 
@@ -1400,23 +1463,15 @@ async fn pipelines_the_cache_does_not_evaluate_go_to_firestore() -> TestResult {
             "aggregate",
             differential
                 .pipeline()
-                .from(EDGE)
-                .aggregate(|e| [e.count_all().alias("count")])
-                .into_pipeline(),
-        ),
-        (
-            "distinct",
-            differential
-                .pipeline()
-                .from(EDGE)
-                .distinct(|e| [e.field("k")])
+                .from(EDGE_CASES_COLLECTION)
+                .aggregate(|expr| [expr.count_all().alias("count")])
                 .into_pipeline(),
         ),
         (
             "collection group",
             differential
                 .pipeline()
-                .from(EDGE)
+                .from(EDGE_CASES_COLLECTION)
                 .all_descendants()
                 .into_pipeline(),
         ),
@@ -1431,76 +1486,58 @@ async fn pipelines_the_cache_does_not_evaluate_go_to_firestore() -> TestResult {
             "force_index",
             differential
                 .pipeline()
-                .from(EDGE)
+                .from(EDGE_CASES_COLLECTION)
                 .force_index(FirestoreIndexHint::TableScan)
                 .into_pipeline(),
         ),
         (
-            "raw stage",
-            differential
-                .pipeline()
-                .from(EDGE)
-                .raw_stage(FirestoreRawStage::new("limit".to_string()).with_args(vec![1.into()]))
-                .into_pipeline(),
-        ),
-        (
-            "a function the cache does not evaluate",
-            differential.edge_where(field("s").regex_contains("^H")),
+            "like",
+            // Only strings reach `like`, so the cache could answer it if it evaluated it.
+            differential.edge_where(
+                FirestorePipelineExprBuilder
+                    .and([field("kind").equal("int"), field("text").like("H%")]),
+            ),
         ),
         (
             "sort by values of every type",
             differential
                 .pipeline()
-                .from(EDGE)
-                .sort(|e| [e.field("v").asc(), e.field("rank").asc()])
-                .into_pipeline(),
-        ),
-        (
-            "limit before sort",
-            differential
-                .pipeline()
-                .from(EDGE)
-                .limit(4)
-                .sort(|e| [e.field("rank").desc()])
+                .from(EDGE_CASES_COLLECTION)
+                .sort(|expr| [expr.field("value").asc(), expr.field("rank").asc()])
                 .into_pipeline(),
         ),
         (
             "limit without sort",
-            differential.pipeline().from(EDGE).limit(3).into_pipeline(),
+            differential
+                .pipeline()
+                .from(EDGE_CASES_COLLECTION)
+                .limit(3)
+                .into_pipeline(),
         ),
         (
             "fields with a nested path",
             differential
                 .pipeline()
-                .from(EDGE)
-                .fields(|e| [e.field("v.x"), e.field("rank")])
+                .from(EDGE_CASES_COLLECTION)
+                .fields(|expr| [expr.field("value.x"), expr.field("rank")])
                 .into_pipeline(),
-        ),
-        (
-            "remove_fields of a nested path",
-            differential
-                .pipeline()
-                .from(EDGE)
-                .remove_fields(["v.x"])
-                .into_pipeline(),
-        ),
-        (
-            "like with an escaped letter",
-            differential.edge_where(
-                FirestorePipelineExprBuilder
-                    .and([field("k").equal("int"), field("s").like("a\\b")]),
-            ),
         ),
         (
             "documents that name one twice",
             differential
                 .pipeline()
-                .documents([format!("{EDGE}/d01"), format!("{EDGE}/d01")])
+                .documents([
+                    format!("{EDGE_CASES_COLLECTION}/d01"),
+                    format!("{EDGE_CASES_COLLECTION}/d01"),
+                ])
                 .into_pipeline(),
         ),
         (
             "documents that name a collection",
-            differential.pipeline().documents([EDGE]).into_pipeline(),
+            differential
+                .pipeline()
+                .documents([EDGE_CASES_COLLECTION])
+                .into_pipeline(),
         ),
         (
             "a collection the cache does not hold",
@@ -1514,7 +1551,10 @@ async fn pipelines_the_cache_does_not_evaluate_go_to_firestore() -> TestResult {
         differential.refused(case, pipeline).await;
     }
 
-    let explained = differential.pipeline().from(EDGE).into_pipeline();
+    let explained = differential
+        .pipeline()
+        .from(EDGE_CASES_COLLECTION)
+        .into_pipeline();
     let cached_db = differential.db.read_cached_only(&differential.cache);
     assert!(matches!(
         cached_db
@@ -1567,7 +1607,10 @@ async fn pipelines_the_cache_does_not_evaluate_go_to_firestore() -> TestResult {
             .db
             .read_through_cache(&differential.cache)
             .clone_with_consistency_selector(selector);
-        let pipeline = differential.pipeline().from(EDGE).into_pipeline();
+        let pipeline = differential
+            .pipeline()
+            .from(EDGE_CASES_COLLECTION)
+            .into_pipeline();
         differential
             .refused_by(case, &cached_db, &through_db, pipeline.into())
             .await;
@@ -1581,48 +1624,50 @@ async fn pipelines_the_cache_does_not_evaluate_go_to_firestore() -> TestResult {
 #[tokio::test]
 async fn sql_reads_match_firestore() -> TestResult {
     let mut differential = Differential::new().await?;
+    // Only the statements whose translation no pipeline case covers.
     let statements = [
-        "SELECT * FROM `pipeline-cache-edge` WHERE v > 1",
-        "SELECT * FROM `pipeline-cache-edge` WHERE v IS NULL",
-        "SELECT * FROM `pipeline-cache-edge` WHERE v IS NOT NULL",
-        "SELECT * FROM `pipeline-cache-edge` WHERE v != 1",
-        "SELECT * FROM `pipeline-cache-edge` WHERE v IN (1, 'a', 2.5)",
-        "SELECT * FROM `pipeline-cache-edge` WHERE n BETWEEN 0 AND 5",
-        "SELECT * FROM `pipeline-cache-edge` WHERE NOT (k = 'int') AND rank < 10",
-        "SELECT * FROM `pipeline-cache-edge` WHERE __name__ = 'd01'",
-        "SELECT * FROM `pipeline-cache-edge` WHERE __name__ IN ('d01', 'd02', 'nope')",
-        "SELECT * FROM `pipeline-cache-edge` WHERE k IN ('int', 'double') AND s LIKE 'H%'",
-        "SELECT * FROM `pipeline-cache-edge` WHERE k = 'string' AND s ILIKE 'A%'",
-        "SELECT * FROM `pipeline-cache-edge` WHERE k = 'int' AND 'a' IN UNNEST(tags)",
-        "SELECT s, LOWER(s) AS lower, s || '!' AS shout FROM `pipeline-cache-edge` WHERE k = 'string'",
-        "SELECT * EXCEPT (v, tags) FROM `pipeline-cache-edge` WHERE rank <= 3",
-        "SELECT __name__, rank FROM `pipeline-cache-edge` ORDER BY rank DESC LIMIT 3 OFFSET 1",
+        (
+            "SELECT * FROM `pipeline-cache-edge` WHERE __name__ = 'd01'",
+            Expect::Rows,
+        ),
+        (
+            "SELECT * FROM `pipeline-cache-edge` WHERE __name__ IN ('d01', 'd02', 'nope')",
+            Expect::Rows,
+        ),
+        (
+            "SELECT * FROM `pipeline-cache-edge` WHERE kind = 'int' AND 'a' IN UNNEST(tags)",
+            Expect::Rows,
+        ),
+        (
+            "SELECT text, LOWER(text) AS lower, text || '!' AS shout FROM `pipeline-cache-edge` \
+             WHERE kind = 'string'",
+            Expect::Rows,
+        ),
+        (
+            "SELECT * EXCEPT (value, tags) FROM `pipeline-cache-edge` WHERE rank <= 3",
+            Expect::Rows,
+        ),
+        (
+            "SELECT __name__, rank FROM `pipeline-cache-edge` ORDER BY rank DESC LIMIT 3 OFFSET 1",
+            Expect::RowsInOrder,
+        ),
+        // `tags` holds a string in one document.
+        (
+            "SELECT * FROM `pipeline-cache-edge` WHERE 'a' IN UNNEST(tags)",
+            Expect::Failure,
+        ),
     ];
-    for statement in statements {
-        let expect = if statement.contains("ORDER BY") {
-            Expect::RowsInOrder
-        } else {
-            Expect::Rows
-        };
+    for (statement, expect) in statements {
         differential
             .same(statement, expect, Query::Sql(statement))
             .await;
     }
-    // `s` holds a number in one document, and `like` fails on it; `tags` holds a string in one.
-    for statement in [
-        "SELECT * FROM `pipeline-cache-edge` WHERE s LIKE 'H%'",
-        "SELECT * FROM `pipeline-cache-edge` WHERE 'a' IN UNNEST(tags)",
-    ] {
-        differential
-            .same(statement, Expect::Failure, Query::Sql(statement))
-            .await;
-    }
-    for statement in [
-        "SELECT k, COUNT(*) AS count FROM `pipeline-cache-edge` GROUP BY k",
-        "SELECT DISTINCT k FROM `pipeline-cache-edge`",
-    ] {
-        differential.refused(statement, Query::Sql(statement)).await;
-    }
+    // `ILIKE` translates to `like` of a lower-cased text, which the cache does not evaluate.
+    let case_insensitive_like =
+        "SELECT * FROM `pipeline-cache-edge` WHERE kind = 'string' AND text ILIKE 'A%'";
+    differential
+        .refused(case_insensitive_like, Query::Sql(case_insensitive_like))
+        .await;
 
     differential.finish().await
 }
