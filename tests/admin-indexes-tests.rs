@@ -11,6 +11,9 @@
 //! `search_indexes_against_real_firestore_enterprise` runs against the Enterprise edition database
 //! `GCP_ENTERPRISE_DATABASE_ID` of the same project instead, on a group of its own.
 //!
+//! The `sql_*` tests run the index statements of the `sql` feature, each on a group of its own,
+//! and empty that group again even when an assertion fails.
+//!
 //! Safety net: `ListIndexes` scoped to one collection group's parent can answer with composite
 //! indexes belonging to *every* group in the database (see the fake-server tests in
 //! `src/db/admin/indexes.rs` that replay a captured response). The library filters and defends
@@ -30,6 +33,8 @@ use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 mod common;
+#[cfg(feature = "sql")]
+use common::setup_enterprise_unseeded;
 use common::{setup, setup_enterprise};
 
 const SYNC_GROUP: &str = "firestore-rs-index-sync-test";
@@ -588,4 +593,237 @@ async fn search_indexes_against_real_firestore_enterprise(
         "{SEARCH_GROUP:?} holds no index after the prune"
     );
     Ok(())
+}
+
+#[cfg(feature = "sql")]
+mod sql_statements {
+    use super::*;
+    use std::future::Future;
+
+    type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    const STANDARD_INDEX_GROUP: &str = "firestore-rs-sql-index-standard";
+    const ENTERPRISE_INDEX_GROUP: &str = "firestore-rs-sql-index-enterprise";
+    const FIELD_GROUP: &str = "firestore-rs-sql-field-standard";
+    const SQL_GROUPS: [&str; 3] = [STANDARD_INDEX_GROUP, ENTERPRISE_INDEX_GROUP, FIELD_GROUP];
+
+    /// Runs `scenario` on `group` after emptying it, and empties it again when the scenario
+    /// fails or panics. Every index outside the three groups of these tests must be unchanged
+    /// afterwards, and `group` must hold no index, field override or TTL.
+    async fn in_emptied_group(
+        db: &FirestoreDb,
+        group: &str,
+        scenario: impl Future<Output = TestResult>,
+    ) -> TestResult {
+        let baseline_outside = outside_groups(&list_all_database_indexes(db).await?, &SQL_GROUPS);
+
+        let scenario = AssertUnwindSafe(async {
+            prune_to_empty(db, group).await?;
+            scenario.await
+        })
+        .catch_unwind()
+        .await;
+
+        let cleanup = prune_to_empty(db, group).await;
+        let after_outside = outside_groups(&list_all_database_indexes(db).await?, &SQL_GROUPS);
+        let remaining = db
+            .fluent()
+            .indexes()
+            .list()
+            .collection_group(group)
+            .get()
+            .await?;
+        println!(
+            "[sql] {group:?}: {} indexes and {} fields left; indexes outside the test groups \
+             unchanged: {}",
+            remaining.indexes.len(),
+            remaining.fields.len(),
+            after_outside == baseline_outside
+        );
+
+        scenario.unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
+        cleanup?;
+        assert_eq!(after_outside, baseline_outside);
+        assert!(remaining.indexes.is_empty() && remaining.fields.is_empty());
+        Ok(())
+    }
+
+    fn run_id() -> Result<u128, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis())
+    }
+
+    fn created(outcome: FirestoreSqlOutcome<'_>) -> FirestoreListedCompositeIndex {
+        match outcome {
+            FirestoreSqlOutcome::IndexCreated(index) => index,
+            _ => panic!("expected the outcome IndexCreated"),
+        }
+    }
+
+    fn listing(outcome: FirestoreSqlOutcome<'_>) -> FirestoreIndexListing {
+        match outcome {
+            FirestoreSqlOutcome::Indexes(listing) => listing,
+            _ => panic!("expected the outcome Indexes"),
+        }
+    }
+
+    fn dropped(outcome: FirestoreSqlOutcome<'_>) -> Option<FirestoreListedCompositeIndex> {
+        match outcome {
+            FirestoreSqlOutcome::IndexDropped(index) => index,
+            _ => panic!("expected the outcome IndexDropped"),
+        }
+    }
+
+    fn updated(outcome: FirestoreSqlOutcome<'_>) -> FirestoreListedField {
+        match outcome {
+            FirestoreSqlOutcome::FieldUpdated(field) => field,
+            _ => panic!("expected the outcome FieldUpdated"),
+        }
+    }
+
+    async fn show_indexes_from(
+        db: &FirestoreDb,
+        group: &str,
+    ) -> Result<FirestoreIndexListing, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(listing(
+            db.fluent()
+                .sql(format!("SHOW INDEXES FROM `{group}`"))
+                .run()
+                .await?,
+        ))
+    }
+
+    /// `CREATE INDEX` with a wait, `SHOW INDEXES FROM` lists it, `DROP INDEX` by ID returns it and
+    /// `SHOW INDEXES FROM` no longer lists it. Standard needs two fields in an index.
+    #[tokio::test]
+    #[ignore = "creates and deletes a real index in GCP_PROJECT; takes minutes; run with --ignored"]
+    async fn sql_index_statements_round_trip_on_standard() -> TestResult {
+        let db = setup().await?;
+        let run = run_id()?;
+        let group = FirestoreCollectionId::new(STANDARD_INDEX_GROUP)?;
+
+        in_emptied_group(&db, STANDARD_INDEX_GROUP, async {
+            let index = created(
+                db.fluent()
+                    .sql(format!(
+                        "CREATE INDEX ON `{STANDARD_INDEX_GROUP}` \
+                         (customer_id_{run}, placed_at_{run} DESC)"
+                    ))
+                    .wait_until_ready(WAIT_TIMEOUT)
+                    .run()
+                    .await?,
+            );
+            assert_eq!(index.state, FirestoreIndexState::Ready);
+            assert_eq!(index.collection_group, group);
+
+            let shown = show_indexes_from(&db, STANDARD_INDEX_GROUP).await?;
+            assert!(shown.indexes.iter().any(|listed| listed.id == index.id));
+
+            let removed = dropped(
+                db.fluent()
+                    .sql(format!("DROP INDEX `{}`", index.id))
+                    .run()
+                    .await?,
+            )
+            .expect("an index without IF EXISTS is returned");
+            assert_eq!(removed.id, index.id);
+
+            let shown = show_indexes_from(&db, STANDARD_INDEX_GROUP).await?;
+            assert!(shown.indexes.iter().all(|listed| listed.id != index.id));
+            Ok(())
+        })
+        .await
+    }
+
+    /// `CREATE UNIQUE INDEX` with a wait on the Enterprise database, then `DROP UNIQUE INDEX` by
+    /// the definition that created it. Enterprise accepts an index of one field.
+    #[tokio::test]
+    #[ignore = "creates and deletes a real index in GCP_ENTERPRISE_DATABASE_ID; takes minutes; run with --ignored"]
+    async fn sql_unique_index_round_trip_on_enterprise() -> TestResult {
+        let db = setup_enterprise_unseeded().await?;
+        let run = run_id()?;
+
+        in_emptied_group(&db, ENTERPRISE_INDEX_GROUP, async {
+            let definition = format!(
+                "ON `{ENTERPRISE_INDEX_GROUP}` (email_{run}) OPTIONS (density = 'SPARSE_ANY')"
+            );
+            let index = created(
+                db.fluent()
+                    .sql(format!("CREATE UNIQUE INDEX {definition}"))
+                    .wait_until_ready(WAIT_TIMEOUT)
+                    .run()
+                    .await?,
+            );
+            assert_eq!(index.state, FirestoreIndexState::Ready);
+            assert!(index.index.unique);
+            assert_eq!(index.index.density, Some(FirestoreIndexDensity::SparseAny));
+
+            let removed = dropped(
+                db.fluent()
+                    .sql(format!("DROP UNIQUE INDEX {definition}"))
+                    .run()
+                    .await?,
+            )
+            .expect("an index without IF EXISTS is returned");
+            assert_eq!(removed.id, index.id);
+
+            let shown = show_indexes_from(&db, ENTERPRISE_INDEX_GROUP).await?;
+            assert!(shown.indexes.iter().all(|listed| listed.id != index.id));
+            Ok(())
+        })
+        .await
+    }
+
+    /// `ALTER COLLECTION` enables TTL and exempts the field in one write, then disables TTL and
+    /// removes the override in one write, each waited. Standard accepts index configuration on a
+    /// field.
+    #[tokio::test]
+    #[ignore = "changes a real field in GCP_PROJECT; takes minutes; run with --ignored"]
+    async fn sql_alter_collection_ttl_and_exemption_round_trip() -> TestResult {
+        let db = setup().await?;
+        let field_path = format!("expires_at_{}", run_id()?);
+
+        in_emptied_group(&db, FIELD_GROUP, async {
+            let enabled = updated(
+                db.fluent()
+                    .sql(format!(
+                        "ALTER COLLECTION `{FIELD_GROUP}` ALTER COLUMN {field_path} \
+                         SET OPTIONS (ttl = TRUE, indexes = [])"
+                    ))
+                    .wait_until_ready(WAIT_TIMEOUT)
+                    .run()
+                    .await?,
+            );
+            assert_eq!(enabled.field_path, field_path);
+            assert_eq!(
+                enabled.ttl,
+                Some(FirestoreFieldTtlOutcome::Configured(
+                    FirestoreFieldTtlState::Active
+                ))
+            );
+            assert!(matches!(
+                &enabled.index_override,
+                Some(FirestoreFieldOverrideOutcome::Explicit(explicit)) if explicit.indexes.is_empty()
+            ));
+
+            let reverted = updated(
+                db.fluent()
+                    .sql(format!(
+                        "ALTER COLLECTION `{FIELD_GROUP}` ALTER COLUMN {field_path} \
+                         SET OPTIONS (ttl = FALSE, indexes = NULL)"
+                    ))
+                    .wait_until_ready(WAIT_TIMEOUT)
+                    .run()
+                    .await?,
+            );
+            assert_eq!(reverted.ttl, None);
+            assert_eq!(
+                reverted.index_override,
+                Some(FirestoreFieldOverrideOutcome::Inherited)
+            );
+            Ok(())
+        })
+        .await
+    }
 }
