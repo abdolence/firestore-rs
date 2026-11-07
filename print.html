@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-234764b6.js";
+            window.path_to_searchindex_js = "searchindex-11f14f9d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-edc99909.js"></script>
@@ -4762,7 +4762,7 @@ a Firestore that stopped answering, it then retries forever, one timeout per att
 between attempts, so the last attempt can still run for a whole timeout past it.</p>
 <h3 id="retry-limits"><a class="header" href="#retry-limits">Retry limits</a></h3>
 <p>Reads, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
-next retry, each delay randomised by up to 50% either way. They differ in when they stop:</p>
+next retry, each delay randomised by up to a third either way. They differ in when they stop:</p>
 <ul>
 <li>reads stop after <code>max_retries</code> of <code>FirestoreDbOptions</code>, 3 by default, with no time limit;</li>
 <li>simple batch writes stop after <code>retry_max_elapsed_time</code> of <code>FirestoreSimpleBatchWriteOptions</code>, 60 seconds by default,
