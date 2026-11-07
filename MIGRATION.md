@@ -79,6 +79,20 @@ let options = FirestoreSqlOptions::new().allow_index_statements();
 `SHOW INDEXES`, `SHOW COLLECTIONS` and `EXPLAIN` need no opt-in. With `.with_collections(..)`, `DROP INDEX` by ID needs
 `ON` and a collection in the set.
 
+### Error codes are constants
+
+The codes of the errors that the index calls, bulk delete and the JSON conversion raise themselves are the constants of
+`firestore::errors::codes`, such as `NO_MATCHING_INDEX`, `OPERATION_WAIT_TIMEOUT` and `JSON_INVALID_WRAPPER`. Code that
+compares `error.public.code` with a string literal can compare it with the constant instead:
+
+```rust,ignore
+use firestore::errors::codes::NO_MATCHING_INDEX;
+
+if matches!(&error, FirestoreError::DataNotFoundError(error) if error.public.code == NO_MATCHING_INDEX) {
+    // the index is already gone
+}
+```
+
 ## 0.64
 
 ### `BackoffError` is the crate's own type

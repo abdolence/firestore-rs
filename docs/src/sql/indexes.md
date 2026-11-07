@@ -365,7 +365,8 @@ statements, field `request_options`: they go to the Admin API, which takes no re
 
 ## Errors
 
-Every error is an existing `FirestoreError` variant:
+Every error is an existing `FirestoreError` variant. A `code` is a constant of
+`firestore::errors::codes`:
 
 | Case | Error |
 |---|---|

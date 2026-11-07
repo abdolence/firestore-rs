@@ -76,22 +76,27 @@ impl<'a> FirestoreParsedReference<'a> {
     pub fn id(&self) -> &'a str {
         self.id
     }
+
+    /// The part of an absolute reference below the database's `documents` root, or `None` when
+    /// `reference` is not an absolute reference.
+    pub(crate) fn documents_path(reference: &'a str) -> Option<&'a str> {
+        let regex = regex!(r"(?s)^projects/[^/]+/databases/[^/]+/documents/(.+)\z");
+        regex
+            .captures(reference)
+            .and_then(|captures| captures.get(1))
+            .map(|documents_path| documents_path.as_str())
+    }
 }
 
 impl<'a> TryFrom<&'a FirestoreReference> for FirestoreParsedReference<'a> {
     type Error = FirestoreError;
 
     fn try_from(raw: &'a FirestoreReference) -> Result<Self, Self::Error> {
-        let regex = regex!(r"(?s)^projects/[^/]+/databases/[^/]+/documents/(.+)\z");
-        let path = regex
-            .captures(&raw.0)
-            .and_then(|captures| captures.get(1))
-            .map(|documents_path| documents_path.as_str())
-            .ok_or_else(|| {
-                FirestoreError::DeserializeError(FirestoreSerializationError::from_message(
-                    "invalid absolute reference",
-                ))
-            })?;
+        let path = Self::documents_path(&raw.0).ok_or_else(|| {
+            FirestoreError::DeserializeError(FirestoreSerializationError::from_message(
+                "invalid absolute reference",
+            ))
+        })?;
 
         let (parent, id) = split_document_path(path);
 

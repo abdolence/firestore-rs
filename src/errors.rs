@@ -196,12 +196,17 @@ impl FirestoreError {
         ))
     }
 
-    /// Builds a [`SystemError`](FirestoreError::SystemError) with `code`, for a failure the crate
-    /// itself found rather than one Firestore reported.
+    /// The public details of an error the crate found itself, rather than one Firestore reported.
+    #[cfg(feature = "admin")]
+    fn crate_found(code: &str) -> FirestoreErrorPublicGenericDetails {
+        FirestoreErrorPublicGenericDetails::new(code.to_string())
+    }
+
+    /// Builds a [`SystemError`](FirestoreError::SystemError) with `code`.
     #[cfg(feature = "admin")]
     pub(crate) fn system_error_with_code(code: &str, message: impl Into<String>) -> Self {
         FirestoreError::SystemError(FirestoreSystemError::new(
-            FirestoreErrorPublicGenericDetails::new(code.to_string()),
+            Self::crate_found(code),
             message.into(),
         ))
     }
@@ -211,7 +216,7 @@ impl FirestoreError {
     #[cfg(feature = "admin")]
     pub(crate) fn data_not_found(code: &str, message: impl Into<String>) -> Self {
         FirestoreError::DataNotFoundError(FirestoreDataNotFoundError::new(
-            FirestoreErrorPublicGenericDetails::new(code.to_string()),
+            Self::crate_found(code),
             message.into(),
         ))
     }
@@ -221,7 +226,7 @@ impl FirestoreError {
     #[cfg(feature = "admin")]
     pub(crate) fn data_conflict(code: &str, message: impl Into<String>) -> Self {
         FirestoreError::DataConflictError(FirestoreDataConflictError::new(
-            FirestoreErrorPublicGenericDetails::new(code.to_string()),
+            Self::crate_found(code),
             message.into(),
         ))
     }
@@ -933,6 +938,66 @@ impl From<gcloud_sdk::prost::DecodeError> for FirestoreError {
             format!("Protobuf deserialization error: {err}"),
         ))
     }
+}
+
+/// The codes of the errors the crate raises itself, to compare with `public.code` of the error.
+///
+/// Each constant is the code of one failure, in the error variant its documentation names.
+pub mod codes {
+    /// A [`SystemError`](super::FirestoreError::SystemError) of bulk delete on the Firestore
+    /// emulator, which does not implement `BulkDeleteDocuments`.
+    #[cfg(feature = "admin")]
+    pub const BULK_DELETE_UNAVAILABLE_ON_EMULATOR: &str = "BULK_DELETE_UNAVAILABLE_ON_EMULATOR";
+
+    /// A [`SystemError`](super::FirestoreError::SystemError) of a wait that reached its deadline
+    /// before the operation or the index it waited for finished.
+    #[cfg(feature = "admin")]
+    pub const OPERATION_WAIT_TIMEOUT: &str = "OPERATION_WAIT_TIMEOUT";
+
+    /// A [`SystemError`](super::FirestoreError::SystemError) of a wait for an index that ended in
+    /// `NEEDS_REPAIR`.
+    #[cfg(feature = "admin")]
+    pub const INDEX_NEEDS_REPAIR: &str = "INDEX_NEEDS_REPAIR";
+
+    /// A [`DataNotFoundError`](super::FirestoreError::DataNotFoundError) of a delete by ID when
+    /// the index belongs to another group than the caller named.
+    #[cfg(feature = "admin")]
+    pub const INDEX_IN_OTHER_GROUP: &str = "INDEX_IN_OTHER_GROUP";
+
+    /// A [`DataNotFoundError`](super::FirestoreError::DataNotFoundError) of a delete when no index
+    /// has the ID, or no listed index matches the definition.
+    #[cfg(feature = "admin")]
+    pub const NO_MATCHING_INDEX: &str = "NO_MATCHING_INDEX";
+
+    /// A [`DataConflictError`](super::FirestoreError::DataConflictError) of a delete by
+    /// definition when more than one listed index matches it.
+    #[cfg(feature = "admin")]
+    pub const SEVERAL_MATCHING_INDEXES: &str = "SEVERAL_MATCHING_INDEXES";
+
+    /// A [`DeserializeError`](super::FirestoreError::DeserializeError) of a one-key object whose
+    /// key starts with `$` and is not one of the eight wrappers.
+    #[cfg(feature = "json")]
+    pub const JSON_UNKNOWN_WRAPPER: &str = "JSON_UNKNOWN_WRAPPER";
+
+    /// A [`DeserializeError`](super::FirestoreError::DeserializeError) of a wrapper whose content
+    /// is not the form it takes.
+    #[cfg(feature = "json")]
+    pub const JSON_INVALID_WRAPPER: &str = "JSON_INVALID_WRAPPER";
+
+    /// A [`DeserializeError`](super::FirestoreError::DeserializeError) of a JSON number that is an
+    /// integer above `i64::MAX` or that no double holds.
+    #[cfg(feature = "json")]
+    pub const JSON_NUMBER_OUT_OF_RANGE: &str = "JSON_NUMBER_OUT_OF_RANGE";
+
+    /// A [`DeserializeError`](super::FirestoreError::DeserializeError) of a document that is not
+    /// an object or has no string `__name__`.
+    #[cfg(feature = "json")]
+    pub const JSON_INVALID_DOCUMENT: &str = "JSON_INVALID_DOCUMENT";
+
+    /// A [`SerializeError`](super::FirestoreError::SerializeError) of a field reference, variable
+    /// reference, function or pipeline value, which have no tagged form.
+    #[cfg(feature = "json")]
+    pub const JSON_EXPRESSION_VALUE: &str = "JSON_EXPRESSION_VALUE";
 }
 
 #[cfg(test)]

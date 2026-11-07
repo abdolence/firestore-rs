@@ -192,6 +192,12 @@ impl FirestoreCompositeIndex {
         }
     }
 
+    /// The options of this index other than its fields, for printing apart from them, such as
+    /// in a column of a listing. The text is empty for an index with none.
+    pub fn options(&self) -> FirestoreCompositeIndexOptions<'_> {
+        FirestoreCompositeIndexOptions { index: self }
+    }
+
     /// Scopes this index to a collection-group query instead of a single collection.
     #[inline]
     pub fn all_descendants(mut self) -> Self {
@@ -1311,22 +1317,43 @@ impl Display for FirestoreCompositeIndex {
         write!(f, "[{}] (", self.query_scope)?;
         write_comma_joined(f, &self.fields)?;
         write!(f, ")")?;
-        if self.unique {
-            write!(f, " unique")?;
-        }
-        if let Some(density) = &self.density {
-            write!(f, " density={density}")?;
-        }
-        let Some(options) = &self.search_options else {
-            return Ok(());
-        };
-        if let Some(language) = &options.text_language {
-            write!(f, " text_language={language}")?;
-        }
-        if let Some(path) = &options.text_language_override_field_path {
-            write!(f, " text_language_override_field_path={path}")?;
+        let options = self.options().to_string();
+        if !options.is_empty() {
+            write!(f, " {options}")?;
         }
         Ok(())
+    }
+}
+
+/// The options of a [`FirestoreCompositeIndex`] that its fields do not carry, as the text
+/// [`Display`] of the index ends with.
+///
+/// It prints `unique`, `density=..` and the search options that are set, in that order and
+/// separated by a space, and prints nothing when the index has none: see
+/// [`FirestoreCompositeIndex::options`].
+#[derive(Debug, Clone, Copy)]
+pub struct FirestoreCompositeIndexOptions<'a> {
+    index: &'a FirestoreCompositeIndex,
+}
+
+impl Display for FirestoreCompositeIndexOptions<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut options = Vec::new();
+        if self.index.unique {
+            options.push("unique".to_string());
+        }
+        if let Some(density) = &self.index.density {
+            options.push(format!("density={density}"));
+        }
+        if let Some(search) = &self.index.search_options {
+            if let Some(language) = &search.text_language {
+                options.push(format!("text_language={language}"));
+            }
+            if let Some(path) = &search.text_language_override_field_path {
+                options.push(format!("text_language_override_field_path={path}"));
+            }
+        }
+        f.write_str(&options.join(" "))
     }
 }
 
@@ -1830,6 +1857,28 @@ mod tests {
             index.to_string(),
             "[COLLECTION] (menu TEXT, location GEO(geo_json_indexing_disabled), area GEO) \
              text_language=en text_language_override_field_path=lang"
+        );
+    }
+
+    #[test]
+    fn the_options_of_an_index_are_the_end_of_its_display() {
+        let index = FirestoreCompositeIndex::new(vec![asc("rating")])
+            .unique()
+            .density(FirestoreIndexDensity::SparseAny)
+            .search_options(
+                FirestoreSearchIndexOptions::new().with_text_language("en".to_string()),
+            );
+        let options = index.options().to_string();
+        assert_eq!(options, "unique density=SPARSE_ANY text_language=en");
+        assert_eq!(
+            index.to_string(),
+            format!("[COLLECTION] (rating ASC) {options}")
+        );
+        assert_eq!(
+            FirestoreCompositeIndex::new(vec![asc("rating")])
+                .options()
+                .to_string(),
+            ""
         );
     }
 

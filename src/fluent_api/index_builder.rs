@@ -219,8 +219,7 @@ impl<'a, D> FirestoreIndexCreateBuilder<'a, D>
 where
     D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
 {
-    /// Waits for the index to finish building before `.execute()` returns, polling at the
-    /// default interval. `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
+    /// `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
     #[inline]
     pub fn wait_until_ready(self, timeout: Duration) -> Self {
         self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))
@@ -548,8 +547,7 @@ where
         self.ttl(FirestoreFieldTtlUpdate::Disable)
     }
 
-    /// Waits for the write to finish before `.execute()` returns, polling at the default
-    /// interval. `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
+    /// `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
     #[inline]
     pub fn wait_until_ready(self, timeout: Duration) -> Self {
         self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))

@@ -519,7 +519,8 @@ The four calls run no edition rule of their own: Firestore's
 [The Firestore emulator](#the-firestore-emulator). A reserved group such as `__default__` fails with
 `InvalidParametersError`.
 
-Failures the library finds itself carry a code in the error:
+Failures the library finds itself carry a code in the error. The codes are the constants of
+`firestore::errors::codes`:
 
 | Case | Error |
 |---|---|

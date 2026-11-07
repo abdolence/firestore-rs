@@ -2,7 +2,12 @@
 //! one, which reads back without loss, and the plain one, which is only for display.
 
 use crate::db::relative_to_documents;
+use crate::errors::codes::{
+    JSON_EXPRESSION_VALUE, JSON_INVALID_DOCUMENT, JSON_INVALID_WRAPPER, JSON_NUMBER_OUT_OF_RANGE,
+    JSON_UNKNOWN_WRAPPER,
+};
 use crate::errors::{FirestoreError, FirestoreSerializationError};
+use crate::firestore_serde::FirestoreParsedReference;
 use crate::{
     is_vector, FirestoreDb, FirestoreDocument, FirestoreResult, FirestoreValue, FirestoreVector,
 };
@@ -16,26 +21,6 @@ use rsb_derive::Builder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Number, Value as Json};
 use std::collections::HashMap;
-
-/// The code of the [`DeserializeError`](FirestoreError::DeserializeError) for a one-key object
-/// whose key starts with `$` and is not one of the eight wrappers.
-const JSON_UNKNOWN_WRAPPER: &str = "JSON_UNKNOWN_WRAPPER";
-
-/// The code of the [`DeserializeError`](FirestoreError::DeserializeError) for a wrapper whose
-/// content is not the form it takes.
-const JSON_INVALID_WRAPPER: &str = "JSON_INVALID_WRAPPER";
-
-/// The code of the [`DeserializeError`](FirestoreError::DeserializeError) for a JSON number that
-/// is an integer above `i64::MAX` or that no double holds.
-const JSON_NUMBER_OUT_OF_RANGE: &str = "JSON_NUMBER_OUT_OF_RANGE";
-
-/// The code of the [`DeserializeError`](FirestoreError::DeserializeError) for a document that is
-/// not an object or has no string `__name__`.
-const JSON_INVALID_DOCUMENT: &str = "JSON_INVALID_DOCUMENT";
-
-/// The code of the [`SerializeError`](FirestoreError::SerializeError) for a field reference,
-/// variable reference, function or pipeline value, which have no tagged form.
-const JSON_EXPRESSION_VALUE: &str = "JSON_EXPRESSION_VALUE";
 
 /// The largest integer a JavaScript number, an IEEE double, holds with its neighbours distinct.
 /// A reader in JavaScript cannot tell 2^53 from 2^53 + 1, so both go to `$int`.
@@ -290,16 +275,9 @@ impl FirestoreJsonConverter<'_> {
     /// number of segments. A relative name has an even number, so a document in a collection
     /// called `projects` is not mistaken for another project's.
     fn resolve_name(&self, text: &str) -> String {
-        let segments: Vec<&str> = text.split('/').collect();
-        let is_full = segments.len() >= 7
-            && segments.len() % 2 == 1
-            && segments[0] == "projects"
-            && segments[2] == "databases"
-            && segments[4] == "documents";
-        if is_full {
-            text.to_string()
-        } else {
-            format!("{}/{text}", self.documents_path)
+        match FirestoreParsedReference::documents_path(text) {
+            Some(path) if path.split('/').count() % 2 == 0 => text.to_string(),
+            _ => format!("{}/{text}", self.documents_path),
         }
     }
 

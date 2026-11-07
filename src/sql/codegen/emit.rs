@@ -37,9 +37,7 @@ enum FirestoreSqlClosure {
 enum FirestoreSqlRustKind {
     // A Rust value, such as `30` or an argument, that converts into a constant.
     Literal,
-    // A `FirestoreExpr`.
     Value,
-    // A `FirestoreBoolExpr`.
     Condition,
 }
 
@@ -242,9 +240,9 @@ impl<'a> FirestoreSqlEmitter<'a> {
             }) => {
                 let mut code = format!(
                     "s.geo_within({field:?}, FirestoreLatLng(FirestoreGeoPoint {{ latitude: {}, longitude: {} }}), {})",
-                    double(center.0.latitude),
-                    double(center.0.longitude),
-                    double(*max_distance_meters),
+                    Self::double(center.0.latitude),
+                    Self::double(center.0.longitude),
+                    Self::double(*max_distance_meters),
                 );
                 if *sort_by_distance {
                     code.push_str(".sort_by_distance()");
@@ -614,21 +612,104 @@ impl<'a> FirestoreSqlEmitter<'a> {
         Ok(match &constant.value.value_type {
             Some(ValueType::NullValue(_)) => "None::<bool>".to_string(),
             Some(ValueType::BooleanValue(value)) => value.to_string(),
-            Some(ValueType::IntegerValue(value)) => integer(*value),
-            Some(ValueType::DoubleValue(value)) => double(*value),
+            Some(ValueType::IntegerValue(value)) => Self::integer(*value),
+            Some(ValueType::DoubleValue(value)) => Self::double(*value),
             Some(ValueType::StringValue(value)) => format!("{value:?}"),
-            Some(ValueType::ReferenceValue(path)) => reference(path),
-            Some(value @ ValueType::ArrayValue(array)) => match references(array) {
+            Some(ValueType::ReferenceValue(path)) => Self::reference(path),
+            Some(value @ ValueType::ArrayValue(array)) => match Self::references(array) {
                 Some(paths) if !paths.is_empty() => {
-                    let references: Vec<String> = paths.into_iter().map(reference).collect();
+                    let references: Vec<String> = paths.into_iter().map(Self::reference).collect();
                     format!("[{}]", references.join(", "))
                 }
-                _ => format!("serde_json::json!({})", json(value).ok_or_else(no_literal)?),
+                _ => format!(
+                    "serde_json::json!({})",
+                    Self::json(value).ok_or_else(no_literal)?
+                ),
             },
             Some(value @ ValueType::MapValue(_)) => {
-                format!("serde_json::json!({})", json(value).ok_or_else(no_literal)?)
+                format!(
+                    "serde_json::json!({})",
+                    Self::json(value).ok_or_else(no_literal)?
+                )
             }
             _ => return Err(no_literal()),
+        })
+    }
+
+    fn double(value: f64) -> String {
+        match (
+            value.is_nan(),
+            value.is_infinite(),
+            value.is_sign_positive(),
+        ) {
+            (true, _, _) => "f64::NAN".to_string(),
+            (_, true, true) => "f64::INFINITY".to_string(),
+            (_, true, false) => "f64::NEG_INFINITY".to_string(),
+            _ => format!("{value:?}"),
+        }
+    }
+
+    // An unsuffixed integer literal is an `i32`, which does not compile out of that range.
+    fn integer(value: i64) -> String {
+        match i32::try_from(value) {
+            Ok(_) => value.to_string(),
+            Err(_) => format!("{value}_i64"),
+        }
+    }
+
+    // The reference `path`, in the database of the snippet's own `db` when the translator wrote it
+    // in the codegen database.
+    fn reference(path: &str) -> String {
+        match relative_to_documents(CODEGEN_DOCUMENTS_PATH, path) {
+            Some(relative) => {
+                let template = format!("{{}}/{}", relative.replace('{', "{{").replace('}', "}}"));
+                format!("FirestoreReference::new(format!({template:?}, db.get_documents_path()))")
+            }
+            None => format!("FirestoreReference::new({path:?}.to_string())"),
+        }
+    }
+
+    // The paths of `array` when every element is a reference.
+    fn references(array: &ArrayValue) -> Option<Vec<&str>> {
+        array
+            .values
+            .iter()
+            .map(|element| match &element.value_type {
+                Some(ValueType::ReferenceValue(path)) => Some(path.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // `value` in the syntax of `serde_json::json!`, which serialises to the same value. `None` for
+    // a value JSON has no form for.
+    fn json(value: &ValueType) -> Option<String> {
+        let element = |value: &Value| Self::json(value.value_type.as_ref()?);
+        Some(match value {
+            ValueType::NullValue(_) => "null".to_string(),
+            ValueType::BooleanValue(value) => value.to_string(),
+            ValueType::IntegerValue(value) => Self::integer(*value),
+            ValueType::DoubleValue(value) if value.is_finite() => format!("{value:?}"),
+            ValueType::StringValue(value) => format!("{value:?}"),
+            ValueType::ArrayValue(array) => format!(
+                "[{}]",
+                array
+                    .values
+                    .iter()
+                    .map(element)
+                    .collect::<Option<Vec<_>>>()?
+                    .join(", ")
+            ),
+            ValueType::MapValue(map) => {
+                // A map's fields have no order; sorted, the snippet is the same every time.
+                let fields: BTreeMap<&String, _> = map.fields.iter().collect();
+                let fields = fields
+                    .into_iter()
+                    .map(|(key, value)| Some(format!("{key:?}: {}", element(value)?)))
+                    .collect::<Option<Vec<_>>>()?;
+                format!("{{{}}}", fields.join(", "))
+            }
+            _ => return None,
         })
     }
 }
@@ -670,81 +751,4 @@ fn receiver_method(name: &str, arity: usize) -> Option<(&str, FirestoreSqlRustKi
 
 fn joined(items: impl Iterator<Item = FirestoreResult<String>>) -> FirestoreResult<String> {
     Ok(items.collect::<FirestoreResult<Vec<_>>>()?.join(", "))
-}
-
-fn double(value: f64) -> String {
-    match (
-        value.is_nan(),
-        value.is_infinite(),
-        value.is_sign_positive(),
-    ) {
-        (true, _, _) => "f64::NAN".to_string(),
-        (_, true, true) => "f64::INFINITY".to_string(),
-        (_, true, false) => "f64::NEG_INFINITY".to_string(),
-        _ => format!("{value:?}"),
-    }
-}
-
-// An unsuffixed integer literal is an `i32`, which does not compile out of that range.
-fn integer(value: i64) -> String {
-    match i32::try_from(value) {
-        Ok(_) => value.to_string(),
-        Err(_) => format!("{value}_i64"),
-    }
-}
-
-// The reference `path`, in the database of the snippet's own `db` when the translator wrote it
-// in the codegen database.
-fn reference(path: &str) -> String {
-    match relative_to_documents(CODEGEN_DOCUMENTS_PATH, path) {
-        Some(relative) => {
-            let template = format!("{{}}/{}", relative.replace('{', "{{").replace('}', "}}"));
-            format!("FirestoreReference::new(format!({template:?}, db.get_documents_path()))")
-        }
-        None => format!("FirestoreReference::new({path:?}.to_string())"),
-    }
-}
-
-// The paths of `array` when every element is a reference.
-fn references(array: &ArrayValue) -> Option<Vec<&str>> {
-    array
-        .values
-        .iter()
-        .map(|element| match &element.value_type {
-            Some(ValueType::ReferenceValue(path)) => Some(path.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
-// `value` in the syntax of `serde_json::json!`, which serialises to the same value. `None` for
-// a value JSON has no form for.
-fn json(value: &ValueType) -> Option<String> {
-    let element = |value: &Value| json(value.value_type.as_ref()?);
-    Some(match value {
-        ValueType::NullValue(_) => "null".to_string(),
-        ValueType::BooleanValue(value) => value.to_string(),
-        ValueType::IntegerValue(value) => integer(*value),
-        ValueType::DoubleValue(value) if value.is_finite() => format!("{value:?}"),
-        ValueType::StringValue(value) => format!("{value:?}"),
-        ValueType::ArrayValue(array) => format!(
-            "[{}]",
-            array
-                .values
-                .iter()
-                .map(element)
-                .collect::<Option<Vec<_>>>()?
-                .join(", ")
-        ),
-        ValueType::MapValue(map) => {
-            // A map's fields have no order; sorted, the snippet is the same every time.
-            let fields: BTreeMap<&String, _> = map.fields.iter().collect();
-            let fields = fields
-                .into_iter()
-                .map(|(key, value)| Some(format!("{key:?}: {}", element(value)?)))
-                .collect::<Option<Vec<_>>>()?;
-            format!("{{{}}}", fields.join(", "))
-        }
-        _ => return None,
-    })
 }

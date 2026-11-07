@@ -4,7 +4,8 @@
 
 use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
 use crate::db::support::FirestoreBulkDeleteSupport;
-use crate::errors::{FirestoreError, FirestoreErrorPublicGenericDetails, FirestoreSystemError};
+use crate::errors::codes::BULK_DELETE_UNAVAILABLE_ON_EMULATOR;
+use crate::errors::FirestoreError;
 use crate::{
     FirestoreBulkDeleteParams, FirestoreBulkDeleteProgress, FirestoreBulkDeleteResult,
     FirestoreCollectionId, FirestoreDb, FirestoreInstant, FirestoreResult,
@@ -228,14 +229,11 @@ impl FirestoreBulkDeleteSupport for FirestoreDb {
                 collection_groups = label.as_str(),
                 "Bulk delete is not available on the Firestore emulator.",
             );
-            return Err(FirestoreError::SystemError(FirestoreSystemError::new(
-                FirestoreErrorPublicGenericDetails::new(
-                    "BULK_DELETE_UNAVAILABLE_ON_EMULATOR".to_string(),
-                ),
+            return Err(FirestoreError::system_error_with_code(
+                BULK_DELETE_UNAVAILABLE_ON_EMULATOR,
                 "bulk delete is not available on the Firestore emulator: BulkDeleteDocuments is \
-                 not implemented there"
-                    .to_string(),
-            )));
+                 not implemented there",
+            ));
         }
 
         let waited = params.wait.is_some();

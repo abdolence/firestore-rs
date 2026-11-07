@@ -7,7 +7,8 @@
 //! state, such as bulk delete's progress metadata, observes every polled [`Operation`] through the
 //! `on_poll` hook.
 
-use crate::errors::{FirestoreError, FirestoreErrorPublicGenericDetails, FirestoreSystemError};
+use crate::errors::codes::OPERATION_WAIT_TIMEOUT;
+use crate::errors::FirestoreError;
 use crate::{FirestoreDb, FirestoreOperationWaitOptions, FirestoreResult};
 use futures::StreamExt;
 use gcloud_sdk::google::longrunning::operation::Result as LroResult;
@@ -106,13 +107,13 @@ impl OperationDeadline {
 
     /// The error a wait that reached this deadline fails with, still `waiting_for` something.
     pub(super) fn timed_out(&self, waiting_for: &str) -> FirestoreError {
-        FirestoreError::SystemError(FirestoreSystemError::new(
-            FirestoreErrorPublicGenericDetails::new("OPERATION_WAIT_TIMEOUT".to_string()),
+        FirestoreError::system_error_with_code(
+            OPERATION_WAIT_TIMEOUT,
             format!(
                 "timed out after {:?} waiting for: {waiting_for}",
                 self.timeout
             ),
-        ))
+        )
     }
 
     /// Sleeps one poll interval, or only until the deadline when that comes first.

@@ -210,7 +210,7 @@ A number above `u64` in hand-written input reads as a double.
 ## Errors
 
 A failed conversion is a `DeserializeError` when it reads JSON and a `SerializeError` when it
-writes it. The code is in `public.code` and the message names the JSON path of the value, such as
+writes it. The code is in `public.code`, a constant of `firestore::errors::codes`, and the message names the JSON path of the value, such as
 `` `reviews[2].at` ``. A document error carries the full document name in `document_path`.
 
 | Case | Error |
