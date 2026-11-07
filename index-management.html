@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-24028ef7.js";
+            window.path_to_searchindex_js = "searchindex-44fad1f8.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-65a52393.js"></script>
@@ -243,10 +243,12 @@ single-field indexing entirely, and <code>.indexes([...])</code> replaces it wit
 See <a href="#a-field-override-replaces-the-whole-automatic-set">below</a> for what that replacement means.</p>
 <p><code>.ttl()</code> names the one field per collection group whose timestamp value enables document TTL.</p>
 <p>Each of <code>.composite()</code>, <code>.field_overrides()</code> and <code>.ttl()</code> replaces whatever an earlier call in the
-same chain set, so call each at most once. A composite index needs at least two fields, unless it
-is a single vector field on its own; a field override or a TTL path may not repeat. These, and the
-vector and field-count limits Firestore itself enforces, are checked at <code>.plan()</code>/<code>.sync()</code> and
-return <code>InvalidParametersError</code> naming what is wrong.</p>
+same chain set, so call each at most once. On a Standard edition database a composite index needs
+at least two fields, unless it is a single vector field on its own; an Enterprise edition database
+takes an index of one field (see <a href="#enterprise-edition">Enterprise edition</a>). An index holds at
+most one <code>.array_contains()</code> field, and a field override or a TTL path may not repeat. These, and
+the vector, field-count and density limits Firestore itself enforces, are checked at <code>.plan()</code>/<code>.sync()</code>
+before anything is written, and return <code>InvalidParametersError</code> naming what is wrong.</p>
 <h2 id="plan-versus-sync"><a class="header" href="#plan-versus-sync">plan() versus sync()</a></h2>
 <p><code>.plan()</code> is read-only: it lists what Firestore already has for the owned group and reports what
 <code>.sync()</code> would change, without writing anything.</p>
@@ -372,12 +374,64 @@ index Firestore lists with those defaults;</li>
 <li><code>.geo_with(config)</code> takes a <code>FirestoreGeoIndexConfig</code> that can leave GeoJSON points out of a geo
 index, which Firestore indexes by default;</li>
 <li><code>.all_descendants()</code> on the index scopes it to a collection group, which a collection-group
-search needs.</li>
+search needs;</li>
+<li>on a Standard edition database <code>.plan()</code> and <code>.sync()</code> refuse a search index with
+<code>InvalidParametersError</code> before anything is written.</li>
 </ul>
-<p>An Enterprise edition database has no single-field index overrides, and Firestore refuses to
-write one. When <code>.plan()</code> or <code>.sync()</code> would have to write a <code>.field_overrides(..)</code> entry there,
-it fails with <code>InvalidParametersError</code> before anything is written. Declare the indexes a
-pipeline needs as composite indexes.</p>
+<h2 id="enterprise-edition"><a class="header" href="#enterprise-edition">Enterprise edition</a></h2>
+<p>An Enterprise edition database builds no index on its own: there are no automatic single-field
+indexes, so every index a query needs is one the statement declares. <code>.plan()</code> and <code>.sync()</code> read
+the database’s edition once per call and follow its rules:</p>
+<ul>
+<li>a composite index of one field is how a single field is indexed. Firestore accepts one there,
+ordered, <code>.array_contains()</code> or <code>__name__</code>, while a Standard edition database refuses it;</li>
+<li><code>.field_overrides()</code> has nothing to override. An <code>.exempt()</code> is already satisfied and is never
+written. An override that lists indexes fails with <code>InvalidParametersError</code> before anything is
+written, since Firestore refuses it;</li>
+<li><code>.ttl()</code> enables a TTL field as on Standard, and <code>.prune_undeclared()</code> disables an undeclared
+one the same way;</li>
+<li>Firestore appends no <code>__name__</code> field to an index, so <code>[a, b]</code> and <code>[a, b, __name__]</code> are two
+different indexes, and a statement can declare both;</li>
+<li>an index can be unique, refusing a write that would give two documents the same entry, and
+dense or sparse, holding an entry for every document or only for the ones that have the indexed
+fields. <code>.unique()</code> and <code>.density(..)</code> set these, as the paragraphs after the example describe.</li>
+</ul>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>db.fluent()
+    .indexes()
+    .collection_group("users")
+    .composite(|i| {
+        i.indexes([
+            i.index([i.field("email").asc()]).unique(),
+            i.index([i.field("country").asc()]),
+            i.index([i.field("country").asc(), i.field("nickname").asc()])
+                .density(FirestoreIndexDensity::SparseAny),
+        ])
+    })
+    .ttl(["expires_at"])
+    .sync()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>A unique index refuses a write that would give two documents the same entry in it. Firestore
+answers a create, an update and a commit alike with <code>ALREADY_EXISTS</code> (“Duplicate values are found
+for unique index.”), and the write returns <code>DataConflictError</code>. A unique index of one field is how
+a value such as an email address is kept unique across a collection.</p>
+<p>The density of an index says which documents it holds an entry for. A dense index holds one for
+every document, with a missing field stored as unset; a sparse index leaves out the documents
+that lack the indexed fields. Enterprise builds an index dense by default, and a text or geo
+search index always as <code>FirestoreIndexDensity::SparseAny</code>, an entry for each document that has at
+least one of the fields. Standard builds every index as <code>SparseAll</code>, an entry only for a document
+that has all of them, and accepts no other density, while Enterprise refuses <code>SparseAll</code>, and a
+search index there takes only <code>SparseAny</code>. A declaration with a density the edition refuses fails
+with <code>InvalidParametersError</code> before anything is written. Two indexes over the same fields are
+different indexes when their densities differ, or when one is unique and the other is not, and a
+declaration matches only the one it describes.</p>
+<p>On an empty collection, <code>.wait_until_ready(..)</code> waited 62 to 68 seconds for one index of each kind
+on an Enterprise edition database: ordered, array, vector, text, geo, and text with geo. On a
+Standard edition database, a lone vector index took 355 seconds, and three composite indexes with
+two field overrides and a TTL field 414 seconds.</p>
 <h2 id="removing-what-you-no-longer-declare"><a class="header" href="#removing-what-you-no-longer-declare">Removing what you no longer declare</a></h2>
 <p>By default, an index, override or TTL field Firestore lists for the owned group but this
 statement does not declare is only reported, never touched. Add <code>.prune_undeclared()</code> to also
@@ -408,9 +462,10 @@ fresh listing shows a matching index: another deployment created it after the sy
 changes. The sync reports the index as unchanged, logs a warning naming it and carries on with
 everything else.</p>
 <p>When the fresh listing shows no matching index, the sync returns the <code>ALREADY_EXISTS</code> error
-instead of reporting the index as unchanged. On an Enterprise edition database Firestore keeps
-answering <code>ALREADY_EXISTS</code> for several minutes after an index with the same fields is deleted,
-while the listing no longer shows it. Run the sync again once the answer changes.</p>
+instead of reporting the index as unchanged. Firestore keeps answering <code>ALREADY_EXISTS</code> for a
+while after an index with the same fields is deleted, while the listing no longer shows it: 40 to
+60 seconds on an Enterprise edition database, measured once. Run the sync again once the answer
+changes.</p>
 <p>In both cases <code>withheld_deletes</code> on the report lists the indexes left in place and the reason.
 Reverts and TTL disables do not wait for new indexes.</p>
 <p><code>.prune_undeclared().plan()</code> previews a pruning sync without writing anything: <code>delete_indexes</code>,
@@ -526,7 +581,9 @@ current state either, so it can still fail.</p>
 <li>deletes undeclared composite indexes, once the new ones have finished building.</li>
 </ul>
 <p>Every TTL disable finishes before any TTL enable is sent, since Firestore allows only one TTL
-field per collection group.</p>
+field per collection group. Declaring a <code>.ttl()</code> field while the group lists a different TTL field
+fails <code>.plan()</code> and <code>.sync()</code> with <code>InvalidParametersError</code> before anything is written, unless
+<code>.prune_undeclared()</code> disables the listed field.</p>
 <h2 id="waiting-for-changes-to-finish"><a class="header" href="#waiting-for-changes-to-finish">Waiting for changes to finish</a></h2>
 <p>By default <code>.sync()</code> returns as soon as the last change is requested; a created index or a newly
 enabled TTL field can still be building. <code>.wait_until_ready(timeout)</code> polls until every started
@@ -602,19 +659,22 @@ defaults, and neither does <code>firestore.indexes.json</code>. <code>.indexes([
 to maintain for a field, never one index to add to what is already there. An empty list, or
 <code>.exempt()</code> (the same thing), excludes the field from single-field indexing entirely.</p>
 <h2 id="__name__-handling"><a class="header" href="#__name__-handling"><code>__name__</code> handling</a></h2>
-<p>A composite index declared without <code>__name__</code> matches a listed index that has it where Firestore
-puts it: last in an ordinary index, or directly before the vector field in a vector index. The
-direction of that <code>__name__</code> does not matter for the match. A <code>__name__</code> anywhere else makes the
-listed index a different one. Declare <code>__name__</code> yourself only when a query needs a specific
-direction; an explicit declaration then matches only a listed index with exactly the same fields,
-<code>__name__</code> included.</p>
+<p>On a Standard edition database, a composite index declared without <code>__name__</code> matches a listed
+index that has it where Firestore puts it: last in an ordinary index, or directly before the
+vector field in a vector index. The direction of that <code>__name__</code> does not matter for the match. A
+<code>__name__</code> anywhere else makes the listed index a different one. Declare <code>__name__</code> yourself only
+when a query needs a specific direction; an explicit declaration then matches only a listed index
+with exactly the same fields, <code>__name__</code> included.</p>
+<p>An Enterprise edition database appends no <code>__name__</code>, so there a declaration matches only a
+listed index with exactly its fields.</p>
 <p>Field paths compare in one spelling, so <code>`expires_at`</code> and <code>expires_at</code>, or <code>a.`b`</code> and
 <code>`a`.b</code>, are the same field. A segment needs backticks only when it is not a plain identifier
 (letters, digits and <code>_</code>, not starting with a digit).</p>
 <h2 id="unrecognised-items"><a class="header" href="#unrecognised-items">Unrecognised items</a></h2>
 <p>Firestore can list index or field shapes this crate’s domain model has no representation for: a
 search field configured other than as one text or geo spec, a MongoDB-compat or Datastore-mode
-API scope, a <code>COLLECTION_RECURSIVE</code> query scope, or an unspecified field order. These are
+API scope, a <code>COLLECTION_RECURSIVE</code> query scope, an unspecified field order, or a multikey or
+sharded index. These are
 reported in <code>unrecognised</code>, with the reason, and never proposed for deletion or reversion, even
 with <code>.prune_undeclared()</code> set, since the plan cannot know that removing them is what the
 declaration intends.</p>
@@ -639,6 +699,8 @@ every group’s indexes.</p>
 <code>kept_undeclared_indexes</code>, <code>kept_undeclared_fields</code> and <code>kept_undeclared_ttl</code> are what it would
 leave alone. This run has none of either, since the group carries nothing undeclared to begin
 with.</p>
+<p>Each call reads the database’s edition first, in a <code>Firestore Index Edition</code> span, ahead of the
+listing. Its time counts in the report’s <code>total</code> and in no phase.</p>
 <p><code>.sync()</code> also logs a <code>Firestore Index Apply</code> span with one child span per applied action, and a
 <code>Firestore Index Wait</code> span when waiting is requested, with one child span per operation polled.</p>
 <h2 id="timings-unchanged-ttl-and-the-emulator-marker-on-the-report"><a class="header" href="#timings-unchanged-ttl-and-the-emulator-marker-on-the-report">Timings, unchanged TTL and the emulator marker on the report</a></h2>
@@ -659,7 +721,8 @@ rather than as “no changes needed” on a project the emulator never actually 
 runs unmodified against the emulator.</p>
 <h2 id="iam-roles"><a class="header" href="#iam-roles">IAM roles</a></h2>
 <p><code>.plan()</code> needs only <code>roles/datastore.viewer</code>. <code>.sync()</code> needs <code>roles/datastore.indexAdmin</code> too,
-to create, update and delete indexes and fields.</p>
+to create, update and delete indexes and fields. Both read the database’s edition, through the
+<code>datastore.databases.getMetadata</code> permission each of the two roles carries.</p>
 <h2 id="running-the-tests-against-a-real-project"><a class="header" href="#running-the-tests-against-a-real-project">Running the tests against a real project</a></h2>
 <p><code>tests/admin-indexes-tests.rs</code> needs the <code>admin</code> feature, a real Firestore project through
 <code>GCP_PROJECT</code>, and local application default credentials. The fast, read-only test runs by
