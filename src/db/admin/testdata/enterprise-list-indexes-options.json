@@ -1,0 +1,197 @@
+{
+  "indexes": [
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/pipeline-books/indexes/CICAgJim14AK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "genre",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rating",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/pipeline-restaurants/indexes/CICAgOjXh4EK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "menu",
+          "searchConfig": {
+            "textSpec": {
+              "indexSpecs": [
+                {
+                  "indexType": "TOKENIZED",
+                  "matchType": "MATCH_GLOBALLY"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "fieldPath": "description",
+          "searchConfig": {
+            "textSpec": {
+              "indexSpecs": [
+                {
+                  "indexType": "TOKENIZED",
+                  "matchType": "MATCH_GLOBALLY"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ANY",
+      "searchIndexOptions": {
+        "textLanguage": "en",
+        "textLanguageOverrideFieldPath": "language"
+      }
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/pipeline-books/indexes/CICAgJjF9oIK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "embedding",
+          "vectorConfig": {
+            "dimension": 3,
+            "flat": {}
+          }
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/pipeline-restaurants/indexes/CICAgJiUpoMK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "location",
+          "searchConfig": {
+            "geoSpec": {}
+          }
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ANY"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/admin-audit-opts/indexes/CICAgPiftYMK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "p1",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "p2",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ANY"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/admin-audit-opts/indexes/CICAgJiHgokK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "p1",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "p2",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/admin-audit-opts/indexes/CICAgNjp84oK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "s1",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/admin-audit-opts/indexes/CICAgOi3kJAK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "m1",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "m2",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE",
+      "multikey": true
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/admin-audit-opts/indexes/CICAgPifq5IK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "w1",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "w2",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/admin-audit-opts/indexes/CICAgNjp5ZMK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "u1",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE",
+      "unique": true
+    },
+    {
+      "name": "projects/latestbit/databases/firestore-rs-enterprise/collectionGroups/admin-audit-opts/indexes/CICAgLjIspYK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "w1",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "w2",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "DENSE"
+    }
+  ]
+}

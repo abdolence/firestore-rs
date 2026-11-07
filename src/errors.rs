@@ -27,7 +27,8 @@ pub enum FirestoreError {
     /// This often wraps errors returned by the Firestore gRPC API.
     DatabaseError(FirestoreDatabaseError),
     /// An error indicating a data conflict, such as trying to create a document
-    /// that already exists, or an optimistic locking failure.
+    /// that already exists, a write that would duplicate an entry of a unique index,
+    /// or an optimistic locking failure.
     DataConflictError(FirestoreDataConflictError),
     /// An error indicating that the requested data (e.g., a document or collection)
     /// was not found.
@@ -216,8 +217,9 @@ impl std::error::Error for FirestoreDatabaseError {}
 
 /// Represents an error due to a data conflict.
 ///
-/// This can occur, for example, if trying to create a document that already exists
-/// or if an optimistic locking condition (e.g., based on `update_time`) is not met.
+/// This can occur, for example, if trying to create a document that already exists,
+/// if a write would give two documents the same entry in a unique index, or if an
+/// optimistic locking condition (e.g., based on `update_time`) is not met.
 #[derive(Debug, Clone, Builder)]
 pub struct FirestoreDataConflictError {
     /// Generic public details about the error.

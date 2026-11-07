@@ -105,10 +105,11 @@ where
     /// [`fields`](FirestoreFieldOverrideBuilder::fields). Each call replaces any overrides set by
     /// a previous call. See [`FirestoreFieldOverride`] for what an override replaces.
     ///
-    /// An Enterprise edition database has no single-field index overrides: when an override
-    /// would have to be written there, `.plan()` and `.sync()` fail with
+    /// An Enterprise edition database has no single-field indexes. There an
+    /// [`exempt()`](FirestoreFieldOverrideFieldBuilder::exempt) is already satisfied and is never
+    /// written, and an override that lists indexes fails `.plan()` and `.sync()` with
     /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) before
-    /// anything is written.
+    /// anything is written. A composite index of one field indexes that field instead.
     #[inline]
     pub fn field_overrides<FN>(self, overrides: FN) -> Self
     where
@@ -375,7 +376,8 @@ impl FirestoreIndexFieldExprBuilder {
         ))
     }
 
-    /// Includes this field for array-containment queries.
+    /// Includes this field for array-containment queries. A composite index holds at most one
+    /// such field; validated at `.plan()`/`.sync()`, not here.
     #[inline]
     pub fn array_contains(self) -> Option<FirestoreIndexField> {
         Some(FirestoreIndexField::new(
@@ -930,20 +932,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("collection_id"));
-        assert!(mock.captured().is_none());
-    }
-
-    #[tokio::test]
-    async fn composite_index_with_one_field_is_rejected_at_the_terminal() {
-        let mock = MockIndexDatabase::default();
-        let err = FirestoreExprBuilder { db: &mock }
-            .indexes()
-            .collection_group("users")
-            .composite(|i| i.indexes([i.index([i.field(path!(User::country)).asc()])]))
-            .plan()
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("at least two fields"));
         assert!(mock.captured().is_none());
     }
 
