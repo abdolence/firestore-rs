@@ -18,7 +18,7 @@ editions, and the client picks one by its ID, see
 | Core aggregations: count, sum, avg | yes | yes, with the same results |
 | [Transactions](./transactions.md) | yes | yes; optimistic by default, so under contention more attempts abort and are retried |
 | Query plans, `.explain()` | Core queries; pipelines and SQL are not available | pipelines and SQL, see [Explaining a pipeline](./editions/query-plans.md#explaining-a-pipeline); a Core query's `.explain()` is rejected with `INVALID_ARGUMENT`, so explain the same query as a pipeline |
-| Core [vector search](./vector-search.md) | needs a vector index, and fails with `FAILED_PRECONDITION` without one | runs without a vector index |
+| Core [vector search](./vector-search.md) | needs a vector index, and fails with `FAILED_PRECONDITION` without one | does not require a vector index: the query runs without one. A vector index can still be created on Enterprise, but whether a Core query uses it cannot be seen, since Core `.explain()` is rejected there. A pipeline `find_nearest` reads every document with or without one, see [Vector search](./vector-search.md#on-the-enterprise-edition) |
 | [Pipelines](./pipelines.md) and [SQL](./sql.md) | fail with `FAILED_PRECONDITION`, unless a cache session answers them | yes |
 | [Pipeline writes](./pipeline-writes.md) and SQL writes | no | yes |
 | [Text and geo search](./pipeline-search.md) | no | yes, with a search index |
