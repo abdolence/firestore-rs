@@ -17,9 +17,11 @@ use crate::{
 
 #[cfg(feature = "admin")]
 use crate::{
-    FirestoreCompositeIndex, FirestoreGeoIndexConfig, FirestoreIndexDefinition,
-    FirestoreIndexDeleteTarget, FirestoreIndexDensity, FirestoreIndexField,
-    FirestoreIndexFieldMode, FirestoreIndexId, FirestoreIndexIdTarget, FirestoreQueryDirection,
+    FirestoreCompositeIndex, FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget,
+    FirestoreFieldOverrideUpdate, FirestoreFieldTtlUpdate, FirestoreFieldUpdate,
+    FirestoreGeoIndexConfig, FirestoreIndexDefinition, FirestoreIndexDeleteTarget,
+    FirestoreIndexDensity, FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexId,
+    FirestoreIndexIdTarget, FirestoreIndexQueryScope, FirestoreQueryDirection,
     FirestoreSearchIndexOptions, FirestoreSqlCreateIndex, FirestoreSqlDropIndex,
     FirestoreVectorIndexConfig,
 };
@@ -2439,7 +2441,7 @@ fn a_parameter_in_an_index_statement_is_refused() {
 }
 
 #[cfg(feature = "admin")]
-fn translated_field_update(sql: &str) -> crate::FirestoreFieldUpdate {
+fn translated_field_update(sql: &str) -> FirestoreFieldUpdate {
     match translate_statement(sql, &FirestoreSqlParameters::new(), &index_options()) {
         Ok(FirestoreSqlStatement::AlterCollection(update)) => update,
         other => panic!("{sql}: {other:?}"),
@@ -2449,11 +2451,6 @@ fn translated_field_update(sql: &str) -> crate::FirestoreFieldUpdate {
 #[cfg(feature = "admin")]
 #[test]
 fn alter_column_combines_ttl_and_exemption_in_one_update() {
-    use crate::{
-        FirestoreFieldOverrideTarget, FirestoreFieldOverrideUpdate, FirestoreFieldTtlUpdate,
-        FirestoreFieldUpdate,
-    };
-
     let update = translated_field_update(
         "ALTER COLLECTION sessions ALTER COLUMN expires_at SET OPTIONS (ttl = TRUE, indexes = [])",
     );
@@ -2472,12 +2469,6 @@ fn alter_column_combines_ttl_and_exemption_in_one_update() {
 #[cfg(feature = "admin")]
 #[test]
 fn alter_collection_set_options_targets_every_field_with_scoped_indexes() {
-    use crate::{
-        FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget, FirestoreFieldOverrideUpdate,
-        FirestoreFieldUpdate, FirestoreIndexFieldMode, FirestoreIndexQueryScope,
-        FirestoreQueryDirection,
-    };
-
     let update = translated_field_update(
         "ALTER COLLECTION orders SET OPTIONS (indexes = ['contains', 'COLLECTION_GROUP DESC'])",
     );
@@ -2504,8 +2495,6 @@ fn alter_collection_set_options_targets_every_field_with_scoped_indexes() {
 #[cfg(feature = "admin")]
 #[test]
 fn alter_column_indexes_null_reverts_the_override() {
-    use crate::{FirestoreFieldOverrideTarget, FirestoreFieldOverrideUpdate, FirestoreFieldUpdate};
-
     let update = translated_field_update(
         "ALTER COLLECTION orders ALTER address.city SET OPTIONS (indexes = NULL)",
     );
