@@ -1,7 +1,9 @@
 use super::aggregation::FirestoreSqlAggregation;
 use super::parameters::FirestoreSqlBinding;
 use super::subquery::{FirestoreSqlCapture, FirestoreSqlCte};
+use super::write::SQL_UPSERT_FORM;
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
+use crate::field_path_segment;
 use crate::{
     FirestoreCollectionId, FirestoreDocumentId, FirestoreExpr, FirestoreResult,
     FirestoreSearchQuery, FirestoreSqlOptions, FirestoreSqlStatement, FirestoreValue,
@@ -9,7 +11,6 @@ use crate::{
 use gcloud_sdk::google::firestore::v1::{value::ValueType, Value};
 use sqlparser::ast::{Expr, Ident, ObjectName, ObjectNamePart, Statement};
 use sqlparser::tokenizer::Span;
-use std::borrow::Cow;
 
 /// How deep the translator nests into a statement. sqlparser's recursion limit does not bound a
 /// chain of infix operators, which it parses in a loop but nests one level per operator.
@@ -73,7 +74,13 @@ impl<'t> FirestoreSqlTranslator<'t> {
             Statement::Insert(insert) => self.insert(insert)?,
             Statement::Update(update) => self.update(update)?,
             Statement::Delete(delete) => self.delete(delete)?,
-            Statement::Merge(merge) => return Err(Self::merge(merge)),
+            Statement::Merge(merge) => {
+                return Err(FirestoreError::invalid_sql(
+                    "MERGE",
+                    format!("MERGE has no pipeline form in SQL: {SQL_UPSERT_FORM}"),
+                    at(merge.merge_token.0.span),
+                ))
+            }
             _ => {
                 return Err(FirestoreError::invalid_sql(
                     "statement",
@@ -280,25 +287,7 @@ pub(super) fn expr_start(mut expr: &Expr) -> Option<FirestoreSqlLocation> {
 pub(super) fn field_path(parts: &[Ident]) -> String {
     parts
         .iter()
-        .map(|part| field_segment(&part.value))
+        .map(|part| field_path_segment(&part.value))
         .collect::<Vec<_>>()
         .join(".")
-}
-
-/// `name` as one segment of a field path. Firestore's field path syntax takes a name other than
-/// letters, digits and underscores, such as one with a dot, between backticks.
-pub(super) fn field_segment(name: &str) -> Cow<'_, str> {
-    let simple = name
-        .chars()
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if simple {
-        Cow::Borrowed(name)
-    } else {
-        Cow::Owned(format!(
-            "`{}`",
-            name.replace('\\', "\\\\").replace('`', "\\`")
-        ))
-    }
 }

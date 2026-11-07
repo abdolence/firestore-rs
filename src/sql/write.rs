@@ -19,14 +19,14 @@ use crate::{
 use gcloud_sdk::google::firestore::v1::{value::ValueType, MapValue, Value};
 use sqlparser::ast::{
     Assignment, AssignmentTarget, ConflictTarget, Delete, DoUpdate, Expr, FromTable, Ident, Insert,
-    Merge, ObjectName, ObjectNamePart, OnConflict, OnConflictAction, OnInsert, Parens, Query,
-    SetExpr, SqliteOnConflict, TableObject, TableWithJoins, Update, Values,
+    ObjectName, ObjectNamePart, OnConflict, OnConflictAction, OnInsert, Parens, Query, SetExpr,
+    SqliteOnConflict, TableObject, TableWithJoins, Update, Values,
 };
 use std::collections::{BTreeMap, HashMap};
 
 /// Why `MERGE` and `REPLACE INTO` are refused, and the forms that do what they are most often
 /// written for.
-const SQL_UPSERT_FORM: &str = "INSERT OR REPLACE INTO replaces the stored document, and INSERT .. ON CONFLICT (__name__) DO UPDATE changes some of its fields";
+pub(super) const SQL_UPSERT_FORM: &str = "INSERT OR REPLACE INTO replaces the stored document, and INSERT .. ON CONFLICT (__name__) DO UPDATE changes some of its fields";
 
 /// The field that holds, during an `ON CONFLICT`, the stored document a row conflicts with.
 /// Firestore refuses a name between double underscores for a field, so the name is an ordinary
@@ -127,14 +127,6 @@ impl FirestoreSqlStatement {
 }
 
 impl FirestoreSqlTranslator<'_> {
-    pub(super) fn merge(merge: &Merge) -> FirestoreError {
-        FirestoreError::invalid_sql(
-            "MERGE",
-            format!("MERGE has no pipeline form in SQL: {SQL_UPSERT_FORM}"),
-            at(merge.merge_token.0.span),
-        )
-    }
-
     pub(super) fn insert(&mut self, insert: &Insert) -> FirestoreResult<FirestoreSqlStatement> {
         let Insert {
             insert_token,
@@ -432,9 +424,8 @@ impl FirestoreSqlTranslator<'_> {
                 ));
             };
             if is_parameter(ident) {
-                return Err(FirestoreError::invalid_sql(
+                return Err(FirestoreError::sql_parameter_names_field(
                     &ident.value,
-                    "a parameter is a value and cannot name a field",
                     start,
                 ));
             }

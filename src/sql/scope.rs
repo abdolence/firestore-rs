@@ -1,6 +1,7 @@
 use super::expr::SQL_DOCUMENT_NAME_FIELD;
-use super::translator::{at, field_path, field_segment, is_parameter};
+use super::translator::{at, field_path, is_parameter};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
+use crate::field_path_segment;
 use crate::FirestoreResult;
 use sqlparser::ast::Ident;
 
@@ -71,7 +72,6 @@ impl<'o> FirestoreSqlPlace<'o> {
     }
 }
 
-/// A relation joined to the base one.
 struct FirestoreSqlJoined {
     relation: FirestoreSqlRelation,
     /// Whether it holds the elements of an array, which are values, and not documents.
@@ -238,7 +238,7 @@ impl<'o> FirestoreSqlScope<'o> {
             .iter()
             .find(|joined| joined.relation.is_called(&qualifier.value))
             .and_then(|joined| joined.relation.name.as_deref())
-            .map(|alias| format!("{}.{}", field_segment(alias), field_path(rest))))
+            .map(|alias| format!("{}.{}", field_path_segment(alias), field_path(rest))))
     }
 
     /// The name a `SELECT` gives the column at `path` when it does not name it: the path without
@@ -248,7 +248,7 @@ impl<'o> FirestoreSqlScope<'o> {
             .iter()
             .filter_map(|joined| joined.relation.name.as_deref())
             .find_map(|name| {
-                path.strip_prefix(field_segment(name).as_ref())
+                path.strip_prefix(field_path_segment(name).as_ref())
                     .and_then(|rest| rest.strip_prefix('.'))
             })
             .unwrap_or(path)
@@ -263,9 +263,8 @@ impl<'o> FirestoreSqlScope<'o> {
     /// that is silently absent.
     pub(super) fn column(&self, parts: &[Ident]) -> FirestoreResult<FirestoreSqlColumn> {
         if let Some(parameter) = parts.iter().find(|part| is_parameter(part)) {
-            return Err(FirestoreError::invalid_sql(
+            return Err(FirestoreError::sql_parameter_names_field(
                 &parameter.value,
-                "a parameter is a value and cannot name a field",
                 at(parameter.span),
             ));
         }

@@ -64,10 +64,7 @@ impl FirestoreError {
         error: impl Into<String>,
         location: Option<FirestoreSqlLocation>,
     ) -> Self {
-        FirestoreError::InvalidParametersError(FirestoreInvalidParametersError::new(
-            FirestoreInvalidParametersPublicDetails::new(construct.into(), error.into())
-                .opt_location(location),
-        ))
+        Self::invalid_parameters(construct, error).located(location)
     }
 
     /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for a SQL
@@ -77,6 +74,20 @@ impl FirestoreError {
         FirestoreError::invalid_sql(
             construct,
             format!("{construct} has no pipeline form in SQL"),
+            location,
+        )
+    }
+
+    /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for a SQL
+    /// `parameter` used where a field name belongs.
+    #[cfg(feature = "sql")]
+    pub(crate) fn sql_parameter_names_field(
+        parameter: &str,
+        location: Option<FirestoreSqlLocation>,
+    ) -> Self {
+        FirestoreError::invalid_sql(
+            parameter,
+            "a parameter is a value and cannot name a field",
             location,
         )
     }

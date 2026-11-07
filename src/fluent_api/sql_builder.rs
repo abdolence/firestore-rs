@@ -42,7 +42,7 @@ impl<'a> FirestoreSqlBuilder<'a> {
         }
     }
 
-    /// Binds `value` to the parameter `@name`, given with or without the `@`.
+    /// Binds `value` to the parameter `@name`, given without the `@`.
     pub fn param<N, V>(self, name: N, value: V) -> Self
     where
         N: Into<String>,
@@ -185,7 +185,6 @@ impl<'a> FirestoreSqlBuilder<'a> {
             .await
     }
 
-    /// The translated query and the options it runs with.
     fn into_params(self) -> FirestoreResult<FirestorePipelineParams> {
         match FirestoreSqlStatement::translate(self.db, &self.sql, &self.parameters, &self.options)?
         {
@@ -199,7 +198,6 @@ impl<'a> FirestoreSqlBuilder<'a> {
         }
     }
 
-    /// The translated write and the options it runs with.
     fn into_write_params(self) -> FirestoreResult<FirestorePipelineWriteParams> {
         match FirestoreSqlStatement::translate(self.db, &self.sql, &self.parameters, &self.options)?
         {

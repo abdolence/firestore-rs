@@ -14,6 +14,18 @@ use sqlparser::ast::{
 use sqlparser::tokenizer::Span;
 use std::borrow::Cow;
 
+impl FirestoreExpr {
+    /// `[NOT] IN`: whether this value is, or with `negated` is not, an element of `search_space`.
+    pub(super) fn in_set(self, search_space: FirestoreExpr, negated: bool) -> FirestoreExpr {
+        if negated {
+            self.not_equal_any(search_space)
+        } else {
+            self.equal_any(search_space)
+        }
+        .into()
+    }
+}
+
 pub(super) const SQL_DOCUMENT_NAME_FIELD: &str = "__name__";
 
 impl FirestoreSqlTranslator<'_> {
@@ -268,12 +280,7 @@ impl FirestoreSqlTranslator<'_> {
             search_space =
                 self.document_references(scope, &operand, search_space, expr_start(array))?;
         }
-        Ok(if negated {
-            operand.not_equal_any(search_space)
-        } else {
-            operand.equal_any(search_space)
-        }
-        .into())
+        Ok(operand.in_set(search_space, negated))
     }
 
     fn arithmetic(
@@ -451,11 +458,15 @@ impl FirestoreSqlTranslator<'_> {
         expr: &Expr,
         op: &BinaryOperator,
     ) -> FirestoreResult<FirestoreExpr> {
-        let operands = chain(expr, op)
-            .into_iter()
+        let operands = chain(expr, op);
+        let [first, rest @ ..] = operands.as_slice() else {
+            return Err(FirestoreError::invalid_sql("||", "|| needs operands", None));
+        };
+        let rest = rest
+            .iter()
             .map(|operand| self.expr(scope, operand))
             .collect::<FirestoreResult<Vec<_>>>()?;
-        Ok(FirestoreExpr::raw("concat", operands))
+        Ok(self.expr(scope, first)?.concat(rest))
     }
 
     fn unary(
@@ -529,12 +540,7 @@ impl FirestoreSqlTranslator<'_> {
             });
         }
         let search_space = Self::array(elements);
-        Ok(if negated {
-            operand.not_equal_any(search_space)
-        } else {
-            operand.equal_any(search_space)
-        }
-        .into())
+        Ok(operand.in_set(search_space, negated))
     }
 
     fn between(

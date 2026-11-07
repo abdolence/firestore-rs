@@ -1,11 +1,6 @@
 use crate::FirestoreCollectionId;
 use std::collections::BTreeSet;
 
-/// The longest statement accepted unless raised, in bytes. sqlparser nests a chain of infix
-/// operators one level per operator, and its parsed statement is dropped recursively: a chain of
-/// 8,192 operators drops well within a 2 MiB stack.
-const SQL_DEFAULT_MAX_LENGTH: usize = 16 * 1024;
-
 /// What a SQL statement may do, checked when it is translated, before any request is sent.
 ///
 /// [`new`](Self::new) allows every statement the translator supports. Text from outside the
@@ -20,7 +15,6 @@ pub struct FirestoreSqlOptions {
     pub(crate) collection_groups: bool,
     pub(crate) collections: Option<BTreeSet<FirestoreCollectionId>>,
     pub(crate) max_rows: Option<u32>,
-    pub(crate) max_length: usize,
     pub(crate) subqueries: bool,
 }
 
@@ -31,15 +25,13 @@ impl Default for FirestoreSqlOptions {
 }
 
 impl FirestoreSqlOptions {
-    /// Allows every statement the translator supports, except joins and subqueries, and
-    /// statements longer than 16 KiB.
+    /// Allows every statement the translator supports, except joins and subqueries.
     pub fn new() -> Self {
         Self {
             read_only: false,
             collection_groups: true,
             collections: None,
             max_rows: None,
-            max_length: SQL_DEFAULT_MAX_LENGTH,
             subqueries: false,
         }
     }
@@ -81,12 +73,6 @@ impl FirestoreSqlOptions {
             max_rows: Some(max_rows),
             ..self
         }
-    }
-
-    /// Refuses a statement longer than `max_length` bytes, 16 KiB unless set. A longer statement
-    /// can chain more operators than a 2 MiB stack drops the parsed statement with.
-    pub fn with_max_length(self, max_length: usize) -> Self {
-        Self { max_length, ..self }
     }
 
     /// Allows joins and subqueries. Each runs one subquery per row of the query it is in, whether

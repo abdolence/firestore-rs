@@ -80,22 +80,14 @@ impl FirestoreSqlProjection {
                 }
                 if !added.is_empty() {
                     stages.push(FirestorePipelineStage::AddFields(
-                        FirestoreAddFieldsStage::new(
-                            added
-                                .into_iter()
-                                .map(FirestoreSelection::without_redundant_alias)
-                                .collect(),
-                        ),
+                        FirestoreAddFieldsStage::new(added),
                     ));
                 }
                 stages
             }
             Self::Fields(fields) => {
                 vec![FirestorePipelineStage::Fields(FirestoreFieldsStage::new(
-                    fields
-                        .into_iter()
-                        .map(FirestoreSelection::without_redundant_alias)
-                        .collect(),
+                    fields,
                 ))]
             }
         }
@@ -370,7 +362,8 @@ impl FirestoreSqlTranslator<'_> {
         })
     }
 
-    /// Filters the documents of `pipeline` by `condition` with a `where` stage.
+    /// A condition that is the constant `true`, as `ON TRUE` is, keeps every row and adds no
+    /// stage.
     pub(super) fn filter(
         &mut self,
         scope: &FirestoreSqlScope,
@@ -378,11 +371,13 @@ impl FirestoreSqlTranslator<'_> {
         condition: FirestoreExpr,
     ) {
         self.define_variables(scope.depth(), pipeline);
-        pipeline
-            .stages
-            .push(FirestorePipelineStage::Where(FirestoreWhereStage::new(
-                FirestoreBoolExpr::unchecked(condition),
-            )))
+        if condition != FirestoreExpr::constant(true) {
+            pipeline
+                .stages
+                .push(FirestorePipelineStage::Where(FirestoreWhereStage::new(
+                    FirestoreBoolExpr::unchecked(condition),
+                )));
+        }
     }
 
     /// The pipeline that reads a table and the relation its names resolve against. `children`
@@ -524,7 +519,6 @@ impl FirestoreSqlTranslator<'_> {
             .opt_parent(parent.map(|parent| format!("{}/{parent}", self.documents_path))))
     }
 
-    /// The path a collection name spells, which is not yet checked.
     pub(super) fn collection_name(name: &ObjectName) -> FirestoreResult<String> {
         let mut parts = Vec::with_capacity(name.0.len());
         for part in &name.0 {
@@ -573,25 +567,36 @@ impl FirestoreSqlTranslator<'_> {
             })
             .collect::<FirestoreResult<Vec<_>>>()?;
         let source = match (function.as_str(), arguments.as_slice()) {
-            ("collection_group", [collection_id]) => {
-                if !self.options.collection_groups {
-                    return Err(FirestoreError::invalid_sql(
-                        "collection_group",
-                        "the options refuse collection groups",
-                        start,
-                    ));
-                }
+            ("collection_group" | "subcollection", [collection_id]) => {
+                let source = if function == "collection_group" {
+                    if !self.options.collection_groups {
+                        return Err(FirestoreError::invalid_sql(
+                            "collection_group",
+                            "the options refuse collection groups",
+                            start,
+                        ));
+                    }
+                    FirestorePipelineSource::CollectionGroup(FirestoreCollectionGroupSource::new(
+                        collection_id.to_string(),
+                    ))
+                } else {
+                    if !children {
+                        return Err(FirestoreError::invalid_sql(
+                            "subcollection",
+                            "subcollection(..) reads the collection under the current document, so it belongs in a subquery or a join",
+                            start,
+                        ));
+                    }
+                    FirestorePipelineSource::Subcollection(FirestoreSubcollectionSource::new(
+                        collection_id.to_string(),
+                    ))
+                };
                 self.check_collection(collection_id, start)?;
                 let relation = FirestoreSqlRelation {
                     name: alias.or_else(|| Some(collection_id.to_string())),
                     collection_path: None,
                 };
-                return Ok((
-                    FirestorePipelineSource::CollectionGroup(FirestoreCollectionGroupSource::new(
-                        collection_id.to_string(),
-                    )),
-                    relation,
-                ));
+                return Ok((source, relation));
             }
             ("documents", paths) if !paths.is_empty() => {
                 let paths = paths
@@ -609,26 +614,6 @@ impl FirestoreSqlTranslator<'_> {
                     ));
                 }
                 FirestorePipelineSource::Database
-            }
-            ("subcollection", [collection_id]) => {
-                if !children {
-                    return Err(FirestoreError::invalid_sql(
-                        "subcollection",
-                        "subcollection(..) reads the collection under the current document, so it belongs in a subquery or a join",
-                        start,
-                    ));
-                }
-                self.check_collection(collection_id, start)?;
-                let relation = FirestoreSqlRelation {
-                    name: alias.or_else(|| Some(collection_id.to_string())),
-                    collection_path: None,
-                };
-                return Ok((
-                    FirestorePipelineSource::Subcollection(FirestoreSubcollectionSource::new(
-                        collection_id.to_string(),
-                    )),
-                    relation,
-                ));
             }
             ("collection_group" | "documents" | "database" | "subcollection", _) => {
                 return Err(FirestoreError::invalid_sql(

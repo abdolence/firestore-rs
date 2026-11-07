@@ -5,6 +5,7 @@
 //! on to Firestore.
 
 use crate::errors::FirestoreError;
+use crate::field_path_segment;
 use crate::{FirestoreCollectionId, FirestoreQueryDirection, FirestoreResult};
 use rsb_derive::Builder;
 use std::collections::HashSet;
@@ -323,14 +324,6 @@ impl CanonicalFieldPath {
             }
         }
     }
-
-    fn is_simple_identifier(segment: &str) -> bool {
-        let mut chars = segment.chars();
-        chars
-            .next()
-            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-    }
 }
 
 impl From<&str> for CanonicalFieldPath {
@@ -346,18 +339,7 @@ impl From<&str> for CanonicalFieldPath {
             if position > 0 {
                 canonical.push('.');
             }
-            if Self::is_simple_identifier(segment) {
-                canonical.push_str(segment);
-            } else {
-                canonical.push('`');
-                for c in segment.chars() {
-                    if c == '`' || c == '\\' {
-                        canonical.push('\\');
-                    }
-                    canonical.push(c);
-                }
-                canonical.push('`');
-            }
+            canonical.push_str(&field_path_segment(segment));
         }
         Self(canonical)
     }

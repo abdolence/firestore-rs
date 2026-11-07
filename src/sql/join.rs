@@ -1,12 +1,12 @@
 use super::query::table_start;
 use super::scope::{FirestoreSqlPlace, FirestoreSqlRelation, FirestoreSqlScope};
-use super::translator::{expr_start, field_segment, FirestoreSqlTranslator};
+use super::translator::{expr_start, FirestoreSqlTranslator};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
+use crate::field_path_segment;
 use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::{
-    FirestoreAddFieldsStage, FirestoreBoolExpr, FirestoreExpr, FirestorePipeline,
-    FirestorePipelineSource, FirestorePipelineStage, FirestoreResult, FirestoreSelection,
-    FirestoreUnnestStage, FirestoreWhereStage,
+    FirestoreAddFieldsStage, FirestoreExpr, FirestorePipeline, FirestorePipelineSource,
+    FirestorePipelineStage, FirestoreResult, FirestoreSelection, FirestoreUnnestStage,
 };
 use sqlparser::ast::{Expr, Join, JoinConstraint, JoinOperator, TableFactor, TableWithJoins};
 
@@ -154,15 +154,13 @@ impl FirestoreSqlTranslator<'_> {
             self.require_subqueries("JOIN", "a join", start)?;
         }
         if let Some(on) = join.on {
-            let condition = {
-                let on_scope = FirestoreSqlScope::new(relation.clone()).joining(scope);
-                self.expr(&on_scope, on)?
-            };
-            keep_matching(&mut matches, condition);
+            let on_scope = FirestoreSqlScope::new(relation.clone()).joining(scope);
+            let condition = self.expr(&on_scope, on)?;
+            self.filter(&on_scope, &mut matches, condition);
         }
 
         self.define_variables(scope.depth(), pipeline);
-        let element = FirestoreExpr::field(field_segment(&name));
+        let element = FirestoreExpr::field(field_path_segment(&name));
         let mut stages = vec![FirestorePipelineStage::AddFields(
             FirestoreAddFieldsStage::new(vec![
                 FirestoreExpr::ArraySubquery(matches).alias(name.clone())
@@ -242,21 +240,8 @@ impl FirestoreSqlTranslator<'_> {
         });
         if let Some(on) = join.on {
             let condition = self.expr(scope, on)?;
-            self.define_variables(scope.depth(), pipeline);
-            keep_matching(pipeline, condition);
+            self.filter(scope, pipeline, condition);
         }
         Ok(())
-    }
-}
-
-/// Keeps only the rows of `pipeline` for which `condition` holds. A condition that is the
-/// constant `true`, as `ON TRUE` is, keeps all of them and adds no stage.
-fn keep_matching(pipeline: &mut FirestorePipeline, condition: FirestoreExpr) {
-    if condition != FirestoreExpr::constant(true) {
-        pipeline
-            .stages
-            .push(FirestorePipelineStage::Where(FirestoreWhereStage::new(
-                FirestoreBoolExpr::unchecked(condition),
-            )));
     }
 }

@@ -21,16 +21,15 @@ impl FirestoreSqlParameters {
         Self::default()
     }
 
-    /// Binds `value` to the parameter `@name`. The name matches case-sensitively, and is given
-    /// with or without the `@`.
+    /// Binds `value` to the parameter `@name`, given without the `@`. The name matches
+    /// case-sensitively.
     pub fn param<N, V>(mut self, name: N, value: V) -> Self
     where
         N: Into<String>,
         V: Serialize,
     {
-        let name: String = name.into();
-        let name = name.strip_prefix('@').map(str::to_string).unwrap_or(name);
-        self.named.insert(name, FirestoreExpr::constant(value));
+        self.named
+            .insert(name.into(), FirestoreExpr::constant(value));
         self
     }
 

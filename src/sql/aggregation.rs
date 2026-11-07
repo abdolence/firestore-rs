@@ -2,6 +2,7 @@ use super::functions::FirestoreSqlCall;
 use super::scope::{FirestoreSqlColumn, FirestoreSqlScope};
 use super::translator::{at, expr_start, is_column, is_parameter, FirestoreSqlTranslator};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
+use crate::pipeline_expr_builder::FirestorePipelineExprBuilder;
 use crate::{
     FirestoreAggregate, FirestoreAggregateStage, FirestoreBoolExpr, FirestoreDistinctStage,
     FirestoreExpr, FirestoreFieldsStage, FirestorePipelineOrdering, FirestorePipelineStage,
@@ -166,27 +167,6 @@ impl FirestoreSqlAggregation {
         let Self {
             keys, accumulators, ..
         } = self;
-        let selections: Vec<FirestoreSelection> = selections
-            .into_iter()
-            .map(FirestoreSelection::without_redundant_alias)
-            .collect();
-        let outputs: BTreeSet<&str> = keys
-            .iter()
-            .map(|key| key.name.as_str())
-            .chain(accumulators.iter().map(|known| known.name.as_str()))
-            .collect();
-        let selected: Option<Vec<&str>> = selections
-            .iter()
-            .map(|selection| match (&selection.expr, &selection.alias) {
-                (FirestoreExpr::Field(name), None) => Some(name.as_str()),
-                _ => None,
-            })
-            .collect();
-        let selects_only_outputs = selected.is_some_and(|selected| {
-            selected.len() == outputs.len()
-                && selected.into_iter().collect::<BTreeSet<_>>() == outputs
-        });
-
         let groups = keys.iter().map(|key| key.selection.clone()).collect();
         let mut stages = Vec::new();
         stages.push(if accumulators.is_empty() {
@@ -210,11 +190,9 @@ impl FirestoreSqlAggregation {
                 orderings,
             )));
         }
-        if !selects_only_outputs {
-            stages.push(FirestorePipelineStage::Fields(FirestoreFieldsStage::new(
-                selections,
-            )));
-        }
+        stages.push(FirestorePipelineStage::Fields(FirestoreFieldsStage::new(
+            selections,
+        )));
         stages
     }
 }
@@ -406,37 +384,21 @@ impl FirestoreSqlTranslator<'_> {
             subquery: _,
         } = call;
         let distinct = matches!(duplicate_treatment, Some(DuplicateTreatment::Distinct));
-        let accumulator = match (name.as_str(), distinct) {
-            ("count", false) => "count",
-            ("count", true) => "count_distinct",
-            ("array_agg", false) => "array_agg",
-            ("array_agg", true) => "array_agg_distinct",
-            ("sum" | "count_distinct" | "array_agg_distinct" | "first" | "last", false) => name,
-            ("avg" | "average", false) => "average",
-            ("min", false) => "minimum",
-            ("max", false) => "maximum",
-            ("countif" | "count_if", false) => "count_if",
-            (_, true) => {
-                return Err(FirestoreError::unsupported_sql(
-                    &format!("DISTINCT in {name}"),
-                    start,
-                ))
-            }
-            _ => {
-                return Err(FirestoreError::unsupported_sql(
-                    &format!("the aggregate function {name}"),
-                    start,
-                ))
-            }
+        let Some(accumulator) = accumulator(name, distinct) else {
+            return Err(FirestoreError::unsupported_sql(
+                &if distinct {
+                    format!("DISTINCT in {name}")
+                } else {
+                    format!("the aggregate function {name}")
+                },
+                start,
+            ));
         };
         if name == "count"
             && !distinct
             && matches!(arguments, [FunctionArg::Unnamed(FunctionArgExpr::Wildcard)])
         {
-            return Ok(FirestoreAggregate::raw(
-                accumulator,
-                Vec::<FirestoreExpr>::new(),
-            ));
+            return Ok(FirestorePipelineExprBuilder.count_all());
         }
         let [argument] = Self::positional_arguments(arguments, start)?[..] else {
             return Err(FirestoreError::invalid_sql(
@@ -445,10 +407,7 @@ impl FirestoreSqlTranslator<'_> {
                 start,
             ));
         };
-        Ok(FirestoreAggregate::raw(
-            accumulator,
-            [self.expr(scope, argument)?],
-        ))
+        Ok(accumulator(self.expr(scope, argument)?))
     }
 
     /// The column `parts` names. A column of the query is noted as read for the aggregation to
@@ -500,4 +459,37 @@ impl FirestoreSqlTranslator<'_> {
             None => translated,
         }
     }
+}
+
+/// The builder of the accumulator that the SQL aggregate function `name` computes, or `None` for
+/// a function or a `DISTINCT` it has no accumulator for.
+fn accumulator(name: &str, distinct: bool) -> Option<fn(FirestoreExpr) -> FirestoreAggregate> {
+    let build: fn(FirestoreExpr) -> FirestoreAggregate = match (name, distinct) {
+        ("count", false) => FirestoreExpr::count,
+        ("count", true) | ("count_distinct", false) => FirestoreExpr::count_distinct,
+        ("array_agg", false) => FirestoreExpr::array_agg,
+        ("array_agg", true) | ("array_agg_distinct", false) => FirestoreExpr::array_agg_distinct,
+        ("sum", false) => FirestoreExpr::sum,
+        ("avg" | "average", false) => FirestoreExpr::average,
+        ("min", false) => FirestoreExpr::minimum,
+        ("max", false) => FirestoreExpr::maximum,
+        ("first", false) => FirestoreExpr::first,
+        ("last", false) => FirestoreExpr::last,
+        ("countif" | "count_if", false) => {
+            |argument| FirestoreBoolExpr::unchecked(argument).count_if()
+        }
+        _ => return None,
+    };
+    Some(build)
+}
+
+/// Whether `name` is an aggregate function: one with an accumulator, or one of SQL's that has none
+/// and is refused rather than passed on as a scalar function. `minimum` and `maximum` are not,
+/// since pipelines also have scalar functions of those names.
+pub(super) fn is_aggregate_function(name: &str) -> bool {
+    accumulator(name, false).is_some()
+        || matches!(
+            name,
+            "any_value" | "logical_and" | "logical_or" | "string_agg"
+        )
 }

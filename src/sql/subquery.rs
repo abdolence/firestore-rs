@@ -193,12 +193,7 @@ impl FirestoreSqlTranslator<'_> {
         negated: bool,
     ) -> FirestoreResult<FirestoreExpr> {
         let values = self.array_subquery(scope, query)?;
-        Ok(if negated {
-            operand.not_equal_any(values)
-        } else {
-            operand.equal_any(values)
-        }
-        .into())
+        Ok(operand.in_set(values, negated))
     }
 
     /// `[NOT] EXISTS (SELECT ..)`: whether the subquery finds a row. It looks for one, and

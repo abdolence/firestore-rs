@@ -13,6 +13,11 @@ use sqlparser::tokenizer::Tokenizer;
 /// a debug build: each level of a nested `NOT` or function call takes about 90 KB there.
 const SQL_PARSER_RECURSION_LIMIT: usize = 16;
 
+/// The longest statement accepted, in bytes. sqlparser nests a chain of infix operators one level
+/// per operator, and its parsed statement is dropped recursively: a chain of 8,192 operators
+/// drops well within a 2 MiB stack.
+const SQL_MAX_LENGTH: usize = 16 * 1024;
+
 /// A SQL statement translated into the pipeline model.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FirestoreSqlStatement {
@@ -50,13 +55,12 @@ impl FirestoreSqlStatement {
         parameters: &FirestoreSqlParameters,
         options: &FirestoreSqlOptions,
     ) -> FirestoreResult<Self> {
-        if sql.len() > options.max_length {
+        if sql.len() > SQL_MAX_LENGTH {
             return Err(FirestoreError::invalid_sql(
                 "max_length",
                 format!(
-                    "the statement is {} bytes, longer than the {} allowed",
-                    sql.len(),
-                    options.max_length
+                    "the statement is {} bytes, longer than the {SQL_MAX_LENGTH} allowed",
+                    sql.len()
                 ),
                 None,
             ));

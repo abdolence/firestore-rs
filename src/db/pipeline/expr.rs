@@ -110,15 +110,6 @@ impl FirestoreAggregate {
 }
 
 impl FirestoreSelection {
-    /// The selection without an alias that repeats the path of the field it selects.
-    #[cfg(feature = "sql")]
-    pub(crate) fn without_redundant_alias(self) -> Self {
-        match (&self.expr, &self.alias) {
-            (FirestoreExpr::Field(path), Some(alias)) if path == alias => Self::new(self.expr),
-            _ => self,
-        }
-    }
-
     /// The expression and the field name it is output under: the alias, or else the field's own
     /// path. Fails for a computed expression without an alias.
     pub(super) fn into_named(self, stage: &str) -> FirestoreResult<(String, FirestoreExpr)> {
@@ -130,6 +121,26 @@ impl FirestoreSelection {
                 format!("a computed expression needs an alias: {expr:?}"),
             )),
         }
+    }
+}
+
+/// `name` as one segment of a field path. A bare segment is a simple identifier,
+/// `[A-Za-z_][A-Za-z0-9_]*`; any other name goes between backticks, with `\\` and `` \` `` escaping
+/// a backslash and a backtick inside them.
+#[cfg(any(feature = "admin", feature = "sql"))]
+pub(crate) fn field_path_segment(name: &str) -> std::borrow::Cow<'_, str> {
+    let simple = name
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if simple {
+        std::borrow::Cow::Borrowed(name)
+    } else {
+        std::borrow::Cow::Owned(format!(
+            "`{}`",
+            name.replace('\\', "\\\\").replace('`', "\\`")
+        ))
     }
 }
 
