@@ -800,6 +800,7 @@ mod tests {
         impl tracing::Subscriber + Send + Sync,
         StdArc<std::sync::Mutex<Vec<u8>>>,
     ) {
+        crate::db::fake_firestore::keep_spans_visible_to_scoped_subscribers();
         let buffer = StdArc::new(std::sync::Mutex::new(Vec::new()));
         let make_writer = {
             let buffer = buffer.clone();

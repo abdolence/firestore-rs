@@ -24,6 +24,21 @@ use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{watch, Notify};
 
+/// Registers a second dispatcher, a disabled one, for the rest of the test binary.
+///
+/// While tracing knows a single dispatcher, it registers a new callsite against the subscriber of
+/// the thread that first reaches it. A concurrent test without a subscriber can then disable a
+/// span for good, and the test that scoped a capturing subscriber never sees it. With two
+/// dispatchers registered, a callsite is registered against both, so each thread decides at the
+/// span itself. Call this wherever a test scopes a subscriber with `set_default`.
+#[cfg(feature = "admin")]
+pub(super) fn keep_spans_visible_to_scoped_subscribers() {
+    static REGISTERED: std::sync::Once = std::sync::Once::new();
+    REGISTERED.call_once(|| {
+        tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default()).ok();
+    });
+}
+
 /// A handler's answer to one RPC.
 pub(super) enum FakeResponse {
     /// A framed protobuf message, sent with a `grpc-status: 0` trailer.
