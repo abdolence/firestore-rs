@@ -18,7 +18,7 @@ editions, and the client picks one by its ID, see
 | Core aggregations: count, sum, avg | yes | yes, with the same results |
 | [Transactions](./transactions.md) | yes | yes; optimistic by default, so under contention more attempts abort and are retried |
 | Core `.explain()` | yes | rejected with `INVALID_ARGUMENT` |
-| Core [vector search](./vector-search.md) | needs a vector index | answered with and without a vector index |
+| Core [vector search](./vector-search.md) | needs a vector index, and fails with `FAILED_PRECONDITION` without one | runs without a vector index |
 | [Pipelines](./pipelines.md) and [SQL](./sql.md) | fail with `FAILED_PRECONDITION`, unless a cache session answers them | yes |
 | [Pipeline writes](./pipeline-writes.md) and SQL writes | no | yes |
 | [Text and geo search](./pipeline-search.md) | no | yes, with a search index |

@@ -68,15 +68,20 @@ let nearest: Vec<Article> = db
 - `Cosine`, which compares the angle between the vectors and ignores their length;
 - `DotProduct`, which is like cosine, and takes the length into account too.
 
+Documents at the same distance come back in no fixed order. A `Cosine` query fails with
+`FAILED_PRECONDITION`, "Cannot compute cosine distance against a vector with a magnitude of zero",
+when the collection holds a vector of zeros.
+
 ## Distance and threshold
 
 `find_nearest_with_options(..)` takes a `FirestoreFindNearestOptions`, with two more settings:
 
 - `.with_distance_result_field(name)` outputs the distance of each document under that field, so
-  the result type can read it;
+  the result type can read it. It holds the straight-line distance for `Euclidean`, the cosine
+  distance for `Cosine` (0 for the same direction), and the dot product itself for `DotProduct`;
 - `.with_distance_threshold(value)` returns only the documents within that distance. For
-  `Euclidean` and `Cosine` it is the largest distance, and for `DotProduct`, where a larger value
-  means a nearer vector, the smallest one.
+  `Euclidean` and `Cosine` it is the largest distance, and a document at exactly that distance is
+  kept. For `DotProduct`, where a larger value means a nearer vector, it is the smallest one.
 
 ```rust,no_run
 # use firestore::*;
@@ -118,8 +123,8 @@ A vector query is never answered from a [cache](./caching/modes.md#what-the-cach
 
 ## On the Enterprise edition
 
-A Core vector query ran on an Enterprise edition database with and without a vector index. Query
-Explain is refused there, so its plan cannot show whether it used the index.
+A Core vector query runs on an Enterprise edition database without a vector index. Query Explain is refused there, so its plan cannot show
+what the query reads.
 
 The pipeline [`find_nearest`](./pipeline-aggregations-and-joins.md#nearest-neighbours) stage takes
 the same vector and measures, and has no distance threshold. It does not use a vector index: its

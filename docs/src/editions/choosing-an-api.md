@@ -61,8 +61,8 @@ See [Query plans and cost](./query-plans.md).
 
 ## Vector search
 
-A Core [vector search](../vector-search.md) needs a vector index on Standard, and ran with and
-without one on Enterprise. The pipeline [`find_nearest`](../pipeline-aggregations-and-joins.md#nearest-neighbours)
+A Core [vector search](../vector-search.md) needs a vector index on Standard, and runs without one
+on Enterprise. The pipeline [`find_nearest`](../pipeline-aggregations-and-joins.md#nearest-neighbours)
 stage never uses the index, so its cost follows the size of the collection.
 
 ## Moving a Core query to a pipeline
