@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-44799e9e.js";
+            window.path_to_searchindex_js = "searchindex-8d4eeee2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0efaf104.js"></script>
@@ -665,7 +665,7 @@ indexes.</p>
 <code>revert_fields</code> and <code>disable_ttl</code> are what a pruning sync would remove, and
 <code>kept_undeclared_indexes</code>, <code>kept_undeclared_fields</code> and <code>kept_undeclared_ttl</code> are what it would
 leave alone. Both are zero here, since the group carries nothing undeclared.</p>
-<p>Each call reads the database’s edition first, in a <code>Firestore Index Edition</code> span, ahead of the
+<p>Each call reads the database’s edition first, in a <code>Firestore Database Edition</code> span, ahead of the
 listing. Its time counts in the report’s <code>total</code> and in no phase.</p>
 <p><code>.sync()</code> also logs a <code>Firestore Index Apply</code> span with one child span per applied action, and a
 <code>Firestore Index Wait</code> span when waiting is requested, with one child span per operation polled.</p>

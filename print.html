@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-44799e9e.js";
+            window.path_to_searchindex_js = "searchindex-8d4eeee2.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-0efaf104.js"></script>
@@ -402,11 +402,26 @@ realtimeUpdatesMode: REALTIME_UPDATES_MODE_ENABLED
 </code></pre>
 <p>The Firestore page of the Google Cloud console lists the databases of a project with the edition
 of each.</p>
+<p>With the <code>admin</code> feature, <code>FirestoreDb::read_database_edition()</code> returns the edition of the
+database the client is connected to. A database that reports no edition reads as <code>Standard</code>, the
+edition Firestore applies at creation. An edition this version of the crate does not know reads as
+<code>Unknown</code>, with the value Firestore reported, and index statements refuse a database of that
+edition. Firestore may add editions, so <code>FirestoreDatabaseEdition</code> is non-exhaustive. The emulator
+does not serve the Admin API, so the call fails there with <code>UNIMPLEMENTED</code>.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; FirestoreResult&lt;()&gt; {
+</span>match db.read_database_edition().await? {
+    FirestoreDatabaseEdition::Standard =&gt; println!("Standard edition"),
+    FirestoreDatabaseEdition::Enterprise =&gt; println!("Enterprise edition"),
+    other =&gt; println!("an edition this version does not know: {other:?}"),
+}
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
 <p>Two errors also tell the editions apart: a pipeline sent to a Standard edition database fails with
 <code>FAILED_PRECONDITION</code>, and a Core <code>.explain()</code> sent to an Enterprise edition database fails with
 <code>INVALID_ARGUMENT</code>, “Explain options are not supported in RunQuery API for Enterprise edition”.</p>
-<p><a href="#index-management">Index management</a> reads the edition itself, through <code>GetDatabase</code>, on
-every <code>.plan()</code> and <code>.sync()</code>, and follows the rules of that edition.</p>
+<p><a href="#index-management">Index management</a> reads the edition itself, the same way, on every
+<code>.plan()</code> and <code>.sync()</code>, and follows the rules of that edition.</p>
 <h2 id="settings-fixed-at-creation"><a class="header" href="#settings-fixed-at-creation">Settings fixed at creation</a></h2>
 <p>The edition and the real-time updates setting are immutable: to change either, create a new
 database with the wanted settings and move the data. Both are chosen when the database is created:</p>
@@ -4748,7 +4763,7 @@ indexes.</p>
 <code>revert_fields</code> and <code>disable_ttl</code> are what a pruning sync would remove, and
 <code>kept_undeclared_indexes</code>, <code>kept_undeclared_fields</code> and <code>kept_undeclared_ttl</code> are what it would
 leave alone. Both are zero here, since the group carries nothing undeclared.</p>
-<p>Each call reads the database’s edition first, in a <code>Firestore Index Edition</code> span, ahead of the
+<p>Each call reads the database’s edition first, in a <code>Firestore Database Edition</code> span, ahead of the
 listing. Its time counts in the report’s <code>total</code> and in no phase.</p>
 <p><code>.sync()</code> also logs a <code>Firestore Index Apply</code> span with one child span per applied action, and a
 <code>Firestore Index Wait</code> span when waiting is requested, with one child span per operation polled.</p>
