@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b567dc1e.js";
+            window.path_to_searchindex_js = "searchindex-42eebebd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-edc99909.js"></script>
@@ -405,7 +405,9 @@ the same query as a pipeline or SQL, see
 <li>Without a vector index the query fails with <code>FAILED_PRECONDITION</code>.</li>
 <li>A vector index can still be created on Enterprise, but whether a Core query uses it cannot be
 seen, since Core <code>.explain()</code> is rejected there.</li>
-<li>The <code>find_nearest</code> stage reads every document with or without a vector index, see
+<li>The <code>find_nearest</code> stage reads every document with or without a vector index, and a filter
+before it does not narrow the read. Google lists this as a known issue of pipelines. Use a Core
+<code>find_nearest</code> where the index should be used, see
 <a href="#on-the-enterprise-edition-2">Vector search</a>.</li>
 <li>An <code>.exempt()</code> is already satisfied.</li>
 <li>The density of an index is which documents it holds an entry for.</li>
@@ -778,8 +780,10 @@ it, where Standard fails with <code>FAILED_PRECONDITION</code>, and without <cod
 results is unspecified. Its plan cannot be shown, since Core <code>.explain()</code> is rejected there;</li>
 <li><strong>Pipeline <code>find_nearest</code>.</strong> The stage does not use a vector index. Its plan is a <code>TableScan</code>
 followed by a sort by distance, even when a vector index exists on the field, so its cost follows
-the size of the collection. A Core <a href="#vector-search-1">vector search</a> uses the index on
-Standard;</li>
+the size of the collection. Google lists this as a known issue of pipelines. A filter before the
+stage does not narrow what it reads, even with a composite index. A Core
+<a href="#on-the-enterprise-edition-2">vector search</a> is the query that can use a vector
+index, and it does on Standard;</li>
 <li><strong>Joins and subqueries.</strong> A subquery runs once for each row of the query it is in, whether or not
 it is <em>correlated</em>, that is, whether or not it reads a value of the row it runs for. An
 unindexed join scans the joined collection once for each left row, see
@@ -1363,6 +1367,17 @@ what the query reads.</p>
 the same vector and measures, and has no distance threshold. It does not use a vector index: its
 plan is a table scan, so its cost follows the size of the collection, see
 <a href="#known-table-scans">Query plans and cost</a>.</p>
+<p>Google lists this as a known issue of pipelines: they do not yet support the <code>vector</code> index type,
+and <code>find_nearest</code> is expected to be slower than its Core equivalent, see
+<a href="https://docs.cloud.google.com/firestore/native/docs/pipeline/overview">Known issues</a> in the
+pipelines overview. Until pipelines use vector indexes:</p>
+<ul>
+<li>a filter before the <code>find_nearest</code> stage does not narrow what the stage reads. The documents are
+read first and the filter is applied to them afterwards, even when a composite index of the
+filter field and the vector field exists;</li>
+<li>a Core <code>find_nearest</code> is the query that can use a vector index, so use it where the index should
+be used. Enterprise rejects a Core <code>.explain()</code>, so whether it does there cannot be seen.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="listening-to-document-changes"><a class="header" href="#listening-to-document-changes">Listening to document changes</a></h1>
 <p>To help to work with asynchronous event listener the library supports high level API for

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b567dc1e.js";
+            window.path_to_searchindex_js = "searchindex-42eebebd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-edc99909.js"></script>
@@ -240,7 +240,9 @@ the same query as a pipeline or SQL, see
 <li>Without a vector index the query fails with <code>FAILED_PRECONDITION</code>.</li>
 <li>A vector index can still be created on Enterprise, but whether a Core query uses it cannot be
 seen, since Core <code>.explain()</code> is rejected there.</li>
-<li>The <code>find_nearest</code> stage reads every document with or without a vector index, see
+<li>The <code>find_nearest</code> stage reads every document with or without a vector index, and a filter
+before it does not narrow the read. Google lists this as a known issue of pipelines. Use a Core
+<code>find_nearest</code> where the index should be used, see
 <a href="./vector-search.html#on-the-enterprise-edition">Vector search</a>.</li>
 <li>An <code>.exempt()</code> is already satisfied.</li>
 <li>The density of an index is which documents it holds an entry for.</li>

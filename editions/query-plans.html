@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-b567dc1e.js";
+            window.path_to_searchindex_js = "../searchindex-42eebebd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-edc99909.js"></script>
@@ -339,8 +339,10 @@ it, where Standard fails with <code>FAILED_PRECONDITION</code>, and without <cod
 results is unspecified. Its plan cannot be shown, since Core <code>.explain()</code> is rejected there;</li>
 <li><strong>Pipeline <code>find_nearest</code>.</strong> The stage does not use a vector index. Its plan is a <code>TableScan</code>
 followed by a sort by distance, even when a vector index exists on the field, so its cost follows
-the size of the collection. A Core <a href="../vector-search.html">vector search</a> uses the index on
-Standard;</li>
+the size of the collection. Google lists this as a known issue of pipelines. A filter before the
+stage does not narrow what it reads, even with a composite index. A Core
+<a href="../vector-search.html#on-the-enterprise-edition">vector search</a> is the query that can use a vector
+index, and it does on Standard;</li>
 <li><strong>Joins and subqueries.</strong> A subquery runs once for each row of the query it is in, whether or not
 it is <em>correlated</em>, that is, whether or not it reads a value of the row it runs for. An
 unindexed join scans the joined collection once for each left row, see
