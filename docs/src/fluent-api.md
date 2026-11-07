@@ -70,8 +70,16 @@ db.fluent()
 # }
 ```
 
-The low level "support" traits were made crate private in v0.52.0. If you used them, see the
-[migration guide](https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md) for the fluent replacement of every removed method.
+The low level "support" traits are crate private. The
+[migration guide](https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md) lists the fluent replacement of every removed method.
+
+On a database of the Enterprise edition, `db.fluent()` has two more entry points next to the Core
+ones:
+
+- [`db.fluent().pipeline()`](./pipelines.md) for pipeline reads and writes;
+- [`db.fluent().sql(..)`](./sql.md) for SQL statements, behind the `sql` feature.
+
+[Choosing Core queries, pipelines or SQL](./editions/choosing-an-api.md) compares the three.
 
 Alongside it, the library provides core functionality that is public API in its own right:
 

@@ -28,7 +28,7 @@ db.fluent()
     .execute::<()>()
     .await?;
 
-// The doc path where we store our children
+// The doc path where the children are stored
 let parent_path = db.parent_path(TEST_PARENT_COLLECTION_NAME, parent_struct.some_id)?;
 
 // Create a child doc

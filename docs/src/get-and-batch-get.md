@@ -1,4 +1,7 @@
-# Get and batch get support
+# Get and batch get
+
+`.one(id)` reads one document by its ID, and returns `None` when it does not exist. `.batch(ids)`
+reads several documents in one request, and streams each ID with its document or `None`:
 
 ```rust,no_run
 # use firestore::*;
@@ -28,3 +31,6 @@ let object_stream: BoxStream<(String, Option<MyTestStructure>)> = db
 # Ok(())
 # }
 ```
+
+What a read by ID costs on each edition is in
+[Query plans and cost](./editions/query-plans.md#cost-per-edition).

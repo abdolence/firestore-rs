@@ -134,3 +134,9 @@ For writes the fluent builders do not cover, queue them directly on `FirestoreBa
 `update_object`, `delete_by_id` and `transform`, plus `_at` variants for an explicit parent path.
 Each takes an optional [write precondition](./preconditions.md). On the simple writer a failed
 precondition fails just that one write; on the streaming writer it fails the whole stream.
+
+## On the Enterprise edition
+
+An Enterprise edition database can hold unique indexes, which refuse a write that would give two
+documents the same entry. Such a write returns `DataConflictError`, see
+[Unique indexes](./index-management/ttl-and-enterprise.md#unique-indexes).

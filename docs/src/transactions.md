@@ -134,5 +134,37 @@ db.run_transaction_with_options(
 
 See the complete example available [here](https://github.com/abdolence/firestore-rs/blob/master/examples/read-write-transactions.rs).
 
-Please note that Firestore doesn't support creating documents in the transactions (generating
-document IDs automatically), so you need to use `update()` to implicitly create documents and specifying your own IDs.
+A Core write in a transaction cannot create a document with an ID that Firestore generates. To
+create a document in a transaction, use `update()` with an ID of your own, which creates the
+document when it does not exist. A pipeline `insert` without `.document_id(..)` is the exception on
+the Enterprise edition: it gets an ID from Firestore and runs in a transaction, see
+[Pipeline writes](./pipeline-writes.md#writes-in-a-transaction).
+
+## Transactions and the cache
+
+A read in a transaction never uses the [cache](./caching.md). The same holds for a handle from
+`clone_with_consistency_selector`, which reads at a read time:
+
+- under `read_through_cache`, `get`, batch get, `query` and `list` are answered by Firestore, so the
+  transaction reads and locks the documents. A document read this way is not written to the cache;
+- under `read_cached_only`, the same reads return `FirestoreError::CacheError` with the code
+  `CacheConsistencySelectorUnsupported`, because that mode never contacts Firestore. A transaction
+  needs a `read_through_cache` handle instead.
+
+Inside `run_transaction`, a `?` on that error makes it transient, so the transaction is retried 4
+times, with a few seconds of backoff, before the error is returned wrapped in
+`FirestoreError::ErrorInTransaction`. Return `BackoffError::permanent` from the closure to fail on
+the first attempt.
+
+## On the Enterprise edition
+
+Core aggregations and transactions behave the same on both editions; under contention an
+Enterprise database, which is optimistic by default, aborts and retries transactions more often
+than a Standard one. The concurrency mode is a setting of the database, shown as `concurrencyMode`
+by `gcloud firestore databases describe`, see
+[Telling which edition a database is](./editions.md#telling-which-edition-a-database-is).
+
+A transaction on Enterprise can also hold [pipeline and SQL writes](./pipeline-writes.md#writes-in-a-transaction).
+They are sent when they run, where Core writes are buffered and sent with the commit. A transaction
+takes pipeline writes or buffered writes: Firestore rejects a commit that mixes them with
+`INVALID_ARGUMENT`.

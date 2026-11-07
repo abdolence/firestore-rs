@@ -54,8 +54,8 @@ dropped, as `one_more_string` in the example above.
 
 Use:
 
-- `q.for_all` for AND conditions
-- `q.for_any` for OR conditions (Firestore has just recently added support for OR conditions)
+- `q.for_all` for AND conditions;
+- `q.for_any` for OR conditions.
 
 You can nest `q.for_all`/`q.for_any`.
 
@@ -128,4 +128,16 @@ ordered fields - this is not enforced by the library, so a mismatch is a runtime
 Firestore rather than a compile-time one.
 
 `.order_by([(path!(..), FirestoreQueryDirection::Descending)])` still works but is deprecated in
-favor of `.order()`.
+favour of `.order()`.
+
+## On the Enterprise edition
+
+On Enterprise a Core query runs as a scan when no index covers it, where Standard fails with
+`FAILED_PRECONDITION`, and without `order_by` the order of its results is unspecified. An
+Enterprise edition database builds no single-field index on its own, so a query reads through an
+index only when one is declared, see [TTL and the Enterprise edition](./index-management/ttl-and-enterprise.md#the-enterprise-edition).
+`order_by` still leaves out the documents that lack the field, on both editions.
+
+A Core `.explain()` is rejected there with `INVALID_ARGUMENT`; the plan of a query comes from the
+same query written as a pipeline, see [Query plans and cost](./editions/query-plans.md). A scan is
+billed by the data it reads, see [Cost per edition](./editions/query-plans.md#cost-per-edition).

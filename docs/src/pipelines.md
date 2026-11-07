@@ -5,9 +5,10 @@ source, such as a collection; every later stage takes the documents of the stage
 passes its own output on: `filter`, `sort`, `fields`, `limit`, and so on. The library sends it
 through Firestore's `ExecutePipeline` call.
 
-Pipelines need a database of the Firestore *Enterprise edition*, the edition that runs them. A
-pipeline sent to a Standard edition database fails at once with `FAILED_PRECONDITION`, and the
-library does not retry it.
+Pipelines need a database of the Firestore *Enterprise edition*, the edition that runs them, see
+[Standard and Enterprise editions](./editions.md). A pipeline sent to a Standard edition database
+fails at once with `FAILED_PRECONDITION`, and the library does not retry it, unless a cache session
+answers it, see [Caching pipelines](./caching.md#pipelines).
 
 ```rust,no_run
 # use firestore::*;
@@ -41,29 +42,17 @@ Full example available [here](https://github.com/abdolence/firestore-rs/blob/mas
 ## When to use a pipeline
 
 The Core query API (`db.fluent().select()`) stays the choice for a Standard edition database, and
-for what it covers. A pipeline adds:
+for what it covers. A pipeline adds grouped aggregations, computed fields, joins, search, writes by
+query and Query Explain on Enterprise, see
+[Choosing Core queries, pipelines or SQL](./editions/choosing-an-api.md).
 
-- grouped aggregations, computed fields, `distinct`, `unnest` and `union`;
-- [joins](./pipeline-aggregations-and-joins.md) through subqueries;
-- [text and geo search](./pipeline-search.md);
-- [writes by query](./pipeline-writes.md): update, delete, insert and upsert of the documents a
-  pipeline selects;
-- Query Explain on Enterprise, where the Core `.explain()` is rejected with `INVALID_ARGUMENT`.
+Indexes are optional for a pipeline, except for a search. A pipeline without an index that covers
+its filter runs as a table scan, and costs by the data it scans, see
+[Query plans and cost](./editions/query-plans.md).
 
-Indexes are optional for a pipeline. A pipeline without an index that covers its filter still
-runs, as a *table scan*: Firestore reads every document of the collection from primary storage
-instead of reading an index. The cost of a pipeline follows the amount of data it scans, so a
-table scan over a large collection costs in proportion to the collection. See
-[Recognising a full scan](#recognising-a-full-scan).
-
-Three behaviours differ from a Core query with the same filter and order:
-
-- `not_equal` is true for a document that lacks the field, while a Core `!=` leaves the document
-  out;
-- `sort` keeps the documents that lack the sorted field and orders them as null, while Core
-  leaves them out;
-- `sort` adds no tie-break on the document name; list a unique field last to fix the order of
-  documents with equal values.
+A pipeline with the same filter and order as a Core query can return other documents: `not_equal`
+matches a document that lacks the field, `sort` keeps such documents, and `sort` adds no
+tie-break on the document name. See [Query and write semantics](./editions/semantics.md).
 
 ## Sources
 
@@ -266,88 +255,9 @@ A session created with `read_through_cache` or `read_cached_only` answers a pipe
 cache when it only filters, sorts and pages cached documents, see
 [Caching pipelines](./caching.md#pipelines).
 
-## Explaining a pipeline
+## Query plans and indexes
 
-Query Explain returns the plan Firestore chose for a pipeline. `.explain()` runs the pipeline for
-its plan only: no document is read or returned. `.explain_with_options(..)` with `analyze` set
-also returns the documents, and adds the execution profile to the plan. The plan arrives as text
-in the metadata of the last item:
-
-```rust,no_run
-# use firestore::*;
-# use futures::TryStreamExt;
-# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-let items: Vec<_> = db
-    .fluent()
-    .pipeline()
-    .select()
-    .from("books")
-    .filter(|q| q.field("genre").eq("Dystopian"))
-    .explain()
-    .stream_query_with_metadata()
-    .await?
-    .try_collect()
-    .await?;
-
-for item in items {
-    if let Some(stats) = item.metadata.explain_stats {
-        println!("{}", stats.text);
-    }
-}
-# Ok(())
-# }
-```
-
-The text is Firestore's own format. The library does not parse it, since Firestore can change it
-at any time.
-
-### Recognising a full scan
-
-The plan names how the pipeline reads its documents:
-
-- a plan that ends in a `TableScan` node reads every document of the collection from primary
-  storage;
-- a plan that ends in a `SequentialScan` node with an `index:` line reads through that index,
-  such as `index: /books (genre ASC, rating DESC)@[id = CICAgJim14AK]`;
-- a search ends in a `StIndexSearch` node.
-
-Run `.explain()` on a pipeline before it reaches production data, and add an index when it shows a
-`TableScan` over a large collection. Firestore has no setting that rejects a table scan, and the
-library adds no check of its own.
-
-### Choosing an index
-
-`.force_index(..)` on a `from(..)` source makes the pipeline read through the index with a given
-ID, the one Firestore assigned to it. It is available on a collection source and on a
-collection-group source, and nowhere else:
-
-```rust,no_run
-# use firestore::*;
-# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-let by_genre = db
-    .fluent()
-    .pipeline()
-    .select()
-    .from("books")
-    .force_index(FirestoreIndexHint::Index("CICAgJim14AK".parse()?))
-    .filter(|q| q.field("genre").eq("Dystopian"))
-    .query()
-    .await?;
-
-let scanned = db
-    .fluent()
-    .pipeline()
-    .select()
-    .from("books")
-    .force_index(FirestoreIndexHint::TableScan)
-    .filter(|q| q.field("genre").eq("Dystopian"))
-    .query()
-    .await?;
-# let _ = (by_genre, scanned);
-# Ok(())
-# }
-```
-
-`FirestoreIndexHint::TableScan` forces a table scan. An ID that names no index of that collection
-fails the request at once with `INVALID_ARGUMENT`. An index that cannot serve the filter is still
-used, and the pipeline then reads all of it. A vector index cannot be forced.
+`.explain()` and `.explain_with_options(..)` return the plan Firestore chose for a pipeline, and
+`.force_index(..)` on a `from(..)` source picks the index it reads through. Both are described in
+[Query plans and cost](./editions/query-plans.md#explaining-a-pipeline), with how to recognise a
+table scan in the plan.

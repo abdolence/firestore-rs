@@ -113,6 +113,11 @@ sync included, which is why it names the operation generically rather than as a 
 That run took about 11 seconds end to end, for 5 documents; budget for it running longer against
 more data.
 
+Bulk delete works on both editions, and removes the named collection group at every depth. A run
+over 8 documents in two levels of one collection group returned from `wait_until_done` after 56
+seconds on a Standard edition database and 65 seconds on an Enterprise edition one. The two
+databases were in different regions, so the times do not compare.
+
 ## The Firestore emulator
 
 The emulator answers `BulkDeleteDocuments` with `UNIMPLEMENTED`. Unlike index management, which

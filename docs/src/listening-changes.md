@@ -1,4 +1,4 @@
-# Listening the document changes on Firestore
+# Listening to document changes
 
 To help to work with asynchronous event listener the library supports high level API for
 listening the events from Firestore on a separate thread:
@@ -142,4 +142,16 @@ It is off by default. When set:
 no interval for the updates it sends on a quiet stream, so a much shorter value can reset healthy
 streams.
 
-See complete example in examples directory.
+Full example available [here](https://github.com/abdolence/firestore-rs/blob/master/examples/listen-changes.rs).
+
+A listener takes Core targets only: a query or documents by ID. Pipelines and SQL statements
+cannot be listened to, and their writes reach a listener as any other change, see
+[Retries and listeners](./pipeline-writes.md#retries-and-listeners).
+
+## On the Enterprise edition
+
+A listener the application opens receives changes on an Enterprise database that has real-time
+updates enabled; Google ties listener support (`onSnapshot`) to that setting, which is fixed when
+the database is created, see [Settings fixed at creation](./editions.md#settings-fixed-at-creation).
+Real-time updates are billed separately on Enterprise, see
+[Cost per edition](./editions/query-plans.md#cost-per-edition).

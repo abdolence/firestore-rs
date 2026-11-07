@@ -59,7 +59,10 @@ export FIRESTORE_EMULATOR_HOST="localhost:8080"
 No credentials are needed in that mode. This is how the caching and transaction behaviour of this
 library itself is verified, and it catches things a hand-written fake cannot.
 
-> **Changed in 0.52**: the low level `*Support` traits are no longer public, so code written to be
-> generic over them no longer compiles. Note that they could never be used with the Fluent API
-> from outside the crate anyway, since the builders' constructors are crate private. See the
-> [migration guide](https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md).
+Code that runs pipelines or SQL needs an emulator started in the Enterprise edition, see
+[Firestore emulator](./emulator.md#on-the-enterprise-edition).
+
+The low level `*Support` traits are not public, and the builders' constructors are crate private,
+so code cannot be generic over them. The
+[migration guide](https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md) lists the
+fluent replacement of every removed method.

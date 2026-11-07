@@ -1,11 +1,11 @@
-# Firestore database client instance and lifecycle
+# Client instance and lifecycle
 
 To create a new instance of Firestore client you need to provide at least a GCP project ID.
 It is not recommended creating a new client for each request, so it is recommended to create a client once and reuse it
 whenever possible.
 Cloning instances is much cheaper than creating a new one.
 
-The client is created using the `Firestore::new` method:
+The client is created using the `FirestoreDb::new` method:
 
 ```rust,no_run
 # fn config_env_var(name: &str) -> Result<String, String> {
@@ -76,7 +76,9 @@ so your project needs no gcloud-sdk dependency of its own.
 
 Full example with a custom `CredentialsProvider` available [here](https://github.com/abdolence/firestore-rs/tree/master/examples/token_auth.rs).
 
-Firebase supports [multiple databases per project now](https://cloud.google.com/firestore/docs/manage-databases),
+## Multiple databases
+
+Firestore supports [multiple databases per project](https://cloud.google.com/firestore/docs/manage-databases),
 so you can specify the database ID in the options:
 
 ```rust,no_run
@@ -91,3 +93,7 @@ FirestoreDb::with_options(
 # Ok(())
 # }
 ```
+
+The *edition*, Standard or Enterprise, belongs to a database, so the database ID chooses it too. A
+project can hold databases of both editions, and a client per database ID reaches each. See
+[Standard and Enterprise editions](./editions.md) for what each edition runs.
