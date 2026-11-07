@@ -39,7 +39,22 @@ use common::{setup, setup_enterprise};
 
 const SYNC_GROUP: &str = "firestore-rs-index-sync-test";
 const PROBE_GROUP: &str = "firestore-rs-index-probe";
-const OWNED_GROUPS: [&str; 2] = [SYNC_GROUP, PROBE_GROUP];
+const SEARCH_GROUP: &str = "admin-search-index-test";
+const STANDARD_INDEX_GROUP: &str = "firestore-rs-sql-index-standard";
+const ENTERPRISE_INDEX_GROUP: &str = "firestore-rs-sql-index-enterprise";
+const FIELD_GROUP: &str = "firestore-rs-sql-field-standard";
+
+/// Every group a test of this file changes indexes in. The tests run in parallel against the same
+/// databases, so each one's check that nothing outside its own group changed must leave out the
+/// groups of the others as well.
+const TEST_GROUPS: [&str; 6] = [
+    SYNC_GROUP,
+    PROBE_GROUP,
+    SEARCH_GROUP,
+    STANDARD_INDEX_GROUP,
+    ENTERPRISE_INDEX_GROUP,
+    FIELD_GROUP,
+];
 
 /// Generous: a real composite index build on an empty collection is usually seconds, but the
 /// live project's quota and current load are outside this test's control.
@@ -357,10 +372,10 @@ async fn admin_index_management_against_real_firestore(
     let db = setup().await?;
 
     let baseline = list_all_database_indexes(&db).await?;
-    let baseline_outside = outside_groups(&baseline, &OWNED_GROUPS);
+    let baseline_outside = outside_groups(&baseline, &TEST_GROUPS);
     println!(
-        "[safety] {} indexes outside {SYNC_GROUP:?} and {PROBE_GROUP:?} before this run; they \
-         must be exactly the same, field for field, after cleanup.",
+        "[safety] {} indexes outside the groups of these tests before this run; they must be \
+         exactly the same, field for field, after cleanup.",
         baseline_outside.len()
     );
     assert!(
@@ -398,12 +413,12 @@ async fn admin_index_management_against_real_firestore(
     let after = list_all_database_indexes(&db).await;
     let outside_unchanged = match &after {
         Ok(after) => {
-            let after_outside = outside_groups(after, &OWNED_GROUPS);
+            let after_outside = outside_groups(after, &TEST_GROUPS);
             if after_outside == baseline_outside {
                 Ok(())
             } else {
                 Err(format!(
-                    "indexes outside {SYNC_GROUP:?}/{PROBE_GROUP:?} changed: before {} indexes, \
+                    "indexes outside the groups of these tests changed: before {} indexes, \
                      after {} indexes",
                     baseline_outside.len(),
                     after_outside.len()
@@ -475,8 +490,6 @@ async fn plan_is_read_only_and_scoped_to_the_owned_group(
     Ok(())
 }
 
-const SEARCH_GROUP: &str = "admin-search-index-test";
-
 /// A text index on `body_{run}` and a geo index on `location_{run}`. Firestore refuses to
 /// recreate an index for minutes after deleting it, answering `ALREADY_EXISTS` while the listing
 /// no longer shows it, so each run declares field paths no earlier run has used.
@@ -494,9 +507,9 @@ fn declare_search_indexes(db: &FirestoreDb, run: u128) -> FirestoreIndexesBuilde
 
 /// Creates a text index and a geo index on the Enterprise database
 /// (`GCP_ENTERPRISE_DATABASE_ID`), replans them, checks that a field override listing indexes is
-/// refused before anything is written, and prunes them again. Every index of the database is snapshotted first:
-/// the create adds exactly the two declared indexes, and after the prune every index outside
-/// `SEARCH_GROUP` is unchanged and the group holds none.
+/// refused before anything is written, and prunes them again. Every index of the database is
+/// snapshotted first: the create adds exactly the two declared indexes, and after the prune every
+/// index outside the groups of these tests is unchanged and `SEARCH_GROUP` holds none.
 #[tokio::test]
 #[ignore = "creates and deletes real search indexes in GCP_ENTERPRISE_DATABASE_ID; takes minutes; run with --ignored"]
 async fn search_indexes_against_real_firestore_enterprise(
@@ -506,9 +519,9 @@ async fn search_indexes_against_real_firestore_enterprise(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis();
 
-    let baseline_outside = outside_groups(&list_all_database_indexes(&db).await?, &[SEARCH_GROUP]);
+    let baseline_outside = outside_groups(&list_all_database_indexes(&db).await?, &TEST_GROUPS);
     println!(
-        "[safety] {} indexes outside {SEARCH_GROUP:?} before this run",
+        "[safety] {} indexes outside the groups of these tests before this run",
         baseline_outside.len()
     );
 
@@ -578,18 +591,19 @@ async fn search_indexes_against_real_firestore_enterprise(
 
     let cleanup = prune_to_empty(&db, SEARCH_GROUP).await;
     let after = list_all_database_indexes(&db).await?;
-    let after_outside = outside_groups(&after, &[SEARCH_GROUP]);
+    let after_outside = outside_groups(&after, &TEST_GROUPS);
     println!(
-        "[safety] indexes outside {SEARCH_GROUP:?} unchanged: {}",
+        "[safety] indexes outside the groups of these tests unchanged: {}",
         after_outside == baseline_outside
     );
 
     scenario.unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
     println!("[search] prune report:\n{}", cleanup?);
     assert_eq!(after_outside, baseline_outside);
-    assert_eq!(
-        after.len(),
-        baseline_outside.len(),
+    assert!(
+        after.iter().all(|index| !index
+            .name
+            .contains(&format!("/collectionGroups/{SEARCH_GROUP}/"))),
         "{SEARCH_GROUP:?} holds no index after the prune"
     );
     Ok(())
@@ -602,20 +616,15 @@ mod sql_statements {
 
     type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
-    const STANDARD_INDEX_GROUP: &str = "firestore-rs-sql-index-standard";
-    const ENTERPRISE_INDEX_GROUP: &str = "firestore-rs-sql-index-enterprise";
-    const FIELD_GROUP: &str = "firestore-rs-sql-field-standard";
-    const SQL_GROUPS: [&str; 3] = [STANDARD_INDEX_GROUP, ENTERPRISE_INDEX_GROUP, FIELD_GROUP];
-
     /// Runs `scenario` on `group` after emptying it, and empties it again when the scenario
-    /// fails or panics. Every index outside the three groups of these tests must be unchanged
+    /// fails or panics. Every index outside the groups of these tests must be unchanged
     /// afterwards, and `group` must hold no index, field override or TTL.
     async fn in_emptied_group(
         db: &FirestoreDb,
         group: &str,
         scenario: impl Future<Output = TestResult>,
     ) -> TestResult {
-        let baseline_outside = outside_groups(&list_all_database_indexes(db).await?, &SQL_GROUPS);
+        let baseline_outside = outside_groups(&list_all_database_indexes(db).await?, &TEST_GROUPS);
 
         let scenario = AssertUnwindSafe(async {
             prune_to_empty(db, group).await?;
@@ -625,7 +634,7 @@ mod sql_statements {
         .await;
 
         let cleanup = prune_to_empty(db, group).await;
-        let after_outside = outside_groups(&list_all_database_indexes(db).await?, &SQL_GROUPS);
+        let after_outside = outside_groups(&list_all_database_indexes(db).await?, &TEST_GROUPS);
         let remaining = db
             .fluent()
             .indexes()
@@ -634,8 +643,8 @@ mod sql_statements {
             .get()
             .await?;
         println!(
-            "[sql] {group:?}: {} indexes and {} fields left; indexes outside the test groups \
-             unchanged: {}",
+            "[sql] {group:?}: {} indexes and {} fields left; indexes outside the groups of these \
+             tests unchanged: {}",
             remaining.indexes.len(),
             remaining.fields.len(),
             after_outside == baseline_outside
@@ -646,6 +655,12 @@ mod sql_statements {
         assert_eq!(after_outside, baseline_outside);
         assert!(remaining.indexes.is_empty() && remaining.fields.is_empty());
         Ok(())
+    }
+
+    /// The statements of these tests change indexes and fields, which the options refuse until
+    /// they allow it.
+    fn index_options() -> FirestoreSqlOptions {
+        FirestoreSqlOptions::new().allow_index_statements()
     }
 
     fn run_id() -> Result<u128, Box<dyn std::error::Error + Send + Sync>> {
@@ -710,6 +725,7 @@ mod sql_statements {
                         "CREATE INDEX ON `{STANDARD_INDEX_GROUP}` \
                          (customer_id_{run}, placed_at_{run} DESC)"
                     ))
+                    .options(index_options())
                     .wait_until_ready(WAIT_TIMEOUT)
                     .run()
                     .await?,
@@ -723,6 +739,7 @@ mod sql_statements {
             let removed = dropped(
                 db.fluent()
                     .sql(format!("DROP INDEX `{}`", index.id))
+                    .options(index_options())
                     .run()
                     .await?,
             )
@@ -751,6 +768,7 @@ mod sql_statements {
             let index = created(
                 db.fluent()
                     .sql(format!("CREATE UNIQUE INDEX {definition}"))
+                    .options(index_options())
                     .wait_until_ready(WAIT_TIMEOUT)
                     .run()
                     .await?,
@@ -762,6 +780,7 @@ mod sql_statements {
             let removed = dropped(
                 db.fluent()
                     .sql(format!("DROP UNIQUE INDEX {definition}"))
+                    .options(index_options())
                     .run()
                     .await?,
             )
@@ -791,6 +810,7 @@ mod sql_statements {
                         "ALTER COLLECTION `{FIELD_GROUP}` ALTER COLUMN {field_path} \
                          SET OPTIONS (ttl = TRUE, indexes = [])"
                     ))
+                    .options(index_options())
                     .wait_until_ready(WAIT_TIMEOUT)
                     .run()
                     .await?,
@@ -813,6 +833,7 @@ mod sql_statements {
                         "ALTER COLLECTION `{FIELD_GROUP}` ALTER COLUMN {field_path} \
                          SET OPTIONS (ttl = FALSE, indexes = NULL)"
                     ))
+                    .options(index_options())
                     .wait_until_ready(WAIT_TIMEOUT)
                     .run()
                     .await?,

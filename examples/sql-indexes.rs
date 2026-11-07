@@ -27,12 +27,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         listing.indexes.len()
     );
 
+    // CREATE INDEX, DROP INDEX and ALTER COLLECTION run only when the options allow them.
+    let options = FirestoreSqlOptions::new().allow_index_statements();
+
     // A Standard edition database needs two fields in an index.
     let FirestoreSqlOutcome::IndexCreated(created) = db
         .fluent()
         .sql(format!(
             "CREATE INDEX IF NOT EXISTS ON `{ORDERS_INDEX_GROUP}` (customer_id, placed_at DESC)"
         ))
+        .options(options.clone())
         .wait_until_ready(Duration::from_secs(900))
         .run()
         .await?
@@ -44,6 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let FirestoreSqlOutcome::IndexDropped(dropped) = db
         .fluent()
         .sql(format!("DROP INDEX IF EXISTS `{}`", created.id))
+        .options(options)
         .run()
         .await?
     else {
