@@ -82,8 +82,7 @@ phrase is replaced by a space.
 
 ### What the grammar supports
 
-The query grammar is Firestore's, and it is narrow. These are the limits, each measured against
-the service:
+The query grammar is Firestore's, and it is narrow. These are its limits:
 
 - terms separated by spaces must all match; there is no OR, and `pancakes OR crepes` matches only
   the documents that contain both words;

@@ -119,8 +119,9 @@ Joins and subqueries are in Preview in Firestore, see
 join as a nested loop: for each row of the left side it runs the right side as a subquery. A
 subquery in an expression, `[NOT] EXISTS`, `[NOT] IN (SELECT ..)`, `(SELECT ..)` or
 `ARRAY(SELECT ..)`, runs once per row of the query it is in too, whether or not it reads a column of
-that row. Query Explain with `analyze` on an Enterprise database, with 11 documents in the outer
-collection and 300 in the inner one:
+that row, so the rows scanned multiply. Rows scanned and read units on an Enterprise edition
+database, for an outer collection of 11 documents and an inner one of 300, as Query Explain with
+`analyze` reports them:
 
 | Statement | Rows scanned | Read units |
 |---|---|---|
@@ -130,8 +131,8 @@ collection and 300 in the inner one:
 | `SELECT title FROM outer WHERE (SELECT COUNT(*) AS c FROM inner) > 0` | 3,311 | 27 |
 | `SELECT title FROM outer WHERE EXISTS (SELECT 1 FROM inner WHERE n > 100000)` | 3,311 | 77 |
 
-The plan of each subquery statement is an `Apply` of the outer scan to the subquery, so the
-uncorrelated `COUNT(*)` ran 11 times too.
+The plan of each subquery statement is an `Apply` of the outer scan to the subquery, so even an
+uncorrelated `COUNT(*)` runs once for each outer row.
 
 The cost depends on the index. Without one on the join key, each run reads the whole joined
 collection. A join or subquery is therefore refused unless the options say `.allow_subqueries()`,
@@ -194,8 +195,9 @@ repeats CTE bodies more than 1,024 times in all is refused.
 
 ### Join cost
 
-These were measured with Query Explain and `analyze` on an Enterprise database. The collections
-were small: 9 restaurants with 6 reviews, 11 books, and 1,500 items.
+Rows scanned and read units for some joins on an Enterprise edition database, as Query Explain
+with `analyze` reports them, over small collections: 9 restaurants with 6 reviews, 11 books and
+1,500 items.
 
 | Join | Rows scanned | Read units | Results |
 |---|---|---|---|
@@ -207,8 +209,7 @@ were small: 9 restaurants with 6 reviews, 11 books, and 1,500 items.
 
 The unindexed join scans the joined collection once for each left row: parents × child collection.
 The indexed join reads an index range for each left row, and a join into `subcollection(..)` reads
-each parent's children only. The last row took 260 ms on the server, and 1.5 s as the client saw
-it.
+each parent's children only.
 
 Rules that follow from it:
 
@@ -216,8 +217,8 @@ Rules that follow from it:
   `TableScan` under the join is the unindexed case, see
   [Query plans and cost](../editions/query-plans.md#recognising-a-full-scan);
 - a join that compares the joined table's `__name__` with a column of the left row becomes a lookup
-  by name for each left row. In a per-row subquery over a collection of 60 documents, run for 3 rows,
-  a plain `=` of `__name__` with a variable scanned the collection: 132 to 180 rows and 4 to 5
-  read units, where the lookup by name read 2 rows for 3 read units;
+  by name for each left row. A plain `=` of `__name__` with a variable in a per-row subquery scans
+  the collection instead: over a collection of 60 documents, run for 3 rows, it scans up to 180
+  rows, where the lookup by name reads 2;
 - a join over a large collection that is run for analysis belongs in BigQuery. Firestore joins fit
   a left side that a filter has narrowed to a few documents.

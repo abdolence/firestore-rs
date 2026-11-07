@@ -3,8 +3,7 @@
 A [pipeline](../pipelines.md) runs with Firestore's pipeline semantics, and a [SQL](../sql.md)
 statement runs as a pipeline, so it keeps them too. A Core query has semantics of its own. This
 page lists where the two differ, and where the pipeline semantics differ from what a SQL database
-does. Each pipeline and SQL row was run against a collection of documents with an integer, a
-double, strings, a boolean, a null, a NaN and a document without the field.
+does.
 
 ## Null and absent
 
@@ -33,7 +32,8 @@ method in brackets where it differs:
 A row that lacks a key deserialises into an `Option` field as `None`.
 
 `COUNT(x)` counts documents where `x` has a value that is not null. Over 11 documents, one holding
-null and one lacking the field, `COUNT(*)` was 11, `COUNT(v)` was 9 and `COUNT(DISTINCT v)` was 8.
+null and one lacking the field, `COUNT(*)` is 11 and `COUNT(v)` is 9; `COUNT(DISTINCT v)` counts
+each distinct value once.
 
 The SQL results are written in SQL, using the pipeline function `is_absent`, which passes through:
 
@@ -41,9 +41,9 @@ The SQL results are written in SQL, using the pipeline function `is_absent`, whi
 - `v != 1 AND v IS NOT NULL` leaves them out;
 - `if_absent(v, NULL)` selects an absent field as null.
 
-The filters differ in cost. `rating != 4.2 AND rating IS NOT NULL` kept the index ranges of
-`rating != 4.2`, and `genre IS NULL OR is_absent(genre)` lost the range: it scanned all 11 index
-entries, where `genre IS NULL` scanned 1. See [Query plans and cost](./query-plans.md).
+The filters differ in cost. `rating != 4.2 AND rating IS NOT NULL` keeps the index ranges of
+`rating != 4.2`, and `genre IS NULL OR is_absent(genre)` loses the index range of `genre IS NULL`,
+so it scans every index entry of the field. See [Query plans and cost](./query-plans.md).
 
 Whether a field is stored as null or left absent is decided when it is written, see
 [Explicit null value serialisation](../null-serialization.md).
@@ -59,7 +59,7 @@ Whether a field is stored as null or left absent is decided when it is written, 
 | `ORDER BY v` over mixed types | absent, null, booleans, NaN, numbers, then strings |
 
 A condition earlier in the same `AND` that excludes the other types avoids the failure: with
-`k IN ('pct', 'pcx') AND v LIKE '100%'`, the `LIKE` ran only on strings.
+`k IN ('pct', 'pcx') AND v LIKE '100%'`, the `LIKE` runs only on strings.
 
 A Core range filter matches values of its own type only, and never NaN. A Core `order_by` over
 mixed types follows Firestore's order of types: null, booleans, numbers, timestamps, strings,
