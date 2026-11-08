@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0f965eb9.js";
+            window.path_to_searchindex_js = "searchindex-755b91f7.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-16032266.js"></script>
+        <script src="toc-b89ea9be.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -5565,6 +5565,40 @@ carries <code>#[ignore]</code> and only runs explicitly:</p>
 </code></pre>
 <p>Full example available
 <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/bulk-delete.rs">here</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="command-line-tool"><a class="header" href="#command-line-tool">Command line tool</a></h1>
+<p><a href="https://github.com/abdolence/firestore-cli-rs">fsq</a> is a command line client for Firestore built on this crate. It is
+for working with a database from a terminal: looking at data, trying a SQL statement before it goes into code, and
+managing indexes.</p>
+<p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/media/fsq-demo.webp" alt="fsq demo"><span class="img-wrapper"><img src="https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/media/fsq-demo.webp" alt="fsq demo"></span></label></p>
+<ul>
+<li>a SQL REPL (an interactive prompt) with highlighting, completion of collections and fields, and results as tables;</li>
+<li><code>EXPLAIN</code>, which draws the query plan as a tree and warns about a table scan, a read of every document of a collection;</li>
+<li><code>\l</code> lists collections, with <code>\l --recursive</code> for subcollections, and <code>\d</code> describes the fields of a collection;</li>
+<li><code>export</code> and <code>import</code> of documents as JSON lines, in the tagged encoding of <a href="#json-conversion">JSON conversion</a>;</li>
+<li><code>index plan</code>, <code>index sync</code> and the other <code>index</code> commands, on the <code>firestore.indexes.json</code> file of the Firebase CLI;</li>
+<li><code>codegen</code> and <code>\gen</code>, which print the fluent API code of a <code>SELECT</code>, as <a href="#fluent-code-for-a-statement">Fluent code for a statement</a> describes;</li>
+<li><code>--format json</code> and <code>--format jsonl</code> output for scripts.</li>
+</ul>
+<p>SQL needs a database of the Enterprise edition, see <a href="#standard-and-enterprise-editions">Standard and Enterprise editions</a>. <code>\l</code>, <code>\d</code>,
+<code>export</code>, <code>import</code> and the index commands work on both editions.</p>
+<h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
+<p>Connect to a project and a database:</p>
+<pre><code class="language-sh">fsq -p my-project -d my-database
+</code></pre>
+<p>Run a statement and print the code of the fluent API for it:</p>
+<pre><code class="language-text">my-project/my-database (enterprise)&gt; SELECT title, rating FROM books WHERE rating &gt;= 4 ORDER BY rating DESC LIMIT 10;
+my-project/my-database (enterprise)&gt; \gen
+</code></pre>
+<p>Export a collection and import it again:</p>
+<pre><code class="language-sh">fsq -p my-project -d my-database export books -o books.jsonl
+fsq -p my-project -d my-database import books.jsonl
+</code></pre>
+<p>Show what changes a <code>firestore.indexes.json</code> file would make, without applying it:</p>
+<pre><code class="language-sh">fsq -p my-project index plan firestore.indexes.json
+</code></pre>
+<p>The installation, the options and the rest of the commands are in the
+<a href="https://github.com/abdolence/firestore-cli-rs#readme">fsq README</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="google-authentication"><a class="header" href="#google-authentication">Google authentication</a></h1>
 <p>Looks for credentials in the following places, preferring the first location found:</p>
