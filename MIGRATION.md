@@ -60,6 +60,12 @@ let listed = FirestoreListedField {
 };
 ```
 
+### Unrecognised index items carry their collection group
+
+`FirestoreUnrecognisedIndexItem` gains the field `collection_group: Option<FirestoreCollectionId>`, parsed from the
+resource `name`. It is `None` when the name has no valid collection group segment. Code that builds the struct with a
+struct literal needs the field added; code that reads a listing or a plan is unaffected.
+
 ### `FirestoreListDocParams` has a `show_missing` field
 
 `FirestoreListDocParams` gains the field `show_missing`, which is `false` by default. Code that builds the struct with a struct literal needs `show_missing: false` added to it. The listing builder is unaffected: `show_missing()` on it turns the option on.

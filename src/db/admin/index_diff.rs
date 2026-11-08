@@ -62,20 +62,30 @@ impl From<FirestoreIndexExistingState> for FirestoreIndexListing {
             let name = proto.name.clone();
             match FirestoreListedField::try_from(proto) {
                 Ok(listed) => listing.fields.push(listed),
-                Err(err) => listing.unrecognised.push(FirestoreUnrecognisedIndexItem {
-                    name,
-                    reason: err.unrecognised_reason(),
-                }),
+                Err(err) => {
+                    listing
+                        .unrecognised
+                        .push(FirestoreUnrecognisedIndexItem::for_resource(
+                            name,
+                            "fields",
+                            err.unrecognised_reason(),
+                        ))
+                }
             }
         }
         for proto in existing.indexes {
             let name = proto.name.clone();
             match FirestoreListedCompositeIndex::try_from(proto) {
                 Ok(listed) => listing.indexes.push(listed),
-                Err(err) => listing.unrecognised.push(FirestoreUnrecognisedIndexItem {
-                    name,
-                    reason: err.unrecognised_reason(),
-                }),
+                Err(err) => {
+                    listing
+                        .unrecognised
+                        .push(FirestoreUnrecognisedIndexItem::for_resource(
+                            name,
+                            "indexes",
+                            err.unrecognised_reason(),
+                        ))
+                }
             }
         }
         listing
@@ -913,12 +923,14 @@ pub(crate) fn plan_index_changes(
         if let Some(FirestoreFieldOverrideOutcome::Unrecognised(reason)) = &listed.index_override {
             plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
                 name: listed.name.clone(),
+                collection_group: Some(listed.collection_group.clone()),
                 reason: reason.clone(),
             });
         }
         if let Some(FirestoreFieldTtlOutcome::Unrecognised(reason)) = &listed.ttl {
             plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
                 name: listed.name.clone(),
+                collection_group: Some(listed.collection_group.clone()),
                 reason: reason.clone(),
             });
         }
@@ -2412,6 +2424,60 @@ pub(crate) mod tests {
         assert_eq!(plan.unchanged, vec![declared], "{plan}");
         assert!(plan.create_indexes.is_empty(), "{plan}");
         assert!(plan.delete_indexes.is_empty(), "{plan}");
+    }
+
+    #[test]
+    fn an_unrecognised_listed_item_carries_its_collection_group() {
+        let mut unrecognised_index = listed_index(
+            vec![order_field("a", ProtoOrder::Ascending)],
+            ProtoQueryScope::Collection,
+            ProtoState::Ready,
+        );
+        unrecognised_index.api_scope = ApiScope::MongodbCompatibleApi as i32;
+        unrecognised_index.name =
+            "projects/p/databases/(default)/collectionGroups/users/indexes/9".to_string();
+        let unrecognised_field = ProtoField {
+            name: "projects/p/databases/(default)/collectionGroups/orders/fields/note".to_string(),
+            index_config: Some(exempt_listed_config()),
+            ttl_config: Some(field::TtlConfig {
+                state: field::ttl_config::State::Unspecified as i32,
+                expiration_offset: None,
+            }),
+        };
+        let unplaced_field = ProtoField {
+            name: "projects/p/databases/d/somethingElse/x".to_string(),
+            index_config: Some(exempt_listed_config()),
+            ttl_config: None,
+        };
+        let listing = FirestoreIndexListing::from(FirestoreIndexExistingState {
+            indexes: vec![unrecognised_index],
+            fields: vec![unplaced_field],
+        });
+        let groups: Vec<_> = listing
+            .unrecognised
+            .iter()
+            .map(|item| item.collection_group.clone())
+            .collect();
+        assert_eq!(
+            groups,
+            vec![None, Some(FirestoreCollectionId::from_static("users"))]
+        );
+
+        let plan = plan_index_changes(
+            &users_params(),
+            &FirestoreIndexExistingState {
+                indexes: vec![],
+                fields: vec![unrecognised_field],
+            }
+            .into(),
+            Standard,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.unrecognised[0].collection_group,
+            Some(FirestoreCollectionId::from_static("orders"))
+        );
     }
 
     #[test]

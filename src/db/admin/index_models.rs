@@ -553,8 +553,25 @@ pub struct FirestoreListedField {
 pub struct FirestoreUnrecognisedIndexItem {
     /// The resource name Firestore assigned it.
     pub name: String,
+    /// The collection group parsed from `name`, or `None` when the name has no valid collection
+    /// group segment, which is the case for a resource this crate could not place in any group.
+    pub collection_group: Option<FirestoreCollectionId>,
     /// Why this crate could not convert it into a domain value.
     pub reason: String,
+}
+
+impl FirestoreUnrecognisedIndexItem {
+    /// Builds the item for a listed `kind` resource (`indexes` or `fields`) whose conversion
+    /// failed, taking its collection group from `name` when the name has one.
+    pub(crate) fn for_resource(name: String, kind: &str, reason: String) -> Self {
+        let collection_group = CollectionGroupResourceName::parse(&name, kind)
+            .and_then(|resource| FirestoreCollectionId::new(resource.collection_group).ok());
+        Self {
+            name,
+            collection_group,
+            reason,
+        }
+    }
 }
 
 /// The composite indexes, field resources and unrecognised items of one listing, each converted
