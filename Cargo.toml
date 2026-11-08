@@ -67,7 +67,7 @@ serde_json = "1"
 # the parser's nesting instead.
 sqlparser = { version = "0.63", default-features = false, features = ["std"], optional = true }
 syn = { version = "2", default-features = false, features = ["full", "parsing"], optional = true }
-prettyplease = { version = "0.2", optional = true }
+prettyplease = { version = "0.3", optional = true }
 heck = { version = "0.5", optional = true }
 base64 = { version = "0.23", optional = true }
 
