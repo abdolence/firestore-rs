@@ -867,7 +867,7 @@ impl FirestoreError {
 /// `FirestoreIndexSupport` implementation that reaches this function some other way.
 ///
 /// On an Enterprise edition database, which stores nothing for a field exemption, a declared
-/// exemption is never planned.
+/// exemption is reported unchanged and never planned.
 ///
 /// A listed index or field this crate's domain model cannot represent - a search config other
 /// than one text or geo spec, a MongoDB-compat or Datastore-mode API scope, `COLLECTION_RECURSIVE`,
@@ -978,16 +978,21 @@ pub(crate) fn plan_index_changes(
                 plan.reverting_fields.push(listed.clone());
             }
             Some((listed, FirestoreFieldOverrideOutcome::Explicit(_))) => {
-                if !field_override_matches(declared, listed) {
+                if field_override_matches(declared, listed) {
+                    plan.unchanged_fields.push(declared.clone());
+                } else {
                     plan.update_fields.push(declared.clone());
                 }
             }
             // An Enterprise edition database has no single-field indexes to exempt a field from,
-            // and it stores nothing for an exemption it accepts, so one can never read back as
-            // written.
+            // so the exemption already holds. A written one would never read back either: the
+            // edition stores nothing for an exemption it accepts.
             None | Some((_, FirestoreFieldOverrideOutcome::Inherited))
                 if edition == FirestoreDatabaseEdition::Enterprise
-                    && declared.indexes.is_empty() => {}
+                    && declared.indexes.is_empty() =>
+            {
+                plan.unchanged_fields.push(declared.clone());
+            }
             None | Some((_, FirestoreFieldOverrideOutcome::Inherited)) => {
                 plan.update_fields.push(declared.clone());
             }
@@ -1074,6 +1079,7 @@ pub(crate) fn plan_index_changes(
 pub(crate) mod tests {
     use super::*;
     use crate::db::admin::index_models::FirestoreDatabaseEdition::Standard;
+    use crate::db::admin::indexes::tests::decode_captured_fields;
     use crate::{FirestoreCollectionId, FirestoreFieldOverrideTarget};
 
     /// The `users` group's resource path on [`FakeFirestore`](crate::db::fake_firestore), so a
@@ -1569,33 +1575,43 @@ pub(crate) mod tests {
 
     #[test]
     fn matching_override_is_unchanged() {
+        // The override latestbit lists for `test-childs`, replayed as if it belonged to the owned
+        // group, so the real listed shape is what the declaration is matched against.
+        let captured = decode_captured_fields(include_str!(
+            "testdata/standard-list-fields-overrides-all-groups.json"
+        ))
+        .into_iter()
+        .find(|field| field.name.ends_with("/test-childs/fields/another_string"))
+        .expect("the fixture holds the test-childs override");
+        let listed_field = ProtoField {
+            name: format!("{USERS_GROUP_PATH}/fields/another_string"),
+            ..captured
+        };
+        let ascending = FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending);
         let declared = FirestoreFieldOverride {
-            target: FirestoreFieldOverrideTarget::Field("tags".to_string()),
+            target: FirestoreFieldOverrideTarget::Field("another_string".to_string()),
             indexes: vec![
-                FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains)
-                    .all_descendants(),
+                FirestoreFieldOverrideIndex::new(ascending.clone()),
+                FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::Order(
+                    FirestoreQueryDirection::Descending,
+                )),
+                FirestoreFieldOverrideIndex::new(FirestoreIndexFieldMode::ArrayContains),
+                FirestoreFieldOverrideIndex::new(ascending).all_descendants(),
             ],
         };
-        let params = users_params().with_field_overrides(vec![declared]);
-        let listed_field = field_resource(
-            "tags",
-            Some(field::IndexConfig {
-                indexes: vec![single_field_index(
-                    ProtoQueryScope::CollectionGroup,
-                    ValueMode::ArrayConfig(ProtoArrayConfig::Contains as i32),
-                )],
-                uses_ancestor_config: false,
-                ancestor_field: String::new(),
-                reverting: false,
-            }),
-            None,
-        );
+        let params = users_params().with_field_overrides(vec![declared.clone()]);
         let existing = FirestoreIndexExistingState {
             indexes: vec![],
             fields: vec![listed_field],
         };
         let plan = plan_index_changes(&params, &existing.into(), Standard, false).unwrap();
-        assert!(plan.update_fields.is_empty());
+        assert_eq!(
+            plan,
+            FirestoreIndexPlan {
+                unchanged_fields: vec![declared],
+                ..Default::default()
+            }
+        );
     }
 
     #[test]

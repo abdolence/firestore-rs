@@ -463,7 +463,7 @@ impl Display for FirestoreInvalidParametersPublicDetails {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(
             f,
-            "Invalid parameters error: {}. {}",
+            "Invalid parameters error: {}: {}",
             self.field, self.error
         )?;
         if let Some(location) = &self.location {
