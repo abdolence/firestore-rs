@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-755b91f7.js";
+            window.path_to_searchindex_js = "searchindex-5c70ce43.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b89ea9be.js"></script>
@@ -469,10 +469,10 @@ Job under the same fixed name fails a later <code>kubectl apply</code> with an i
 declaration against Firestore, <code>.plan()</code> with <code>.prune_undeclared()</code> at startup is read-only and
 safe from any number of replicas at once: log a warning, or emit a metric, when <code>create_indexes</code>,
 <code>update_fields</code>, <code>enable_ttl</code>, <code>delete_indexes</code>, <code>revert_fields</code> or <code>disable_ttl</code> comes back
-non-empty. <code>unchanged</code> and <code>unchanged_ttl</code> are non-empty in the steady state and say nothing about
-drift on their own. Do not wire this into the replica’s readiness probe: after a Helm rollback, or
-when an old pod restarts once the release job has already run, every replica would see the same
-drift and fail its probe at once.</p>
+non-empty. <code>unchanged</code>, <code>unchanged_fields</code> and <code>unchanged_ttl</code> are non-empty in the steady state
+and say nothing about drift on their own. Do not wire this into the replica’s readiness probe:
+after a Helm rollback, or when an old pod restarts once the release job has already run, every
+replica would see the same drift and fail its probe at once.</p>
 <p>The job’s service account needs <code>roles/datastore.indexAdmin</code>, the role <code>.sync()</code> always needs.
 Replicas that only call <code>.plan()</code> need <code>roles/datastore.viewer</code>.</p>
 <p>When two syncs do overlap regardless, index creates and deletes converge on their own: a
@@ -657,7 +657,7 @@ applying and, when <code>.wait_until_ready()</code> is set, waiting. Every span 
 field overrides or TTL fields declared, and none listed for the group):</p>
 <pre><code class="language-text">DEBUG Firestore Index Plan{/firestore/collection_group="firestore-rs-index-sync-test" /firestore/prune=false}:Firestore Index List{...}: firestore::db::admin::indexes: Listed the collection group's indexes and fields. indexes=0 fields=0 skipped_indexes=7 skipped_fields=0
  INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Existing state: 0 indexes, 0 field overrides, 0 TTL fields collection_group="firestore-rs-index-sync-test" composite_indexes=0 field_overrides=0 ttl_fields=0
- INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Firestore index plan: no changes (0 unchanged, 0 pending, 0 ttl unchanged)
+ INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Firestore index plan: no changes (0 unchanged, 0 pending, 0 field overrides unchanged, 0 ttl unchanged)
  collection_group="firestore-rs-index-sync-test" create_indexes=0 update_fields=0 enable_ttl=0 unchanged=0 pending=0 delete_indexes=0 revert_fields=0 disable_ttl=0 kept_undeclared_indexes=0 kept_undeclared_fields=0 kept_undeclared_ttl=0 unrecognised=0
  INFO Firestore Index Plan{...}: firestore::db::admin::indexes: plan() reports what sync() would change; nothing was applied. collection_group="firestore-rs-index-sync-test"
 </code></pre>
