@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5c70ce43.js";
+            window.path_to_searchindex_js = "searchindex-55b07baa.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b89ea9be.js"></script>
@@ -1334,6 +1334,19 @@ let article = Article {
 };
 <span class="boring">let _ = article;</span></code></pre>
 <p><code>vec![..].into()</code> builds a <code>FirestoreVector</code> too, from any iterator of <code>f64</code>.</p>
+<h2 id="reading-a-vector-from-a-document"><a class="header" href="#reading-a-vector-from-a-document">Reading a vector from a document</a></h2>
+<p>A document read without a struct, as in
+<a href="#working-on-dynamicdocument-level">Working on dynamic/document level</a>, holds each vector as a map of
+<code>__type__</code> and <code>value</code>. <code>FirestoreVector::from_value</code> reads a vector from such a field:</p>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span><span class="boring">fn example(document: &amp;FirestoreDocument) -&gt; FirestoreResult&lt;()&gt; {
+</span>if let Some(value) = document.fields.get("embedding") {
+    let embedding = FirestoreVector::from_value(value)?;
+    println!("{} components", embedding.as_vec().len());
+}
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Any other value, such as a plain map, fails with a <code>DeserializeError</code> of code <code>NOT_A_VECTOR</code>.</p>
 <h2 id="the-vector-index"><a class="header" href="#the-vector-index">The vector index</a></h2>
 <p>On a Standard edition database a vector query needs a vector index on the field, and uses it. The
 index declares the dimension every indexed vector in the field must have. Without one the query
