@@ -127,6 +127,17 @@ where
         }
     }
 
+    /// Also lists missing documents: documents that do not exist but have subcollections. They
+    /// come back without fields and without create or update times, and Firestore refuses the
+    /// option together with an ordering.
+    #[inline]
+    pub fn show_missing(self) -> Self {
+        Self {
+            params: self.params.with_show_missing(true),
+            ..self
+        }
+    }
+
     /// Sets the page token for pagination.
     #[inline]
     pub fn page_token(self, value: String) -> Self {

@@ -60,6 +60,10 @@ let listed = FirestoreListedField {
 };
 ```
 
+### `FirestoreListDocParams` has a `show_missing` field
+
+`FirestoreListDocParams` gains the field `show_missing`, which is `false` by default. Code that builds the struct with a struct literal needs `show_missing: false` added to it. The listing builder is unaffected: `show_missing()` on it turns the option on.
+
 ### The edition read span is renamed
 
 The span that reads the database edition before each index call is now `Firestore Database Edition`, where it was
