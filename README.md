@@ -185,6 +185,28 @@ gcloud-sdk re-exports, or a `GoogleAuthHeaders`. The library re-exports gcloud-s
 so these types need no gcloud-sdk dependency of your own.
 See [Client instance and lifecycle](https://firestore-rust.abdolence.dev/client.html) for the examples.
 
+## Command line tool
+
+[fsq](https://github.com/abdolence/firestore-cli-rs) is a command line client for Firestore built on this library: a SQL
+REPL (an interactive prompt) with results as tables and query plans, index management from a
+`firestore.indexes.json` file, export and import of documents as JSON lines, and output for scripts.
+
+![fsq demo](https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/media/fsq-demo.webp)
+
+On macOS, Linux and FreeBSD:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/install.sh | sh
+```
+
+On Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/install.ps1 | iex
+```
+
+See [Command line tool](https://firestore-rust.abdolence.dev/cli.html) for the details.
+
 ## How this library is tested
 
 There are integration tests in the tests directory that runs for every commit against the real
