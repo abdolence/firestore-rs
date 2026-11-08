@@ -59,6 +59,16 @@ impl FirestoreError {
         ))
     }
 
+    /// Builds the [`DeserializeError`](FirestoreError::DeserializeError) of a value read as a
+    /// [`FirestoreVector`](crate::FirestoreVector) that is not a vector.
+    pub(crate) fn not_a_vector() -> Self {
+        FirestoreError::DeserializeError(FirestoreSerializationError::new(
+            FirestoreErrorPublicGenericDetails::new(codes::NOT_A_VECTOR.to_string()),
+            "a vector is a map of `__type__` set to `__vector__` and `value`, an array of doubles"
+                .to_string(),
+        ))
+    }
+
     /// Builds an [`InvalidParametersError`](FirestoreError::InvalidParametersError) for SQL text,
     /// naming the refused `construct` and where it starts.
     #[cfg(feature = "sql")]
@@ -995,6 +1005,10 @@ pub mod codes {
     /// reference, function or pipeline value, which have no tagged form.
     #[cfg(feature = "json-conversion")]
     pub const JSON_EXPRESSION_VALUE: &str = "JSON_EXPRESSION_VALUE";
+
+    /// A [`DeserializeError`](super::FirestoreError::DeserializeError) of a value read as a
+    /// [`FirestoreVector`](crate::FirestoreVector) that is not a vector.
+    pub const NOT_A_VECTOR: &str = "NOT_A_VECTOR";
 }
 
 #[cfg(test)]

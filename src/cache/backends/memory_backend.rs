@@ -1671,6 +1671,7 @@ mod tests {
             ("array-2", vec![2_i64].into()),
             ("vector-short", vector(vec![5.0, 5.0])),
             ("vector-long", vector(vec![0.0, 0.0, 0.0])),
+            ("vector-long-larger", vector(vec![0.0, 0.0, 1.0])),
             ("map-a1", FirestoreValue::from_map([("a", 1_i64.into())])),
             (
                 "map-a1-b2",
