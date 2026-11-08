@@ -6,7 +6,7 @@ managing indexes.
 
 ![fsq demo](https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/media/fsq-demo.webp)
 
-- a SQL REPL (an interactive prompt) with highlighting, completion of collections and fields, and results as tables;
+- a SQL REPL (an interactive prompt) with highlighting, completion of collections and fields, and results as tables, with `\x` for one block per document and `\x full` for the path, type and whole value of every field;
 - `EXPLAIN`, which draws the query plan as a tree and warns about a table scan, a read of every document of a collection;
 - `\l` lists collections, with `\l --recursive` for subcollections, and `\d` describes the fields of a collection;
 - `export` and `import` of documents as JSON lines, in the tagged encoding of [JSON conversion](./json.md);
@@ -16,6 +16,35 @@ managing indexes.
 
 SQL needs a database of the Enterprise edition, see [Standard and Enterprise editions](./editions.md). `\l`, `\d`,
 `export`, `import` and the index commands work on both editions.
+
+## Installation
+
+fsq has binaries for Linux, macOS, Windows and FreeBSD on its [GitHub releases](https://github.com/abdolence/firestore-cli-rs/releases).
+The install script picks the one for your system.
+
+On macOS, Linux and FreeBSD:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/install.sh | sh
+```
+
+On Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/install.ps1 | iex
+```
+
+The scripts install the latest release, check its SHA-256 digest and put `fsq` in `~/.local/bin` on macOS, Linux and
+FreeBSD, and in `%LOCALAPPDATA%\Programs\fsq` on Windows. Running a script again upgrades fsq. `FSQ_VERSION` and
+`FSQ_INSTALL_DIR` choose another release and directory.
+
+With Rust installed, Cargo builds it from source:
+
+```sh
+cargo install firestore-cli --locked
+```
+
+The crate is `firestore-cli` and the binary it installs is `fsq`.
 
 ## Examples
 
@@ -45,5 +74,5 @@ Show what changes a `firestore.indexes.json` file would make, without applying i
 fsq -p my-project index plan firestore.indexes.json
 ```
 
-The installation, the options and the rest of the commands are in the
+The options and the rest of the commands are in the
 [fsq README](https://github.com/abdolence/firestore-cli-rs#readme).
