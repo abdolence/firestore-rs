@@ -10,9 +10,9 @@ use crate::{
     FirestoreGeoPoint, FirestoreInsertWrite, FirestoreLatLng, FirestoreListCollectionIdsParams,
     FirestorePipeline, FirestorePipelineSource, FirestorePipelineStage, FirestorePipelineWrite,
     FirestorePipelineWriteParams, FirestorePipelineWriteTransaction, FirestoreReference,
-    FirestoreResult, FirestoreSelection, FirestoreSqlExplain, FirestoreSqlOptions,
-    FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUnionStage, FirestoreUpdateWrite,
-    FirestoreUpsertWrite, FirestoreWriteCollection,
+    FirestoreResult, FirestoreSelection, FirestoreSqlExplain, FirestoreSqlFieldName,
+    FirestoreSqlOptions, FirestoreSqlParameters, FirestoreSqlStatement, FirestoreUnionStage,
+    FirestoreUpdateWrite, FirestoreUpsertWrite, FirestoreWriteCollection,
 };
 
 #[cfg(feature = "admin")]
@@ -192,6 +192,20 @@ fn sources_translate_to_their_pipeline_sources() {
 
     for (sql, source) in sources {
         assert_eq!(translated(sql), FirestorePipeline::new(source), "{sql}");
+    }
+}
+
+#[test]
+fn a_field_name_reads_back_as_the_field_it_was_written_from() {
+    let names = [
+        ("title", "title"),
+        ("order", "order"),
+        ("odd`name\\here", "`odd\\`name\\\\here`"),
+    ];
+
+    for (name, path) in names {
+        let sql = format!("SELECT {} FROM books", FirestoreSqlFieldName::from(name));
+        assert_eq!(column(&sql), field(path), "{name}");
     }
 }
 

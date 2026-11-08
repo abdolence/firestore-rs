@@ -97,6 +97,10 @@ mod sql_writes {}
 #[doc = include_str!("../docs/src/sql/indexes.md")]
 mod sql_indexes {}
 
+#[cfg(feature = "codegen")]
+#[doc = include_str!("../docs/src/sql/codegen.md")]
+mod sql_codegen {}
+
 #[doc = include_str!("../docs/src/request-tags.md")]
 mod request_tags {}
 
@@ -105,6 +109,10 @@ mod request_timeouts {}
 
 #[doc = include_str!("../docs/src/document-collection-ids.md")]
 mod document_collection_ids {}
+
+#[cfg(feature = "json-conversion")]
+#[doc = include_str!("../docs/src/json.md")]
+mod json {}
 
 #[cfg(feature = "caching")]
 #[doc = include_str!("../docs/src/caching.md")]

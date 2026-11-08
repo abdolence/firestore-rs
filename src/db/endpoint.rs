@@ -53,16 +53,6 @@ impl FirestoreDbEndpoint {
         }
     }
 
-    /// Whether requests reach the `FIRESTORE_EMULATOR_HOST` emulator: only when that host is
-    /// the URL actually used. An explicit `firebase_api_url` pointing elsewhere, production
-    /// included, is not the emulator just because the variable is set.
-    #[cfg(feature = "admin")]
-    pub(super) fn is_emulator(&self) -> bool {
-        self.emulator_host
-            .as_ref()
-            .is_some_and(|host| ensure_url_scheme(host.clone()) == self.api_url)
-    }
-
     /// A client of this endpoint that authenticates every request with `auth`.
     pub(super) async fn connect(
         &self,
@@ -197,29 +187,6 @@ mod tests {
         assert_eq!(
             ensure_url_scheme("invalid:localhost:8080".into()),
             "http://invalid:localhost:8080"
-        );
-    }
-
-    #[cfg(feature = "admin")]
-    fn endpoint(
-        firebase_api_url: Option<&str>,
-        emulator_host: Option<&str>,
-    ) -> FirestoreDbEndpoint {
-        let mut options = FirestoreDbOptions::new("emulated-project".to_string());
-        options.firebase_api_url = firebase_api_url.map(str::to_string);
-        FirestoreDbEndpoint::new(&options, emulator_host.map(str::to_string))
-    }
-
-    #[cfg(feature = "admin")]
-    #[test]
-    fn the_emulator_host_is_the_emulator_only_when_it_is_the_url_used() {
-        assert!(endpoint(None, Some("localhost:8080")).is_emulator());
-        assert!(endpoint(None, Some("http://localhost:8080")).is_emulator());
-        assert!(endpoint(Some("http://localhost:8080"), Some("localhost:8080")).is_emulator());
-        assert!(!endpoint(None, None).is_emulator());
-        assert!(
-            !endpoint(Some(GOOGLE_FIREBASE_API_URL), Some("localhost:8080")).is_emulator(),
-            "an explicit production URL is not the emulator"
         );
     }
 }

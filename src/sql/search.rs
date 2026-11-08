@@ -86,7 +86,10 @@ impl FirestoreSqlTranslator<'_> {
                 start,
             ));
         };
-        match self.expr(scope, query)?.constant_value() {
+        match self
+            .search_value(scope, query, "document_matches")?
+            .constant_value()
+        {
             Some(ValueType::StringValue(query)) => Ok(FirestoreSearchQuery::Text(
                 FirestoreTextSearch::new(FirestoreTextQuery::from(query.clone())),
             )),
@@ -164,7 +167,10 @@ impl FirestoreSqlTranslator<'_> {
                         longitude: self.number(scope, longitude)?,
                     })
                 }
-                _ => match self.expr(scope, point)?.constant_value() {
+                _ => match self
+                    .search_value(scope, point, "geo_distance")?
+                    .constant_value()
+                {
                     Some(ValueType::GeoPointValue(point)) => FirestoreLatLng(FirestoreGeoPoint {
                         latitude: point.latitude,
                         longitude: point.longitude,
@@ -180,7 +186,10 @@ impl FirestoreSqlTranslator<'_> {
     }
 
     fn number(&mut self, scope: &FirestoreSqlScope, expr: &Expr) -> FirestoreResult<f64> {
-        match self.expr(scope, expr)?.constant_value() {
+        match self
+            .search_value(scope, expr, "geo_distance")?
+            .constant_value()
+        {
             Some(ValueType::DoubleValue(number)) => Ok(*number),
             Some(ValueType::IntegerValue(number)) => Ok(*number as f64),
             _ => Err(FirestoreError::invalid_sql(
@@ -189,6 +198,18 @@ impl FirestoreSqlTranslator<'_> {
                 expr_start(expr),
             )),
         }
+    }
+
+    // The value of `expr`, which the search is built from rather than computed at run time.
+    fn search_value(
+        &mut self,
+        scope: &FirestoreSqlScope,
+        expr: &Expr,
+        construct: &str,
+    ) -> FirestoreResult<FirestoreExpr> {
+        let value = self.expr(scope, expr)?;
+        value.require_value(construct, expr_start(expr))?;
+        Ok(value)
     }
 
     pub(super) fn score(

@@ -219,8 +219,7 @@ impl<'a, D> FirestoreIndexCreateBuilder<'a, D>
 where
     D: FirestoreIndexSupport + Clone + Send + Sync + 'static,
 {
-    /// Waits for the index to finish building before `.execute()` returns, polling at the
-    /// default interval. `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
+    /// `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
     #[inline]
     pub fn wait_until_ready(self, timeout: Duration) -> Self {
         self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))
@@ -548,8 +547,7 @@ where
         self.ttl(FirestoreFieldTtlUpdate::Disable)
     }
 
-    /// Waits for the write to finish before `.execute()` returns, polling at the default
-    /// interval. `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
+    /// `timeout` bounds the whole call: see [`FirestoreOperationWaitOptions`].
     #[inline]
     pub fn wait_until_ready(self, timeout: Duration) -> Self {
         self.wait_until_ready_with_options(FirestoreOperationWaitOptions::new(timeout))
@@ -648,10 +646,9 @@ where
     /// a previous call. See [`FirestoreFieldOverride`] for what an override replaces.
     ///
     /// An Enterprise edition database has no single-field indexes. There an
-    /// [`exempt()`](FirestoreFieldOverrideFieldBuilder::exempt) is already satisfied and is never
-    /// written, and an override that lists indexes fails `.plan()` and `.sync()` with
-    /// [`InvalidParametersError`](crate::errors::FirestoreError::InvalidParametersError) before
-    /// anything is written. A composite index of one field indexes that field instead.
+    /// [`exempt()`](FirestoreFieldOverrideFieldBuilder::exempt) is never planned, and Firestore
+    /// answers an override that lists indexes with its own error. A composite index of one field
+    /// indexes that field instead.
     #[inline]
     pub fn field_overrides<FN>(self, overrides: FN) -> Self
     where

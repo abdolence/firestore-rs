@@ -154,6 +154,27 @@ pub(crate) fn field_path_segment(name: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
+/// One segment of a Firestore field path, as an update mask or a document field reference writes
+/// it: bare when it is a simple name, otherwise quoted in backticks with backticks and
+/// backslashes escaped.
+#[cfg(any(feature = "admin", feature = "sql"))]
+#[derive(Debug, Clone, Copy)]
+pub struct FirestoreFieldPathSegment<'a>(&'a str);
+
+#[cfg(any(feature = "admin", feature = "sql"))]
+impl<'a> From<&'a str> for FirestoreFieldPathSegment<'a> {
+    fn from(name: &'a str) -> Self {
+        Self(name)
+    }
+}
+
+#[cfg(any(feature = "admin", feature = "sql"))]
+impl std::fmt::Display for FirestoreFieldPathSegment<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&field_path_segment(self.0))
+    }
+}
+
 impl FirestoreExpr {
     /// A field of the current document, by its path.
     pub fn field<S: Into<String>>(path: S) -> Self {
@@ -392,5 +413,16 @@ mod tests {
                 options: HashMap::new(),
             }))
         );
+    }
+
+    #[cfg(any(feature = "admin", feature = "sql"))]
+    #[test]
+    fn field_path_segment_quotes_only_what_is_not_a_simple_name() {
+        let written = |name: &str| FirestoreFieldPathSegment::from(name).to_string();
+
+        assert_eq!(written("plain"), "plain");
+        assert_eq!(written("a.b"), "`a.b`");
+        assert_eq!(written("it`s"), "`it\\`s`");
+        assert_eq!(written(r"back\slash"), r"`back\\slash`");
     }
 }

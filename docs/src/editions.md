@@ -92,9 +92,9 @@ of each.
 With the `admin` feature, `FirestoreDb::read_database_edition()` returns the edition of the
 database the client is connected to. A database that reports no edition reads as `Standard`, the
 edition Firestore applies at creation. An edition this version of the crate does not know reads as
-`Unknown`, with the value Firestore reported, and index statements refuse a database of that
-edition. Firestore may add editions, so `FirestoreDatabaseEdition` is non-exhaustive. The emulator
-does not serve the Admin API, so the call fails there with `UNIMPLEMENTED`.
+`Unknown`, with the value Firestore reported. Firestore may add editions, so
+`FirestoreDatabaseEdition` is non-exhaustive. The emulator does not serve the Admin API, so the call
+fails there with `UNIMPLEMENTED`.
 
 ```rust,no_run
 # use firestore::*;

@@ -31,13 +31,13 @@ describes how the move is applied, and when a second TTL field is refused.
 
 An Enterprise edition database builds no index on its own: there are no automatic single-field
 indexes, so every index a query needs is one the statement declares. `.plan()` and `.sync()` read
-the database's edition once per call and follow its rules:
+the database's edition once per call to match a declaration with a listed index, and send what the
+statement declares. Firestore answers what it refuses with `INVALID_ARGUMENT`. On Enterprise:
 
 - a composite index of one field is how a single field is indexed. Firestore accepts one there,
   ordered, `.array_contains()` or `__name__`, while a Standard edition database refuses it;
-- `.field_overrides()` has nothing to override. An `.exempt()` is already satisfied and is never
-  written. An override that lists indexes fails with `InvalidParametersError` before anything is
-  written, since Firestore refuses it;
+- `.field_overrides()` has nothing to override. An `.exempt()` is never planned, since Firestore
+  stores nothing for it. Firestore refuses an override that lists indexes;
 - `.ttl()` enables a TTL field as on Standard, and `.prune_undeclared()` disables an undeclared
   one the same way;
 - Firestore appends no `__name__` field to an index, so `[a, b]` and `[a, b, __name__]` are two
@@ -82,10 +82,13 @@ a value such as an email address is kept unique across a collection.
 The *density* of an index says which documents it holds an entry for. A dense index holds one for
 every document, with a missing field stored as unset; a sparse index leaves out the documents
 that lack the indexed fields. Enterprise builds an index dense by default, and a text or geo
-search index always as `FirestoreIndexDensity::SparseAny`, an entry for each document that has at
+search index as `FirestoreIndexDensity::SparseAny`, an entry for each document that has at
 least one of the fields. Standard builds every index as `SparseAll`, an entry only for a document
-that has all of them, and accepts no other density, while Enterprise refuses `SparseAll`, and a
-search index there takes only `SparseAny`. A declaration with a density the edition refuses fails
-with `InvalidParametersError` before anything is written. Two indexes over the same fields are
-different indexes when their densities differ, or when one is unique and the other is not, and a
-declaration matches only the one it describes.
+that has all of them. Firestore answers a density its edition does not build with
+`INVALID_ARGUMENT`.
+
+A declaration that sets a density matches only a listed index of that density. A declaration
+without one matches a listed index over the same fields, scope and `unique` flag whatever its
+density, and when several listed indexes match, the library treats it as it does any declaration
+that matches several. Two indexes over the same fields are different indexes when one is unique
+and the other is not.

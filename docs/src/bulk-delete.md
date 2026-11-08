@@ -117,10 +117,8 @@ Bulk delete works on both editions, and removes the named collection group at ev
 
 ## The Firestore emulator
 
-The emulator answers `BulkDeleteDocuments` with `UNIMPLEMENTED`. Unlike index management, which
-skips silently against the emulator, a bulk delete returns an explicit error instead: there is no
-safe default result to report for an operation the emulator cannot run at all, so the library
-never lets it pass silently.
+The emulator answers `BulkDeleteDocuments` with `UNIMPLEMENTED`, which a bulk delete returns as
+`DatabaseError`.
 
 ## IAM roles
 

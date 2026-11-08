@@ -30,6 +30,35 @@ pub(crate) fn fixture_case(name: &str, case: Option<&str>) -> Json {
     }
 }
 
+/// A captured database and its documents, from `tests/fixtures/json/{edition}.json`.
+#[cfg(feature = "json-conversion")]
+pub(crate) struct JsonFixture {
+    /// The database name, as in `projects/{project}/databases/{database}`.
+    pub(crate) database: String,
+    pub(crate) documents: Vec<wire::Document>,
+}
+
+/// The documents captured on `edition`, `standard` or `enterprise`.
+#[cfg(feature = "json-conversion")]
+pub(crate) fn json_fixture(edition: &str) -> JsonFixture {
+    let path = format!(
+        "{}/tests/fixtures/json/{edition}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let file: Json = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    JsonFixture {
+        database: string(&file["database"], "database").unwrap(),
+        documents: file["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(index, document)| decode_document(document, &format!("documents[{index}]")))
+            .collect::<Decoded<_>>()
+            .unwrap(),
+    }
+}
+
 /// The request a fixture case sent.
 pub(crate) fn request(case: &Json) -> wire::ExecutePipelineRequest {
     decode_request(&case["request"], "request").unwrap()
@@ -82,13 +111,9 @@ fn bytes(json: &Json, context: &str) -> Decoded<Vec<u8>> {
 }
 
 fn timestamp(json: &Json, context: &str) -> Decoded<Timestamp> {
-    let instant: jiff::Timestamp = string(json, context)?
+    string(json, context)?
         .parse()
-        .map_err(|err| format!("{context}: bad timestamp: {err}"))?;
-    Ok(Timestamp {
-        seconds: instant.as_second(),
-        nanos: instant.subsec_nanosecond(),
-    })
+        .map_err(|err| format!("{context}: bad timestamp: {err}"))
 }
 
 fn integer(json: &Json, context: &str) -> Decoded<i64> {

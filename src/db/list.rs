@@ -24,6 +24,12 @@ pub struct FirestoreListDocParams {
     pub order_by: Option<Vec<FirestoreQueryOrder>>,
     pub return_only_fields: Option<Vec<String>>,
 
+    /// Also returns missing documents: documents that do not exist but have subcollections.
+    /// Firestore returns them without fields and without create or update times, and refuses
+    /// the option together with an `order_by`.
+    #[default = "false"]
+    pub show_missing: bool,
+
     /// Request options (e.g. request tags) for this listing operation.
     pub request_options: Option<FirestoreRequestOptions>,
 }
@@ -239,7 +245,7 @@ impl FirestoreDb {
                 .map(|selector| selector.try_into())
                 .transpose()?,
             request_options: self.resolve_request_options(params.request_options.as_ref()),
-            show_missing: false,
+            show_missing: params.show_missing,
         })
     }
 

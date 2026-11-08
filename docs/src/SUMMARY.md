@@ -42,6 +42,7 @@
     - [Reads, joins and subqueries](./sql/reads.md)
     - [Writes and ON CONFLICT](./sql/writes.md)
     - [Index statements](./sql/indexes.md)
+    - [Fluent code for a statement](./sql/codegen.md)
 
 # Data modelling
 
@@ -49,6 +50,7 @@
 - [Document metadata as struct fields](./document-metadata.md)
 - [Explicit null value serialisation](./null-serialization.md)
 - [Document and collection IDs](./document-collection-ids.md)
+- [JSON conversion](./json.md)
 
 # Caching
 

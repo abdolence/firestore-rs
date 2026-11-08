@@ -3,24 +3,25 @@
 //! [`indexes`](super::indexes), and the four calls that each list, create, delete or update one
 //! index or field.
 //!
-//! The four calls run no edition rule and no emulator check of their own: Firestore's own
-//! `INVALID_ARGUMENT` and the emulator's `UNIMPLEMENTED` are their errors.
+//! Neither the four calls nor `.plan()` and `.sync()` check an edition rule or the emulator
+//! before they send a request: Firestore's own `INVALID_ARGUMENT` and the emulator's
+//! `UNIMPLEMENTED` are their errors.
 
 use crate::db::admin::index_models::{validate_collection_group, CanonicalFieldPath};
-use crate::db::admin::indexes::{
-    IndexAction, PendingOperation, RefusedFieldWrite, SEQUENCING_TIMEOUT,
-};
+use crate::db::admin::indexes::{IndexAction, RefusedFieldWrite, SEQUENCING_TIMEOUT};
 use crate::db::admin::operation_wait::{OperationDeadline, StartedOperation};
 use crate::db::support::FirestoreIndexSupport;
+use crate::errors::codes::{
+    INDEX_IN_OTHER_GROUP, INDEX_NEEDS_REPAIR, NO_MATCHING_INDEX, SEVERAL_MATCHING_INDEXES,
+};
 use crate::errors::FirestoreError;
 use crate::{
     FirestoreCollectionId, FirestoreDb, FirestoreFieldOverride, FirestoreFieldOverrideUpdate,
     FirestoreFieldTtlUpdate, FirestoreFieldUpdate, FirestoreIndexDefinition,
     FirestoreIndexDeleteTarget, FirestoreIndexIdTarget, FirestoreIndexListing,
     FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexState, FirestoreIndexSyncOptions,
-    FirestoreIndexSyncReport, FirestoreIndexSyncSkipReason, FirestoreIndexSyncTimings,
-    FirestoreInstant, FirestoreListedCompositeIndex, FirestoreListedField,
-    FirestoreOperationWaitOptions, FirestoreResult,
+    FirestoreIndexSyncReport, FirestoreInstant, FirestoreListedCompositeIndex,
+    FirestoreListedField, FirestoreOperationWaitOptions, FirestoreResult,
 };
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field::{IndexConfig, TtlConfig};
@@ -28,63 +29,12 @@ use gcloud_sdk::google::firestore::admin::v1::{
     Field as ProtoField, GetFieldRequest, GetIndexRequest, Index as ProtoIndex,
     IndexOperationMetadata, UpdateFieldRequest,
 };
-use gcloud_sdk::google::longrunning::Operation;
 use gcloud_sdk::prost::Message as _;
 use gcloud_sdk::prost_types::FieldMask;
 use gcloud_sdk::tonic::{Code, Status};
 use gcloud_sdk::RequestTimeouts;
 use std::time::Instant;
 use tracing::*;
-
-/// The code of the [`DataNotFoundError`](FirestoreError::DataNotFoundError) a delete by ID fails
-/// with when the index belongs to another group than the caller named.
-const INDEX_IN_OTHER_GROUP: &str = "INDEX_IN_OTHER_GROUP";
-
-/// The code of the [`DataNotFoundError`](FirestoreError::DataNotFoundError) a delete fails with
-/// when no index has the ID, or no listed index matches the definition.
-const NO_MATCHING_INDEX: &str = "NO_MATCHING_INDEX";
-
-/// The code of the [`DataConflictError`](FirestoreError::DataConflictError) a delete by
-/// definition fails with when more than one listed index matches it.
-const SEVERAL_MATCHING_INDEXES: &str = "SEVERAL_MATCHING_INDEXES";
-
-/// The code of the [`SystemError`](FirestoreError::SystemError) a wait fails with when the index
-/// it waited for ended in `NEEDS_REPAIR`.
-const INDEX_NEEDS_REPAIR: &str = "INDEX_NEEDS_REPAIR";
-
-/// A `CreateIndex` Firestore accepted: its operation, and the resource name of the index it
-/// builds.
-struct StartedIndexBuild {
-    operation: PendingOperation,
-    index_name: String,
-}
-
-impl StartedIndexBuild {
-    /// Firestore names the new index in the metadata of its first answer, which is why a build
-    /// without that name is refused: nothing else says which index to read back.
-    fn new(operation: Operation, action: IndexAction) -> FirestoreResult<Self> {
-        let index_name = operation
-            .metadata
-            .as_ref()
-            .map(|metadata| IndexOperationMetadata::decode(metadata.value.as_slice()))
-            .transpose()?
-            .map(|metadata| metadata.index)
-            .filter(|index| !index.is_empty())
-            .ok_or_else(|| {
-                FirestoreError::system_error(format!(
-                    "operation {} started to {action} without naming the index",
-                    operation.name
-                ))
-            })?;
-        Ok(Self {
-            operation: StartedOperation {
-                name: operation.name,
-                action,
-            },
-            index_name,
-        })
-    }
-}
 
 impl FirestoreDb {
     async fn get_index(&self, name: &str) -> Result<ProtoIndex, Status> {
@@ -110,9 +60,6 @@ impl FirestoreDb {
         FirestoreListedField::try_from(field)
     }
 
-    /// Reads the index `name` as one poll of a wait: bounded by `deadline`'s poll limit, and
-    /// retryable when it does not answer in time, as `GetOperation` is in
-    /// [`wait_for_operations`](Self::wait_for_operations).
     async fn poll_index(
         &self,
         name: &str,
@@ -350,16 +297,6 @@ impl FirestoreIndexSupport for FirestoreDb {
         options: FirestoreIndexSyncOptions,
     ) -> FirestoreResult<FirestoreIndexPlan> {
         crate::validate_index_params(&params)?;
-        if self.inner.is_emulator {
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "Skipping index plan: the Firestore emulator does not implement the admin API.",
-            );
-            return Ok(FirestoreIndexPlan {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                ..Default::default()
-            });
-        }
 
         let root = span!(
             Level::INFO,
@@ -394,23 +331,6 @@ impl FirestoreIndexSupport for FirestoreDb {
     ) -> FirestoreResult<FirestoreIndexSyncReport> {
         let started = Instant::now();
         crate::validate_index_params(&params)?;
-        if self.inner.is_emulator {
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "Skipping index sync: the Firestore emulator does not implement the admin API.",
-            );
-            return Ok(FirestoreIndexSyncReport {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                timings: FirestoreIndexSyncTimings {
-                    total: started.elapsed(),
-                    list: None,
-                    apply: None,
-                    wait: None,
-                },
-                ..Default::default()
-            });
-        }
-
         let root = span!(
             Level::INFO,
             "Firestore Index Sync",
@@ -497,12 +417,30 @@ impl FirestoreIndexSupport for FirestoreDb {
                 return Err(status.into());
             }
         };
-        let build = StartedIndexBuild::new(operation, action)?;
+        // Firestore names the new index in the metadata of its first answer, which is why a build
+        // without that name is refused: nothing else says which index to read back.
+        let index_name = operation
+            .metadata
+            .as_ref()
+            .map(|metadata| IndexOperationMetadata::decode(metadata.value.as_slice()))
+            .transpose()?
+            .map(|metadata| metadata.index)
+            .filter(|index| !index.is_empty())
+            .ok_or_else(|| {
+                FirestoreError::system_error(format!(
+                    "operation {} started to {action} without naming the index",
+                    operation.name
+                ))
+            })?;
         if let Some(deadline) = &deadline {
-            self.wait_for_operations(&[&build.operation], deadline, |_, _| {})
+            let started = StartedOperation {
+                name: operation.name,
+                action,
+            };
+            self.wait_for_operations(&[&started], deadline, |_, _| {})
                 .await?;
         }
-        FirestoreListedCompositeIndex::try_from(self.get_index(&build.index_name).await?)
+        FirestoreListedCompositeIndex::try_from(self.get_index(&index_name).await?)
     }
 
     async fn delete_index(
@@ -561,6 +499,7 @@ mod tests {
     use crate::db::fake_firestore::{
         list_fields_response, list_indexes_response, FakeFirestore, FakeResponse,
     };
+    use crate::errors::codes::OPERATION_WAIT_TIMEOUT;
     use crate::{
         FirestoreCompositeIndex, FirestoreFieldOverrideOutcome, FirestoreFieldOverrideTarget,
         FirestoreIndexDensity, FirestoreIndexField, FirestoreIndexFieldMode, FirestoreIndexId,
@@ -1117,7 +1056,7 @@ mod tests {
 
         assert!(
             matches!(&refused, FirestoreError::SystemError(error)
-                if error.public.code == "OPERATION_WAIT_TIMEOUT"),
+                if error.public.code == OPERATION_WAIT_TIMEOUT),
             "{refused:?}"
         );
     }

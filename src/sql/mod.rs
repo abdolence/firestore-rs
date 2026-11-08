@@ -1,5 +1,8 @@
 mod aggregation;
 
+#[cfg(feature = "codegen")]
+mod codegen;
+
 mod ddl;
 
 #[cfg(feature = "admin")]
@@ -9,6 +12,9 @@ mod ddl_field;
 mod ddl_index;
 
 mod expr;
+
+mod field_name;
+pub use field_name::*;
 
 mod functions;
 

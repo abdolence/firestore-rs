@@ -46,6 +46,8 @@ Library provides a simple API for Google Firestore based on the official gRPC AP
   overrides and TTL policy, planned and synced with one call, following the edition of the database;
 - Bulk delete behind the same `admin` feature: removes every document in named collection groups,
   at any depth across the whole database, in the background;
+- Converting values and documents to JSON and back behind an opt-in `json-conversion` feature: a lossless form
+  for export and import, and a plain form for display;
 - Works with the Firestore emulator through `FIRESTORE_EMULATOR_HOST`, no credentials needed;
 - Google client based on [gcloud-sdk library](https://github.com/abdolence/gcloud-sdk-rs)
   that automatically detects GCE environment or application default accounts for local development;

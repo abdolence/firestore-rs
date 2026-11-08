@@ -594,10 +594,10 @@ async fn search_indexes_against_real_firestore_enterprise(
         assert!(
             matches!(
                 &refused,
-                Err(FirestoreError::InvalidParametersError(invalid))
-                    if invalid.public.field == "field_overrides"
+                Err(FirestoreError::DatabaseError(err))
+                    if err.public.code == "InvalidArgument" && !err.retry_possible
             ),
-            "an Enterprise database refuses field overrides before any write"
+            "Firestore answers INVALID_ARGUMENT to a field override that lists indexes on Enterprise"
         );
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     })

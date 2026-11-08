@@ -2,6 +2,7 @@ use super::aggregation::FirestoreSqlAggregation;
 use super::parameters::FirestoreSqlBinding;
 use super::subquery::{FirestoreSqlCapture, FirestoreSqlCte};
 use super::write::SQL_UPSERT_FORM;
+use crate::db::relative_to_documents;
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
 use crate::field_path_segment;
 use crate::{
@@ -157,10 +158,7 @@ impl<'t> FirestoreSqlTranslator<'t> {
         path: &'p str,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<&'p str> {
-        let relative = path
-            .strip_prefix(self.documents_path)
-            .and_then(|path| path.strip_prefix('/'))
-            .unwrap_or(path);
+        let relative = relative_to_documents(self.documents_path, path).unwrap_or(path);
         let segments: Vec<&str> = relative.split('/').collect();
         if !segments.len().is_multiple_of(2) {
             return Err(FirestoreError::invalid_sql(

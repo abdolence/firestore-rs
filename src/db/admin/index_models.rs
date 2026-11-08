@@ -50,8 +50,8 @@ pub enum FirestoreIndexDensity {
 
 /// The edition of a Firestore database, read with
 /// [`FirestoreDb::read_database_edition`](crate::FirestoreDb::read_database_edition): it
-/// decides which features the database offers and which indexes it accepts. Index statements read
-/// it once per `.plan()` or `.sync()` call.
+/// decides which features the database offers and which indexes it accepts. `.plan()` and
+/// `.sync()` read it once per call.
 ///
 /// An edition the Admin API reports as unspecified reads as [`Standard`](Self::Standard), the
 /// edition Firestore applies at creation.
@@ -65,24 +65,7 @@ pub enum FirestoreDatabaseEdition {
     /// The edition with pipelines, SQL and search indexes.
     Enterprise,
     /// An edition this version of the crate does not know, with the raw value Firestore reported.
-    /// Index statements refuse a database of this edition rather than apply the rules of another.
     Unknown(i32),
-}
-
-impl FirestoreDatabaseEdition {
-    /// Fails with [`InvalidParametersError`](FirestoreError::InvalidParametersError) on
-    /// [`Unknown`](Self::Unknown). The edition rules match on [`Standard`](Self::Standard) and
-    /// [`Enterprise`](Self::Enterprise) only, so an edition they do not know must be refused
-    /// before they run, or they would validate and match as Standard.
-    pub(crate) fn require_known(self) -> FirestoreResult<Self> {
-        match self {
-            Self::Unknown(reported) => Err(FirestoreError::invalid_parameters(
-                "database_edition",
-                format!("{reported} is not a database edition this version of the crate knows"),
-            )),
-            known => Ok(known),
-        }
-    }
 }
 
 /// A flat vector index's configuration, for nearest-neighbor search.
@@ -177,7 +160,8 @@ pub struct FirestoreCompositeIndex {
     /// index. Enterprise edition only.
     pub unique: bool,
     /// Which documents the index holds an entry for, `None` for the database's default: see
-    /// [`FirestoreIndexDensity`].
+    /// [`FirestoreIndexDensity`]. A declaration without a density matches a listed index of any
+    /// density.
     pub density: Option<FirestoreIndexDensity>,
 }
 
@@ -190,6 +174,12 @@ impl FirestoreCompositeIndex {
             unique: false,
             density: None,
         }
+    }
+
+    /// The options of this index other than its fields, for printing apart from them, such as
+    /// in a column of a listing. The text is empty for an index with none.
+    pub fn options(&self) -> FirestoreCompositeIndexOptions<'_> {
+        FirestoreCompositeIndexOptions { index: self }
     }
 
     /// Scopes this index to a collection-group query instead of a single collection.
@@ -222,11 +212,6 @@ impl FirestoreCompositeIndex {
     pub fn density(mut self, density: FirestoreIndexDensity) -> Self {
         self.density = Some(density);
         self
-    }
-
-    /// Whether this is a text or geo search index.
-    pub(crate) fn is_search_index(&self) -> bool {
-        self.fields.iter().any(|field| field.mode.is_search())
     }
 }
 
@@ -543,12 +528,31 @@ pub struct FirestoreListedField {
 /// [`FirestoreFieldOverride`] can express. The planner never proposes deleting or reverting one of
 /// these, even when pruning, because it cannot know that doing so is what the declaration
 /// intends.
+///
+/// Displays as `name: reason`.
 #[derive(Debug, PartialEq, Clone)]
 pub struct FirestoreUnrecognisedIndexItem {
     /// The resource name Firestore assigned it.
     pub name: String,
+    /// The collection group parsed from `name`, or `None` when the name has no valid collection
+    /// group segment, which is the case for a resource this crate could not place in any group.
+    pub collection_group: Option<FirestoreCollectionId>,
     /// Why this crate could not convert it into a domain value.
     pub reason: String,
+}
+
+impl FirestoreUnrecognisedIndexItem {
+    /// Builds the item for a listed index resource whose conversion failed, taking its collection
+    /// group from `name` when the name has one.
+    pub(crate) fn for_index(name: String, reason: String) -> Self {
+        let collection_group = CollectionGroupResourceName::parse(&name, "indexes")
+            .and_then(|resource| FirestoreCollectionId::new(resource.collection_group).ok());
+        Self {
+            name,
+            collection_group,
+            reason,
+        }
+    }
 }
 
 /// The composite indexes, field resources and unrecognised items of one listing, each converted
@@ -566,6 +570,37 @@ pub struct FirestoreIndexListing {
     pub fields: Vec<FirestoreListedField>,
     /// The listed indexes and fields this crate's domain model cannot represent.
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
+}
+
+impl FirestoreIndexListing {
+    /// Everything in this listing the crate cannot model, in listing order: first
+    /// [`unrecognised`](Self::unrecognised), then, for each listed field, its override half and
+    /// then its TTL half when that half is unrecognised.
+    ///
+    /// A field with one unrecognised half and one recognised half yields one item; a field with
+    /// two unrecognised halves yields two items with the same name. Each item is an owned copy.
+    pub fn unrecognised_items(&self) -> impl Iterator<Item = FirestoreUnrecognisedIndexItem> + '_ {
+        let items = self.unrecognised.iter().cloned();
+        let field_halves = self.fields.iter().flat_map(|field| {
+            let override_reason = match &field.index_override {
+                Some(FirestoreFieldOverrideOutcome::Unrecognised(reason)) => Some(reason),
+                _ => None,
+            };
+            let ttl_reason = match &field.ttl {
+                Some(FirestoreFieldTtlOutcome::Unrecognised(reason)) => Some(reason),
+                _ => None,
+            };
+            [override_reason, ttl_reason]
+                .into_iter()
+                .flatten()
+                .map(|reason| FirestoreUnrecognisedIndexItem {
+                    name: field.name.clone(),
+                    collection_group: Some(field.collection_group.clone()),
+                    reason: reason.clone(),
+                })
+        });
+        items.chain(field_halves)
+    }
 }
 
 /// A composite index and the collection group it belongs to.
@@ -779,11 +814,6 @@ pub struct FirestoreIndexPlan {
     /// Listed indexes or fields this crate's domain model cannot represent; never planned for
     /// deletion or revert, even when pruning.
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
-    /// Why this plan did nothing without contacting Firestore; `None` when it ran. Mirrors
-    /// [`FirestoreIndexSyncReport::skipped`], so a plan made against the emulator carries the
-    /// same explicit marker a sync against it reports, rather than the plain default a caller
-    /// could otherwise mistake for "nothing to do".
-    pub skipped: Option<FirestoreIndexSyncSkipReason>,
 }
 
 /// The result of `.sync()`: what it changed, what it left alone, and what it found undeclared.
@@ -835,8 +865,6 @@ pub struct FirestoreIndexSyncReport {
     /// Listed indexes or fields this crate's domain model cannot represent; never deleted or
     /// reverted, even when pruning.
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
-    /// Why this sync did nothing without contacting Firestore; `None` when it ran.
-    pub skipped: Option<FirestoreIndexSyncSkipReason>,
     /// How long the sync and each of its phases took.
     pub timings: FirestoreIndexSyncTimings,
 }
@@ -864,15 +892,8 @@ pub enum FirestoreIndexDeletesWithheldReason {
     CreatesUnfinished(Vec<FirestoreCompositeIndex>),
 }
 
-/// Why a `.sync()` returned without contacting Firestore.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum FirestoreIndexSyncSkipReason {
-    /// The client talks to the Firestore emulator, which does not implement the admin API.
-    Emulator,
-}
-
-/// How long a `.sync()` took, in total and per phase. A phase is `None` when it did not run: all
-/// of them for a skipped sync, and `wait` when the caller did not ask to wait.
+/// How long a `.sync()` took, in total and per phase. A phase is `None` when it did not run, as
+/// `wait` when the caller did not ask to wait.
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct FirestoreIndexSyncTimings {
     /// The whole call.
@@ -886,12 +907,8 @@ pub struct FirestoreIndexSyncTimings {
     pub wait: Option<Duration>,
 }
 
-/// The maximum number of fields Firestore allows on one composite index, `__name__` included.
-const MAX_INDEX_FIELDS: usize = 100;
-
 /// Checks the structural rules a declared [`FirestoreIndexParams`] must satisfy, independent of
-/// what Firestore currently has and of the database's edition (see
-/// [`validate_index_params_for_edition`] for the rules that depend on it).
+/// what Firestore currently has.
 ///
 /// # Errors
 /// Returns [`FirestoreError::InvalidParametersError`] if a composite index has no fields, mixes
@@ -905,121 +922,6 @@ pub(crate) fn validate_index_params(params: &FirestoreIndexParams) -> FirestoreR
     validate_composite_indexes(&params.composite_indexes)?;
     validate_field_overrides(&params.field_overrides)?;
     validate_ttl_fields(&params.ttl_fields)?;
-    Ok(())
-}
-
-/// Checks the rules a declared [`FirestoreIndexParams`] must satisfy on a database of `edition`,
-/// on top of [`validate_index_params`].
-///
-/// # Errors
-/// Returns [`FirestoreError::InvalidParametersError`] if a composite index duplicates an earlier
-/// declared one, as Firestore tells indexes apart on `edition`, or has more than 100 fields,
-/// counting the `__name__` field a Standard edition database appends; if its density is one the
-/// edition refuses (see [`FirestoreIndexDensity`]); on a Standard edition database, if
-/// a composite index is unique, is a text or geo search index, or has a single field that is not
-/// a vector field; on an Enterprise edition database, if a field override lists single-field
-/// indexes.
-pub(crate) fn validate_index_params_for_edition(
-    params: &FirestoreIndexParams,
-    edition: FirestoreDatabaseEdition,
-) -> FirestoreResult<()> {
-    let indexes = &params.composite_indexes;
-    for (position, index) in indexes.iter().enumerate() {
-        if edition == FirestoreDatabaseEdition::Standard {
-            let enterprise_only = if index.unique {
-                Some("is unique")
-            } else if index.is_search_index() {
-                Some("is a text or geo search index")
-            } else if index.fields.len() == 1
-                && !matches!(index.fields[0].mode, FirestoreIndexFieldMode::Vector(_))
-            {
-                Some("has a single field, which Standard indexes on its own (see .field_overrides())")
-            } else {
-                None
-            };
-            if let Some(enterprise_only) = enterprise_only {
-                return Err(FirestoreError::invalid_parameters(
-                    "composite_indexes",
-                    format!(
-                        "index {position} {enterprise_only}; only an Enterprise edition database \
-                         supports that"
-                    ),
-                ));
-            }
-        }
-
-        let appended_name = edition == FirestoreDatabaseEdition::Standard
-            && !index
-                .fields
-                .iter()
-                .any(|field| field.field_path == IMPLIED_NAME_FIELD);
-        let max_fields = MAX_INDEX_FIELDS - usize::from(appended_name);
-        if index.fields.len() > max_fields {
-            return Err(FirestoreError::invalid_parameters(
-                "composite_indexes",
-                format!(
-                    "index {position} declares {} fields; Firestore allows at most {max_fields} \
-                     on this edition",
-                    index.fields.len()
-                ),
-            ));
-        }
-
-        if let Some(density) = index.density {
-            let accepted = match edition {
-                FirestoreDatabaseEdition::Standard | FirestoreDatabaseEdition::Unknown(_) => {
-                    density == FirestoreIndexDensity::SparseAll
-                }
-                FirestoreDatabaseEdition::Enterprise if index.is_search_index() => {
-                    density == FirestoreIndexDensity::SparseAny
-                }
-                FirestoreDatabaseEdition::Enterprise => density != FirestoreIndexDensity::SparseAll,
-            };
-            if !accepted {
-                return Err(FirestoreError::invalid_parameters(
-                    "composite_indexes",
-                    format!("index {position} cannot be built {density} on this edition"),
-                ));
-            }
-        }
-
-        for (earlier_position, earlier) in indexes.iter().enumerate().take(position) {
-            // Checked both ways: on Standard, `composite_index_matches` only ignores `__name__` on
-            // its second (`listed`) argument, and either declaration may be the one that states
-            // it explicitly.
-            if super::index_diff::composite_index_matches(index, earlier, edition)
-                || super::index_diff::composite_index_matches(earlier, index, edition)
-            {
-                let ignoring = match edition {
-                    FirestoreDatabaseEdition::Standard | FirestoreDatabaseEdition::Unknown(_) => {
-                        " once the __name__ field Firestore appends is ignored"
-                    }
-                    FirestoreDatabaseEdition::Enterprise => "",
-                };
-                return Err(FirestoreError::invalid_parameters(
-                    "composite_indexes",
-                    format!("index {position} duplicates index {earlier_position}{ignoring}"),
-                ));
-            }
-        }
-    }
-
-    if edition == FirestoreDatabaseEdition::Enterprise {
-        if let Some(field_override) = params
-            .field_overrides
-            .iter()
-            .find(|field_override| !field_override.indexes.is_empty())
-        {
-            return Err(FirestoreError::invalid_parameters(
-                "field_overrides",
-                format!(
-                    "{} lists single-field indexes, which an Enterprise edition database does \
-                     not support; declare a composite index of that one field instead",
-                    field_override.target
-                ),
-            ));
-        }
-    }
     Ok(())
 }
 
@@ -1311,22 +1213,43 @@ impl Display for FirestoreCompositeIndex {
         write!(f, "[{}] (", self.query_scope)?;
         write_comma_joined(f, &self.fields)?;
         write!(f, ")")?;
-        if self.unique {
-            write!(f, " unique")?;
-        }
-        if let Some(density) = &self.density {
-            write!(f, " density={density}")?;
-        }
-        let Some(options) = &self.search_options else {
-            return Ok(());
-        };
-        if let Some(language) = &options.text_language {
-            write!(f, " text_language={language}")?;
-        }
-        if let Some(path) = &options.text_language_override_field_path {
-            write!(f, " text_language_override_field_path={path}")?;
+        let options = self.options().to_string();
+        if !options.is_empty() {
+            write!(f, " {options}")?;
         }
         Ok(())
+    }
+}
+
+/// The options of a [`FirestoreCompositeIndex`] that its fields do not carry, as the text
+/// [`Display`] of the index ends with.
+///
+/// It prints `unique`, `density=..` and the search options that are set, in that order and
+/// separated by a space, and prints nothing when the index has none: see
+/// [`FirestoreCompositeIndex::options`].
+#[derive(Debug, Clone, Copy)]
+pub struct FirestoreCompositeIndexOptions<'a> {
+    index: &'a FirestoreCompositeIndex,
+}
+
+impl Display for FirestoreCompositeIndexOptions<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut options = Vec::new();
+        if self.index.unique {
+            options.push("unique".to_string());
+        }
+        if let Some(density) = &self.index.density {
+            options.push(format!("density={density}"));
+        }
+        if let Some(search) = &self.index.search_options {
+            if let Some(language) = &search.text_language {
+                options.push(format!("text_language={language}"));
+            }
+            if let Some(path) = &search.text_language_override_field_path {
+                options.push(format!("text_language_override_field_path={path}"));
+            }
+        }
+        f.write_str(&options.join(" "))
     }
 }
 
@@ -1442,9 +1365,6 @@ impl Display for FirestoreIndexPlan {
                 self.pending.len(),
                 self.unchanged_ttl.len()
             )?;
-            if let Some(reason) = &self.skipped {
-                writeln!(f, "  skipped: {reason}")?;
-            }
             return Ok(());
         }
 
@@ -1488,9 +1408,6 @@ impl Display for FirestoreIndexPlan {
                 self.unchanged_ttl.len()
             )?;
         }
-        if let Some(reason) = &self.skipped {
-            writeln!(f, "  skipped: {reason}")?;
-        }
         Ok(())
     }
 }
@@ -1525,9 +1442,6 @@ impl Display for FirestoreIndexSyncReport {
         write_section(f, "kept_undeclared_fields", &self.kept_undeclared_fields)?;
         write_section(f, "kept_undeclared_ttl", &self.kept_undeclared_ttl)?;
         write_section(f, "unrecognised", &self.unrecognised)?;
-        if let Some(reason) = &self.skipped {
-            writeln!(f, "  skipped: {reason}")?;
-        }
         writeln!(f, "  timings: {}", self.timings)
     }
 }
@@ -1542,16 +1456,6 @@ impl Display for FirestoreIndexDeletesWithheldReason {
             FirestoreIndexDeletesWithheldReason::CreatesUnfinished(indexes) => {
                 write!(f, "these new indexes had not finished building: ")?;
                 write_comma_joined(f, indexes)
-            }
-        }
-    }
-}
-
-impl Display for FirestoreIndexSyncSkipReason {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            FirestoreIndexSyncSkipReason::Emulator => {
-                write!(f, "the Firestore emulator does not implement the admin API")
             }
         }
     }
@@ -1632,11 +1536,6 @@ mod tests {
         )
     }
 
-    fn users_params(indexes: Vec<FirestoreCompositeIndex>) -> FirestoreIndexParams {
-        FirestoreIndexParams::new(FirestoreCollectionId::from_static("users"))
-            .with_composite_indexes(indexes)
-    }
-
     #[test]
     fn composite_index_without_fields_is_rejected() {
         let err = validate_composite_indexes(&[FirestoreCompositeIndex::new(vec![])]).unwrap_err();
@@ -1651,78 +1550,6 @@ mod tests {
         ]);
         let err = validate_composite_indexes(&[index]).unwrap_err();
         assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
-    }
-
-    #[test]
-    fn unique_and_search_indexes_are_refused_on_standard_only() {
-        for index in [
-            FirestoreCompositeIndex::new(vec![asc("a"), asc("b")]).unique(),
-            FirestoreCompositeIndex::new(vec![field("body", FirestoreIndexFieldMode::Text)]),
-        ] {
-            let params = users_params(vec![index]);
-            let err =
-                validate_index_params_for_edition(&params, FirestoreDatabaseEdition::Standard)
-                    .unwrap_err();
-            assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
-            assert!(validate_index_params_for_edition(
-                &params,
-                FirestoreDatabaseEdition::Enterprise
-            )
-            .is_ok());
-        }
-    }
-
-    #[test]
-    fn a_density_the_edition_refuses_is_rejected_before_any_write() {
-        use FirestoreIndexDensity::{Dense, SparseAll, SparseAny};
-        let ordered = || FirestoreCompositeIndex::new(vec![asc("a"), asc("b")]);
-        let search =
-            || FirestoreCompositeIndex::new(vec![field("body", FirestoreIndexFieldMode::Text)]);
-        let refused = [
-            (
-                FirestoreDatabaseEdition::Standard,
-                ordered().density(SparseAny),
-            ),
-            (FirestoreDatabaseEdition::Standard, ordered().density(Dense)),
-            (
-                FirestoreDatabaseEdition::Enterprise,
-                ordered().density(SparseAll),
-            ),
-            (
-                FirestoreDatabaseEdition::Enterprise,
-                search().density(Dense),
-            ),
-        ];
-        for (edition, index) in refused {
-            let err =
-                validate_index_params_for_edition(&users_params(vec![index]), edition).unwrap_err();
-            assert!(
-                is_invalid_parameter(&err, "composite_indexes"),
-                "{edition:?}: {err:?}"
-            );
-        }
-
-        let accepted = [
-            (
-                FirestoreDatabaseEdition::Standard,
-                ordered().density(SparseAll),
-            ),
-            (
-                FirestoreDatabaseEdition::Enterprise,
-                ordered().density(SparseAny),
-            ),
-            (
-                FirestoreDatabaseEdition::Enterprise,
-                ordered().density(Dense),
-            ),
-            (
-                FirestoreDatabaseEdition::Enterprise,
-                search().density(SparseAny),
-            ),
-        ];
-        for (edition, index) in accepted {
-            validate_index_params_for_edition(&users_params(vec![index]), edition).unwrap();
-        }
     }
 
     #[test]
@@ -1834,6 +1661,28 @@ mod tests {
     }
 
     #[test]
+    fn the_options_of_an_index_are_the_end_of_its_display() {
+        let index = FirestoreCompositeIndex::new(vec![asc("rating")])
+            .unique()
+            .density(FirestoreIndexDensity::SparseAny)
+            .search_options(
+                FirestoreSearchIndexOptions::new().with_text_language("en".to_string()),
+            );
+        let options = index.options().to_string();
+        assert_eq!(options, "unique density=SPARSE_ANY text_language=en");
+        assert_eq!(
+            index.to_string(),
+            format!("[COLLECTION] (rating ASC) {options}")
+        );
+        assert_eq!(
+            FirestoreCompositeIndex::new(vec![asc("rating")])
+                .options()
+                .to_string(),
+            ""
+        );
+    }
+
+    #[test]
     fn duplicate_field_override_path_is_rejected() {
         let overrides = vec![
             FirestoreFieldOverride {
@@ -1920,50 +1769,6 @@ mod tests {
         let index = FirestoreCompositeIndex::new(vec![asc(""), asc("b")]);
         let err = validate_composite_indexes(&[index]).unwrap_err();
         assert!(err.to_string().contains("empty path"));
-    }
-
-    #[test]
-    fn composite_index_exceeding_max_declared_fields_is_rejected_on_standard() {
-        let fields: Vec<_> = (0..100).map(|i| asc(&format!("f{i}"))).collect();
-        let params = users_params(vec![FirestoreCompositeIndex::new(fields)]);
-        let err = validate_index_params_for_edition(&params, FirestoreDatabaseEdition::Standard)
-            .unwrap_err();
-        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
-    }
-
-    #[test]
-    fn composite_index_at_max_declared_fields_is_valid_on_standard() {
-        let fields: Vec<_> = (0..99).map(|i| asc(&format!("f{i}"))).collect();
-        let params = users_params(vec![FirestoreCompositeIndex::new(fields)]);
-        validate_index_params_for_edition(&params, FirestoreDatabaseEdition::Standard).unwrap();
-    }
-
-    #[test]
-    fn duplicate_composite_index_after_name_normalisation_is_rejected_on_standard() {
-        let index_a = FirestoreCompositeIndex::new(vec![asc("a"), asc("b")]);
-        let index_b =
-            FirestoreCompositeIndex::new(vec![asc("a"), asc("b"), asc(IMPLIED_NAME_FIELD)]);
-        let err = validate_index_params_for_edition(
-            &users_params(vec![index_a, index_b]),
-            FirestoreDatabaseEdition::Standard,
-        )
-        .unwrap_err();
-        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
-    }
-
-    #[test]
-    fn composite_index_with_name_field_mid_position_is_not_a_duplicate() {
-        // Firestore never places an implicit `__name__` mid-index, so a declaration that states
-        // it there explicitly is a different index from one that omits `__name__` altogether,
-        // not a duplicate of it.
-        let index_a = FirestoreCompositeIndex::new(vec![asc("a"), asc("b")]);
-        let index_b =
-            FirestoreCompositeIndex::new(vec![asc("a"), asc(IMPLIED_NAME_FIELD), asc("b")]);
-        assert!(validate_index_params_for_edition(
-            &users_params(vec![index_a, index_b]),
-            FirestoreDatabaseEdition::Standard
-        )
-        .is_ok());
     }
 
     #[test]
