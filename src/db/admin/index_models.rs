@@ -591,6 +591,83 @@ pub struct FirestoreIndexListing {
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
 }
 
+/// A borrowed view of one thing a [`FirestoreIndexListing`] holds that this crate cannot model,
+/// see [`FirestoreIndexListing::unrecognised_items`].
+///
+/// Displays as `name: reason`, and converts into an owned [`FirestoreUnrecognisedIndexItem`].
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct FirestoreUnrecognisedIndexItemRef<'a> {
+    /// The resource name Firestore assigned it.
+    pub name: &'a str,
+    /// The collection group parsed from `name`, or `None` when the name has no valid collection
+    /// group segment.
+    pub collection_group: Option<&'a FirestoreCollectionId>,
+    /// Why this crate could not convert it into a domain value.
+    pub reason: &'a str,
+}
+
+impl<'a> From<&'a FirestoreUnrecognisedIndexItem> for FirestoreUnrecognisedIndexItemRef<'a> {
+    fn from(item: &'a FirestoreUnrecognisedIndexItem) -> Self {
+        Self {
+            name: &item.name,
+            collection_group: item.collection_group.as_ref(),
+            reason: &item.reason,
+        }
+    }
+}
+
+impl From<FirestoreUnrecognisedIndexItemRef<'_>> for FirestoreUnrecognisedIndexItem {
+    fn from(item: FirestoreUnrecognisedIndexItemRef<'_>) -> Self {
+        Self {
+            name: item.name.to_string(),
+            collection_group: item.collection_group.cloned(),
+            reason: item.reason.to_string(),
+        }
+    }
+}
+
+impl Display for FirestoreUnrecognisedIndexItemRef<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.name, self.reason)
+    }
+}
+
+impl FirestoreIndexListing {
+    /// Everything in this listing the crate cannot model, in listing order: first
+    /// [`unrecognised`](Self::unrecognised), then, for each listed field, its override half and
+    /// then its TTL half when that half is unrecognised.
+    ///
+    /// A field with one unrecognised half and one recognised half yields one item; a field with
+    /// two unrecognised halves yields two items with the same name.
+    pub fn unrecognised_items(
+        &self,
+    ) -> impl Iterator<Item = FirestoreUnrecognisedIndexItemRef<'_>> {
+        let items = self
+            .unrecognised
+            .iter()
+            .map(FirestoreUnrecognisedIndexItemRef::from);
+        let field_halves = self.fields.iter().flat_map(|field| {
+            let override_reason = match &field.index_override {
+                Some(FirestoreFieldOverrideOutcome::Unrecognised(reason)) => Some(reason),
+                _ => None,
+            };
+            let ttl_reason = match &field.ttl {
+                Some(FirestoreFieldTtlOutcome::Unrecognised(reason)) => Some(reason),
+                _ => None,
+            };
+            [override_reason, ttl_reason]
+                .into_iter()
+                .flatten()
+                .map(|reason| FirestoreUnrecognisedIndexItemRef {
+                    name: &field.name,
+                    collection_group: Some(&field.collection_group),
+                    reason,
+                })
+        });
+        items.chain(field_halves)
+    }
+}
+
 /// A composite index and the collection group it belongs to.
 #[derive(Debug, PartialEq, Clone, Builder)]
 pub struct FirestoreIndexDefinition {

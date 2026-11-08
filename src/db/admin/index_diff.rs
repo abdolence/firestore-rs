@@ -913,28 +913,15 @@ pub(crate) fn plan_index_changes(
     validate_index_params_for_edition(params, edition)?;
 
     let mut plan = FirestoreIndexPlan {
-        unrecognised: listing.unrecognised.clone(),
+        unrecognised: listing
+            .unrecognised_items()
+            .map(FirestoreUnrecognisedIndexItem::from)
+            .collect(),
         ..Default::default()
     };
 
     let listed_indexes = &listing.indexes;
     let listed_fields = &listing.fields;
-    for listed in listed_fields {
-        if let Some(FirestoreFieldOverrideOutcome::Unrecognised(reason)) = &listed.index_override {
-            plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
-                name: listed.name.clone(),
-                collection_group: Some(listed.collection_group.clone()),
-                reason: reason.clone(),
-            });
-        }
-        if let Some(FirestoreFieldTtlOutcome::Unrecognised(reason)) = &listed.ttl {
-            plan.unrecognised.push(FirestoreUnrecognisedIndexItem {
-                name: listed.name.clone(),
-                collection_group: Some(listed.collection_group.clone()),
-                reason: reason.clone(),
-            });
-        }
-    }
 
     let mut matched_listed_index = vec![false; listed_indexes.len()];
     for declared in &params.composite_indexes {
@@ -2477,6 +2464,55 @@ pub(crate) mod tests {
         assert_eq!(
             plan.unrecognised[0].collection_group,
             Some(FirestoreCollectionId::from_static("orders"))
+        );
+    }
+
+    #[test]
+    fn unrecognised_items_yield_listed_items_then_unrecognised_field_halves() {
+        let mut unrecognised_index = listed_index(
+            vec![order_field("a", ProtoOrder::Ascending)],
+            ProtoQueryScope::Collection,
+            ProtoState::Ready,
+        );
+        unrecognised_index.api_scope = ApiScope::MongodbCompatibleApi as i32;
+        unrecognised_index.name =
+            "projects/p/databases/(default)/collectionGroups/orders/indexes/9".to_string();
+        let field_with_unrecognised_override = field_resource(
+            "tags",
+            Some(field::IndexConfig {
+                indexes: vec![single_field_index(
+                    ProtoQueryScope::Collection,
+                    ValueMode::Order(ProtoOrder::Unspecified as i32),
+                )],
+                uses_ancestor_config: false,
+                ancestor_field: String::new(),
+                reverting: false,
+            }),
+            None,
+        );
+        let listing = FirestoreIndexListing::from(FirestoreIndexExistingState {
+            indexes: vec![unrecognised_index.clone()],
+            fields: vec![field_with_unrecognised_override.clone()],
+        });
+        assert_eq!(listing.unrecognised.len(), 1);
+
+        let items: Vec<_> = listing
+            .unrecognised_items()
+            .map(|item| (item.name, item.collection_group.cloned()))
+            .collect();
+
+        assert_eq!(
+            items,
+            vec![
+                (
+                    unrecognised_index.name.as_str(),
+                    Some(FirestoreCollectionId::from_static("orders"))
+                ),
+                (
+                    field_with_unrecognised_override.name.as_str(),
+                    Some(FirestoreCollectionId::from_static("users"))
+                ),
+            ]
         );
     }
 
