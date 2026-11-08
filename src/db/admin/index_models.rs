@@ -835,6 +835,10 @@ pub struct FirestoreIndexSyncReport {
     pub updated_fields: Vec<FirestoreFieldOverride>,
     /// Declared field overrides already in place before this sync ran.
     pub unchanged_fields: Vec<FirestoreFieldOverride>,
+    /// Declared field overrides matched to a listed override Firestore is still reverting. This
+    /// sync wrote nothing for these, so as not to race that revert, and a sync run after it
+    /// finishes writes them back.
+    pub reverting_fields: Vec<FirestoreListedField>,
     /// TTL fields enabled by this sync.
     pub enabled_ttl: Vec<String>,
     /// Declared TTL fields already active before this sync ran.
@@ -1436,6 +1440,7 @@ impl Display for FirestoreIndexSyncReport {
         write_section(f, "unchanged_ttl", &self.unchanged_ttl)?;
         write_section(f, "unchanged", &self.unchanged)?;
         write_section(f, "unchanged_fields", &self.unchanged_fields)?;
+        write_section(f, "reverting_fields", &self.reverting_fields)?;
         write_section(f, "pending", &self.pending)?;
         write_section(f, "needs_repair", &self.needs_repair)?;
         write_section(f, "pending_ttl", &self.pending_ttl)?;
