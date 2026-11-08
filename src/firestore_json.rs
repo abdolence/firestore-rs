@@ -30,8 +30,8 @@ const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 ///
 /// Plain JSON types stay plain. A type JSON lacks becomes a one-key object, a wrapper such as
 /// `{"$timestamp": "2023-11-14T22:13:20Z"}`. Read one back with
-/// [`FirestoreJsonConverter::value_from_tagged`] or
-/// [`FirestoreJsonConverter::document_from_tagged`].
+/// [`FirestoreDb::deserialize_value_from_tagged_json`] or
+/// [`FirestoreDb::deserialize_doc_from_tagged_json`].
 ///
 /// Do not turn it into a [`FirestoreValue`] with `.into()`. That conversion serialises the JSON
 /// as data, so a wrapper is stored as an ordinary map holding a string.
@@ -63,7 +63,7 @@ impl FirestorePlainJson {
 
 /// Which parts of a document a JSON conversion writes beside its name and fields.
 #[derive(Debug, Clone, PartialEq, Eq, Builder)]
-pub struct FirestoreJsonDocumentOptions {
+pub struct FirestoreJsonOptions {
     /// Adds `__create_time__` and `__update_time__` when the document carries them.
     #[default = "false"]
     pub metadata: bool,
@@ -72,16 +72,103 @@ pub struct FirestoreJsonDocumentOptions {
 /// Converts Firestore values and documents to and from JSON, relative to one database.
 ///
 /// References and document names inside the database are written relative to it, and a relative
-/// name read back resolves against it. Build one with [`FirestoreDb::json`].
+/// name read back resolves against it. `documents_path` is the database's documents root.
 #[derive(Clone, Debug)]
-pub struct FirestoreJsonConverter<'a> {
+struct FirestoreJsonConverter<'a> {
     documents_path: &'a str,
 }
 
+/// Conversion of values and documents to and from JSON, behind the `json` feature.
+///
+/// Like [`serialize_to_doc`](FirestoreDb::serialize_to_doc), these are associated functions that
+/// take their context explicitly, so they need no client. `documents_path` is the documents root of
+/// the database, `projects/{project}/databases/{database}/documents`, as
+/// [`get_documents_path`](FirestoreDb::get_documents_path) returns it. References and document
+/// names inside that database are written relative to it, and a relative name read back resolves
+/// against it.
 impl FirestoreDb {
-    /// Converts values and documents of this database to and from JSON.
-    pub fn json(&self) -> FirestoreJsonConverter<'_> {
-        FirestoreJsonConverter::new(self.get_documents_path())
+    /// Writes `value` in the tagged encoding.
+    ///
+    /// # Errors
+    /// Returns a [`FirestoreError::SerializeError`] with code `JSON_EXPRESSION_VALUE` for a field
+    /// reference, variable reference, function or pipeline value, which a stored document never
+    /// holds and which cannot be read back.
+    pub fn serialize_value_to_tagged_json(
+        documents_path: &str,
+        value: &Value,
+    ) -> FirestoreResult<FirestoreTaggedJson> {
+        FirestoreJsonConverter::new(documents_path).tagged(value)
+    }
+
+    /// Writes `value` in the plain encoding.
+    pub fn serialize_value_to_plain_json(
+        documents_path: &str,
+        value: &Value,
+    ) -> FirestorePlainJson {
+        FirestoreJsonConverter::new(documents_path).plain(value)
+    }
+
+    /// Writes `document` in the tagged encoding, as one flat object holding `__name__`, the
+    /// metadata when `options` ask for it, and the fields. The keys come out in the order of
+    /// serde_json's map: sorted by default, and `__name__`, the metadata, then the fields in
+    /// byte order with serde_json's `preserve_order` feature, which `json` does not enable.
+    ///
+    /// # Errors
+    /// Fails like [`serialize_value_to_tagged_json`](FirestoreDb::serialize_value_to_tagged_json).
+    pub fn serialize_doc_to_tagged_json(
+        documents_path: &str,
+        document: &FirestoreDocument,
+        options: &FirestoreJsonOptions,
+    ) -> FirestoreResult<FirestoreTaggedJson> {
+        FirestoreJsonConverter::new(documents_path).tagged_document(document, options)
+    }
+
+    /// Writes `document` in the plain encoding, in the form of
+    /// [`serialize_doc_to_tagged_json`](FirestoreDb::serialize_doc_to_tagged_json).
+    pub fn serialize_doc_to_plain_json(
+        documents_path: &str,
+        document: &FirestoreDocument,
+        options: &FirestoreJsonOptions,
+    ) -> FirestorePlainJson {
+        FirestoreJsonConverter::new(documents_path).plain_document(document, options)
+    }
+
+    /// Reads a value written in the tagged encoding.
+    ///
+    /// # Errors
+    /// Returns a [`FirestoreError::DeserializeError`] with code `JSON_UNKNOWN_WRAPPER`,
+    /// `JSON_INVALID_WRAPPER` or `JSON_NUMBER_OUT_OF_RANGE`. Only what a wrapper's own form
+    /// requires is checked: Firestore refuses an empty vector or a latitude of 91 itself.
+    pub fn deserialize_value_from_tagged_json(
+        documents_path: &str,
+        json: FirestoreTaggedJson,
+    ) -> FirestoreResult<FirestoreValue> {
+        FirestoreJsonConverter::new(documents_path).value_from_tagged(json)
+    }
+
+    /// Reads a document written by
+    /// [`serialize_doc_to_tagged_json`](FirestoreDb::serialize_doc_to_tagged_json).
+    ///
+    /// `__create_time__` and `__update_time__` are ignored, so the document has neither. It
+    /// carries a name, so write it with `update()`: `insert()` refuses a named document.
+    ///
+    /// # Errors
+    /// Returns a [`FirestoreError::DeserializeError`] with code `JSON_INVALID_DOCUMENT` unless
+    /// the input is an object with a string `__name__`, and fails like
+    /// [`deserialize_value_from_tagged_json`](FirestoreDb::deserialize_value_from_tagged_json)
+    /// for a field.
+    pub fn deserialize_doc_from_tagged_json(
+        documents_path: &str,
+        json: FirestoreTaggedJson,
+    ) -> FirestoreResult<FirestoreDocument> {
+        FirestoreJsonConverter::new(documents_path).document_from_tagged(json)
+    }
+
+    /// The name of a document or reference relative to the database whose documents root is
+    /// `documents_path`, or the full name when it belongs to another database. It is the form
+    /// the JSON functions write names in.
+    pub fn relative_document_name<'n>(documents_path: &str, name: &'n str) -> &'n str {
+        FirestoreJsonConverter::new(documents_path).relative_name(name)
     }
 }
 
@@ -152,37 +239,24 @@ impl Failure {
 }
 
 impl<'a> FirestoreJsonConverter<'a> {
-    /// Converts values and documents of the database whose documents root is `documents_path`,
-    /// `projects/{project}/databases/{database}/documents`, without a client.
-    pub fn new(documents_path: &'a str) -> Self {
+    fn new(documents_path: &'a str) -> Self {
         Self { documents_path }
     }
 
-    /// Writes `value` in the tagged encoding.
-    ///
-    /// Fails with `JSON_EXPRESSION_VALUE` on a field reference, variable reference, function or
-    /// pipeline value, which a stored document never holds and which cannot be read back.
-    pub fn tagged(&self, value: &Value) -> FirestoreResult<FirestoreTaggedJson> {
+    fn tagged(&self, value: &Value) -> FirestoreResult<FirestoreTaggedJson> {
         self.encode_tagged(value)
             .map(FirestoreTaggedJson)
             .map_err(|failure| failure.into_encode_error(None))
     }
 
-    /// Writes `value` in the plain encoding.
-    pub fn plain(&self, value: &Value) -> FirestorePlainJson {
+    fn plain(&self, value: &Value) -> FirestorePlainJson {
         FirestorePlainJson(self.encode_plain(value))
     }
 
-    /// Writes `document` in the tagged encoding, as one flat object holding `__name__`, the
-    /// metadata when `options` ask for it, and the fields. The keys come out in the order of
-    /// serde_json's map: sorted by default, and `__name__`, the metadata, then the fields in
-    /// byte order with serde_json's `preserve_order` feature, which `json` does not enable.
-    ///
-    /// Fails like [`tagged`](Self::tagged).
-    pub fn tagged_document(
+    fn tagged_document(
         &self,
         document: &FirestoreDocument,
-        options: &FirestoreJsonDocumentOptions,
+        options: &FirestoreJsonOptions,
     ) -> FirestoreResult<FirestoreTaggedJson> {
         let mut object = self.document_header(
             document,
@@ -199,12 +273,10 @@ impl<'a> FirestoreJsonConverter<'a> {
         Ok(FirestoreTaggedJson(Json::Object(object)))
     }
 
-    /// Writes `document` in the plain encoding, in the form of
-    /// [`tagged_document`](Self::tagged_document).
-    pub fn plain_document(
+    fn plain_document(
         &self,
         document: &FirestoreDocument,
-        options: &FirestoreJsonDocumentOptions,
+        options: &FirestoreJsonOptions,
     ) -> FirestorePlainJson {
         let mut object =
             self.document_header(document, options, |time| Json::String(time.to_string()));
@@ -212,23 +284,13 @@ impl<'a> FirestoreJsonConverter<'a> {
         FirestorePlainJson(Json::Object(object))
     }
 
-    /// Reads a value written in the tagged encoding.
-    ///
-    /// Fails with `JSON_UNKNOWN_WRAPPER`, `JSON_INVALID_WRAPPER` or `JSON_NUMBER_OUT_OF_RANGE`.
-    /// Only what a wrapper's own form requires is checked: Firestore refuses an empty vector or
-    /// a latitude of 91 itself.
-    pub fn value_from_tagged(&self, json: FirestoreTaggedJson) -> FirestoreResult<FirestoreValue> {
+    fn value_from_tagged(&self, json: FirestoreTaggedJson) -> FirestoreResult<FirestoreValue> {
         self.decode(json.0)
             .map(FirestoreValue::from)
             .map_err(|failure| failure.into_decode_error(None))
     }
 
-    /// Reads a document written by [`tagged_document`](Self::tagged_document).
-    ///
-    /// The input must be an object with a string `__name__`, else `JSON_INVALID_DOCUMENT`.
-    /// `__create_time__` and `__update_time__` are ignored, so the document has neither. It
-    /// carries a name, so write it with `update()`: `insert()` refuses a named document.
-    pub fn document_from_tagged(
+    fn document_from_tagged(
         &self,
         json: FirestoreTaggedJson,
     ) -> FirestoreResult<FirestoreDocument> {
@@ -269,13 +331,11 @@ impl<'a> FirestoreJsonConverter<'a> {
         entries
     }
 
-    /// The name of a document or reference relative to this database, or the full name when it
-    /// belongs to another database.
-    pub fn relative_name<'n>(&self, name: &'n str) -> &'n str {
+    fn relative_name<'n>(&self, name: &'n str) -> &'n str {
         relative_to_documents(self.documents_path, name).unwrap_or(name)
     }
 
-    /// The full name of a reference written by [`relative_name`](Self::relative_name).
+    /// The full name of a reference written by `relative_name`.
     ///
     /// A full name is `projects/{project}/databases/{database}/documents/{path}` with an odd
     /// number of segments. A relative name has an even number, so a document in a collection
@@ -290,7 +350,7 @@ impl<'a> FirestoreJsonConverter<'a> {
     fn document_header(
         &self,
         document: &FirestoreDocument,
-        options: &FirestoreJsonDocumentOptions,
+        options: &FirestoreJsonOptions,
         time: impl Fn(&Timestamp) -> Json,
     ) -> Map<String, Json> {
         let mut object = Map::new();
@@ -644,12 +704,8 @@ mod tests {
 
     const DOCUMENTS_PATH: &str = "projects/project/databases/database/documents";
 
-    fn converter(documents_path: &str) -> FirestoreJsonConverter<'_> {
-        FirestoreJsonConverter::new(documents_path)
-    }
-
-    fn with_metadata() -> FirestoreJsonDocumentOptions {
-        FirestoreJsonDocumentOptions::new().with_metadata(true)
+    fn with_metadata() -> FirestoreJsonOptions {
+        FirestoreJsonOptions::new().with_metadata(true)
     }
 
     fn lines(edition: &str, encoding: &str) -> Vec<Json> {
@@ -669,31 +725,41 @@ mod tests {
         for edition in ["standard", "enterprise"] {
             let fixture = json_fixture(edition);
             let documents_path = format!("{}/documents", fixture.database);
-            let converter = converter(&documents_path);
             let expected_lines = lines(edition, "tagged");
             assert_eq!(fixture.documents.len(), expected_lines.len());
             for (document, expected) in fixture.documents.iter().zip(expected_lines) {
-                let tagged = converter
-                    .tagged_document(document, &with_metadata())
-                    .unwrap();
+                let tagged = FirestoreDb::serialize_doc_to_tagged_json(
+                    &documents_path,
+                    document,
+                    &with_metadata(),
+                )
+                .unwrap();
                 assert_eq!(tagged.clone().into_inner(), expected, "{}", document.name);
 
                 let text = serde_json::to_string(&tagged).unwrap();
                 let read_back = serde_json::from_str::<FirestoreTaggedJson>(&text).unwrap();
-                let imported = converter.document_from_tagged(read_back).unwrap();
+                let imported =
+                    FirestoreDb::deserialize_doc_from_tagged_json(&documents_path, read_back)
+                        .unwrap();
                 assert_eq!(imported.name, document.name);
 
-                let without_metadata = FirestoreJsonDocumentOptions::new();
+                let without_metadata = FirestoreJsonOptions::new();
                 let exported_text = serde_json::to_string(
-                    &converter
-                        .tagged_document(document, &without_metadata)
-                        .unwrap(),
+                    &FirestoreDb::serialize_doc_to_tagged_json(
+                        &documents_path,
+                        document,
+                        &without_metadata,
+                    )
+                    .unwrap(),
                 )
                 .unwrap();
                 let re_exported_text = serde_json::to_string(
-                    &converter
-                        .tagged_document(&imported, &without_metadata)
-                        .unwrap(),
+                    &FirestoreDb::serialize_doc_to_tagged_json(
+                        &documents_path,
+                        &imported,
+                        &without_metadata,
+                    )
+                    .unwrap(),
                 )
                 .unwrap();
                 assert_eq!(re_exported_text, exported_text, "{}", document.name);
@@ -707,10 +773,13 @@ mod tests {
         let component = Value {
             value_type: Some(ValueType::DoubleValue(EMBEDDING_COMPONENT)),
         };
-        let converter = converter(DOCUMENTS_PATH);
-        let text = serde_json::to_string(&converter.tagged(&component).unwrap()).unwrap();
+        let text = serde_json::to_string(
+            &FirestoreDb::serialize_value_to_tagged_json(DOCUMENTS_PATH, &component).unwrap(),
+        )
+        .unwrap();
         let read_back = serde_json::from_str::<FirestoreTaggedJson>(&text).unwrap();
-        let imported = converter.value_from_tagged(read_back).unwrap();
+        let imported =
+            FirestoreDb::deserialize_value_from_tagged_json(DOCUMENTS_PATH, read_back).unwrap();
         assert_eq!(imported.value.value_type, component.value_type);
     }
 
@@ -719,19 +788,24 @@ mod tests {
         for edition in ["standard", "enterprise"] {
             let fixture = json_fixture(edition);
             let documents_path = format!("{}/documents", fixture.database);
-            let converter = converter(&documents_path);
             let expected_lines = lines(edition, "plain");
             assert_eq!(fixture.documents.len(), expected_lines.len());
             for (document, expected) in fixture.documents.iter().zip(expected_lines) {
-                let plain = converter.plain_document(document, &with_metadata());
+                let plain = FirestoreDb::serialize_doc_to_plain_json(
+                    &documents_path,
+                    document,
+                    &with_metadata(),
+                );
                 assert_eq!(plain.into_inner(), expected, "{}", document.name);
             }
         }
     }
 
     fn read_tagged(text: &str) -> FirestoreResult<FirestoreValue> {
-        converter(DOCUMENTS_PATH)
-            .value_from_tagged(serde_json::from_str::<FirestoreTaggedJson>(text).unwrap())
+        FirestoreDb::deserialize_value_from_tagged_json(
+            DOCUMENTS_PATH,
+            serde_json::from_str::<FirestoreTaggedJson>(text).unwrap(),
+        )
     }
 
     #[test]
@@ -763,9 +837,11 @@ mod tests {
 
     #[test]
     fn document_without_a_name_is_refused() {
-        let error = converter(DOCUMENTS_PATH)
-            .document_from_tagged(serde_json::from_str(r#"{"title": "Dune"}"#).unwrap())
-            .unwrap_err();
+        let error = FirestoreDb::deserialize_doc_from_tagged_json(
+            DOCUMENTS_PATH,
+            serde_json::from_str(r#"{"title": "Dune"}"#).unwrap(),
+        )
+        .unwrap_err();
         assert!(
             matches!(&error, FirestoreError::DeserializeError(error) if error.public.code == JSON_INVALID_DOCUMENT),
             "{error:?}"
@@ -777,10 +853,25 @@ mod tests {
         let expression = Value {
             value_type: Some(ValueType::FieldReferenceValue("title".to_string())),
         };
-        let error = converter(DOCUMENTS_PATH).tagged(&expression).unwrap_err();
+        let error =
+            FirestoreDb::serialize_value_to_tagged_json(DOCUMENTS_PATH, &expression).unwrap_err();
         assert!(
             matches!(&error, FirestoreError::SerializeError(error) if error.public.code == JSON_EXPRESSION_VALUE),
             "{error:?}"
+        );
+    }
+
+    #[test]
+    fn name_in_another_database_stays_full() {
+        let own = format!("{DOCUMENTS_PATH}/books/dune");
+        let other = "projects/project/databases/other/documents/books/dune";
+        assert_eq!(
+            FirestoreDb::relative_document_name(DOCUMENTS_PATH, &own),
+            "books/dune"
+        );
+        assert_eq!(
+            FirestoreDb::relative_document_name(DOCUMENTS_PATH, other),
+            other
         );
     }
 }

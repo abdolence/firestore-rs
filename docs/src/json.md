@@ -1,10 +1,13 @@
 # JSON conversion
 
-With the `json` cargo feature, `db.json()` converts Firestore values and documents to JSON and back.
-It is meant for tools that move documents out of Firestore and into it again, such as an export and
-an import, and for tools that show documents to a person. It does not send anything.
-`FirestoreJsonConverter::new(documents_path)` builds the same converter from a documents path,
-without a client.
+With the `json` cargo feature, associated functions of `FirestoreDb` convert Firestore values and
+documents to JSON and back. It is meant for tools that move documents out of Firestore and into it
+again, such as an export and an import, and for tools that show documents to a person. It does not
+send anything.
+
+Like `FirestoreDb::serialize_to_doc`, the functions take their context explicitly, so they need no
+client. The first argument is the documents root of the database,
+`projects/{project}/databases/{database}/documents`, which `db.get_documents_path()` returns.
 
 ```toml
 [dependencies]
@@ -12,21 +15,22 @@ firestore = { version = "...", features = ["json"] }
 serde_json = "1"
 ```
 
-The converter writes two encodings:
+The functions write two encodings:
 
 - **tagged**, for export and import. It reads back to the same Firestore value, without loss.
   A type that JSON lacks becomes a one-key object, a *wrapper*, whose key starts with `$`;
 - **plain**, for display. It is the most readable JSON for each type, and it has no way back: a
   timestamp, a reference and a string look alike.
 
-| Method | Result |
+| Function | Result |
 |---|---|
-| `tagged(&value)` | `FirestoreResult<FirestoreTaggedJson>` |
-| `plain(&value)` | `FirestorePlainJson` |
-| `tagged_document(&document, &options)` | `FirestoreResult<FirestoreTaggedJson>` |
-| `plain_document(&document, &options)` | `FirestorePlainJson` |
-| `value_from_tagged(json)` | `FirestoreResult<FirestoreValue>` |
-| `document_from_tagged(json)` | `FirestoreResult<FirestoreDocument>` |
+| `serialize_value_to_tagged_json(documents_path, &value)` | `FirestoreResult<FirestoreTaggedJson>` |
+| `serialize_value_to_plain_json(documents_path, &value)` | `FirestorePlainJson` |
+| `serialize_doc_to_tagged_json(documents_path, &document, &options)` | `FirestoreResult<FirestoreTaggedJson>` |
+| `serialize_doc_to_plain_json(documents_path, &document, &options)` | `FirestorePlainJson` |
+| `deserialize_value_from_tagged_json(documents_path, json)` | `FirestoreResult<FirestoreValue>` |
+| `deserialize_doc_from_tagged_json(documents_path, json)` | `FirestoreResult<FirestoreDocument>` |
+| `relative_document_name(documents_path, name)` | `&str` |
 
 A value is a `gcloud_sdk::google::firestore::v1::Value`, the type that `FirestoreDocument::fields`
 holds, so a field converts without a copy. `FirestoreValue::value` is one.
@@ -37,22 +41,24 @@ returns, and implement `Serialize` and `Deserialize`. Write a line of an export 
 
 > Do not turn either type into a `FirestoreValue` with `.into()`. The conversion serialises the JSON
 > as data, so `{"$timestamp": "2023-11-14T22:13:20Z"}` is stored as a map holding a string. A tagged
-> value goes back to a value through `db.json().value_from_tagged(..)`.
+> value goes back to a value through `FirestoreDb::deserialize_value_from_tagged_json(..)`.
 
 ## Export and import
 
 ```rust,no_run
 # use firestore::*;
 # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-let options = FirestoreJsonDocumentOptions::new();
+let documents_path = db.get_documents_path();
+let options = FirestoreJsonOptions::new();
 
 let Some(document) = db.fluent().select().by_id_in("books").one("dune").await? else {
     return Ok(());
 };
-let line = serde_json::to_string(&db.json().tagged_document(&document, &options)?)?;
+let tagged = FirestoreDb::serialize_doc_to_tagged_json(documents_path, &document, &options)?;
+let line = serde_json::to_string(&tagged)?;
 
 let tagged = serde_json::from_str::<FirestoreTaggedJson>(&line)?;
-let document = db.json().document_from_tagged(tagged)?;
+let document = FirestoreDb::deserialize_doc_from_tagged_json(documents_path, tagged)?;
 db.fluent()
     .update()
     .in_col("books")
@@ -106,9 +112,9 @@ The keys follow the order of `serde_json`'s map. By default it is sorted, so a f
 is written before `__name__`. With the `preserve_order` feature of `serde_json`, which the `json`
 feature does not enable, the order is `__name__`, the metadata, then the fields in byte order.
 
-`FirestoreJsonDocumentOptions::new().with_metadata(true)` adds `__create_time__` and
+`FirestoreJsonOptions::new().with_metadata(true)` adds `__create_time__` and
 `__update_time__` when the document carries them: wrapped as `$timestamp` in the tagged encoding,
-as strings in the plain one. `document_from_tagged` ignores both, so the document it returns has
+as strings in the plain one. `deserialize_doc_from_tagged_json` ignores both, so the document it returns has
 neither.
 
 `__name__` is left out of a document without a name, such as an aggregation or a pipeline `select`
@@ -117,15 +123,16 @@ document is always read as fields.
 
 Firestore refuses `__name__`, `__create_time__`, `__update_time__` and every other name between
 double underscores as a stored field, so these keys cannot collide with a stored document's fields.
-The converter does not check for them. A pipeline result with a field of such a name overwrites
+The functions do not check for them. A pipeline result with a field of such a name overwrites
 the key of the name in the object.
 
 ## References and portability
 
-A reference and `__name__` are written relative to the database of the converter when they point
+A reference and `__name__` are written relative to the database of `documents_path` when they point
 into it, and as a full name otherwise:
-`projects/latestbit/databases/other/documents/books/dune`. A relative name resolves against the
-database of the converter that reads it, so an export from one database imports into another, and
+`projects/latestbit/databases/other/documents/books/dune`. `relative_document_name` gives the same form
+for any name. A relative name resolves against the database of the `documents_path` that reads it,
+so an export from one database imports into another, and
 a full name keeps pointing where it pointed.
 
 A name is read as a full name when it has the form
@@ -160,10 +167,10 @@ slower float parse.
 Timestamps are written as RFC 3339 in UTC with a `Z`, with 0, 3, 6 or 9 fraction digits:
 `2023-11-14T22:13:20Z`, `2023-11-14T22:13:20.500Z`, `2023-11-14T22:13:20.123456Z`. The range is
 the whole range Firestore accepts, from `0001-01-01T00:00:00Z` to `9999-12-31T23:59:59.999999Z`.
-`FirestoreInstant` ends 26 hours earlier, so the converter does not go through it.
+`FirestoreInstant` ends 26 hours earlier, so the functions do not go through it.
 
 Reading accepts an offset (`+01:00`), a lowercase `t` and `z`, and a space for `T`, and keeps
-nanoseconds. Firestore stores microseconds and cuts the digits beyond; the converter leaves that to
+nanoseconds. Firestore stores microseconds and cuts the digits beyond; the functions leave that to
 Firestore. `FirestoreTimestamp::truncated_to_firestore_precision` cuts them before a write.
 
 ## Values that exist only in pipelines
@@ -220,5 +227,5 @@ writes it. The code is in `public.code`, a constant of `firestore::errors::codes
 | an object with one key that starts with `$` and is none of the eight wrappers | `DeserializeError`, code `JSON_UNKNOWN_WRAPPER` |
 | a wrapper with content that is not its form, such as `{"$timestamp": 17}` | `DeserializeError`, code `JSON_INVALID_WRAPPER` |
 | a JSON integer above `i64::MAX` | `DeserializeError`, code `JSON_NUMBER_OUT_OF_RANGE` |
-| `document_from_tagged` of JSON that is not an object or has no string `__name__` | `DeserializeError`, code `JSON_INVALID_DOCUMENT` |
-| `tagged` or `tagged_document` of a field reference, variable reference, function or pipeline | `SerializeError`, code `JSON_EXPRESSION_VALUE` |
+| `deserialize_doc_from_tagged_json` of JSON that is not an object or has no string `__name__` | `DeserializeError`, code `JSON_INVALID_DOCUMENT` |
+| `serialize_value_to_tagged_json` or `serialize_doc_to_tagged_json` of a field reference, variable reference, function or pipeline | `SerializeError`, code `JSON_EXPRESSION_VALUE` |
