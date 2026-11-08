@@ -69,6 +69,7 @@
     - [Search indexes (Enterprise edition)](./index-management/search.md)
     - [TTL and the Enterprise edition](./index-management/ttl-and-enterprise.md)
 - [Bulk delete](./bulk-delete.md)
+- [Command line tool](./cli.md)
 
 # Environment and operations
 
