@@ -1118,6 +1118,7 @@ impl FirestoreDb {
             unchanged: plan.unchanged.clone(),
             pending: plan.pending.clone(),
             needs_repair: plan.needs_repair.clone(),
+            unchanged_fields: plan.unchanged_fields.clone(),
             unchanged_ttl: plan.unchanged_ttl.clone(),
             pending_ttl: plan.pending_ttl.clone(),
             needs_repair_ttl: plan.needs_repair_ttl.clone(),
@@ -1522,7 +1523,7 @@ pub(crate) mod tests {
             other => recording_writes(other, bytes),
         })
         .await;
-        let params = FirestoreIndexParams::new(group()).with_field_overrides(vec![
+        let exemptions = vec![
             FirestoreFieldOverride {
                 target: FirestoreFieldOverrideTarget::AllFields,
                 indexes: vec![],
@@ -1531,7 +1532,8 @@ pub(crate) mod tests {
                 target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
                 indexes: vec![],
             },
-        ]);
+        ];
+        let params = FirestoreIndexParams::new(group()).with_field_overrides(exemptions.clone());
 
         let report = fake
             .db
@@ -1540,6 +1542,7 @@ pub(crate) mod tests {
             .unwrap();
 
         assert!(report.updated_fields.is_empty(), "{report}");
+        assert_eq!(report.unchanged_fields, exemptions, "{report}");
         assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
     }
 

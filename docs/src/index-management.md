@@ -345,10 +345,10 @@ The application's own replicas do not need to sync at all. If you want one to ch
 declaration against Firestore, `.plan()` with `.prune_undeclared()` at startup is read-only and
 safe from any number of replicas at once: log a warning, or emit a metric, when `create_indexes`,
 `update_fields`, `enable_ttl`, `delete_indexes`, `revert_fields` or `disable_ttl` comes back
-non-empty. `unchanged` and `unchanged_ttl` are non-empty in the steady state and say nothing about
-drift on their own. Do not wire this into the replica's readiness probe: after a Helm rollback, or
-when an old pod restarts once the release job has already run, every replica would see the same
-drift and fail its probe at once.
+non-empty. `unchanged`, `unchanged_fields` and `unchanged_ttl` are non-empty in the steady state
+and say nothing about drift on their own. Do not wire this into the replica's readiness probe:
+after a Helm rollback, or when an old pod restarts once the release job has already run, every
+replica would see the same drift and fail its probe at once.
 
 The job's service account needs `roles/datastore.indexAdmin`, the role `.sync()` always needs.
 Replicas that only call `.plan()` need `roles/datastore.viewer`.
@@ -561,7 +561,7 @@ field overrides or TTL fields declared, and none listed for the group):
 ```text
 DEBUG Firestore Index Plan{/firestore/collection_group="firestore-rs-index-sync-test" /firestore/prune=false}:Firestore Index List{...}: firestore::db::admin::indexes: Listed the collection group's indexes and fields. indexes=0 fields=0 skipped_indexes=7 skipped_fields=0
  INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Existing state: 0 indexes, 0 field overrides, 0 TTL fields collection_group="firestore-rs-index-sync-test" composite_indexes=0 field_overrides=0 ttl_fields=0
- INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Firestore index plan: no changes (0 unchanged, 0 pending, 0 ttl unchanged)
+ INFO Firestore Index Plan{...}: firestore::db::admin::indexes: Firestore index plan: no changes (0 unchanged, 0 pending, 0 field overrides unchanged, 0 ttl unchanged)
  collection_group="firestore-rs-index-sync-test" create_indexes=0 update_fields=0 enable_ttl=0 unchanged=0 pending=0 delete_indexes=0 revert_fields=0 disable_ttl=0 kept_undeclared_indexes=0 kept_undeclared_fields=0 kept_undeclared_ttl=0 unrecognised=0
  INFO Firestore Index Plan{...}: firestore::db::admin::indexes: plan() reports what sync() would change; nothing was applied. collection_group="firestore-rs-index-sync-test"
 ```

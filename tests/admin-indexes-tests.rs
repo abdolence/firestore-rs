@@ -293,6 +293,11 @@ async fn all_fields_override_on_a_single_group(
         plan.update_fields.is_empty(),
         "replanning the same declaration must show no changes"
     );
+    assert_eq!(
+        plan.unchanged_fields.len(),
+        2,
+        "both written overrides are reported unchanged"
+    );
 
     let revert_report = prune_to_empty(db, PROBE_GROUP).await?;
     println!("[Q4] revert report:\n{revert_report}");

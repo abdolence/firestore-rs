@@ -764,7 +764,9 @@ pub struct FirestoreIndexSyncOptions {
 /// writes anything. Every undeclared item lands in exactly one of two lists: the one `.sync()`
 /// acts on when pruning (`delete_indexes`, `revert_fields`, `disable_ttl`), or the one it keeps
 /// and only reports otherwise (`kept_undeclared_*`). So a plan made with `.prune_undeclared()`
-/// shows exactly what a pruning sync would do.
+/// shows exactly what a pruning sync would do. Every declared item lands in exactly one list as
+/// well, except one whose listed counterpart this crate cannot read: that one lands in none, and
+/// `unrecognised` reports the listed item.
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct FirestoreIndexPlan {
     /// Declared composite indexes that match nothing listed; `.sync()` creates these.
@@ -785,6 +787,11 @@ pub struct FirestoreIndexPlan {
     /// Declared field overrides whose listed configuration differs from the declaration, or is
     /// absent; `.sync()` writes these.
     pub update_fields: Vec<FirestoreFieldOverride>,
+    /// Declared field overrides whose listed configuration already matches the declaration;
+    /// `.sync()` writes nothing for these. On an Enterprise edition database this includes every
+    /// declared exemption: that edition has no single-field indexes to exempt a field from, and
+    /// lists nothing for an exemption it accepts.
+    pub unchanged_fields: Vec<FirestoreFieldOverride>,
     /// Declared field overrides matched to a listed override Firestore is already reverting
     /// (`reverting: true`, an in-flight change back to the ancestor's configuration). Classified
     /// as pending, not unchanged: once the revert completes the field will no longer carry this
@@ -826,6 +833,8 @@ pub struct FirestoreIndexSyncReport {
     pub created_indexes: Vec<FirestoreCompositeIndex>,
     /// Field overrides written by this sync.
     pub updated_fields: Vec<FirestoreFieldOverride>,
+    /// Declared field overrides already in place before this sync ran.
+    pub unchanged_fields: Vec<FirestoreFieldOverride>,
     /// TTL fields enabled by this sync.
     pub enabled_ttl: Vec<String>,
     /// Declared TTL fields already active before this sync ran.
@@ -1360,9 +1369,11 @@ impl Display for FirestoreIndexPlan {
         if !anything_to_report {
             writeln!(
                 f,
-                "Firestore index plan: no changes ({} unchanged, {} pending, {} ttl unchanged)",
+                "Firestore index plan: no changes ({} unchanged, {} pending, {} field overrides \
+                 unchanged, {} ttl unchanged)",
                 self.unchanged.len(),
                 self.pending.len(),
+                self.unchanged_fields.len(),
                 self.unchanged_ttl.len()
             )?;
             return Ok(());
@@ -1398,13 +1409,17 @@ impl Display for FirestoreIndexPlan {
         write_section(f, "needs_repair", &self.needs_repair)?;
         write_section(f, "needs_repair_ttl", &self.needs_repair_ttl)?;
         write_section(f, "unrecognised, never pruned", &self.unrecognised)?;
-        if !self.unchanged.is_empty() || !self.pending.is_empty() || !self.unchanged_ttl.is_empty()
+        if !self.unchanged.is_empty()
+            || !self.pending.is_empty()
+            || !self.unchanged_fields.is_empty()
+            || !self.unchanged_ttl.is_empty()
         {
             writeln!(
                 f,
-                "  unchanged: {}, pending: {}, ttl unchanged: {}",
+                "  unchanged: {}, pending: {}, field overrides unchanged: {}, ttl unchanged: {}",
                 self.unchanged.len(),
                 self.pending.len(),
+                self.unchanged_fields.len(),
                 self.unchanged_ttl.len()
             )?;
         }
@@ -1420,6 +1435,7 @@ impl Display for FirestoreIndexSyncReport {
         write_section(f, "enabled_ttl", &self.enabled_ttl)?;
         write_section(f, "unchanged_ttl", &self.unchanged_ttl)?;
         write_section(f, "unchanged", &self.unchanged)?;
+        write_section(f, "unchanged_fields", &self.unchanged_fields)?;
         write_section(f, "pending", &self.pending)?;
         write_section(f, "needs_repair", &self.needs_repair)?;
         write_section(f, "pending_ttl", &self.pending_ttl)?;
