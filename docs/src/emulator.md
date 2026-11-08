@@ -14,10 +14,9 @@ authenticate the requests. This means you do not need any credentials
 configured to develop against it. Specifying credentials explicitly, with
 `FirestoreDb::with_options_auth()` for example, still takes precedence.
 
-The emulator implements neither [bulk delete](./bulk-delete.md), which fails with
-`BULK_DELETE_UNAVAILABLE_ON_EMULATOR`, nor [index management](./index-management.md#the-firestore-emulator),
-which skips its run. The index calls `list()`, `create()`, `delete()` and `update_field()`, and the
-[SQL index statements](./sql/indexes.md), fail with the emulator's `UNIMPLEMENTED`. `SHOW COLLECTIONS`
+The emulator answers [bulk delete](./bulk-delete.md) and [index management](./index-management.md#the-firestore-emulator)
+with `UNIMPLEMENTED`: `.plan()`, `.sync()`, the index calls `list()`, `create()`, `delete()` and
+`update_field()`, and the [SQL index statements](./sql/indexes.md) fail with it. `SHOW COLLECTIONS`
 works on the emulator.
 
 ## On the Enterprise edition

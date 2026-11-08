@@ -379,8 +379,7 @@ impl FirestoreDb {
     /// [`Unknown`](FirestoreDatabaseEdition::Unknown) with the raw value.
     ///
     /// The Firestore emulator does not serve the Admin API, so on it this fails with the
-    /// emulator's `UNIMPLEMENTED`; unlike `.plan()` and `.sync()`, it makes no emulator check of
-    /// its own.
+    /// emulator's `UNIMPLEMENTED`.
     pub async fn read_database_edition(&self) -> FirestoreResult<FirestoreDatabaseEdition> {
         let span = span!(
             Level::INFO,
@@ -406,7 +405,7 @@ impl FirestoreDb {
     }
 
     /// The group a statement naming `group` owns, with the database's edition read once, so every
-    /// step of a call validates, matches and writes under the same edition.
+    /// step of a call matches and plans under the same edition.
     pub(super) async fn read_owned_group<'a>(
         &self,
         group: &'a FirestoreCollectionId,
@@ -414,7 +413,7 @@ impl FirestoreDb {
         Ok(OwnedGroup {
             id: group,
             path: self.collection_group_path(group.as_str()),
-            edition: self.read_database_edition().await?.require_known()?,
+            edition: self.read_database_edition().await?,
         })
     }
 
@@ -1307,7 +1306,7 @@ impl FirestoreIndexPlan {
 pub(crate) mod tests {
     use super::*;
     use crate::db::admin::index_diff::tests::{
-        field_resource, is_invalid_parameter, listed_index, order_field, USERS_GROUP_PATH,
+        field_resource, listed_index, order_field, USERS_GROUP_PATH,
     };
     use crate::db::admin::index_models::IMPLIED_NAME_FIELD;
     use crate::db::fake_firestore::{
@@ -1316,13 +1315,11 @@ pub(crate) mod tests {
         FakeResponse,
     };
     use crate::db::support::FirestoreIndexSupport;
-    use crate::db::FirestoreDbInner;
     use crate::{
         FirestoreCollectionId, FirestoreFieldOverrideIndex, FirestoreFieldOverrideTarget,
         FirestoreGeoIndexConfig, FirestoreIndexDensity, FirestoreIndexField,
-        FirestoreIndexFieldMode, FirestoreIndexSyncOptions, FirestoreIndexSyncSkipReason,
-        FirestoreOperationWaitOptions, FirestoreQueryDirection, FirestoreSearchIndexOptions,
-        FirestoreVectorIndexConfig,
+        FirestoreIndexFieldMode, FirestoreIndexSyncOptions, FirestoreOperationWaitOptions,
+        FirestoreQueryDirection, FirestoreSearchIndexOptions, FirestoreVectorIndexConfig,
     };
     use gcloud_sdk::google::firestore::admin::v1::database::DatabaseEdition;
     use gcloud_sdk::google::firestore::admin::v1::index::index_field::SearchConfig;
@@ -1463,26 +1460,6 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_sync_on_an_unknown_edition_is_refused_before_any_write() {
-        let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = start_on(UNKNOWN_EDITION, |method, bytes| match method {
-            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
-            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
-            other => recording_writes(other, bytes),
-        })
-        .await;
-
-        let err = fake
-            .db
-            .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
-            .await
-            .unwrap_err();
-
-        assert!(is_invalid_parameter(&err, "database_edition"), "{err:?}");
-        assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
-    }
-
-    #[tokio::test]
     async fn missing_index_is_created() {
         let _serialize = MODULE_TEST_LOCK.lock().await;
         let fake = start_standard(|method, bytes| match method {
@@ -1534,32 +1511,6 @@ pub(crate) mod tests {
 
         assert_eq!(report.unchanged, vec![declared_index()]);
         assert!(report.created_indexes.is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_field_override_index_list_on_an_enterprise_database_is_refused_before_any_write() {
-        let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = start_on(DatabaseEdition::Enterprise, |method, bytes| match method {
-            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
-            LIST_FIELDS => ("ListFields".to_string(), list_fields_response(vec![])),
-            other => recording_writes(other, bytes),
-        })
-        .await;
-        let params = params_with_index().with_field_overrides(vec![FirestoreFieldOverride {
-            target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
-            indexes: vec![FirestoreFieldOverrideIndex::new(
-                FirestoreIndexFieldMode::Order(FirestoreQueryDirection::Ascending),
-            )],
-        }]);
-
-        let err = fake
-            .db
-            .sync_indexes(params, FirestoreIndexSyncOptions::new())
-            .await
-            .unwrap_err();
-
-        assert!(is_invalid_parameter(&err, "field_overrides"), "{err:?}");
-        assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
     }
 
     #[tokio::test]
@@ -1642,7 +1593,6 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(waited.skipped, None);
         let (list, apply, wait) = (
             waited.timings.list.expect("the listing ran"),
             waited.timings.apply.expect("the apply ran"),
@@ -4030,57 +3980,6 @@ pub(crate) mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn the_emulator_skips_index_management_entirely() {
-        let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = start_standard(|method, _| no_writes_allowed(method)).await;
-
-        let emulator_db = FirestoreDb {
-            inner: StdArc::new(FirestoreDbInner {
-                database_path: fake.db.get_database_path().clone(),
-                doc_path: fake.db.get_documents_path().clone(),
-                options: fake.db.get_options().clone(),
-                client: fake.db.client().clone(),
-                is_emulator: true,
-            }),
-            session_params: fake.db.get_session_params().clone().into(),
-            request_timeout: None,
-        };
-
-        assert!(emulator_db.is_emulator());
-        assert!(!fake.db.is_emulator());
-
-        let plan = emulator_db
-            .plan_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
-            .await
-            .unwrap();
-        assert_eq!(plan.skipped, Some(FirestoreIndexSyncSkipReason::Emulator));
-        assert_eq!(
-            plan,
-            FirestoreIndexPlan {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                ..Default::default()
-            }
-        );
-        assert!(plan.to_string().contains("skipped: the Firestore emulator"));
-
-        let report = emulator_db
-            .sync_indexes(params_with_index(), FirestoreIndexSyncOptions::new())
-            .await
-            .unwrap();
-        assert_eq!(report.skipped, Some(FirestoreIndexSyncSkipReason::Emulator));
-        assert_eq!(report.timings.list, None);
-        assert_eq!(report.timings.apply, None);
-        assert!(report
-            .to_string()
-            .contains("skipped: the Firestore emulator"));
-
-        assert!(
-            fake.calls().is_empty(),
-            "the emulator path must never contact the server"
-        );
-    }
-
     // The tests below replay `ListIndexes` responses captured read-only from a real project,
     // rather than hand-written fixtures: a hand-written fixture encodes the same assumptions as
     // the code it checks (that `ListIndexes` scoped to one group's parent lists only that group,
@@ -4507,7 +4406,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_one_field_index_is_planned_on_enterprise_and_refused_on_standard() {
+    fn a_one_field_index_is_planned_on_enterprise() {
         let one_field = FirestoreCompositeIndex::new(vec![asc("s1")]);
         let params = options_group_params(vec![one_field.clone()]);
 
@@ -4519,15 +4418,6 @@ pub(crate) mod tests {
         )
         .unwrap();
         assert_eq!(plan.unchanged, vec![one_field], "{plan}");
-
-        let err = plan_index_changes(
-            &params,
-            &FirestoreIndexListing::default(),
-            FirestoreDatabaseEdition::Standard,
-            false,
-        )
-        .unwrap_err();
-        assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");
     }
 
     #[test]

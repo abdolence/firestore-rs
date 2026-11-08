@@ -36,10 +36,11 @@ db.fluent()
 # }
 ```
 
-On a Standard edition database a composite index needs at least two fields, unless it is a single
-vector field on its own; an Enterprise edition database takes an index of one field, see
-[TTL and the Enterprise edition](./ttl-and-enterprise.md#the-enterprise-edition). An index holds at
-most one `.array_contains()` field. `.plan()` and `.sync()` check these rules before anything is
+On a Standard edition database Firestore takes a composite index of at least two fields, unless it
+is a single vector field on its own; an Enterprise edition database takes an index of one field, see
+[TTL and the Enterprise edition](./ttl-and-enterprise.md#the-enterprise-edition). Firestore answers
+`INVALID_ARGUMENT` to an index it refuses, and `.plan()` and `.sync()` send it as declared. An index
+holds at most one `.array_contains()` field, which `.plan()` and `.sync()` check before anything is
 written, see [Declaring a collection group's indexes](../index-management.md#declaring-a-collection-groups-indexes).
 
 ## Vector indexes

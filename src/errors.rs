@@ -946,11 +946,6 @@ impl From<gcloud_sdk::prost::DecodeError> for FirestoreError {
 ///
 /// Each constant is the code of one failure, in the error variant its documentation names.
 pub mod codes {
-    /// A [`SystemError`](super::FirestoreError::SystemError) of bulk delete on the Firestore
-    /// emulator, which does not implement `BulkDeleteDocuments`.
-    #[cfg(feature = "admin")]
-    pub const BULK_DELETE_UNAVAILABLE_ON_EMULATOR: &str = "BULK_DELETE_UNAVAILABLE_ON_EMULATOR";
-
     /// A [`SystemError`](super::FirestoreError::SystemError) of a wait that reached its deadline
     /// before the operation or the index it waited for finished.
     #[cfg(feature = "admin")]

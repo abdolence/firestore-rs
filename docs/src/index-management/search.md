@@ -42,5 +42,4 @@ db.fluent()
   search needs;
 - a search index is always built as `FirestoreIndexDensity::SparseAny`, see
   [Density](./ttl-and-enterprise.md#density);
-- on a Standard edition database `.plan()` and `.sync()` refuse a search index with
-  `InvalidParametersError` before anything is written.
+- a Standard edition database answers a search index with `INVALID_ARGUMENT`.

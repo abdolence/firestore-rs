@@ -86,9 +86,11 @@ println!("{report}");
 
 Each of `.composite()`, `.field_overrides()` and `.ttl()` replaces whatever an earlier call in the
 same chain set, so call each at most once. A field override or a TTL path may not repeat. These
-rules, the rules of the database's edition, and the vector, field-count and density limits
-Firestore itself enforces, are checked at `.plan()`/`.sync()` before anything is written, and
-return `InvalidParametersError` naming what is wrong.
+rules, and the structural rules of each index in [Composite and vector indexes](./index-management/composite.md),
+are checked at `.plan()`/`.sync()` before anything is written, and return `InvalidParametersError`
+naming what is wrong. Every other rule, including the rules of the database's edition, is
+Firestore's: `.plan()` and `.sync()` send what you declare, and Firestore answers `INVALID_ARGUMENT`
+with its own message when it refuses it.
 
 ## plan() versus sync()
 
@@ -514,8 +516,9 @@ A delete by definition fails with `DataNotFoundError` when nothing matches, and 
 `DataConflictError`, naming the IDs, when several indexes match. On an Enterprise edition database
 two indexes over the same fields differ by `unique` and density, and the definition tells them apart.
 
-The four calls run no edition rule of their own: Firestore's
-`INVALID_ARGUMENT` answers arrive as `DatabaseError`, and the emulator's `UNIMPLEMENTED`, see
+The four calls run no edition rule of their own, and neither do `.plan()` and `.sync()`:
+Firestore's `INVALID_ARGUMENT` answers arrive as `DatabaseError`, and so does the emulator's
+`UNIMPLEMENTED`, see
 [The Firestore emulator](#the-firestore-emulator). A reserved group such as `__default__` fails with
 `InvalidParametersError`.
 
@@ -579,7 +582,7 @@ listing. Its time counts in the report's `total` and in no phase.
 `.sync()` also logs a `Firestore Index Apply` span with one child span per applied action, and a
 `Firestore Index Wait` span when waiting is requested, with one child span per operation polled.
 
-## Timings, unchanged TTL and the emulator marker on the report
+## Timings and unchanged TTL on the report
 
 `FirestoreIndexSyncReport` carries a `timings` value alongside its lists: the whole call's
 duration, plus how long listing, applying and, when you waited, waiting each took. `Display`
@@ -589,22 +592,13 @@ prints it as `timings: total <n> ms`, followed by `, list <n> ms`, `, apply <n> 
 `unchanged_ttl` reports declared TTL fields that were already active before this sync ran,
 separately from `enabled_ttl`, which is what this sync itself enabled.
 
-`skipped` is `Some(FirestoreIndexSyncSkipReason::Emulator)` when the sync ran against the emulator
-and did nothing, `None` once it has actually talked to Firestore. `.plan()` carries the same
-marker on `FirestoreIndexPlan::skipped`, so a plan made against the emulator prints as skipped
-rather than as "no changes needed" on a project the emulator never actually checked.
-
 ## The Firestore emulator
 
-`.plan()` and `.sync()` both skip when `FIRESTORE_EMULATOR_HOST` is set. The emulator answers
-`ListIndexes` with `UNIMPLEMENTED`, so both return an empty plan or report carrying the emulator
-`skipped` marker, and log an `info` line saying so, instead of failing, so the same startup code
-runs unmodified against the emulator.
-
-The emulator serves no Firestore Admin API, whatever its edition. `list()`, `create()`, `delete()`
-and `update_field()`, and the SQL index statements, are explicit commands, so they fail with the
-emulator's own `UNIMPLEMENTED`, which arrives as `DatabaseError` and whose message names the admin
-method.
+The emulator serves no Firestore Admin API, whatever its edition. `.plan()`, `.sync()`, `list()`,
+`create()`, `delete()` and `update_field()`, and the SQL index statements, fail with the emulator's
+own `UNIMPLEMENTED`, which arrives as `DatabaseError` and whose message names the admin method.
+Startup code that runs `.sync()` against the emulator handles that error, or runs it only
+where `FIRESTORE_EMULATOR_HOST` is not set.
 
 ## IAM roles
 

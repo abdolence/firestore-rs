@@ -6,8 +6,7 @@
 //! already fetched and never performs I/O of its own.
 
 use crate::db::admin::index_models::{
-    validate_index_params_for_edition, CanonicalFieldPath, CollectionGroupResourceName,
-    FirestoreDatabaseEdition, IMPLIED_NAME_FIELD,
+    CanonicalFieldPath, CollectionGroupResourceName, FirestoreDatabaseEdition, IMPLIED_NAME_FIELD,
 };
 use crate::errors::FirestoreError;
 use crate::{
@@ -687,20 +686,6 @@ impl FirestoreCompositeIndex {
         }
     }
 
-    /// The density Firestore builds this index with on a database of `edition`: the declared one,
-    /// or the edition's default when none is declared.
-    fn density_on(&self, edition: FirestoreDatabaseEdition) -> FirestoreIndexDensity {
-        self.density.unwrap_or(match edition {
-            FirestoreDatabaseEdition::Standard | FirestoreDatabaseEdition::Unknown(_) => {
-                FirestoreIndexDensity::SparseAll
-            }
-            FirestoreDatabaseEdition::Enterprise if self.is_search_index() => {
-                FirestoreIndexDensity::SparseAny
-            }
-            FirestoreDatabaseEdition::Enterprise => FirestoreIndexDensity::Dense,
-        })
-    }
-
     /// This index with every field path spelled canonically (see [`CanonicalFieldPath`]), the
     /// spelling a listed index already carries, so the two compare field by field.
     fn with_canonical_field_paths(&self) -> Self {
@@ -795,8 +780,8 @@ fn strip_implied_name_at_expected_position(
 /// Whether `declared` and `listed` are the same index on a database of `edition`.
 ///
 /// Two indexes over the same fields are different indexes when one is unique and the other is
-/// not, or when Firestore builds them with different densities, a density left unset being the
-/// edition's default.
+/// not. A declared density must equal the listed one; a declaration without a density matches a
+/// listed index of any density.
 ///
 /// An Enterprise edition database appends no `__name__` field, so there the fields compare as
 /// they are. On Standard, a declaration that does not mention `__name__` matches a listed index
@@ -807,10 +792,6 @@ fn strip_implied_name_at_expected_position(
 /// than leaving it to Firestore.
 ///
 /// Field paths compare in their canonical spelling (see [`CanonicalFieldPath`]).
-///
-/// Used both to match a declaration against a listed index and, in
-/// [`validate_index_params_for_edition`], to reject two declarations that are really the same
-/// index.
 pub(crate) fn composite_index_matches(
     declared: &FirestoreCompositeIndex,
     listed: &FirestoreCompositeIndex,
@@ -818,7 +799,9 @@ pub(crate) fn composite_index_matches(
 ) -> bool {
     if declared.query_scope != listed.query_scope
         || declared.unique != listed.unique
-        || declared.density_on(edition) != listed.density_on(edition)
+        || declared
+            .density
+            .is_some_and(|density| listed.density != Some(density))
         || declared.listed_search_options() != listed.listed_search_options()
     {
         return false;
@@ -883,9 +866,8 @@ impl FirestoreError {
 /// terminals already run before calling in, so every caller gets it - including a
 /// `FirestoreIndexSupport` implementation that reaches this function some other way.
 ///
-/// It also checks the rules that depend on the database's `edition`. On an Enterprise edition
-/// database, which has no single-field indexes, a declared exemption is already satisfied and is
-/// never planned.
+/// On an Enterprise edition database, which stores nothing for a field exemption, a declared
+/// exemption is never planned.
 ///
 /// A listed index or field this crate's domain model cannot represent - a search config other
 /// than one text or geo spec, a MongoDB-compat or Datastore-mode API scope, `COLLECTION_RECURSIVE`,
@@ -903,7 +885,6 @@ pub(crate) fn plan_index_changes(
     prune: bool,
 ) -> FirestoreResult<FirestoreIndexPlan> {
     crate::validate_index_params(params)?;
-    validate_index_params_for_edition(params, edition)?;
 
     let mut plan = FirestoreIndexPlan {
         unrecognised: listing.unrecognised_items().collect(),
@@ -1772,20 +1753,25 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_enterprise_index_of_a_hundred_fields_is_within_the_limit() {
-        let fields: Vec<_> = (0..100).map(|i| asc_field(&format!("f{i}"))).collect();
-        let params =
-            users_params().with_composite_indexes(vec![FirestoreCompositeIndex::new(fields)]);
-        let listing = FirestoreIndexListing::default();
+    fn a_declaration_without_a_density_matches_a_listed_index_of_any_density() {
+        use FirestoreIndexDensity::{Dense, SparseAll, SparseAny};
+        let declared = FirestoreCompositeIndex::new(vec![asc_field("a"), asc_field("b")]);
 
-        plan_index_changes(
-            &params,
-            &listing,
-            FirestoreDatabaseEdition::Enterprise,
-            false,
-        )
-        .unwrap();
-        plan_index_changes(&params, &listing, Standard, false).unwrap_err();
+        for edition in [Standard, FirestoreDatabaseEdition::Enterprise] {
+            for density in [SparseAll, SparseAny, Dense] {
+                let listed = declared.clone().density(density);
+                assert!(
+                    composite_index_matches(&declared, &listed, edition),
+                    "{edition:?} {density:?}"
+                );
+            }
+            let declared_dense = declared.clone().density(Dense);
+            assert!(!composite_index_matches(
+                &declared_dense,
+                &declared.clone().density(SparseAll),
+                edition
+            ));
+        }
     }
 
     #[test]
@@ -2319,8 +2305,8 @@ pub(crate) mod tests {
         // `FirestoreIndexSupport` implementations call `plan_index_changes` directly; this
         // pins that it validates `params` itself rather than trusting a caller to have done so
         // already.
-        let params = users_params()
-            .with_composite_indexes(vec![FirestoreCompositeIndex::new(vec![asc_field("a")])]);
+        let params =
+            users_params().with_composite_indexes(vec![FirestoreCompositeIndex::new(vec![])]);
         let err = plan_index_changes(&params, &FirestoreIndexListing::default(), Standard, false)
             .unwrap_err();
         assert!(is_invalid_parameter(&err, "composite_indexes"), "{err:?}");

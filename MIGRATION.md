@@ -89,6 +89,52 @@ let options = FirestoreSqlOptions::new().allow_index_statements();
 `SHOW INDEXES`, `SHOW COLLECTIONS` and `EXPLAIN` need no opt-in. With `.with_collections(..)`, `DROP INDEX` by ID needs
 `ON` and a collection in the set.
 
+### `.plan()` and `.sync()` no longer skip the emulator
+
+`.plan()` and `.sync()` send their requests when `FIRESTORE_EMULATOR_HOST` is set. Before, they returned without a
+request and with `skipped` set. The emulator serves no Admin API, so both now fail with `DatabaseError`, code
+`Unimplemented`, and the emulator's own message:
+
+```rust,ignore
+// 0.64 on the emulator: Ok(report) with report.skipped == Some(FirestoreIndexSyncSkipReason::Emulator)
+// 0.65 on the emulator: Err(FirestoreError::DatabaseError(..)), code "Unimplemented"
+let report = db.fluent().indexes().collection_group("users").composite(..).sync().await?;
+```
+
+`FirestoreIndexSyncSkipReason` is removed, and so are the `skipped` fields of `FirestoreIndexPlan` and
+`FirestoreIndexSyncReport`, since a plan or a report no longer says that nothing ran. Code that read `skipped` drops
+the read. Startup code that runs `.sync()` against the emulator handles the error, or does not call `.sync()` there.
+
+### Bulk delete no longer refuses the emulator
+
+`bulk_delete_documents` and `.execute()` send `BulkDeleteDocuments` on the emulator, which answers `UNIMPLEMENTED`.
+The call returns `DatabaseError`, code `Unimplemented`, where it returned `SystemError` with the code
+`BULK_DELETE_UNAVAILABLE_ON_EMULATOR` and made no request. The constant `firestore::errors::codes::BULK_DELETE_UNAVAILABLE_ON_EMULATOR`
+is removed. Code that compared `public.code` with it matches on `FirestoreError::DatabaseError` instead.
+
+### Edition rules are Firestore's
+
+`.plan()` and `.sync()` no longer check the rules of the database's edition before a write. Firestore refuses what the
+edition does not take, with `INVALID_ARGUMENT` and its own message, which arrives as `DatabaseError`. Where 0.63 and
+0.64 returned `InvalidParametersError` before any write, a sync now sends its writes in order, and the ones before
+the refused one are applied. The checks removed are:
+
+- on a Standard edition database, a unique index, a text or geo search index, and a composite index of a single field
+  that is not a vector field;
+- on an Enterprise edition database, a field override that lists single-field indexes;
+- a density the edition does not build, and the limit of 100 fields on an index;
+- two declarations of one index in a statement. The second one is sent, and Firestore answers `ALREADY_EXISTS`;
+- a database whose edition is `FirestoreDatabaseEdition::Unknown`. A statement runs against it.
+
+The structural checks that need no edition stay: a composite index without fields, a mix of text or geo fields with
+other fields, more than one `.array_contains()` field, a misplaced or mis-sized vector field, an empty or repeated
+path, and a second TTL field.
+
+A declaration without a density now matches a listed index over the same fields, scope and `unique` flag, whatever
+its density. Before, it matched only the density the edition builds by default: `SparseAll` on Standard, `Dense` on
+Enterprise and `SparseAny` for a search index there. A declared density is compared exactly. A declaration that
+now matches several listed indexes is reported as it is for any declaration that matches several.
+
 ### Error codes are constants
 
 The codes of the errors that the index calls, bulk delete and the JSON conversion raise themselves are the constants of

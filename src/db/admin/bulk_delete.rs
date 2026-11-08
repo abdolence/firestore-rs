@@ -4,7 +4,6 @@
 
 use crate::db::admin::operation_wait::{OperationAction, OperationDeadline, StartedOperation};
 use crate::db::support::FirestoreBulkDeleteSupport;
-use crate::errors::codes::BULK_DELETE_UNAVAILABLE_ON_EMULATOR;
 use crate::errors::FirestoreError;
 use crate::{
     FirestoreBulkDeleteParams, FirestoreBulkDeleteProgress, FirestoreBulkDeleteResult,
@@ -224,18 +223,6 @@ impl FirestoreBulkDeleteSupport for FirestoreDb {
         crate::validate_bulk_delete_params(&params)?;
         let label = CollectionGroupList(&params.collection_groups).to_string();
 
-        if self.inner.is_emulator {
-            error!(
-                collection_groups = label.as_str(),
-                "Bulk delete is not available on the Firestore emulator.",
-            );
-            return Err(FirestoreError::system_error_with_code(
-                BULK_DELETE_UNAVAILABLE_ON_EMULATOR,
-                "bulk delete is not available on the Firestore emulator: BulkDeleteDocuments is \
-                 not implemented there",
-            ));
-        }
-
         let waited = params.wait.is_some();
         let root = span!(
             Level::INFO,
@@ -305,7 +292,6 @@ mod tests {
         done_operation_response, failed_operation_response, pending_operation_response,
         FakeFirestore, FakeResponse,
     };
-    use crate::db::FirestoreDbInner;
     use crate::{FirestoreCollectionId, FirestoreOperationWaitOptions};
     use gcloud_sdk::google::firestore::admin::v1::{
         BulkDeleteDocumentsRequest, Progress as ProtoProgress,
@@ -768,31 +754,6 @@ mod tests {
         let err = fake.db.bulk_delete_documents(params).await.unwrap_err();
         assert!(err.to_string().contains("timed out"));
         assert!(err.to_string().contains(OPERATION_NAME));
-    }
-
-    #[tokio::test]
-    async fn the_emulator_path_errors_instead_of_skipping() {
-        let _serialize = MODULE_TEST_LOCK.lock().await;
-        let fake = FakeFirestore::start(|method, _| no_writes_allowed(method)).await;
-
-        let emulator_db = FirestoreDb {
-            inner: StdArc::new(FirestoreDbInner {
-                database_path: fake.db.get_database_path().clone(),
-                doc_path: fake.db.get_documents_path().clone(),
-                options: fake.db.get_options().clone(),
-                client: fake.db.client().clone(),
-                is_emulator: true,
-            }),
-            session_params: fake.db.get_session_params().clone().into(),
-            request_timeout: None,
-        };
-
-        let err = emulator_db
-            .bulk_delete_documents(FirestoreBulkDeleteParams::new(groups()))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("emulator"));
-        assert!(fake.calls().is_empty());
     }
 
     #[tokio::test]

@@ -3,8 +3,9 @@
 //! [`indexes`](super::indexes), and the four calls that each list, create, delete or update one
 //! index or field.
 //!
-//! The four calls run no edition rule and no emulator check of their own: Firestore's own
-//! `INVALID_ARGUMENT` and the emulator's `UNIMPLEMENTED` are their errors.
+//! Neither the four calls nor `.plan()` and `.sync()` check an edition rule or the emulator
+//! before they send a request: Firestore's own `INVALID_ARGUMENT` and the emulator's
+//! `UNIMPLEMENTED` are their errors.
 
 use crate::db::admin::index_models::{validate_collection_group, CanonicalFieldPath};
 use crate::db::admin::indexes::{IndexAction, RefusedFieldWrite, SEQUENCING_TIMEOUT};
@@ -19,9 +20,8 @@ use crate::{
     FirestoreFieldTtlUpdate, FirestoreFieldUpdate, FirestoreIndexDefinition,
     FirestoreIndexDeleteTarget, FirestoreIndexIdTarget, FirestoreIndexListing,
     FirestoreIndexParams, FirestoreIndexPlan, FirestoreIndexState, FirestoreIndexSyncOptions,
-    FirestoreIndexSyncReport, FirestoreIndexSyncSkipReason, FirestoreIndexSyncTimings,
-    FirestoreInstant, FirestoreListedCompositeIndex, FirestoreListedField,
-    FirestoreOperationWaitOptions, FirestoreResult,
+    FirestoreIndexSyncReport, FirestoreInstant, FirestoreListedCompositeIndex,
+    FirestoreListedField, FirestoreOperationWaitOptions, FirestoreResult,
 };
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::admin::v1::field::{IndexConfig, TtlConfig};
@@ -297,16 +297,6 @@ impl FirestoreIndexSupport for FirestoreDb {
         options: FirestoreIndexSyncOptions,
     ) -> FirestoreResult<FirestoreIndexPlan> {
         crate::validate_index_params(&params)?;
-        if self.inner.is_emulator {
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "Skipping index plan: the Firestore emulator does not implement the admin API.",
-            );
-            return Ok(FirestoreIndexPlan {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                ..Default::default()
-            });
-        }
 
         let root = span!(
             Level::INFO,
@@ -341,23 +331,6 @@ impl FirestoreIndexSupport for FirestoreDb {
     ) -> FirestoreResult<FirestoreIndexSyncReport> {
         let started = Instant::now();
         crate::validate_index_params(&params)?;
-        if self.inner.is_emulator {
-            info!(
-                collection_group = params.collection_group.as_str(),
-                "Skipping index sync: the Firestore emulator does not implement the admin API.",
-            );
-            return Ok(FirestoreIndexSyncReport {
-                skipped: Some(FirestoreIndexSyncSkipReason::Emulator),
-                timings: FirestoreIndexSyncTimings {
-                    total: started.elapsed(),
-                    list: None,
-                    apply: None,
-                    wait: None,
-                },
-                ..Default::default()
-            });
-        }
-
         let root = span!(
             Level::INFO,
             "Firestore Index Sync",
