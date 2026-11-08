@@ -1119,6 +1119,7 @@ impl FirestoreDb {
             pending: plan.pending.clone(),
             needs_repair: plan.needs_repair.clone(),
             unchanged_fields: plan.unchanged_fields.clone(),
+            reverting_fields: plan.reverting_fields.clone(),
             unchanged_ttl: plan.unchanged_ttl.clone(),
             pending_ttl: plan.pending_ttl.clone(),
             needs_repair_ttl: plan.needs_repair_ttl.clone(),
@@ -1544,6 +1545,46 @@ pub(crate) mod tests {
         assert!(report.updated_fields.is_empty(), "{report}");
         assert_eq!(report.unchanged_fields, exemptions, "{report}");
         assert_eq!(writes_and_polls(&fake), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_declared_override_firestore_is_reverting_is_reported_and_not_written() {
+        let _serialize = MODULE_TEST_LOCK.lock().await;
+        let reverting = field_resource(
+            "bio",
+            Some(proto_field::IndexConfig {
+                reverting: true,
+                ..exempt_override()
+            }),
+            None,
+        );
+        let listing = reverting.clone();
+        let fake = start_standard(move |method, _| match method {
+            LIST_INDEXES => ("ListIndexes".to_string(), list_indexes_response(vec![])),
+            LIST_FIELDS => (
+                "ListFields".to_string(),
+                list_fields_response(vec![listing.clone()]),
+            ),
+            other => no_writes_allowed(other),
+        })
+        .await;
+        let params =
+            FirestoreIndexParams::new(group()).with_field_overrides(vec![FirestoreFieldOverride {
+                target: FirestoreFieldOverrideTarget::Field("bio".to_string()),
+                indexes: vec![],
+            }]);
+
+        let report = fake
+            .db
+            .sync_indexes(params, FirestoreIndexSyncOptions::new())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            report.reverting_fields,
+            vec![FirestoreListedField::try_from(reverting).unwrap()],
+            "{report}"
+        );
     }
 
     #[tokio::test]
