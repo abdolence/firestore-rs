@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-55b07baa.js";
+            window.path_to_searchindex_js = "searchindex-e2cdf68b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b89ea9be.js"></script>
@@ -5585,7 +5585,7 @@ for working with a database from a terminal: looking at data, trying a SQL state
 managing indexes.</p>
 <p><label class="checkbox-label"><input class="checkbox-img" type="checkbox"><img src="https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/media/fsq-demo.webp" alt="fsq demo"><span class="img-wrapper"><img src="https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/media/fsq-demo.webp" alt="fsq demo"></span></label></p>
 <ul>
-<li>a SQL REPL (an interactive prompt) with highlighting, completion of collections and fields, and results as tables;</li>
+<li>a SQL REPL (an interactive prompt) with highlighting, completion of collections and fields, and results as tables, with <code>\x</code> for one block per document and <code>\x full</code> for the path, type and whole value of every field;</li>
 <li><code>EXPLAIN</code>, which draws the query plan as a tree and warns about a table scan, a read of every document of a collection;</li>
 <li><code>\l</code> lists collections, with <code>\l --recursive</code> for subcollections, and <code>\d</code> describes the fields of a collection;</li>
 <li><code>export</code> and <code>import</code> of documents as JSON lines, in the tagged encoding of <a href="#json-conversion">JSON conversion</a>;</li>
@@ -5595,6 +5595,22 @@ managing indexes.</p>
 </ul>
 <p>SQL needs a database of the Enterprise edition, see <a href="#standard-and-enterprise-editions">Standard and Enterprise editions</a>. <code>\l</code>, <code>\d</code>,
 <code>export</code>, <code>import</code> and the index commands work on both editions.</p>
+<h2 id="installation"><a class="header" href="#installation">Installation</a></h2>
+<p>fsq has binaries for Linux, macOS, Windows and FreeBSD on its <a href="https://github.com/abdolence/firestore-cli-rs/releases">GitHub releases</a>.
+The install script picks the one for your system.</p>
+<p>On macOS, Linux and FreeBSD:</p>
+<pre><code class="language-sh">curl -fsSL https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/install.sh | sh
+</code></pre>
+<p>On Windows (PowerShell):</p>
+<pre><code class="language-powershell">irm https://raw.githubusercontent.com/abdolence/firestore-cli-rs/master/install.ps1 | iex
+</code></pre>
+<p>The scripts install the latest release, check its SHA-256 digest and put <code>fsq</code> in <code>~/.local/bin</code> on macOS, Linux and
+FreeBSD, and in <code>%LOCALAPPDATA%\Programs\fsq</code> on Windows. Running a script again upgrades fsq. <code>FSQ_VERSION</code> and
+<code>FSQ_INSTALL_DIR</code> choose another release and directory.</p>
+<p>With Rust installed, Cargo builds it from source:</p>
+<pre><code class="language-sh">cargo install firestore-cli --locked
+</code></pre>
+<p>The crate is <code>firestore-cli</code> and the binary it installs is <code>fsq</code>.</p>
 <h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
 <p>Connect to a project and a database:</p>
 <pre><code class="language-sh">fsq -p my-project -d my-database
@@ -5610,7 +5626,7 @@ fsq -p my-project -d my-database import books.jsonl
 <p>Show what changes a <code>firestore.indexes.json</code> file would make, without applying it:</p>
 <pre><code class="language-sh">fsq -p my-project index plan firestore.indexes.json
 </code></pre>
-<p>The installation, the options and the rest of the commands are in the
+<p>The options and the rest of the commands are in the
 <a href="https://github.com/abdolence/firestore-cli-rs#readme">fsq README</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="google-authentication"><a class="header" href="#google-authentication">Google authentication</a></h1>
