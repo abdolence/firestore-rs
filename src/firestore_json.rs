@@ -8,6 +8,7 @@ use crate::errors::codes::{
 };
 use crate::errors::{FirestoreError, FirestoreSerializationError};
 use crate::firestore_serde::FirestoreParsedReference;
+use crate::firestore_serde::VectorComponents;
 use crate::{FirestoreDb, FirestoreDocument, FirestoreResult, FirestoreValue, FirestoreVector};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
@@ -343,10 +344,8 @@ impl<'a> FirestoreJsonConverter<'a> {
     /// component, so a vector with one is written as a map, as any other map is, and reads back
     /// to the same value.
     fn vector_components(map: &MapValue) -> Option<Vec<Json>> {
-        FirestoreVector::from_map_value(map)
-            .ok()?
-            .into_vec()
-            .into_iter()
+        VectorComponents::of(map)?
+            .iter()
             .map(|component| Number::from_f64(component).map(Json::Number))
             .collect()
     }

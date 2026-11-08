@@ -1,3 +1,4 @@
+use crate::firestore_serde::VectorComponents;
 use crate::FirestoreQueryFilter;
 use crate::*;
 use gcloud_sdk::google::firestore::v1::value::ValueType;
@@ -336,9 +337,7 @@ impl From<&ValueType> for ValueTypeRank {
             ValueType::ReferenceValue(_) => Self::Reference,
             ValueType::GeoPointValue(_) => Self::GeoPoint,
             ValueType::ArrayValue(_) => Self::Array,
-            ValueType::MapValue(map) if FirestoreVector::from_map_value(map).is_ok() => {
-                Self::Vector
-            }
+            ValueType::MapValue(map) if VectorComponents::of(map).is_some() => Self::Vector,
             // Pipeline expressions: a stored document never holds one, so their place is
             // arbitrary.
             ValueType::MapValue(_)
@@ -450,23 +449,19 @@ pub(super) fn value_order(a: &ValueType, b: &ValueType) -> Ordering {
         (ValueType::ArrayValue(a), ValueType::ArrayValue(b)) => {
             compare_elements(&a.values, &b.values).then_with(|| a.values.len().cmp(&b.values.len()))
         }
-        (ValueType::MapValue(a_map), ValueType::MapValue(b_map)) => match (
-            FirestoreVector::from_map_value(a_map),
-            FirestoreVector::from_map_value(b_map),
-        ) {
-            (Ok(a), Ok(b)) => {
-                let (a, b) = (a.as_vec(), b.as_vec());
-                a.len().cmp(&b.len()).then_with(|| {
+        (ValueType::MapValue(a_map), ValueType::MapValue(b_map)) => {
+            match (VectorComponents::of(a_map), VectorComponents::of(b_map)) {
+                (Some(a), Some(b)) => a.len().cmp(&b.len()).then_with(|| {
                     a.iter()
-                        .zip(b)
-                        .map(|(a, b)| compare_doubles(*a, *b))
+                        .zip(b.iter())
+                        .map(|(a, b)| compare_doubles(a, b))
                         .find(|ordering| ordering.is_ne())
                         .unwrap_or(Ordering::Equal)
-                })
+                }),
+                (None, None) => compare_maps(a_map, b_map),
+                _ => ValueTypeRank::from(a).cmp(&ValueTypeRank::from(b)),
             }
-            (Err(_), Err(_)) => compare_maps(a_map, b_map),
-            _ => ValueTypeRank::from(a).cmp(&ValueTypeRank::from(b)),
-        },
+        }
         _ => ValueTypeRank::from(a).cmp(&ValueTypeRank::from(b)),
     }
 }

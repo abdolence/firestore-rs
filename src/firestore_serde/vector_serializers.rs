@@ -33,6 +33,15 @@ impl FirestoreVector {
         &self.0
     }
 
+    /// Whether `value` is a vector, by the rule of [`from_value`](Self::from_value), without
+    /// reading its components.
+    pub fn is_vector(value: &Value) -> bool {
+        matches!(
+            &value.value_type,
+            Some(ValueType::MapValue(map)) if VectorComponents::of(map).is_some()
+        )
+    }
+
     /// Reads a vector from a document field, which Firestore stores as a map of exactly two
     /// fields: `__type__` set to `__vector__`, and `value`, an array of doubles.
     ///
@@ -41,12 +50,29 @@ impl FirestoreVector {
     /// checked, not Firestore's limits on the components, such as that a vector is not empty.
     pub fn from_value(value: &Value) -> FirestoreResult<Self> {
         match &value.value_type {
-            Some(ValueType::MapValue(map)) => Self::from_map_value(map),
+            Some(ValueType::MapValue(map)) => VectorComponents::of(map)
+                .map(|components| {
+                    let mut vec = Vec::with_capacity(components.len());
+                    vec.extend(components.iter());
+                    Self(vec)
+                })
+                .ok_or_else(FirestoreError::not_a_vector),
             _ => Err(FirestoreError::not_a_vector()),
         }
     }
+}
 
-    pub(crate) fn from_map_value(map: &MapValue) -> FirestoreResult<Self> {
+/// The components of a map that is a vector, borrowed from the map.
+///
+/// The one place the crate decides whether a map is a vector, so that reading one, ranking one
+/// in the cache, typing one in codegen and writing one as JSON cannot disagree.
+#[derive(Clone, Copy)]
+pub(crate) struct VectorComponents<'a>(&'a [Value]);
+
+impl<'a> VectorComponents<'a> {
+    /// The components of `map`, when it has exactly the fields `__type__` set to `__vector__` and
+    /// `value`, an array of doubles. Allocates nothing.
+    pub(crate) fn of(map: &'a MapValue) -> Option<Self> {
         match (map.fields.get("__type__"), map.fields.get("value")) {
             (
                 Some(Value {
@@ -55,17 +81,29 @@ impl FirestoreVector {
                 Some(Value {
                     value_type: Some(ValueType::ArrayValue(components)),
                 }),
-            ) if marker == "__vector__" && map.fields.len() == 2 => components
-                .values
-                .iter()
-                .map(|component| match component.value_type {
-                    Some(ValueType::DoubleValue(double)) => Ok(double),
-                    _ => Err(FirestoreError::not_a_vector()),
-                })
-                .collect::<FirestoreResult<_>>()
-                .map(Self),
-            _ => Err(FirestoreError::not_a_vector()),
+            ) if marker == "__vector__"
+                && map.fields.len() == 2
+                && components.values.iter().all(|component| {
+                    matches!(component.value_type, Some(ValueType::DoubleValue(_)))
+                }) =>
+            {
+                Some(Self(&components.values))
+            }
+            _ => None,
         }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = f64> + 'a {
+        self.0
+            .iter()
+            .filter_map(|component| match component.value_type {
+                Some(ValueType::DoubleValue(double)) => Some(double),
+                _ => None,
+            })
     }
 }
 
@@ -225,6 +263,12 @@ mod tests {
             })),
         };
         assert!(is_not_a_vector(FirestoreVector::from_value(&marker_only)));
+    }
+
+    #[test]
+    fn is_vector_tells_a_stored_vector_from_a_plain_map() {
+        assert!(FirestoreVector::is_vector(&dune_field("embedding")));
+        assert!(!FirestoreVector::is_vector(&dune_field("awards")));
     }
 
     #[test]

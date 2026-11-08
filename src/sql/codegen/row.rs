@@ -1,8 +1,9 @@
 use super::FirestoreSqlIdentifiers;
+use crate::firestore_serde::VectorComponents;
 use crate::sql::expr::SQL_DOCUMENT_NAME_FIELD;
 use crate::{
     FirestoreDocument, FirestoreFieldsStage, FirestorePipeline, FirestorePipelineStage,
-    FirestoreResult, FirestoreVector,
+    FirestoreResult,
 };
 use gcloud_sdk::google::firestore::v1::value::ValueType;
 use std::collections::BTreeSet;
@@ -34,9 +35,7 @@ impl FirestoreSqlRustType {
             ValueType::StringValue(_) => Self::String,
             ValueType::BooleanValue(_) => Self::Boolean,
             ValueType::TimestampValue(_) => Self::Timestamp,
-            ValueType::MapValue(map) if FirestoreVector::from_map_value(map).is_ok() => {
-                Self::Vector
-            }
+            ValueType::MapValue(map) if VectorComponents::of(map).is_some() => Self::Vector,
             ValueType::ReferenceValue(_) => Self::Reference,
             ValueType::GeoPointValue(_) => Self::GeoPoint,
             ValueType::BytesValue(_) => Self::Bytes,
