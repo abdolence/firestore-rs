@@ -718,7 +718,7 @@ pub(crate) fn split_document_path(path: &str) -> (&str, &str) {
 
 /// The path below `documents_path`, the documents root of a database, or `None` when `path` is
 /// not inside it.
-#[cfg(any(feature = "sql", feature = "json"))]
+#[cfg(any(feature = "sql", feature = "json-conversion"))]
 pub(crate) fn relative_to_documents<'p>(documents_path: &str, path: &'p str) -> Option<&'p str> {
     path.strip_prefix(documents_path)
         .and_then(|path| path.strip_prefix('/'))

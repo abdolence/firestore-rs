@@ -31,7 +31,7 @@ pub(crate) fn fixture_case(name: &str, case: Option<&str>) -> Json {
 }
 
 /// A captured database and its documents, from `tests/fixtures/json/{edition}.json`.
-#[cfg(feature = "json")]
+#[cfg(feature = "json-conversion")]
 pub(crate) struct JsonFixture {
     /// The database name, as in `projects/{project}/databases/{database}`.
     pub(crate) database: String,
@@ -39,7 +39,7 @@ pub(crate) struct JsonFixture {
 }
 
 /// The documents captured on `edition`, `standard` or `enterprise`.
-#[cfg(feature = "json")]
+#[cfg(feature = "json-conversion")]
 pub(crate) fn json_fixture(edition: &str) -> JsonFixture {
     let path = format!(
         "{}/tests/fixtures/json/{edition}.json",

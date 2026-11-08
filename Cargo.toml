@@ -42,7 +42,7 @@ sql = ["dep:sqlparser"]
 codegen = ["sql", "dep:syn", "dep:prettyplease", "dep:heck"]
 # serde_json parses a float one unit in the last place off about once in six embedding-like values
 # unless `float_roundtrip` is on, which would break the lossless tagged form.
-json = ["dep:base64", "serde_json/float_roundtrip"]
+json-conversion = ["dep:base64", "serde_json/float_roundtrip"]
 
 [dependencies]
 tracing = "0.1"

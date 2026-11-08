@@ -110,7 +110,7 @@ mod request_timeouts {}
 #[doc = include_str!("../docs/src/document-collection-ids.md")]
 mod document_collection_ids {}
 
-#[cfg(feature = "json")]
+#[cfg(feature = "json-conversion")]
 #[doc = include_str!("../docs/src/json.md")]
 mod json {}
 

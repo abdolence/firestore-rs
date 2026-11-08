@@ -685,7 +685,7 @@ pub struct FirestoreSerializationError {
 
 impl FirestoreSerializationError {
     /// Builds the error of a JSON conversion, with `code`.
-    #[cfg(feature = "json")]
+    #[cfg(feature = "json-conversion")]
     pub(crate) fn json(
         code: &str,
         message: impl Into<String>,
@@ -973,27 +973,27 @@ pub mod codes {
 
     /// A [`DeserializeError`](super::FirestoreError::DeserializeError) of a one-key object whose
     /// key starts with `$` and is not one of the eight wrappers.
-    #[cfg(feature = "json")]
+    #[cfg(feature = "json-conversion")]
     pub const JSON_UNKNOWN_WRAPPER: &str = "JSON_UNKNOWN_WRAPPER";
 
     /// A [`DeserializeError`](super::FirestoreError::DeserializeError) of a wrapper whose content
     /// is not the form it takes.
-    #[cfg(feature = "json")]
+    #[cfg(feature = "json-conversion")]
     pub const JSON_INVALID_WRAPPER: &str = "JSON_INVALID_WRAPPER";
 
     /// A [`DeserializeError`](super::FirestoreError::DeserializeError) of a JSON number that is an
     /// integer above `i64::MAX` or that no double holds.
-    #[cfg(feature = "json")]
+    #[cfg(feature = "json-conversion")]
     pub const JSON_NUMBER_OUT_OF_RANGE: &str = "JSON_NUMBER_OUT_OF_RANGE";
 
     /// A [`DeserializeError`](super::FirestoreError::DeserializeError) of a document that is not
     /// an object or has no string `__name__`.
-    #[cfg(feature = "json")]
+    #[cfg(feature = "json-conversion")]
     pub const JSON_INVALID_DOCUMENT: &str = "JSON_INVALID_DOCUMENT";
 
     /// A [`SerializeError`](super::FirestoreError::SerializeError) of a field reference, variable
     /// reference, function or pipeline value, which have no tagged form.
-    #[cfg(feature = "json")]
+    #[cfg(feature = "json-conversion")]
     pub const JSON_EXPRESSION_VALUE: &str = "JSON_EXPRESSION_VALUE";
 }
 
