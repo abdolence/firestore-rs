@@ -24,6 +24,25 @@ let article = Article {
 
 `vec![..].into()` builds a `FirestoreVector` too, from any iterator of `f64`.
 
+## Reading a vector from a document
+
+A document read without a struct, as in
+[Working on dynamic/document level](./dynamic-documents.md), holds each vector as a map of
+`__type__` and `value`. `FirestoreVector::from_value` reads a vector from such a field:
+
+```rust
+# use firestore::*;
+# fn example(document: &FirestoreDocument) -> FirestoreResult<()> {
+if let Some(value) = document.fields.get("embedding") {
+    let embedding = FirestoreVector::from_value(value)?;
+    println!("{} components", embedding.as_vec().len());
+}
+# Ok(())
+# }
+```
+
+Any other value, such as a plain map, fails with a `DeserializeError` of code `NOT_A_VECTOR`.
+
 ## The vector index
 
 On a Standard edition database a vector query needs a vector index on the field, and uses it. The

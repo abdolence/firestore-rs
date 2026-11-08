@@ -8,9 +8,7 @@ use crate::errors::codes::{
 };
 use crate::errors::{FirestoreError, FirestoreSerializationError};
 use crate::firestore_serde::FirestoreParsedReference;
-use crate::{
-    is_vector, FirestoreDb, FirestoreDocument, FirestoreResult, FirestoreValue, FirestoreVector,
-};
+use crate::{FirestoreDb, FirestoreDocument, FirestoreResult, FirestoreValue, FirestoreVector};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use gcloud_sdk::google::firestore::v1::value::ValueType;
@@ -341,24 +339,15 @@ impl<'a> FirestoreJsonConverter<'a> {
         object
     }
 
-    /// The components of a stored vector: a map of exactly the marker and an array of finite
-    /// doubles. Any other map, including one Firestore refuses, is written as a map, which reads
-    /// back to the same value.
+    /// The components of a vector, when every one is finite. JSON has no number for an infinite
+    /// component, so a vector with one is written as a map, as any other map is, and reads back
+    /// to the same value.
     fn vector_components(map: &MapValue) -> Option<Vec<Json>> {
-        if !is_vector(map) || map.fields.len() != 2 {
-            return None;
-        }
-        let Some(ValueType::ArrayValue(components)) = map.fields.get("value")?.value_type.as_ref()
-        else {
-            return None;
-        };
-        components
-            .values
-            .iter()
-            .map(|component| match component.value_type {
-                Some(ValueType::DoubleValue(double)) => Number::from_f64(double).map(Json::Number),
-                _ => None,
-            })
+        FirestoreVector::from_map_value(map)
+            .ok()?
+            .into_vec()
+            .into_iter()
+            .map(|component| Number::from_f64(component).map(Json::Number))
             .collect()
     }
 

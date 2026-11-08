@@ -336,7 +336,9 @@ impl From<&ValueType> for ValueTypeRank {
             ValueType::ReferenceValue(_) => Self::Reference,
             ValueType::GeoPointValue(_) => Self::GeoPoint,
             ValueType::ArrayValue(_) => Self::Array,
-            ValueType::MapValue(map) if is_vector(map) => Self::Vector,
+            ValueType::MapValue(map) if FirestoreVector::from_map_value(map).is_ok() => {
+                Self::Vector
+            }
             // Pipeline expressions: a stored document never holds one, so their place is
             // arbitrary.
             ValueType::MapValue(_)
@@ -350,17 +352,6 @@ impl From<&ValueType> for ValueTypeRank {
 
 pub(super) fn is_nan(value: &ValueType) -> bool {
     matches!(value, ValueType::DoubleValue(double) if double.is_nan())
-}
-
-fn vector_components(map: &MapValue) -> &[Value] {
-    match map
-        .fields
-        .get("value")
-        .and_then(|value| value.value_type.as_ref())
-    {
-        Some(ValueType::ArrayValue(array)) => &array.values,
-        _ => &[],
-    }
 }
 
 /// The order of two doubles, with NaN equal to itself and below every other double, and `-0.0`
@@ -459,13 +450,23 @@ pub(super) fn value_order(a: &ValueType, b: &ValueType) -> Ordering {
         (ValueType::ArrayValue(a), ValueType::ArrayValue(b)) => {
             compare_elements(&a.values, &b.values).then_with(|| a.values.len().cmp(&b.values.len()))
         }
-        (ValueType::MapValue(a), ValueType::MapValue(b)) if is_vector(a) && is_vector(b) => {
-            let (a, b) = (vector_components(a), vector_components(b));
-            a.len().cmp(&b.len()).then_with(|| compare_elements(a, b))
-        }
-        (ValueType::MapValue(a), ValueType::MapValue(b)) if !is_vector(a) && !is_vector(b) => {
-            compare_maps(a, b)
-        }
+        (ValueType::MapValue(a_map), ValueType::MapValue(b_map)) => match (
+            FirestoreVector::from_map_value(a_map),
+            FirestoreVector::from_map_value(b_map),
+        ) {
+            (Ok(a), Ok(b)) => {
+                let (a, b) = (a.as_vec(), b.as_vec());
+                a.len().cmp(&b.len()).then_with(|| {
+                    a.iter()
+                        .zip(b)
+                        .map(|(a, b)| compare_doubles(*a, *b))
+                        .find(|ordering| ordering.is_ne())
+                        .unwrap_or(Ordering::Equal)
+                })
+            }
+            (Err(_), Err(_)) => compare_maps(a_map, b_map),
+            _ => ValueTypeRank::from(a).cmp(&ValueTypeRank::from(b)),
+        },
         _ => ValueTypeRank::from(a).cmp(&ValueTypeRank::from(b)),
     }
 }
