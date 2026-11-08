@@ -549,6 +549,8 @@ pub struct FirestoreListedField {
 /// [`FirestoreFieldOverride`] can express. The planner never proposes deleting or reverting one of
 /// these, even when pruning, because it cannot know that doing so is what the declaration
 /// intends.
+///
+/// Displays as `name: reason`.
 #[derive(Debug, PartialEq, Clone)]
 pub struct FirestoreUnrecognisedIndexItem {
     /// The resource name Firestore assigned it.
@@ -561,10 +563,10 @@ pub struct FirestoreUnrecognisedIndexItem {
 }
 
 impl FirestoreUnrecognisedIndexItem {
-    /// Builds the item for a listed `kind` resource (`indexes` or `fields`) whose conversion
-    /// failed, taking its collection group from `name` when the name has one.
-    pub(crate) fn for_resource(name: String, kind: &str, reason: String) -> Self {
-        let collection_group = CollectionGroupResourceName::parse(&name, kind)
+    /// Builds the item for a listed index resource whose conversion failed, taking its collection
+    /// group from `name` when the name has one.
+    pub(crate) fn for_index(name: String, reason: String) -> Self {
+        let collection_group = CollectionGroupResourceName::parse(&name, "indexes")
             .and_then(|resource| FirestoreCollectionId::new(resource.collection_group).ok());
         Self {
             name,
@@ -591,61 +593,15 @@ pub struct FirestoreIndexListing {
     pub unrecognised: Vec<FirestoreUnrecognisedIndexItem>,
 }
 
-/// A borrowed view of one thing a [`FirestoreIndexListing`] holds that this crate cannot model,
-/// see [`FirestoreIndexListing::unrecognised_items`].
-///
-/// Displays as `name: reason`, and converts into an owned [`FirestoreUnrecognisedIndexItem`].
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub struct FirestoreUnrecognisedIndexItemRef<'a> {
-    /// The resource name Firestore assigned it.
-    pub name: &'a str,
-    /// The collection group parsed from `name`, or `None` when the name has no valid collection
-    /// group segment.
-    pub collection_group: Option<&'a FirestoreCollectionId>,
-    /// Why this crate could not convert it into a domain value.
-    pub reason: &'a str,
-}
-
-impl<'a> From<&'a FirestoreUnrecognisedIndexItem> for FirestoreUnrecognisedIndexItemRef<'a> {
-    fn from(item: &'a FirestoreUnrecognisedIndexItem) -> Self {
-        Self {
-            name: &item.name,
-            collection_group: item.collection_group.as_ref(),
-            reason: &item.reason,
-        }
-    }
-}
-
-impl From<FirestoreUnrecognisedIndexItemRef<'_>> for FirestoreUnrecognisedIndexItem {
-    fn from(item: FirestoreUnrecognisedIndexItemRef<'_>) -> Self {
-        Self {
-            name: item.name.to_string(),
-            collection_group: item.collection_group.cloned(),
-            reason: item.reason.to_string(),
-        }
-    }
-}
-
-impl Display for FirestoreUnrecognisedIndexItemRef<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.name, self.reason)
-    }
-}
-
 impl FirestoreIndexListing {
     /// Everything in this listing the crate cannot model, in listing order: first
     /// [`unrecognised`](Self::unrecognised), then, for each listed field, its override half and
     /// then its TTL half when that half is unrecognised.
     ///
     /// A field with one unrecognised half and one recognised half yields one item; a field with
-    /// two unrecognised halves yields two items with the same name.
-    pub fn unrecognised_items(
-        &self,
-    ) -> impl Iterator<Item = FirestoreUnrecognisedIndexItemRef<'_>> {
-        let items = self
-            .unrecognised
-            .iter()
-            .map(FirestoreUnrecognisedIndexItemRef::from);
+    /// two unrecognised halves yields two items with the same name. Each item is an owned copy.
+    pub fn unrecognised_items(&self) -> impl Iterator<Item = FirestoreUnrecognisedIndexItem> + '_ {
+        let items = self.unrecognised.iter().cloned();
         let field_halves = self.fields.iter().flat_map(|field| {
             let override_reason = match &field.index_override {
                 Some(FirestoreFieldOverrideOutcome::Unrecognised(reason)) => Some(reason),
@@ -658,10 +614,10 @@ impl FirestoreIndexListing {
             [override_reason, ttl_reason]
                 .into_iter()
                 .flatten()
-                .map(|reason| FirestoreUnrecognisedIndexItemRef {
-                    name: &field.name,
-                    collection_group: Some(&field.collection_group),
-                    reason,
+                .map(|reason| FirestoreUnrecognisedIndexItem {
+                    name: field.name.clone(),
+                    collection_group: Some(field.collection_group.clone()),
+                    reason: reason.clone(),
                 })
         });
         items.chain(field_halves)

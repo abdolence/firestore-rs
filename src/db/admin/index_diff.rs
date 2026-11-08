@@ -62,30 +62,23 @@ impl From<FirestoreIndexExistingState> for FirestoreIndexListing {
             let name = proto.name.clone();
             match FirestoreListedField::try_from(proto) {
                 Ok(listed) => listing.fields.push(listed),
-                Err(err) => {
-                    listing
-                        .unrecognised
-                        .push(FirestoreUnrecognisedIndexItem::for_resource(
-                            name,
-                            "fields",
-                            err.unrecognised_reason(),
-                        ))
-                }
+                Err(err) => listing.unrecognised.push(FirestoreUnrecognisedIndexItem {
+                    name,
+                    collection_group: None,
+                    reason: err.unrecognised_reason(),
+                }),
             }
         }
         for proto in existing.indexes {
             let name = proto.name.clone();
             match FirestoreListedCompositeIndex::try_from(proto) {
                 Ok(listed) => listing.indexes.push(listed),
-                Err(err) => {
-                    listing
-                        .unrecognised
-                        .push(FirestoreUnrecognisedIndexItem::for_resource(
-                            name,
-                            "indexes",
-                            err.unrecognised_reason(),
-                        ))
-                }
+                Err(err) => listing
+                    .unrecognised
+                    .push(FirestoreUnrecognisedIndexItem::for_index(
+                        name,
+                        err.unrecognised_reason(),
+                    )),
             }
         }
         listing
@@ -913,10 +906,7 @@ pub(crate) fn plan_index_changes(
     validate_index_params_for_edition(params, edition)?;
 
     let mut plan = FirestoreIndexPlan {
-        unrecognised: listing
-            .unrecognised_items()
-            .map(FirestoreUnrecognisedIndexItem::from)
-            .collect(),
+        unrecognised: listing.unrecognised_items().collect(),
         ..Default::default()
     };
 
@@ -2498,18 +2488,18 @@ pub(crate) mod tests {
 
         let items: Vec<_> = listing
             .unrecognised_items()
-            .map(|item| (item.name, item.collection_group.cloned()))
+            .map(|item| (item.name, item.collection_group))
             .collect();
 
         assert_eq!(
             items,
             vec![
                 (
-                    unrecognised_index.name.as_str(),
+                    unrecognised_index.name.clone(),
                     Some(FirestoreCollectionId::from_static("orders"))
                 ),
                 (
-                    field_with_unrecognised_override.name.as_str(),
+                    field_with_unrecognised_override.name.clone(),
                     Some(FirestoreCollectionId::from_static("users"))
                 ),
             ]

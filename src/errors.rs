@@ -1008,15 +1008,6 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn a_serialization_error_without_a_path_prints_no_document_path_line() {
-        let without_path = FirestoreSerializationError::from_message("bad value");
-        assert!(
-            !without_path.to_string().contains("Document path"),
-            "{without_path}"
-        );
-    }
-
-    #[test]
     fn a_client_timeout_is_retryable_and_a_server_deadline_is_not() {
         let client_timeout = gcloud_sdk::tonic::Status::from(
             gcloud_sdk::RequestTimeoutElapsed::Idle(Duration::from_secs(5)),

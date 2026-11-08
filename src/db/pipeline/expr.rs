@@ -154,7 +154,9 @@ pub(crate) fn field_path_segment(name: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// One segment of a Firestore field path, as an update mask or a document field reference writes it: bare when it is a simple name, otherwise quoted in backticks with backticks and backslashes escaped.
+/// One segment of a Firestore field path, as an update mask or a document field reference writes
+/// it: bare when it is a simple name, otherwise quoted in backticks with backticks and
+/// backslashes escaped.
 #[cfg(any(feature = "admin", feature = "sql"))]
 #[derive(Debug, Clone, Copy)]
 pub struct FirestoreFieldPathSegment<'a>(&'a str);
