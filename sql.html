@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0efaf104.js"></script>
+        <script src="toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -213,7 +213,9 @@ shapes.</p>
 <p>Application code keeps the fluent API, whose field paths are checked when the program compiles. SQL
 is for text that the program does not write: an admin command line, statements kept in
 configuration, statements an LLM agent writes, and queries ported from a SQL database. See
-<a href="./editions/choosing-an-api.html#when-to-use-sql">Choosing Core queries, pipelines or SQL</a>.</p>
+<a href="./editions/choosing-an-api.html#when-to-use-sql">Choosing Core queries, pipelines or SQL</a>. With the
+<code>codegen</code> feature, <a href="./sql/codegen.html">Fluent code for a statement</a> returns the fluent API code that
+a <code>SELECT</code> translates to, to move a ported statement into application code.</p>
 <h2 id="setup"><a class="header" href="#setup">Setup</a></h2>
 <p>SQL is behind the <code>sql</code> cargo feature, off by default:</p>
 <pre><code class="language-toml">[dependencies]

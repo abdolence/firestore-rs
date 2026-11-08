@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "../searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-0efaf104.js"></script>
+        <script src="../toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -419,8 +419,8 @@ message.</p>
 </div>
 <p>The emulator serves no Firestore Admin API, whatever its edition, and answers each index call with
 <code>UNIMPLEMENTED</code>; it arrives as <code>DatabaseError</code>, with <code>retry_possible</code> unset. <code>.plan()</code> and <code>.sync()</code>
-skip the emulator and return, see <a href="../index-management.html#the-firestore-emulator">The Firestore emulator</a>,
-but a statement is an explicit command, so it fails. <code>SHOW COLLECTIONS</code> works on the emulator.</p>
+fail the same way, see <a href="../index-management.html#the-firestore-emulator">The Firestore emulator</a>.
+<code>SHOW COLLECTIONS</code> works on the emulator.</p>
 <h2 id="options"><a class="header" href="#options">Options</a></h2>
 <p><code>FirestoreSqlOptions</code> apply to the new statements as to a <code>SELECT</code>, see
 <a href="../sql.html#read-only-options">Read-only options</a>:</p>
@@ -503,7 +503,8 @@ set the options. <code>.explain()</code> on <code>SHOW</code> or on an index sta
 no plan, and so does <code>.request_options(..)</code>, or <code>.request_tags(..)</code>, on <code>SHOW INDEXES</code> and the index
 statements, field <code>request_options</code>: they go to the Admin API, which takes no request options.</p>
 <h2 id="errors"><a class="header" href="#errors">Errors</a></h2>
-<p>Every error is an existing <code>FirestoreError</code> variant:</p>
+<p>Every error is an existing <code>FirestoreError</code> variant. A <code>code</code> is a constant of
+<code>firestore::errors::codes</code>:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -556,7 +557,7 @@ emulator fails every pipeline and SQL statement with <code>INVALID_ARGUMENT</cod
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../timestamps.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../sql/codegen.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -570,7 +571,7 @@ emulator fails every pipeline and SQL statement with <code>INVALID_ARGUMENT</cod
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../timestamps.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../sql/codegen.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

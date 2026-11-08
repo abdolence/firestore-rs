@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0efaf104.js"></script>
+        <script src="toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -267,10 +267,8 @@ few documents, from about ten seconds to about a minute. The time grows with the
 wait timeout well above that.</p>
 <p>Bulk delete works on both editions, and removes the named collection group at every depth.</p>
 <h2 id="the-firestore-emulator"><a class="header" href="#the-firestore-emulator">The Firestore emulator</a></h2>
-<p>The emulator answers <code>BulkDeleteDocuments</code> with <code>UNIMPLEMENTED</code>. Unlike index management, which
-skips silently against the emulator, a bulk delete returns an explicit error instead: there is no
-safe default result to report for an operation the emulator cannot run at all, so the library
-never lets it pass silently.</p>
+<p>The emulator answers <code>BulkDeleteDocuments</code> with <code>UNIMPLEMENTED</code>, which a bulk delete returns as
+<code>DatabaseError</code>.</p>
 <h2 id="iam-roles"><a class="header" href="#iam-roles">IAM roles</a></h2>
 <p><code>roles/datastore.bulkAdmin</code> carries <code>datastore.databases.bulkDelete</code>, the permission a bulk delete
 needs. <code>roles/datastore.owner</code> is a superset and also works.</p>

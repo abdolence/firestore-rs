@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "../searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-0efaf104.js"></script>
+        <script src="../toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -202,13 +202,13 @@ describes how the move is applied, and when a second TTL field is refused.</p>
 <h2 id="the-enterprise-edition"><a class="header" href="#the-enterprise-edition">The Enterprise edition</a></h2>
 <p>An Enterprise edition database builds no index on its own: there are no automatic single-field
 indexes, so every index a query needs is one the statement declares. <code>.plan()</code> and <code>.sync()</code> read
-the database’s edition once per call and follow its rules:</p>
+the database’s edition once per call to match a declaration with a listed index, and send what the
+statement declares. Firestore answers what it refuses with <code>INVALID_ARGUMENT</code>. On Enterprise:</p>
 <ul>
 <li>a composite index of one field is how a single field is indexed. Firestore accepts one there,
 ordered, <code>.array_contains()</code> or <code>__name__</code>, while a Standard edition database refuses it;</li>
-<li><code>.field_overrides()</code> has nothing to override. An <code>.exempt()</code> is already satisfied and is never
-written. An override that lists indexes fails with <code>InvalidParametersError</code> before anything is
-written, since Firestore refuses it;</li>
+<li><code>.field_overrides()</code> has nothing to override. An <code>.exempt()</code> is never planned, since Firestore
+stores nothing for it. Firestore refuses an override that lists indexes;</li>
 <li><code>.ttl()</code> enables a TTL field as on Standard, and <code>.prune_undeclared()</code> disables an undeclared
 one the same way;</li>
 <li>Firestore appends no <code>__name__</code> field to an index, so <code>[a, b]</code> and <code>[a, b, __name__]</code> are two
@@ -246,13 +246,15 @@ a value such as an email address is kept unique across a collection.</p>
 <p>The <em>density</em> of an index says which documents it holds an entry for. A dense index holds one for
 every document, with a missing field stored as unset; a sparse index leaves out the documents
 that lack the indexed fields. Enterprise builds an index dense by default, and a text or geo
-search index always as <code>FirestoreIndexDensity::SparseAny</code>, an entry for each document that has at
+search index as <code>FirestoreIndexDensity::SparseAny</code>, an entry for each document that has at
 least one of the fields. Standard builds every index as <code>SparseAll</code>, an entry only for a document
-that has all of them, and accepts no other density, while Enterprise refuses <code>SparseAll</code>, and a
-search index there takes only <code>SparseAny</code>. A declaration with a density the edition refuses fails
-with <code>InvalidParametersError</code> before anything is written. Two indexes over the same fields are
-different indexes when their densities differ, or when one is unique and the other is not, and a
-declaration matches only the one it describes.</p>
+that has all of them. Firestore answers a density its edition does not build with
+<code>INVALID_ARGUMENT</code>.</p>
+<p>A declaration that sets a density matches only a listed index of that density. A declaration
+without one matches a listed index over the same fields, scope and <code>unique</code> flag whatever its
+density, and when several listed indexes match, the library treats it as it does any declaration
+that matches several. Two indexes over the same fields are different indexes when one is unique
+and the other is not.</p>
 
                     </main>
 

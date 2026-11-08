@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0efaf104.js"></script>
+        <script src="toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -240,9 +240,9 @@ of each.</p>
 <p>With the <code>admin</code> feature, <code>FirestoreDb::read_database_edition()</code> returns the edition of the
 database the client is connected to. A database that reports no edition reads as <code>Standard</code>, the
 edition Firestore applies at creation. An edition this version of the crate does not know reads as
-<code>Unknown</code>, with the value Firestore reported, and index statements refuse a database of that
-edition. Firestore may add editions, so <code>FirestoreDatabaseEdition</code> is non-exhaustive. The emulator
-does not serve the Admin API, so the call fails there with <code>UNIMPLEMENTED</code>.</p>
+<code>Unknown</code>, with the value Firestore reported. Firestore may add editions, so
+<code>FirestoreDatabaseEdition</code> is non-exhaustive. The emulator does not serve the Admin API, so the call
+fails there with <code>UNIMPLEMENTED</code>.</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; FirestoreResult&lt;()&gt; {
 </span>match db.read_database_edition().await? {

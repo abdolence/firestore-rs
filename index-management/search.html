@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "../searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-0efaf104.js"></script>
+        <script src="../toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -217,8 +217,7 @@ index, which Firestore indexes by default;</li>
 search needs;</li>
 <li>a search index is always built as <code>FirestoreIndexDensity::SparseAny</code>, see
 <a href="./ttl-and-enterprise.html#density">Density</a>;</li>
-<li>on a Standard edition database <code>.plan()</code> and <code>.sync()</code> refuse a search index with
-<code>InvalidParametersError</code> before anything is written.</li>
+<li>a Standard edition database answers a search index with <code>INVALID_ARGUMENT</code>.</li>
 </ul>
 
                     </main>

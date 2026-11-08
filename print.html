@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0efaf104.js"></script>
+        <script src="toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -405,9 +405,9 @@ of each.</p>
 <p>With the <code>admin</code> feature, <code>FirestoreDb::read_database_edition()</code> returns the edition of the
 database the client is connected to. A database that reports no edition reads as <code>Standard</code>, the
 edition Firestore applies at creation. An edition this version of the crate does not know reads as
-<code>Unknown</code>, with the value Firestore reported, and index statements refuse a database of that
-edition. Firestore may add editions, so <code>FirestoreDatabaseEdition</code> is non-exhaustive. The emulator
-does not serve the Admin API, so the call fails there with <code>UNIMPLEMENTED</code>.</p>
+<code>Unknown</code>, with the value Firestore reported. Firestore may add editions, so
+<code>FirestoreDatabaseEdition</code> is non-exhaustive. The emulator does not serve the Admin API, so the call
+fails there with <code>UNIMPLEMENTED</code>.</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; FirestoreResult&lt;()&gt; {
 </span>match db.read_database_edition().await? {
@@ -2821,7 +2821,9 @@ shapes.</p>
 <p>Application code keeps the fluent API, whose field paths are checked when the program compiles. SQL
 is for text that the program does not write: an admin command line, statements kept in
 configuration, statements an LLM agent writes, and queries ported from a SQL database. See
-<a href="#when-to-use-sql">Choosing Core queries, pipelines or SQL</a>.</p>
+<a href="#when-to-use-sql">Choosing Core queries, pipelines or SQL</a>. With the
+<code>codegen</code> feature, <a href="#fluent-code-for-a-statement">Fluent code for a statement</a> returns the fluent API code that
+a <code>SELECT</code> translates to, to move a ported statement into application code.</p>
 <h2 id="setup"><a class="header" href="#setup">Setup</a></h2>
 <p>SQL is behind the <code>sql</code> cargo feature, off by default:</p>
 <pre><code class="language-toml">[dependencies]
@@ -3590,8 +3592,8 @@ message.</p>
 </div>
 <p>The emulator serves no Firestore Admin API, whatever its edition, and answers each index call with
 <code>UNIMPLEMENTED</code>; it arrives as <code>DatabaseError</code>, with <code>retry_possible</code> unset. <code>.plan()</code> and <code>.sync()</code>
-skip the emulator and return, see <a href="#the-firestore-emulator">The Firestore emulator</a>,
-but a statement is an explicit command, so it fails. <code>SHOW COLLECTIONS</code> works on the emulator.</p>
+fail the same way, see <a href="#the-firestore-emulator">The Firestore emulator</a>.
+<code>SHOW COLLECTIONS</code> works on the emulator.</p>
 <h2 id="options-1"><a class="header" href="#options-1">Options</a></h2>
 <p><code>FirestoreSqlOptions</code> apply to the new statements as to a <code>SELECT</code>, see
 <a href="#read-only-options">Read-only options</a>:</p>
@@ -3674,7 +3676,8 @@ set the options. <code>.explain()</code> on <code>SHOW</code> or on an index sta
 no plan, and so does <code>.request_options(..)</code>, or <code>.request_tags(..)</code>, on <code>SHOW INDEXES</code> and the index
 statements, field <code>request_options</code>: they go to the Admin API, which takes no request options.</p>
 <h2 id="errors-1"><a class="header" href="#errors-1">Errors</a></h2>
-<p>Every error is an existing <code>FirestoreError</code> variant:</p>
+<p>Every error is an existing <code>FirestoreError</code> variant. A <code>code</code> is a constant of
+<code>firestore::errors::codes</code>:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -3716,6 +3719,186 @@ has no automatic single-field indexes to override. <a href="#fr-enterprise-index
 <li id="footnote-explain-emulator">
 <p>The Enterprise emulator returns the rows and no explain output. The Standard
 emulator fails every pipeline and SQL statement with <code>INVALID_ARGUMENT</code>. <a href="#fr-explain-emulator-1">↩</a></p>
+</li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="fluent-code-for-a-statement"><a class="header" href="#fluent-code-for-a-statement">Fluent code for a statement</a></h1>
+<p>With the <code>codegen</code> cargo feature, <code>FirestoreSqlStatement::fluent_rust(..)</code> turns a SQL <code>SELECT</code> into
+the Rust code of the equivalent <a href="#pipelines">pipeline</a> in the fluent API. It is meant for
+people who port a statement to application code: the snippet shows the builder calls, the row
+struct and the function arguments, and the person who pastes it keeps and edits the result. It
+sends nothing, so it needs no client and no credentials.</p>
+<pre><code class="language-toml">[dependencies]
+firestore = { version = "...", features = ["codegen"] }
+serde_json = "1"
+serde_bytes = "0.11"
+</code></pre>
+<p>The snippet reads values that have no fixed type into <code>serde_json::Value</code>, and bytes through
+<code>serde_bytes</code>, so the project that pastes it needs <code>serde_json</code>, and <code>serde_bytes</code> when the
+statement reads or binds bytes.</p>
+<h2 id="calling-it"><a class="header" href="#calling-it">Calling it</a></h2>
+<pre><code class="language-text">FirestoreSqlStatement::fluent_rust(sql, &amp;parameters, &amp;sample) -&gt; FirestoreResult&lt;String&gt;
+</code></pre>
+<ul>
+<li><code>sql</code> is a <code>SELECT</code>;</li>
+<li><code>parameters</code> binds every <code>@name</code> and <code>?</code> of the text to a sample value, as <code>.param(..)</code> and
+<code>.params(..)</code> of the <a href="#setup">SQL builder</a> do. A parameter without a value fails as it
+does when the statement runs;</li>
+<li><code>sample</code> holds rows that the statement returned, as <code>Vec&lt;FirestoreDocument&gt;</code>. A <em>sample</em> is
+enough to type the fields of the row struct, and an empty one is accepted.</li>
+</ul>
+<p>The options of a statement are not an argument: nothing runs, so there is nothing for them to
+guard, and a <code>with_max_rows(..)</code> used to fetch the sample would add a <code>LIMIT</code> that the snippet must
+not show.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let sql = "SELECT title, author, rating, publishedAt, tags, edition FROM books
+WHERE genre = @genre AND rating &gt;= @min_rating ORDER BY rating DESC LIMIT 20";
+let parameters = FirestoreSqlParameters::new()
+    .param("genre", "Dystopian")
+    .param("min_rating", 4.0);
+
+let statement =
+    FirestoreSqlStatement::translate(&amp;db, sql, &amp;parameters, &amp;FirestoreSqlOptions::read_only())?;
+let FirestoreSqlStatement::Query(pipeline) = statement else {
+    return Ok(());
+};
+let sample = db.fluent().pipeline().select().from_pipeline(pipeline).query().await?;
+
+println!("{}", FirestoreSqlStatement::fluent_rust(sql, &amp;parameters, &amp;sample)?);
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>Without a database, <code>&amp;[]</code> is the sample and every field is typed as unknown, see
+<a href="#row-struct">Row struct</a>. For a sample where <code>author</code> is missing from one row, <code>rating</code> is an
+integer in some rows and a double in others, and <code>edition</code> is an integer in some rows and a string
+in others, the text it returns is:</p>
+<pre><code class="language-rust">// SELECT title, author, rating, publishedAt, tags, edition FROM books
+// WHERE genre = @genre AND rating &gt;= @min_rating ORDER BY rating DESC LIMIT 20
+use firestore::*;
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
+struct BooksRow {
+    title: String,
+    author: Option&lt;String&gt;,
+    rating: f64,
+    #[serde(rename = "publishedAt")]
+    published_at: FirestoreTimestamp,
+    tags: serde_json::Value,
+    /// Observed as integer and string in the sample.
+    edition: serde_json::Value,
+}
+
+async fn query_books(
+    db: &amp;FirestoreDb,
+    genre: &amp;str,
+    min_rating: f64,
+) -&gt; FirestoreResult&lt;Vec&lt;BooksRow&gt;&gt; {
+    db.fluent()
+        .pipeline()
+        .select()
+        .from("books")
+        .filter(|q| {
+            q
+                .for_all([
+                    q.field("genre").equal(genre),
+                    q.field("rating").greater_than_or_equal(min_rating),
+                ])
+        })
+        .sort(|e| [e.field("rating").desc()])
+        .fields(|e| [
+            e.field("title"),
+            e.field("author"),
+            e.field("rating"),
+            e.field("publishedAt"),
+            e.field("tags"),
+            e.field("edition"),
+        ])
+        .limit(20)
+        .obj::&lt;BooksRow&gt;()
+        .query()
+        .await
+}</code></pre>
+<p>The snippet follows the pipeline that the statement translates to, stage by stage, so its stages
+are in the order of the translation: <code>sort</code> before <code>fields</code>, as above. The text is formatted by the
+crate, not by <code>rustfmt</code>, so run <code>cargo fmt</code> after pasting it.<sup class="footnote-reference" id="fr-formatting-1"><a href="#footnote-formatting">1</a></sup></p>
+<h2 id="row-struct"><a class="header" href="#row-struct">Row struct</a></h2>
+<p>The snippet’s struct holds the columns of the select list, in the order of the list. Without a select
+list, as in <code>SELECT *</code>, it holds the field names of the sample, in alphabetical order, since the
+fields of a document have no order. Each field is typed from the values of its column across the
+whole sample:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Values in the sample</th><th>Field type</th></tr>
+</thead>
+<tbody>
+<tr><td>integer</td><td><code>i64</code></td></tr>
+<tr><td>double, or integer and double</td><td><code>f64</code></td></tr>
+<tr><td>string</td><td><code>String</code></td></tr>
+<tr><td>boolean</td><td><code>bool</code></td></tr>
+<tr><td>timestamp</td><td><code>FirestoreTimestamp</code></td></tr>
+<tr><td>vector</td><td><code>FirestoreVector</code></td></tr>
+<tr><td>reference</td><td><code>FirestoreReference</code></td></tr>
+<tr><td>geo point</td><td><code>FirestoreLatLng</code></td></tr>
+<tr><td>bytes</td><td><code>Vec&lt;u8&gt;</code>, with <code>#[serde(with = "serde_bytes")]</code></td></tr>
+<tr><td>map or array</td><td><code>serde_json::Value</code></td></tr>
+<tr><td>two kinds other than integer and double</td><td><code>serde_json::Value</code>, with a doc comment naming the kinds</td></tr>
+<tr><td>absent or null in some rows</td><td>the type above in an <code>Option</code></td></tr>
+<tr><td>absent or null in every row</td><td><code>Option&lt;serde_json::Value&gt;</code>, with a doc comment that says so</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>serde_json::Value</code> cannot hold bytes, so a column that mixes bytes with another kind, or holds
+them inside a map or an array, fails to read.</p>
+<p>A column that is always present in the sample can still be absent from a document that the
+statement returns later, and the type of a field is the type of the sample’s values. Check the
+types against the data before relying on them.</p>
+<p>With an empty sample every field is an <code>Option&lt;serde_json::Value&gt;</code>, since nothing says which
+fields are always present. With an empty sample and no select list there is nothing to type: the
+function returns <code>Vec&lt;FirestoreDocument&gt;</code> and the snippet has no struct.</p>
+<p>A statement that selects <code>__name__</code>, and a sample whose rows carry a document name, give the struct
+an <code>id: Option&lt;String&gt;</code> field that reads <code>_firestore_id</code>, as in
+<a href="#typed-results-and-metadata">Pipelines</a>.</p>
+<h2 id="naming-and-arguments"><a class="header" href="#naming-and-arguments">Naming and arguments</a></h2>
+<p>The struct and the function are named after the collection, <code>BooksRow</code> and <code>query_books</code> for
+<code>books</code>, and a field after its column in snake case, with a <code>serde</code> rename when the two differ. A
+name that Rust cannot use, such as a keyword or one that starts with a digit, is made valid, and a
+name that another one took gets a suffix, as <code>db_2</code> does for a parameter named <code>db</code>.</p>
+<p>The function takes <code>db: &amp;FirestoreDb</code>, then one argument for each parameter, in the alphabetical
+order of the names, and <code>param_1</code>, <code>param_2</code> for <code>?</code> in the order of the text. An argument has the
+type of the value bound to it, as in the table of the row struct, borrowed unless it is <code>Copy</code>.
+A null, a map or an array is a <code>&amp;serde_json::Value</code>.</p>
+<h2 id="what-it-shows"><a class="header" href="#what-it-shows">What it shows</a></h2>
+<p><code>fluent_rust(..)</code> covers:</p>
+<ul>
+<li>reads of one collection, a path to a nested collection, or a collection group, with <code>WHERE</code>,
+<code>ORDER BY</code>, <code>LIMIT</code>, <code>OFFSET</code> and a select list;</li>
+<li>aggregates, with and without <code>GROUP BY</code>, and <code>DISTINCT</code>;</li>
+<li>text and geo search, <code>document_matches(..)</code> and <code>geo_distance(..)</code>, see
+<a href="#search">Search</a>. Vector distance is a function like any other and is shown as one.</li>
+</ul>
+<p>A statement outside this list fails with <code>InvalidParametersError</code>, before anything is generated,
+and its message names the construct:</p>
+<ul>
+<li><code>UNION</code>, <code>UNNEST</code>, subqueries, variables, and so a join, which the translator writes as a
+subquery and an <code>UNNEST</code>, see <a href="#joins-and-subqueries">Reads, joins and subqueries</a>;</li>
+<li><code>* EXCEPT</code>, and a column written beside <code>*</code>;</li>
+<li>the sources <code>documents(..)</code>, <code>database()</code> and <code>subcollection(..)</code>;</li>
+<li><code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, index statements, <code>EXPLAIN</code> and <code>SHOW</code>: a statement that is not a
+<code>SELECT</code> runs with the <a href="#setup">SQL builder</a>, and has no fluent code to show;</li>
+<li>a parameter whose value the translation reads when it builds the pipeline, since the snippet has
+no value to put in its place. Such a parameter is <code>LIMIT @n</code> and <code>OFFSET @n</code>, <code>__name__ = @id</code>
+and the other comparisons on <code>__name__</code>, the key of a subscript as in <code>x[@key]</code>, and the
+arguments of search such as <code>document_matches(@query)</code>. Write the value in the text instead. A
+parameter anywhere else becomes an argument of the function.</li>
+</ul>
+<hr>
+<ol class="footnote-definition">
+<li id="footnote-formatting">
+<p>The crate prints the snippet with a library formatter, since <code>rustfmt</code> is a separate
+program that a library cannot count on. It breaks some lines differently from <code>rustfmt</code>, such as
+<code>q.for_all</code> above. <a href="#fr-formatting-1">↩</a></p>
 </li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -3923,6 +4106,237 @@ struct CreateSession {
 <p>See <code>examples/crud.rs</code> and <code>examples/nested_collections.rs</code> for a document ID and a
 <code>parent_path</code>/<code>at</code> pair built from validated IDs, and <code>examples/dynamic_doc_level_crud.rs</code> /
 <code>examples/caching_dynamic_collections.rs</code> for a collection name chosen at runtime.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="json-conversion"><a class="header" href="#json-conversion">JSON conversion</a></h1>
+<p>With the <code>json-conversion</code> cargo feature, associated functions of <code>FirestoreDb</code> convert Firestore values and
+documents to JSON and back. It is meant for tools that move documents out of Firestore and into it
+again, such as an export and an import, and for tools that show documents to a person. It does not
+send anything.</p>
+<p>Like <code>FirestoreDb::serialize_to_doc</code>, the functions take their context explicitly, so they need no
+client. The first argument is the documents root of the database,
+<code>projects/{project}/databases/{database}/documents</code>, which <code>db.get_documents_path()</code> returns.</p>
+<pre><code class="language-toml">[dependencies]
+firestore = { version = "...", features = ["json-conversion"] }
+serde_json = "1"
+</code></pre>
+<p>The functions write two encodings, chosen with <code>FirestoreJsonEncoding</code>:</p>
+<ul>
+<li><strong><code>Tagged</code></strong>, for export and import. It reads back to the same Firestore value, without loss.
+A type that JSON lacks becomes a one-key object, a <em>wrapper</em>, whose key starts with <code>$</code>;</li>
+<li><strong><code>Plain</code></strong>, for display. It is the most readable JSON for each type, and it has no way back: a
+timestamp, a reference and a string look alike.</li>
+</ul>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Function</th><th>Result</th></tr>
+</thead>
+<tbody>
+<tr><td><code>serialize_value_to_json(documents_path, &amp;value, encoding)</code></td><td><code>FirestoreResult&lt;serde_json::Value&gt;</code></td></tr>
+<tr><td><code>serialize_doc_to_json(documents_path, &amp;document, &amp;options)</code></td><td><code>FirestoreResult&lt;serde_json::Value&gt;</code></td></tr>
+<tr><td><code>deserialize_value_from_json(documents_path, json)</code></td><td><code>FirestoreResult&lt;FirestoreValue&gt;</code></td></tr>
+<tr><td><code>deserialize_doc_from_json(documents_path, json)</code></td><td><code>FirestoreResult&lt;FirestoreDocument&gt;</code></td></tr>
+<tr><td><code>relative_document_name(documents_path, name)</code></td><td><code>&amp;str</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>A value is a <code>gcloud_sdk::google::firestore::v1::Value</code>, the type that <code>FirestoreDocument::fields</code>
+holds, so a field converts without a copy. <code>FirestoreValue::value</code> is one.</p>
+<p><code>FirestoreJsonOptions</code> holds the encoding of a document and whether it carries its metadata. Both
+are set through its builder, and the defaults are the tagged encoding and no metadata:</p>
+<pre><code class="language-rust"><span class="boring">use firestore::*;
+</span>let options = FirestoreJsonOptions::new()
+    .with_encoding(FirestoreJsonEncoding::Plain)
+    .with_metadata(true);</code></pre>
+<p>The plain encoding of a value never fails; the tagged one refuses the values that exist only in
+pipelines, see below. The metadata option means nothing for a single value, so
+<code>serialize_value_to_json</code> takes the encoding alone.</p>
+<p>Write a line of an export with <code>serde_json::to_string(&amp;json)</code> and read one with
+<code>serde_json::from_str::&lt;serde_json::Value&gt;(..)</code>. The deserialising functions read the tagged
+encoding. The plain encoding parses too, but a timestamp and a reference come back as strings,
+since the plain encoding does not tell them from a string; nothing prevents reading one.</p>
+<blockquote>
+<p>Do not turn the JSON into a <code>FirestoreValue</code> with <code>.into()</code>. The conversion serialises the JSON
+as data, so <code>{"$timestamp": "2023-11-14T22:13:20Z"}</code> is stored as a map holding a string. A tagged
+value goes back to a value through <code>FirestoreDb::deserialize_value_from_json(..)</code>.</p>
+</blockquote>
+<h2 id="export-and-import"><a class="header" href="#export-and-import">Export and import</a></h2>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let documents_path = db.get_documents_path();
+let options = FirestoreJsonOptions::new();
+
+let Some(document) = db.fluent().select().by_id_in("books").one("dune").await? else {
+    return Ok(());
+};
+let json = FirestoreDb::serialize_doc_to_json(documents_path, &amp;document, &amp;options)?;
+let line = serde_json::to_string(&amp;json)?;
+
+let json = serde_json::from_str(&amp;line)?;
+let document = FirestoreDb::deserialize_doc_from_json(documents_path, json)?;
+db.fluent()
+    .update()
+    .in_col("books")
+    .document(document)
+    .execute()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>An imported document carries its name, so write it with <code>update()</code>, or with a batch writer.
+<code>insert().document(..)</code> refuses a document whose name is set.</p>
+<h2 id="encodings-of-each-type"><a class="header" href="#encodings-of-each-type">Encodings of each type</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Firestore value</th><th>Tagged</th><th>Plain</th></tr>
+</thead>
+<tbody>
+<tr><td>null</td><td><code>null</code></td><td><code>null</code></td></tr>
+<tr><td>boolean</td><td><code>true</code></td><td><code>true</code></td></tr>
+<tr><td>integer, at most 2^53 − 1 in size</td><td><code>42</code></td><td><code>42</code></td></tr>
+<tr><td>integer, 2^53 and beyond</td><td><code>{"$int": "9007199254740992"}</code></td><td><code>9007199254740992</code></td></tr>
+<tr><td>double</td><td><code>1.5</code>, <code>3.0</code>, <code>-0.0</code></td><td><code>1.5</code>, <code>3.0</code>, <code>-0.0</code></td></tr>
+<tr><td>NaN, infinities</td><td><code>{"$double": "NaN"}</code>, <code>{"$double": "Infinity"}</code>, <code>{"$double": "-Infinity"}</code></td><td><code>"NaN"</code>, <code>"Infinity"</code>, <code>"-Infinity"</code></td></tr>
+<tr><td>string</td><td><code>"Dune"</code></td><td><code>"Dune"</code></td></tr>
+<tr><td>bytes</td><td><code>{"$bytes": "AAEC/w=="}</code></td><td><code>"AAEC/w=="</code></td></tr>
+<tr><td>timestamp</td><td><code>{"$timestamp": "2023-11-14T22:13:20.123456Z"}</code></td><td><code>"2023-11-14T22:13:20.123456Z"</code></td></tr>
+<tr><td>reference</td><td><code>{"$ref": "books/dune"}</code></td><td><code>"books/dune"</code></td></tr>
+<tr><td>geo point</td><td><code>{"$geo": [51.5, -0.12]}</code></td><td><code>{"latitude": 51.5, "longitude": -0.12}</code></td></tr>
+<tr><td>array</td><td><code>[1, "two", null]</code></td><td><code>[1, "two", null]</code></td></tr>
+<tr><td>map</td><td><code>{"city": "London"}</code></td><td><code>{"city": "London"}</code></td></tr>
+<tr><td>map with the single key <code>$timestamp</code></td><td><code>{"$map": {"$timestamp": "x"}}</code></td><td><code>{"$timestamp": "x"}</code></td></tr>
+<tr><td>vector</td><td><code>{"$vector": [1.0, 2.5]}</code></td><td><code>[1.0, 2.5]</code></td></tr>
+</tbody>
+</table>
+</div>
+<ul>
+<li>Bytes are base64 with the standard alphabet and padding;</li>
+<li>a map is escaped as <code>{"$map": {..}}</code> only in the tagged encoding, and only when its single key
+starts with <code>$</code>, so that it is not read as a wrapper. A map with no key or several is never
+escaped;</li>
+<li>map keys are written in byte order. Whether a JSON reader keeps that order depends on the
+<code>preserve_order</code> feature of <code>serde_json</code>; the format does not depend on it;</li>
+<li>a <code>Value</code> with no type set is written as <code>null</code> in both encodings.</li>
+</ul>
+<h2 id="documents"><a class="header" href="#documents">Documents</a></h2>
+<p>A document is one flat object holding <code>__name__</code> and the fields.</p>
+<pre><code class="language-json">{"__name__": "books/dune", "published": {"$timestamp": "2023-11-14T22:13:20Z"}, "title": "Dune"}
+</code></pre>
+<p>The keys follow the order of <code>serde_json</code>’s map. By default it is sorted, so a field named <code>Title</code>
+is written before <code>__name__</code>. With the <code>preserve_order</code> feature of <code>serde_json</code>, which the <code>json-conversion</code>
+feature does not enable, the order is <code>__name__</code>, the metadata, then the fields in byte order.</p>
+<p><code>FirestoreJsonOptions::new().with_metadata(true)</code> adds <code>__create_time__</code> and
+<code>__update_time__</code> when the document carries them: wrapped as <code>$timestamp</code> in the tagged encoding,
+as strings in the plain one. <code>deserialize_doc_from_json</code> ignores both, so the document it returns has neither.</p>
+<p><code>__name__</code> is left out of a document without a name, such as an aggregation or a pipeline <code>select</code>
+result. A top-level field whose name starts with <code>$</code> needs no escape, since the top level of a
+document is always read as fields.</p>
+<p>Firestore refuses <code>__name__</code>, <code>__create_time__</code>, <code>__update_time__</code> and every other name between
+double underscores as a stored field, so these keys cannot collide with a stored document’s fields.
+The functions do not check for them. A pipeline result with a field of such a name overwrites
+the key of the name in the object.</p>
+<h2 id="references-and-portability"><a class="header" href="#references-and-portability">References and portability</a></h2>
+<p>A reference and <code>__name__</code> are written relative to the database of <code>documents_path</code> when they point
+into it, and as a full name otherwise:
+<code>projects/latestbit/databases/other/documents/books/dune</code>. <code>relative_document_name</code> gives the same form
+for any name. A relative name resolves against the database of the <code>documents_path</code> that reads it,
+so an export from one database imports into another, and
+a full name keeps pointing where it pointed.</p>
+<p>A name is read as a full name when it has the form
+<code>projects/{project}/databases/{database}/documents/{path}</code> with an odd number of segments. A
+relative document path has an even number of segments, so a document in a collection called
+<code>projects</code> is not mistaken for another project’s.</p>
+<h2 id="integers-and-doubles"><a class="header" href="#integers-and-doubles">Integers and doubles</a></h2>
+<p>Firestore integers are 64-bit. A JSON number that a JavaScript reader parses as an IEEE double
+holds integers exactly only up to 2^53 − 1, so the tagged encoding writes anything beyond as
+<code>$int</code> with the decimal text. 2^53 itself goes to <code>$int</code>, since a JavaScript reader cannot tell it
+from 2^53 + 1. The plain encoding writes every integer as a number.</p>
+<p>A double is written with a <code>.</code> or an exponent, <code>3.0</code> and <code>1e+300</code>, so it reads back as a double and
+not as an integer. A coordinate of a geo point follows the same rule.</p>
+<h3 id="exact-doubles-and-float_roundtrip"><a class="header" href="#exact-doubles-and-float_roundtrip">Exact doubles and <code>float_roundtrip</code></a></h3>
+<p><code>serde_json</code> parses a float one ULP (unit in the last place, the gap between a double and its
+neighbour) off for about one in six values with many digits, such as a vector component widened
+from <code>f32</code>. The text then reads back as the neighbouring double. A float round trip, a double
+written to text and parsed again to the same double, needs the <code>float_roundtrip</code> feature of
+<code>serde_json</code>.</p>
+<p>The <code>json-conversion</code> feature turns it on. Cargo builds one <code>serde_json</code> per program with the features of every
+crate that uses it, so a program that enables <code>json-conversion</code> parses every float exactly, at the cost of a
+slower float parse.</p>
+<h2 id="timestamps"><a class="header" href="#timestamps">Timestamps</a></h2>
+<p>Timestamps are written as RFC 3339 in UTC with a <code>Z</code>, with 0, 3, 6 or 9 fraction digits:
+<code>2023-11-14T22:13:20Z</code>, <code>2023-11-14T22:13:20.500Z</code>, <code>2023-11-14T22:13:20.123456Z</code>. The range is
+the whole range Firestore accepts, from <code>0001-01-01T00:00:00Z</code> to <code>9999-12-31T23:59:59.999999Z</code>.
+<code>FirestoreInstant</code> ends 26 hours earlier, so the functions do not go through it.</p>
+<p>Reading accepts an offset (<code>+01:00</code>), a lowercase <code>t</code> and <code>z</code>, and a space for <code>T</code>, and keeps
+nanoseconds. Firestore stores microseconds and cuts the digits beyond; the functions leave that to
+Firestore. <code>FirestoreTimestamp::truncated_to_firestore_precision</code> cuts them before a write.</p>
+<h2 id="values-that-exist-only-in-pipelines"><a class="header" href="#values-that-exist-only-in-pipelines">Values that exist only in pipelines</a></h2>
+<p>Field references, variable references, functions and pipelines are parts of a pipeline request, and
+a stored document never holds one.</p>
+<ul>
+<li>The tagged encoding refuses them with <code>JSON_EXPRESSION_VALUE</code>, since they cannot be read back;</li>
+<li>the plain encoding shows what the caller holds: the text of a field or variable reference, the
+name of a function, and <code>"pipeline"</code>.</li>
+</ul>
+<h2 id="reading-the-tagged-encoding"><a class="header" href="#reading-the-tagged-encoding">Reading the tagged encoding</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>JSON</th><th>Firestore value</th></tr>
+</thead>
+<tbody>
+<tr><td><code>-0</code></td><td>the double -0.0</td></tr>
+<tr><td>a number without a <code>.</code> or an exponent that fits <code>i64</code></td><td>integer</td></tr>
+<tr><td>an integer from 2^63 to 2^64 − 1</td><td>refused, <code>JSON_NUMBER_OUT_OF_RANGE</code></td></tr>
+<tr><td>any other number up to the range of a double</td><td>double</td></tr>
+<tr><td>an object with one key that starts with <code>$</code></td><td>the wrapper</td></tr>
+<tr><td>any other object</td><td>map</td></tr>
+</tbody>
+</table>
+</div>
+<p>A wrapper takes exactly one form of content:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Wrapper</th><th>Content</th></tr>
+</thead>
+<tbody>
+<tr><td><code>$int</code></td><td>a string that parses as <code>i64</code></td></tr>
+<tr><td><code>$double</code></td><td><code>"NaN"</code>, <code>"Infinity"</code> or <code>"-Infinity"</code></td></tr>
+<tr><td><code>$timestamp</code></td><td>an RFC 3339 string</td></tr>
+<tr><td><code>$bytes</code></td><td>a base64 string, standard alphabet</td></tr>
+<tr><td><code>$ref</code></td><td>a string</td></tr>
+<tr><td><code>$geo</code></td><td>an array of two numbers, each a JSON number or a <code>$double</code> wrapper</td></tr>
+<tr><td><code>$vector</code></td><td>an array of numbers</td></tr>
+<tr><td><code>$map</code></td><td>an object, whose keys are taken as they are</td></tr>
+</tbody>
+</table>
+</div>
+<p>A component of <code>$geo</code> and <code>$vector</code> may be an integer literal, so <code>{"$vector": [1, 2]}</code> reads as
+two doubles.</p>
+<p>Only the form of a wrapper is checked. An empty <code>$vector</code>, a latitude of 91 and a timestamp in the
+year 10000 read without an error, and Firestore refuses them on write. A timestamp in the year
+10000 reads only in the signed form the writer produces, <code>+10000-01-01T00:00:00Z</code>; without the
+sign it is a <code>JSON_INVALID_WRAPPER</code> error.</p>
+<p>A number above <code>u64</code> in hand-written input reads as a double.</p>
+<h2 id="errors-2"><a class="header" href="#errors-2">Errors</a></h2>
+<p>A failed conversion is a <code>DeserializeError</code> when it reads JSON and a <code>SerializeError</code> when it
+writes it. The code is in <code>public.code</code>, a constant of <code>firestore::errors::codes</code>, and the message names the JSON path of the value, such as
+<code>`reviews[2].at`</code>. A document error carries the full document name in <code>document_path</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Case</th><th>Error</th></tr>
+</thead>
+<tbody>
+<tr><td>an object with one key that starts with <code>$</code> and is none of the eight wrappers</td><td><code>DeserializeError</code>, code <code>JSON_UNKNOWN_WRAPPER</code></td></tr>
+<tr><td>a wrapper with content that is not its form, such as <code>{"$timestamp": 17}</code></td><td><code>DeserializeError</code>, code <code>JSON_INVALID_WRAPPER</code></td></tr>
+<tr><td>a JSON integer above <code>i64::MAX</code></td><td><code>DeserializeError</code>, code <code>JSON_NUMBER_OUT_OF_RANGE</code></td></tr>
+<tr><td><code>deserialize_doc_from_json</code> of JSON that is not an object or has no string <code>__name__</code></td><td><code>DeserializeError</code>, code <code>JSON_INVALID_DOCUMENT</code></td></tr>
+<tr><td><code>serialize_value_to_json</code> or <code>serialize_doc_to_json</code> in the tagged encoding of a field reference, variable reference, function or pipeline</td><td><code>SerializeError</code>, code <code>JSON_EXPRESSION_VALUE</code></td></tr>
+</tbody>
+</table>
+</div>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="caching"><a class="header" href="#caching">Caching</a></h1>
 <p>The library supports caching for collections and documents. A Firestore listener keeps the cache
@@ -4352,9 +4766,11 @@ println!("{report}");
 </ul>
 <p>Each of <code>.composite()</code>, <code>.field_overrides()</code> and <code>.ttl()</code> replaces whatever an earlier call in the
 same chain set, so call each at most once. A field override or a TTL path may not repeat. These
-rules, the rules of the database’s edition, and the vector, field-count and density limits
-Firestore itself enforces, are checked at <code>.plan()</code>/<code>.sync()</code> before anything is written, and
-return <code>InvalidParametersError</code> naming what is wrong.</p>
+rules, and the structural rules of each index in <a href="#composite-and-vector-indexes">Composite and vector indexes</a>,
+are checked at <code>.plan()</code>/<code>.sync()</code> before anything is written, and return <code>InvalidParametersError</code>
+naming what is wrong. Every other rule, including the rules of the database’s edition, is
+Firestore’s: <code>.plan()</code> and <code>.sync()</code> send what you declare, and Firestore answers <code>INVALID_ARGUMENT</code>
+with its own message when it refuses it.</p>
 <h2 id="plan-versus-sync"><a class="header" href="#plan-versus-sync">plan() versus sync()</a></h2>
 <p><code>.plan()</code> is read-only: it lists what Firestore already has for the owned group and reports what
 <code>.sync()</code> would change, without writing anything.</p>
@@ -4712,11 +5128,13 @@ is unique within one database.</p>
 <p>A delete by definition fails with <code>DataNotFoundError</code> when nothing matches, and with
 <code>DataConflictError</code>, naming the IDs, when several indexes match. On an Enterprise edition database
 two indexes over the same fields differ by <code>unique</code> and density, and the definition tells them apart.</p>
-<p>The four calls run no edition rule of their own: Firestore’s
-<code>INVALID_ARGUMENT</code> answers arrive as <code>DatabaseError</code>, and the emulator’s <code>UNIMPLEMENTED</code>, see
+<p>The four calls run no edition rule of their own, and neither do <code>.plan()</code> and <code>.sync()</code>:
+Firestore’s <code>INVALID_ARGUMENT</code> answers arrive as <code>DatabaseError</code>, and so does the emulator’s
+<code>UNIMPLEMENTED</code>, see
 <a href="#the-firestore-emulator">The Firestore emulator</a>. A reserved group such as <code>__default__</code> fails with
 <code>InvalidParametersError</code>.</p>
-<p>Failures the library finds itself carry a code in the error:</p>
+<p>Failures the library finds itself carry a code in the error. The codes are the constants of
+<code>firestore::errors::codes</code>:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4767,26 +5185,19 @@ leave alone. Both are zero here, since the group carries nothing undeclared.</p>
 listing. Its time counts in the report’s <code>total</code> and in no phase.</p>
 <p><code>.sync()</code> also logs a <code>Firestore Index Apply</code> span with one child span per applied action, and a
 <code>Firestore Index Wait</code> span when waiting is requested, with one child span per operation polled.</p>
-<h2 id="timings-unchanged-ttl-and-the-emulator-marker-on-the-report"><a class="header" href="#timings-unchanged-ttl-and-the-emulator-marker-on-the-report">Timings, unchanged TTL and the emulator marker on the report</a></h2>
+<h2 id="timings-and-unchanged-ttl-on-the-report"><a class="header" href="#timings-and-unchanged-ttl-on-the-report">Timings and unchanged TTL on the report</a></h2>
 <p><code>FirestoreIndexSyncReport</code> carries a <code>timings</code> value alongside its lists: the whole call’s
 duration, plus how long listing, applying and, when you waited, waiting each took. <code>Display</code>
 prints it as <code>timings: total &lt;n&gt; ms</code>, followed by <code>, list &lt;n&gt; ms</code>, <code>, apply &lt;n&gt; ms</code> and
 <code>, wait &lt;n&gt; ms</code> for whichever phases ran.</p>
 <p><code>unchanged_ttl</code> reports declared TTL fields that were already active before this sync ran,
 separately from <code>enabled_ttl</code>, which is what this sync itself enabled.</p>
-<p><code>skipped</code> is <code>Some(FirestoreIndexSyncSkipReason::Emulator)</code> when the sync ran against the emulator
-and did nothing, <code>None</code> once it has actually talked to Firestore. <code>.plan()</code> carries the same
-marker on <code>FirestoreIndexPlan::skipped</code>, so a plan made against the emulator prints as skipped
-rather than as “no changes needed” on a project the emulator never actually checked.</p>
 <h2 id="the-firestore-emulator"><a class="header" href="#the-firestore-emulator">The Firestore emulator</a></h2>
-<p><code>.plan()</code> and <code>.sync()</code> both skip when <code>FIRESTORE_EMULATOR_HOST</code> is set. The emulator answers
-<code>ListIndexes</code> with <code>UNIMPLEMENTED</code>, so both return an empty plan or report carrying the emulator
-<code>skipped</code> marker, and log an <code>info</code> line saying so, instead of failing, so the same startup code
-runs unmodified against the emulator.</p>
-<p>The emulator serves no Firestore Admin API, whatever its edition. <code>list()</code>, <code>create()</code>, <code>delete()</code>
-and <code>update_field()</code>, and the SQL index statements, are explicit commands, so they fail with the
-emulator’s own <code>UNIMPLEMENTED</code>, which arrives as <code>DatabaseError</code> and whose message names the admin
-method.</p>
+<p>The emulator serves no Firestore Admin API, whatever its edition. <code>.plan()</code>, <code>.sync()</code>, <code>list()</code>,
+<code>create()</code>, <code>delete()</code> and <code>update_field()</code>, and the SQL index statements, fail with the emulator’s
+own <code>UNIMPLEMENTED</code>, which arrives as <code>DatabaseError</code> and whose message names the admin method.
+Startup code that runs <code>.sync()</code> against the emulator handles that error, or runs it only
+where <code>FIRESTORE_EMULATOR_HOST</code> is not set.</p>
 <h2 id="iam-roles"><a class="header" href="#iam-roles">IAM roles</a></h2>
 <p><code>.plan()</code> needs only <code>roles/datastore.viewer</code>. <code>.sync()</code> needs <code>roles/datastore.indexAdmin</code> too,
 to create, update and delete indexes and fields. Both read the database’s edition, through the
@@ -4851,10 +5262,11 @@ index for a collection-group index rather than a single collection.</p>
     .await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p>On a Standard edition database a composite index needs at least two fields, unless it is a single
-vector field on its own; an Enterprise edition database takes an index of one field, see
-<a href="#the-enterprise-edition">TTL and the Enterprise edition</a>. An index holds at
-most one <code>.array_contains()</code> field. <code>.plan()</code> and <code>.sync()</code> check these rules before anything is
+<p>On a Standard edition database Firestore takes a composite index of at least two fields, unless it
+is a single vector field on its own; an Enterprise edition database takes an index of one field, see
+<a href="#the-enterprise-edition">TTL and the Enterprise edition</a>. Firestore answers
+<code>INVALID_ARGUMENT</code> to an index it refuses, and <code>.plan()</code> and <code>.sync()</code> send it as declared. An index
+holds at most one <code>.array_contains()</code> field, which <code>.plan()</code> and <code>.sync()</code> check before anything is
 written, see <a href="#declaring-a-collection-groups-indexes">Declaring a collection group’s indexes</a>.</p>
 <h2 id="vector-indexes"><a class="header" href="#vector-indexes">Vector indexes</a></h2>
 <p>A <code>.vector(dimension)</code> field makes a vector index, which a Core
@@ -4969,8 +5381,7 @@ index, which Firestore indexes by default;</li>
 search needs;</li>
 <li>a search index is always built as <code>FirestoreIndexDensity::SparseAny</code>, see
 <a href="#density">Density</a>;</li>
-<li>on a Standard edition database <code>.plan()</code> and <code>.sync()</code> refuse a search index with
-<code>InvalidParametersError</code> before anything is written.</li>
+<li>a Standard edition database answers a search index with <code>INVALID_ARGUMENT</code>.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="ttl-and-the-enterprise-edition"><a class="header" href="#ttl-and-the-enterprise-edition">TTL and the Enterprise edition</a></h1>
@@ -4998,13 +5409,13 @@ describes how the move is applied, and when a second TTL field is refused.</p>
 <h2 id="the-enterprise-edition"><a class="header" href="#the-enterprise-edition">The Enterprise edition</a></h2>
 <p>An Enterprise edition database builds no index on its own: there are no automatic single-field
 indexes, so every index a query needs is one the statement declares. <code>.plan()</code> and <code>.sync()</code> read
-the database’s edition once per call and follow its rules:</p>
+the database’s edition once per call to match a declaration with a listed index, and send what the
+statement declares. Firestore answers what it refuses with <code>INVALID_ARGUMENT</code>. On Enterprise:</p>
 <ul>
 <li>a composite index of one field is how a single field is indexed. Firestore accepts one there,
 ordered, <code>.array_contains()</code> or <code>__name__</code>, while a Standard edition database refuses it;</li>
-<li><code>.field_overrides()</code> has nothing to override. An <code>.exempt()</code> is already satisfied and is never
-written. An override that lists indexes fails with <code>InvalidParametersError</code> before anything is
-written, since Firestore refuses it;</li>
+<li><code>.field_overrides()</code> has nothing to override. An <code>.exempt()</code> is never planned, since Firestore
+stores nothing for it. Firestore refuses an override that lists indexes;</li>
 <li><code>.ttl()</code> enables a TTL field as on Standard, and <code>.prune_undeclared()</code> disables an undeclared
 one the same way;</li>
 <li>Firestore appends no <code>__name__</code> field to an index, so <code>[a, b]</code> and <code>[a, b, __name__]</code> are two
@@ -5042,13 +5453,15 @@ a value such as an email address is kept unique across a collection.</p>
 <p>The <em>density</em> of an index says which documents it holds an entry for. A dense index holds one for
 every document, with a missing field stored as unset; a sparse index leaves out the documents
 that lack the indexed fields. Enterprise builds an index dense by default, and a text or geo
-search index always as <code>FirestoreIndexDensity::SparseAny</code>, an entry for each document that has at
+search index as <code>FirestoreIndexDensity::SparseAny</code>, an entry for each document that has at
 least one of the fields. Standard builds every index as <code>SparseAll</code>, an entry only for a document
-that has all of them, and accepts no other density, while Enterprise refuses <code>SparseAll</code>, and a
-search index there takes only <code>SparseAny</code>. A declaration with a density the edition refuses fails
-with <code>InvalidParametersError</code> before anything is written. Two indexes over the same fields are
-different indexes when their densities differ, or when one is unique and the other is not, and a
-declaration matches only the one it describes.</p>
+that has all of them. Firestore answers a density its edition does not build with
+<code>INVALID_ARGUMENT</code>.</p>
+<p>A declaration that sets a density matches only a listed index of that density. A declaration
+without one matches a listed index over the same fields, scope and <code>unique</code> flag whatever its
+density, and when several listed indexes match, the library treats it as it does any declaration
+that matches several. Two indexes over the same fields are different indexes when one is unique
+and the other is not.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="bulk-delete"><a class="header" href="#bulk-delete">Bulk delete</a></h1>
 <p>Firestore’s <code>BulkDeleteDocuments</code> operation removes every document in one or more collection
@@ -5140,10 +5553,8 @@ few documents, from about ten seconds to about a minute. The time grows with the
 wait timeout well above that.</p>
 <p>Bulk delete works on both editions, and removes the named collection group at every depth.</p>
 <h2 id="the-firestore-emulator-1"><a class="header" href="#the-firestore-emulator-1">The Firestore emulator</a></h2>
-<p>The emulator answers <code>BulkDeleteDocuments</code> with <code>UNIMPLEMENTED</code>. Unlike index management, which
-skips silently against the emulator, a bulk delete returns an explicit error instead: there is no
-safe default result to report for an operation the emulator cannot run at all, so the library
-never lets it pass silently.</p>
+<p>The emulator answers <code>BulkDeleteDocuments</code> with <code>UNIMPLEMENTED</code>, which a bulk delete returns as
+<code>DatabaseError</code>.</p>
 <h2 id="iam-roles-1"><a class="header" href="#iam-roles-1">IAM roles</a></h2>
 <p><code>roles/datastore.bulkAdmin</code> carries <code>datastore.databases.bulkDelete</code>, the permission a bulk delete
 needs. <code>roles/datastore.owner</code> is a superset and also works.</p>
@@ -5194,10 +5605,9 @@ credentials and uses a stub token instead, since the emulator does not
 authenticate the requests. This means you do not need any credentials
 configured to develop against it. Specifying credentials explicitly, with
 <code>FirestoreDb::with_options_auth()</code> for example, still takes precedence.</p>
-<p>The emulator implements neither <a href="#bulk-delete">bulk delete</a>, which fails with
-<code>BULK_DELETE_UNAVAILABLE_ON_EMULATOR</code>, nor <a href="#the-firestore-emulator">index management</a>,
-which skips its run. The index calls <code>list()</code>, <code>create()</code>, <code>delete()</code> and <code>update_field()</code>, and the
-<a href="#index-statements-1">SQL index statements</a>, fail with the emulator’s <code>UNIMPLEMENTED</code>. <code>SHOW COLLECTIONS</code>
+<p>The emulator answers <a href="#bulk-delete">bulk delete</a> and <a href="#the-firestore-emulator">index management</a>
+with <code>UNIMPLEMENTED</code>: <code>.plan()</code>, <code>.sync()</code>, the index calls <code>list()</code>, <code>create()</code>, <code>delete()</code> and
+<code>update_field()</code>, and the <a href="#index-statements-1">SQL index statements</a> fail with it. <code>SHOW COLLECTIONS</code>
 works on the emulator.</p>
 <h2 id="on-the-enterprise-edition-9"><a class="header" href="#on-the-enterprise-edition-9">On the Enterprise edition</a></h2>
 <p>The emulator acts as one edition, Standard by default. <code>gcloud</code> starts it, and needs a Java runtime

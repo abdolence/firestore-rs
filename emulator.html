@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0efaf104.js"></script>
+        <script src="toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -187,10 +187,9 @@ credentials and uses a stub token instead, since the emulator does not
 authenticate the requests. This means you do not need any credentials
 configured to develop against it. Specifying credentials explicitly, with
 <code>FirestoreDb::with_options_auth()</code> for example, still takes precedence.</p>
-<p>The emulator implements neither <a href="./bulk-delete.html">bulk delete</a>, which fails with
-<code>BULK_DELETE_UNAVAILABLE_ON_EMULATOR</code>, nor <a href="./index-management.html#the-firestore-emulator">index management</a>,
-which skips its run. The index calls <code>list()</code>, <code>create()</code>, <code>delete()</code> and <code>update_field()</code>, and the
-<a href="./sql/indexes.html">SQL index statements</a>, fail with the emulator’s <code>UNIMPLEMENTED</code>. <code>SHOW COLLECTIONS</code>
+<p>The emulator answers <a href="./bulk-delete.html">bulk delete</a> and <a href="./index-management.html#the-firestore-emulator">index management</a>
+with <code>UNIMPLEMENTED</code>: <code>.plan()</code>, <code>.sync()</code>, the index calls <code>list()</code>, <code>create()</code>, <code>delete()</code> and
+<code>update_field()</code>, and the <a href="./sql/indexes.html">SQL index statements</a> fail with it. <code>SHOW COLLECTIONS</code>
 works on the emulator.</p>
 <h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
 <p>The emulator acts as one edition, Standard by default. <code>gcloud</code> starts it, and needs a Java runtime

@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "../searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-0efaf104.js"></script>
+        <script src="../toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -210,10 +210,11 @@ index for a collection-group index rather than a single collection.</p>
     .await?;
 <span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
-<p>On a Standard edition database a composite index needs at least two fields, unless it is a single
-vector field on its own; an Enterprise edition database takes an index of one field, see
-<a href="./ttl-and-enterprise.html#the-enterprise-edition">TTL and the Enterprise edition</a>. An index holds at
-most one <code>.array_contains()</code> field. <code>.plan()</code> and <code>.sync()</code> check these rules before anything is
+<p>On a Standard edition database Firestore takes a composite index of at least two fields, unless it
+is a single vector field on its own; an Enterprise edition database takes an index of one field, see
+<a href="./ttl-and-enterprise.html#the-enterprise-edition">TTL and the Enterprise edition</a>. Firestore answers
+<code>INVALID_ARGUMENT</code> to an index it refuses, and <code>.plan()</code> and <code>.sync()</code> send it as declared. An index
+holds at most one <code>.array_contains()</code> field, which <code>.plan()</code> and <code>.sync()</code> check before anything is
 written, see <a href="../index-management.html#declaring-a-collection-groups-indexes">Declaring a collection group’s indexes</a>.</p>
 <h2 id="vector-indexes"><a class="header" href="#vector-indexes">Vector indexes</a></h2>
 <p>A <code>.vector(dimension)</code> field makes a vector index, which a Core

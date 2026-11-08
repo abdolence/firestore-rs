@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8d4eeee2.js";
+            window.path_to_searchindex_js = "searchindex-0f965eb9.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-0efaf104.js"></script>
+        <script src="toc-16032266.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -254,9 +254,11 @@ println!("{report}");
 </ul>
 <p>Each of <code>.composite()</code>, <code>.field_overrides()</code> and <code>.ttl()</code> replaces whatever an earlier call in the
 same chain set, so call each at most once. A field override or a TTL path may not repeat. These
-rules, the rules of the database’s edition, and the vector, field-count and density limits
-Firestore itself enforces, are checked at <code>.plan()</code>/<code>.sync()</code> before anything is written, and
-return <code>InvalidParametersError</code> naming what is wrong.</p>
+rules, and the structural rules of each index in <a href="./index-management/composite.html">Composite and vector indexes</a>,
+are checked at <code>.plan()</code>/<code>.sync()</code> before anything is written, and return <code>InvalidParametersError</code>
+naming what is wrong. Every other rule, including the rules of the database’s edition, is
+Firestore’s: <code>.plan()</code> and <code>.sync()</code> send what you declare, and Firestore answers <code>INVALID_ARGUMENT</code>
+with its own message when it refuses it.</p>
 <h2 id="plan-versus-sync"><a class="header" href="#plan-versus-sync">plan() versus sync()</a></h2>
 <p><code>.plan()</code> is read-only: it lists what Firestore already has for the owned group and reports what
 <code>.sync()</code> would change, without writing anything.</p>
@@ -614,11 +616,13 @@ is unique within one database.</p>
 <p>A delete by definition fails with <code>DataNotFoundError</code> when nothing matches, and with
 <code>DataConflictError</code>, naming the IDs, when several indexes match. On an Enterprise edition database
 two indexes over the same fields differ by <code>unique</code> and density, and the definition tells them apart.</p>
-<p>The four calls run no edition rule of their own: Firestore’s
-<code>INVALID_ARGUMENT</code> answers arrive as <code>DatabaseError</code>, and the emulator’s <code>UNIMPLEMENTED</code>, see
+<p>The four calls run no edition rule of their own, and neither do <code>.plan()</code> and <code>.sync()</code>:
+Firestore’s <code>INVALID_ARGUMENT</code> answers arrive as <code>DatabaseError</code>, and so does the emulator’s
+<code>UNIMPLEMENTED</code>, see
 <a href="#the-firestore-emulator">The Firestore emulator</a>. A reserved group such as <code>__default__</code> fails with
 <code>InvalidParametersError</code>.</p>
-<p>Failures the library finds itself carry a code in the error:</p>
+<p>Failures the library finds itself carry a code in the error. The codes are the constants of
+<code>firestore::errors::codes</code>:</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -669,26 +673,19 @@ leave alone. Both are zero here, since the group carries nothing undeclared.</p>
 listing. Its time counts in the report’s <code>total</code> and in no phase.</p>
 <p><code>.sync()</code> also logs a <code>Firestore Index Apply</code> span with one child span per applied action, and a
 <code>Firestore Index Wait</code> span when waiting is requested, with one child span per operation polled.</p>
-<h2 id="timings-unchanged-ttl-and-the-emulator-marker-on-the-report"><a class="header" href="#timings-unchanged-ttl-and-the-emulator-marker-on-the-report">Timings, unchanged TTL and the emulator marker on the report</a></h2>
+<h2 id="timings-and-unchanged-ttl-on-the-report"><a class="header" href="#timings-and-unchanged-ttl-on-the-report">Timings and unchanged TTL on the report</a></h2>
 <p><code>FirestoreIndexSyncReport</code> carries a <code>timings</code> value alongside its lists: the whole call’s
 duration, plus how long listing, applying and, when you waited, waiting each took. <code>Display</code>
 prints it as <code>timings: total &lt;n&gt; ms</code>, followed by <code>, list &lt;n&gt; ms</code>, <code>, apply &lt;n&gt; ms</code> and
 <code>, wait &lt;n&gt; ms</code> for whichever phases ran.</p>
 <p><code>unchanged_ttl</code> reports declared TTL fields that were already active before this sync ran,
 separately from <code>enabled_ttl</code>, which is what this sync itself enabled.</p>
-<p><code>skipped</code> is <code>Some(FirestoreIndexSyncSkipReason::Emulator)</code> when the sync ran against the emulator
-and did nothing, <code>None</code> once it has actually talked to Firestore. <code>.plan()</code> carries the same
-marker on <code>FirestoreIndexPlan::skipped</code>, so a plan made against the emulator prints as skipped
-rather than as “no changes needed” on a project the emulator never actually checked.</p>
 <h2 id="the-firestore-emulator"><a class="header" href="#the-firestore-emulator">The Firestore emulator</a></h2>
-<p><code>.plan()</code> and <code>.sync()</code> both skip when <code>FIRESTORE_EMULATOR_HOST</code> is set. The emulator answers
-<code>ListIndexes</code> with <code>UNIMPLEMENTED</code>, so both return an empty plan or report carrying the emulator
-<code>skipped</code> marker, and log an <code>info</code> line saying so, instead of failing, so the same startup code
-runs unmodified against the emulator.</p>
-<p>The emulator serves no Firestore Admin API, whatever its edition. <code>list()</code>, <code>create()</code>, <code>delete()</code>
-and <code>update_field()</code>, and the SQL index statements, are explicit commands, so they fail with the
-emulator’s own <code>UNIMPLEMENTED</code>, which arrives as <code>DatabaseError</code> and whose message names the admin
-method.</p>
+<p>The emulator serves no Firestore Admin API, whatever its edition. <code>.plan()</code>, <code>.sync()</code>, <code>list()</code>,
+<code>create()</code>, <code>delete()</code> and <code>update_field()</code>, and the SQL index statements, fail with the emulator’s
+own <code>UNIMPLEMENTED</code>, which arrives as <code>DatabaseError</code> and whose message names the admin method.
+Startup code that runs <code>.sync()</code> against the emulator handles that error, or runs it only
+where <code>FIRESTORE_EMULATOR_HOST</code> is not set.</p>
 <h2 id="iam-roles"><a class="header" href="#iam-roles">IAM roles</a></h2>
 <p><code>.plan()</code> needs only <code>roles/datastore.viewer</code>. <code>.sync()</code> needs <code>roles/datastore.indexAdmin</code> too,
 to create, update and delete indexes and fields. Both read the database’s edition, through the
