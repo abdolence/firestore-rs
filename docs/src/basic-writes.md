@@ -157,8 +157,11 @@ Other failures to expect from a single write:
 - `ABORTED`: Firestore received too many updates for one document per second, and answers with "Too much contention on
   these datastore entities. Please try again." Google's Java, Go and Python server libraries do not retry it on a
   single write, and neither does the library. Lower the rate of writes to that document;
-- `ALREADY_EXISTS`, as `FirestoreError::DataConflictError`: an `insert()` of an ID that exists. After a retried
-  `insert()` it can mean that the first attempt created the document;
+- `ALREADY_EXISTS`, as `FirestoreError::DataConflictError`: an `insert()` of an ID that exists, or an `update()` with
+  `Exists(false)` on a document that exists. After a retried write it can mean that the first attempt created the
+  document;
+- `NOT_FOUND`, as `FirestoreError::DataNotFoundError`: a `delete()` with `Exists(true)` on a document that does not
+  exist. After a retried `delete()` it can mean that the first attempt deleted the document;
 - `FAILED_PRECONDITION`: the precondition of the write did not hold, see
   [Update/delete preconditions](./preconditions.md). After a retried write with an `UpdateTime` precondition it can mean
   that the first attempt was applied.

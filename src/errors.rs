@@ -599,8 +599,9 @@ impl From<gcloud_sdk::tonic::Status> for FirestoreError {
                     | gcloud_sdk::tonic::Code::Unavailable
                     | gcloud_sdk::tonic::Code::ResourceExhausted => true,
                     // A request timeout that ran out leaves the outcome as unknown as a dropped
-                    // connection does, so it is retried like one. The server's own deadline is
-                    // retried by reads alone, through `from_read_status`.
+                    // connection does, so reads and simple batch writes retry it. Single
+                    // writes do not. The server's own deadline is retried by reads alone,
+                    // through `from_read_status`.
                     gcloud_sdk::tonic::Code::DeadlineExceeded => status
                         .source()
                         .is_some_and(|source| source.is::<gcloud_sdk::RequestTimeoutElapsed>()),

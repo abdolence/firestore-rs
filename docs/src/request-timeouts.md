@@ -48,7 +48,7 @@ let unlimited_db = db.clone_with_request_timeout(None);
 ## Retries
 
 The limit applies to each attempt. A request that runs out of it fails with a `DatabaseError` with the code
-`DeadlineExceeded` and `retry_possible` set, and it is retried wherever a dropped connection is:
+`DeadlineExceeded` and `retry_possible` set. Reads and simple batch writes retry it:
 - gets, lists, list collection IDs and the start of queries, aggregations, pipelines and SQL reads, up to `max_retries`
   times;
 - simple batch writes, until `retry_max_elapsed_time`. A retried batch may apply twice, for example an `increment`,
@@ -63,7 +63,7 @@ A pipeline or SQL write makes one attempt and clears the flag, see
 request, so no timeout or retry applies to it.
 
 Batch gets, partition queries, a query or aggregation stream that has already started and transaction commits return
-the error without a retry. A commit is never retried, because its writes may already be applied.
+the error without a retry. A transaction commit is never retried, because its writes may already be applied.
 
 The reads in the first item also retry a `DEADLINE_EXCEEDED` that Firestore itself answers with, up to `max_retries`
 times, with or without a request timeout set. Inserts, updates, deletes, batch gets, partition queries and streams that
@@ -75,8 +75,8 @@ have already started return it with `retry_possible` unset.
 `RESOURCE_EXHAUSTED` and `UNAVAILABLE`. A connection lost while a request is in flight is retried like `UNAVAILABLE`.
 
 These are the codes that Google's Firestore server libraries for Java, Go and Python retry a write on. They send every
-single write, a delete included, as a commit, and the library follows them. The Node.js library additionally retries
-`ABORTED` on a commit; the library does not, see [When a write fails](./basic-writes.md#when-a-write-fails).
+single write, a delete included, as a commit, so one list covers all three. The Node.js library also retries `ABORTED`
+on a commit. The library does not, see [When a write fails](./basic-writes.md#when-a-write-fails).
 
 Any other code is returned at once, whatever `retry_possible` says: `INTERNAL`, `ABORTED` and `DEADLINE_EXCEEDED`
 included, the request timeout running out among them.
@@ -86,6 +86,10 @@ say whether it was. Then:
 - an `insert()` fails with `ALREADY_EXISTS` when the first attempt created the document;
 - an `update()` or `delete()` with an `UpdateTime` [precondition](./preconditions.md) fails with `FAILED_PRECONDITION`,
   since the document no longer has that update time. The write went through, and the error reports that it did not;
+- an `update()` with `FirestoreWritePrecondition::Exists(false)` fails with `ALREADY_EXISTS` when the first attempt
+  created the document;
+- a `delete()` with `FirestoreWritePrecondition::Exists(true)` fails with `NOT_FOUND` when the first attempt deleted the
+  document;
 - a `delete()` without a precondition finds the document already gone, which is not an error;
 - an `update()` with [transformations](./document-transformations.md) applies them again: an `increment` adds its value
   twice. Do not use such an update where a repeated increment is wrong; run it in a transaction or set `max_retries`
