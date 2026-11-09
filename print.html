@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-382315ce.js";
+            window.path_to_searchindex_js = "searchindex-58352109.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-bf8dc4ac.js"></script>
@@ -4867,8 +4867,9 @@ cache.remove_collection("currencies").await?;
 <p><code>add_collection</code> downloads the collection first if it is preloaded, publishes it only once it is
 complete, and then extends the listener - so a listing never observes it half filled, and nothing
 written during the download is missed. A download that fails, even partway, fails <code>add_collection</code>
-with that error and publishes nothing. A persistent cache discards any rows an earlier run left for
-the collection before it downloads. <code>remove_collection</code> does the reverse, and also forgets the
+with that error and publishes nothing. On a persistent cache, <code>add_collection</code> first discards any
+rows an earlier run left for the collection, whatever its load mode, so <code>PreloadAllIfEmpty</code>
+downloads it again. <code>remove_collection</code> does the reverse, and also forgets the
 collection’s resume token so its listener target ID cannot be reused against a different query.
 Use <code>remove_collection_at</code> for a sub-collection, whose absolute path a bare name cannot address.
 A collection whose target Firestore ends, for example on <code>PERMISSION_DENIED</code>, stays configured and
@@ -4976,8 +4977,11 @@ another order from an Enterprise edition database than from the cache, see
 <li><code>PreloadAllDocs</code> (<code>.collection_with(name, |c| c.preload_all())</code>): preload all documents in the
 collection;</li>
 <li><code>PreloadAllIfEmpty</code> (<code>.collection_with(name, |c| c.preload_all_if_empty())</code>): preload all
-documents only if the cache is empty. This is useful for the persistent cache; for the memory
-cache it is the same as <code>PreloadAllDocs</code>, since an in-memory cache always starts empty.</li>
+documents only if the cache is empty. This is useful for the persistent cache, where the saving
+applies when the cache loads; for the memory cache it is the same as <code>PreloadAllDocs</code>, since an
+in-memory cache always starts empty. A persistent cache whose process stopped in the middle of a
+download can hold part of a collection, and <code>PreloadAllIfEmpty</code> then treats it as complete. Use
+<code>PreloadAllDocs</code> where that matters.</li>
 </ul>
 <p><code>.preloaded_collection(name)</code> picks the appropriate preloading mode for the backend.</p>
 <p>A lazily filled collection holds only the documents that happened to be read through it.
