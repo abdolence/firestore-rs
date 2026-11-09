@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-98c573ef.js";
+            window.path_to_searchindex_js = "searchindex-293fb92a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-bf8dc4ac.js"></script>
@@ -319,10 +319,33 @@ A selection without an alias replaces the array field with its elements:</p>
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <h2 id="replacing-documents"><a class="header" href="#replacing-documents">Replacing documents</a></h2>
-<p><code>.replace_with(expr, mode)</code> replaces each document with the map <code>expr</code> evaluates to.
-<code>FirestoreReplaceWithMode::FullReplace</code> makes the map the document; <code>MergeOverwriteExisting</code> adds
-the map’s fields and replaces the fields of the same name; <code>MergeKeepExisting</code> adds them and keeps
-the fields of the same name.</p>
+<p><code>.replace_with(expr, mode)</code> reshapes each document in the pipeline’s output and changes nothing in
+storage. The stored documents stay as they are; only the documents the pipeline returns have the
+new shape. Stored documents change only through the write stages, see
+<a href="./pipeline-writes.html">Pipeline writes</a>.</p>
+<p><code>expr</code> must evaluate to a map. The mode says how the map and the document combine:</p>
+<ul>
+<li><code>FirestoreReplaceWithMode::FullReplace</code>: the map becomes the document, and the document’s own
+fields are dropped;</li>
+<li><code>FirestoreReplaceWithMode::MergeOverwriteExisting</code>: the map’s fields are added to the document,
+and replace its fields of the same name;</li>
+<li><code>FirestoreReplaceWithMode::MergeKeepExisting</code>: the map’s fields are added to the document, and
+its fields of the same name stay.</li>
+</ul>
+<p>For <code>books/book-10</code>, which has the fields <code>title</code> (“Dune”), <code>author</code>, <code>genre</code>, <code>awards</code> (a map of
+<code>hugo</code> and <code>nebula</code>) and others, each mode outputs:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>expr</code></th><th>Mode</th><th>Output document</th></tr>
+</thead>
+<tbody>
+<tr><td>the field <code>awards</code></td><td><code>FullReplace</code></td><td><code>hugo: true</code> and <code>nebula: true</code>, and no other field</td></tr>
+<tr><td>the map <code>title: "Overwritten", extra: 1</code></td><td><code>MergeOverwriteExisting</code></td><td>every field of the book, with <code>title</code> “Overwritten” and the new field <code>extra</code> 1</td></tr>
+<tr><td>the map <code>title: "Overwritten", extra: 1</code></td><td><code>MergeKeepExisting</code></td><td>every field of the book, with <code>title</code> still “Dune” and the new field <code>extra</code> 1</td></tr>
+</tbody>
+</table>
+</div>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
 </span>let awards = db
@@ -334,6 +357,27 @@ the fields of the same name.</p>
     .query()
     .await?;
 <span class="boring">let _ = awards;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>The query returns the two award fields, and a read of <code>books/book-10</code> afterwards still returns the
+whole book. The same holds for the two merge modes.</p>
+<p>A write stage stores what the stages before it output, so a write after <code>replace_with</code> stores the
+replaced documents. This <code>insert</code> stores the awards of <code>books/book-10</code> as the document
+<code>book-awards/book-10</code>, and leaves <code>books/book-10</code> as it is:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let written = db
+    .fluent()
+    .pipeline()
+    .insert()
+    .into("book-awards")
+    .document_id(|e| e.constant("book-10"))
+    .documents(["books/book-10"])
+    .replace_with(|e| e.field("awards"), FirestoreReplaceWithMode::FullReplace)
+    .atomic()
+    .execute()
+    .await?;
+<span class="boring">let _ = written;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
 <h2 id="nearest-neighbours"><a class="header" href="#nearest-neighbours">Nearest neighbours</a></h2>
