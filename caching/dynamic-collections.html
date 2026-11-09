@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-b4f0fff6.js";
+            window.path_to_searchindex_js = "../searchindex-382315ce.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-bf8dc4ac.js"></script>
@@ -190,7 +190,9 @@ cache.remove_collection("currencies").await?;
 </span><span class="boring">}</span></code></pre>
 <p><code>add_collection</code> downloads the collection first if it is preloaded, publishes it only once it is
 complete, and then extends the listener - so a listing never observes it half filled, and nothing
-written during the download is missed. <code>remove_collection</code> does the reverse, and also forgets the
+written during the download is missed. A download that fails, even partway, fails <code>add_collection</code>
+with that error and publishes nothing. A persistent cache discards any rows an earlier run left for
+the collection before it downloads. <code>remove_collection</code> does the reverse, and also forgets the
 collection’s resume token so its listener target ID cannot be reused against a different query.
 Use <code>remove_collection_at</code> for a sub-collection, whose absolute path a bare name cannot address.
 A collection whose target Firestore ends, for example on <code>PERMISSION_DENIED</code>, stays configured and
