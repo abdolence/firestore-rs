@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Created by calling [`FirestoreExprBuilder::update()`](crate::FirestoreExprBuilder::update).
 /// This builder allows specifying which fields to update. If no fields are specified,
-/// the entire object provided later will be merged with the existing document.
+/// the object provided later replaces the whole document.
 #[derive(Clone, Debug)]
 pub struct FirestoreUpdateInitialBuilder<'a, D>
 where
@@ -41,11 +41,9 @@ where
 
     /// Specifies the exact set of fields to update.
     ///
-    /// If this is set, only the fields listed here will be modified. Any other fields
-    /// in the provided object/document will be ignored. If not set (the default),
-    /// the update acts as a merge: fields in the provided object will overwrite
-    /// existing fields, and new fields will be added. Fields not present in the
-    /// provided object will remain untouched in the document.
+    /// If this is set, only the fields listed here are written, and the other fields of the
+    /// stored document stay as they are. If not set (the default), the provided object replaces
+    /// the whole stored document, and the fields it does not have are removed.
     #[inline]
     pub fn fields<I>(self, update_only_fields: I) -> Self
     where
@@ -472,7 +470,7 @@ where
     /// Adds server-side field transformations to the update operation.
     ///
     /// This can be combined with updating fields from an object. The transformations
-    /// are applied *after* the object merge/update.
+    /// are applied *after* the object is written.
     #[inline]
     pub fn transforms<FN>(self, transforms_builder: FN) -> Self
     where
@@ -484,7 +482,7 @@ where
         }
     }
 
-    /// Queues this update (object merge and/or transforms) on `transaction`, to be sent when the
+    /// Queues this update (object write and/or transforms) on `transaction`, to be sent when the
     /// transaction commits.
     ///
     /// Returns an error if the update cannot be added to the transaction.
@@ -515,7 +513,7 @@ where
         }
     }
 
-    /// Queues this update (object merge and/or transforms) on `batch`, to be sent when the batch
+    /// Queues this update (object write and/or transforms) on `batch`, to be sent when the batch
     /// is written.
     ///
     /// Returns an error if the update cannot be added to the batch.
@@ -552,7 +550,7 @@ where
 
 /// A builder for an update operation that consists *only* of field transformations.
 ///
-/// This is used when no object data is being merged, and the update is solely
+/// This is used when no object data is written, and the update is solely
 /// defined by server-side atomic operations like increment, array manipulation, etc.
 #[derive(Clone, Debug)]
 pub struct FirestoreUpdateOnlyTransformBuilder<'a, D>
