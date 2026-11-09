@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 
 use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use gcloud_sdk::google::firestore::v1::Document;
 use gcloud_sdk::prost::Message;
 use redb::*;
@@ -222,10 +222,10 @@ impl FirestorePersistentCacheBackend {
             None => selector,
         };
 
-        let mut stream = selector.batch(document_ids.to_vec()).await?;
+        let mut stream = selector.batch_with_errors(document_ids.to_vec()).await?;
         let mut found: Vec<Document> = Vec::new();
-        while let Some((_, doc)) = stream.next().await {
-            if let Some(doc) = doc {
+        while let Some(fetched) = stream.next().await {
+            if let (_, Some(doc)) = fetched? {
                 found.push(doc);
             }
         }
@@ -328,36 +328,8 @@ impl FirestorePersistentCacheBackend {
                         continue;
                     }
 
-                    let params = if let Some(parent) = &config.parent {
-                        db.fluent()
-                            .select()
-                            .from(config.collection_name.as_str())
-                            .parent(parent)
-                    } else {
-                        db.fluent().select().from(config.collection_name.as_str())
-                    };
-
-                    let stream = params.stream_query().await?;
-
-                    stream
-                        .enumerate()
-                        .map(|(index, docs)| {
-                            if index > 0 && index % 5000 == 0 {
-                                debug!(
-                                    collection_path = collection_path.as_str(),
-                                    entries_loaded = index,
-                                    "Collection preload in progress...",
-                                );
-                            }
-                            docs
-                        })
-                        .ready_chunks(100)
-                        .for_each(|docs| async move {
-                            if let Err(err) = self.write_batch_docs(collection_path, docs) {
-                                error!(?err, "Error while preloading collection.");
-                            }
-                        })
-                        .await;
+                    self.download_collection(db, collection_path, config)
+                        .await?;
 
                     let updated_records = if matches!(
                         config.collection_load_mode,
@@ -378,6 +350,43 @@ impl FirestorePersistentCacheBackend {
             }
         }
         Ok(())
+    }
+
+    /// Streams every document of a collection into its table. A stream that fails partway fails
+    /// the download, because the table would otherwise pass as the complete collection.
+    async fn download_collection(
+        &self,
+        db: &FirestoreDb,
+        collection_path: &str,
+        config: &FirestoreCacheCollectionConfiguration,
+    ) -> FirestoreResult<()> {
+        let params = if let Some(parent) = &config.parent {
+            db.fluent()
+                .select()
+                .from(config.collection_name.as_str())
+                .parent(parent)
+        } else {
+            db.fluent().select().from(config.collection_name.as_str())
+        };
+
+        params
+            .stream_query_with_errors()
+            .await?
+            .enumerate()
+            .map(|(index, doc)| {
+                if index > 0 && index % 5000 == 0 {
+                    debug!(
+                        collection_path,
+                        entries_loaded = index,
+                        "Collection preload in progress...",
+                    );
+                }
+                doc
+            })
+            .ready_chunks(100)
+            .map(|docs| docs.into_iter().collect::<FirestoreResult<Vec<_>>>())
+            .try_for_each(|docs| async move { self.write_batch_docs(collection_path, docs) })
+            .await
     }
 
     fn write_batch_docs(&self, collection_path: &str, docs: Vec<Document>) -> FirestoreResult<()> {
@@ -593,8 +602,10 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
         let collection_path = collection_config.resolve_collection_path(db.get_documents_path());
 
-        // A collection added at runtime starts from nothing - `remove_collection` deletes the
-        // table - so both preloading modes mean the same thing here.
+        // A collection added at runtime starts from nothing, whatever an earlier run left in its
+        // table: the target attaches from `read_from_time`, so it never reports what was deleted
+        // while the cache was closed. Both preloading modes therefore mean the same thing here.
+        self.drop_collection_table(&collection_path)?;
         self.create_collection_table(&collection_path)?;
 
         if collection_config.collection_load_mode.is_preloading() {
@@ -627,27 +638,8 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                 return Ok(target_params);
             }
 
-            let params = if let Some(parent) = &collection_config.parent {
-                db.fluent()
-                    .select()
-                    .from(collection_config.collection_name.as_str())
-                    .parent(parent)
-            } else {
-                db.fluent()
-                    .select()
-                    .from(collection_config.collection_name.as_str())
-            };
-
-            params
-                .stream_query()
-                .await?
-                .ready_chunks(100)
-                .for_each(|docs| async {
-                    if let Err(err) = self.write_batch_docs(&collection_path, docs) {
-                        error!(?err, "Error while preloading collection.");
-                    }
-                })
-                .await;
+            self.download_collection(db, &collection_path, &collection_config)
+                .await?;
 
             info!(
                 collection_path = collection_path.as_str(),
@@ -988,8 +980,13 @@ impl From<redb::CompactionError> for FirestoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::fake_firestore::{
+        batch_get_found_message, run_query_message, FakeFirestore, FakeResponse,
+    };
     use futures::TryStreamExt;
     use gcloud_sdk::google::firestore::v1::{DocumentDelete, DocumentRemove, TargetChange};
+    use gcloud_sdk::tonic::Code;
+    use std::time::Duration;
 
     const DOCS: &str = "projects/test/databases/(default)/documents";
 
@@ -1021,6 +1018,10 @@ mod tests {
             },
         );
 
+        backend_over(config)
+    }
+
+    fn backend_over(config: FirestoreCacheConfiguration) -> TestBackend {
         let dir = tempfile::tempdir().expect("temp dir");
         let backend =
             FirestorePersistentCacheBackend::with_options(config, dir.path().join("redb"))
@@ -1070,6 +1071,149 @@ mod tests {
                 .expect("listing"),
             FirestoreCachedValue::UseCached(_)
         )
+    }
+
+    /// The documents path of a database served by [`FakeFirestore`].
+    const FAKE_DOCS: &str = "projects/fake-firestore/databases/(default)/documents";
+
+    fn fake_document(id: &str) -> FirestoreDocument {
+        FirestoreDocument {
+            name: format!("{FAKE_DOCS}/a/{id}"),
+            ..Default::default()
+        }
+    }
+
+    fn collection_a(
+        load_mode: FirestoreCacheCollectionLoadMode,
+    ) -> FirestoreCacheCollectionConfiguration {
+        FirestoreCacheCollectionConfiguration::new(
+            "a",
+            FirestoreListenerTarget::new(1000),
+            load_mode,
+        )
+    }
+
+    async fn query_server(
+        documents: Vec<FirestoreDocument>,
+        failure: Option<Code>,
+    ) -> FakeFirestore {
+        FakeFirestore::start(move |_, _| {
+            let messages = documents.iter().cloned().map(run_query_message).collect();
+            let response = match failure {
+                Some(code) => FakeResponse::MessagesThenStatus(messages, code),
+                None => FakeResponse::Paced(messages, Duration::ZERO),
+            };
+            ("RunQuery".to_string(), response)
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_preload_that_fails_partway_fails_load() {
+        let backend = preloaded(&[("a", 1000)]);
+        let server = query_server(vec![fake_document("one")], Some(Code::Internal)).await;
+
+        let FirestoreError::DatabaseError(error) = backend
+            .load(&FirestoreCacheOptions::new("partial".into()), &server.db)
+            .await
+            .unwrap_err()
+        else {
+            panic!("load did not fail with the stream's database error");
+        };
+        assert_eq!(error.public.code, "Internal");
+    }
+
+    #[tokio::test]
+    async fn a_watched_documents_preload_that_fails_partway_fails_load() {
+        let backend = backend_over(
+            FirestoreCacheConfiguration::new().add_collection_config_at(
+                DOCS,
+                collection_a(FirestoreCacheCollectionLoadMode::PreloadAllDocs)
+                    .with_documents(["one", "two"]),
+            ),
+        );
+        let server = FakeFirestore::start(|_, _| {
+            (
+                "BatchGetDocuments".to_string(),
+                FakeResponse::MessagesThenStatus(
+                    vec![batch_get_found_message(fake_document("one"))],
+                    Code::Internal,
+                ),
+            )
+        })
+        .await;
+
+        let FirestoreError::DatabaseError(error) = backend
+            .load(&FirestoreCacheOptions::new("partial".into()), &server.db)
+            .await
+            .unwrap_err()
+        else {
+            panic!("load did not fail with the batch get's database error");
+        };
+        assert_eq!(error.public.code, "Internal");
+    }
+
+    #[tokio::test]
+    async fn a_preload_that_fails_partway_fails_add_collection_and_publishes_nothing() {
+        let backend = preloaded(&[]);
+        let server = query_server(vec![fake_document("one")], Some(Code::Internal)).await;
+
+        let FirestoreError::DatabaseError(error) = backend
+            .add_collection(
+                &FirestoreCacheOptions::new("partial".into()),
+                &server.db,
+                collection_a(FirestoreCacheCollectionLoadMode::PreloadAllDocs),
+            )
+            .await
+            .unwrap_err()
+        else {
+            panic!("add_collection did not fail with the stream's database error");
+        };
+        assert_eq!(error.public.code, "Internal");
+        assert!(backend.config().collections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_collection_discards_rows_left_by_an_earlier_run() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let data_file = dir.path().join("redb");
+
+        let earlier_run = FirestorePersistentCacheBackend::with_options(
+            FirestoreCacheConfiguration::new(),
+            data_file.clone(),
+        )
+        .expect("backend");
+        earlier_run
+            .write_batch_docs(
+                &format!("{FAKE_DOCS}/a"),
+                vec![fake_document("deleted_while_closed"), fake_document("kept")],
+            )
+            .expect("rows of the earlier run");
+        earlier_run.shutdown().await.expect("shutdown");
+
+        let backend = FirestorePersistentCacheBackend::with_options(
+            FirestoreCacheConfiguration::new(),
+            data_file,
+        )
+        .expect("backend");
+        let server = query_server(vec![fake_document("kept")], None).await;
+
+        backend
+            .add_collection(
+                &FirestoreCacheOptions::new("reopened".into()),
+                &server.db,
+                collection_a(FirestoreCacheCollectionLoadMode::PreloadAllDocs),
+            )
+            .await
+            .expect("added");
+
+        let collection_path = format!("{FAKE_DOCS}/a");
+        assert_eq!(backend.table_len(&collection_path).unwrap(), 1);
+        assert!(backend
+            .get_doc_by_path(&fake_document("kept").name)
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]

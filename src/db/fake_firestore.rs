@@ -5,7 +5,8 @@ use gcloud_sdk::google::firestore::admin::v1::{
     BulkDeleteDocumentsMetadata, Field as ProtoField, Index as ProtoIndex,
 };
 use gcloud_sdk::google::firestore::v1::{
-    get_document_request, BeginTransactionResponse, CommitResponse, GetDocumentRequest,
+    batch_get_documents_response, get_document_request, BatchGetDocumentsResponse,
+    BeginTransactionResponse, CommitResponse, Document, GetDocumentRequest, RunQueryResponse,
 };
 #[cfg(feature = "admin")]
 use gcloud_sdk::google::longrunning::{operation, Operation};
@@ -92,6 +93,10 @@ pub(crate) enum FakeResponse {
     /// A stream of framed messages, the first at once and each next one the given interval after
     /// the one before, then a `grpc-status: 0` trailer: a stream that is slow but healthy.
     Paced(Vec<Vec<u8>>, Duration),
+    /// A stream of framed messages that then ends with a `grpc-status` trailer of `code`: a stream
+    /// that fails after the client has already received part of it. Never `Code::Ok`; use
+    /// [`FakeResponse::Message`] or [`FakeResponse::Paced`].
+    MessagesThenStatus(Vec<Vec<u8>>, Code),
     /// A Trailers-Only error response with no body - the only way a streaming call's error is
     /// visible at its initial `await` rather than only once polled. Never `Code::Ok`: a unary
     /// call answered that way fails for want of a response message; use [`FakeResponse::empty`].
@@ -140,6 +145,24 @@ pub(super) fn begin_failure(code: Code) -> (String, FakeResponse) {
         format!("Begin failed: {code:?}"),
         FakeResponse::Status(code),
     )
+}
+
+/// A framed `RunQuery` stream message carrying `document`.
+pub(crate) fn run_query_message(document: Document) -> Vec<u8> {
+    RunQueryResponse {
+        document: Some(document),
+        ..Default::default()
+    }
+    .encode_to_vec()
+}
+
+/// A framed `BatchGetDocuments` stream message carrying `document` as found.
+pub(crate) fn batch_get_found_message(document: Document) -> Vec<u8> {
+    BatchGetDocumentsResponse {
+        result: Some(batch_get_documents_response::Result::Found(document)),
+        ..Default::default()
+    }
+    .encode_to_vec()
 }
 
 /// The transaction ID, as [`begin_response`] numbers them, that a `GetDocument` request reads in.
@@ -406,9 +429,19 @@ async fn answer(
     }
     match response {
         FakeResponse::Message(message) => {
-            send_messages(respond, vec![message], Duration::ZERO).await
+            send_messages(respond, vec![message], Duration::ZERO, Code::Ok).await
         }
-        FakeResponse::Paced(messages, interval) => send_messages(respond, messages, interval).await,
+        FakeResponse::Paced(messages, interval) => {
+            send_messages(respond, messages, interval, Code::Ok).await
+        }
+        FakeResponse::MessagesThenStatus(messages, code) => {
+            assert_ne!(
+                code,
+                Code::Ok,
+                "end a successful stream with FakeResponse::Paced"
+            );
+            send_messages(respond, messages, Duration::ZERO, code).await
+        }
         // A single Trailers-Only frame, with no body ever opened, is what makes even a streaming
         // call's error visible at its initial `await` rather than only once its caller polls the
         // response.
@@ -437,11 +470,12 @@ async fn answer(
 }
 
 /// Answers with each of `messages`, `interval` apart and the first at once, then a
-/// `grpc-status: 0` trailer.
+/// `grpc-status` trailer of `status`.
 async fn send_messages(
     mut respond: SendResponse<Bytes>,
     messages: Vec<Vec<u8>>,
     interval: Duration,
+    status: Code,
 ) {
     let Ok(mut send) = respond.send_response(ok_headers().body(()).unwrap(), false) else {
         return;
@@ -455,7 +489,7 @@ async fn send_messages(
         }
     }
     let mut trailers = hyper::HeaderMap::new();
-    trailers.insert("grpc-status", HeaderValue::from_static("0"));
+    trailers.insert("grpc-status", HeaderValue::from(status as i32));
     let _ = send.send_trailers(trailers);
 }
 

@@ -5,7 +5,7 @@ use futures::stream::BoxStream;
 use moka::future::{Cache, CacheBuilder};
 
 use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -309,9 +309,9 @@ impl FirestoreMemoryCacheBackend {
                 None => selector,
             };
 
-            let mut stream = selector.batch(document_ids.to_vec()).await?;
-            while let Some((_, doc)) = stream.next().await {
-                if let Some(doc) = doc {
+            let mut stream = selector.batch_with_errors(document_ids.to_vec()).await?;
+            while let Some(fetched) = stream.next().await {
+                if let (_, Some(doc)) = fetched? {
                     let (_, document_id) = split_document_path(&doc.name);
                     mem_cache.insert(document_id.to_string(), doc).await;
                 }
@@ -335,17 +335,15 @@ impl FirestoreMemoryCacheBackend {
             db.fluent().select().from(config.collection_name.as_str())
         };
 
-        let stream = params.stream_query().await?;
-
-        stream
-            .for_each_concurrent(1, |doc| {
-                let mem_cache = mem_cache.clone();
-                async move {
-                    let (_, document_id) = split_document_path(&doc.name);
-                    mem_cache.insert(document_id.to_string(), doc).await;
-                }
+        params
+            .stream_query_with_errors()
+            .await?
+            .try_for_each(|doc| async {
+                let (_, document_id) = split_document_path(&doc.name);
+                mem_cache.insert(document_id.to_string(), doc).await;
+                Ok(())
             })
-            .await;
+            .await?;
 
         mem_cache.run_pending_tasks().await;
 
@@ -758,10 +756,14 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::fake_firestore::{
+        batch_get_found_message, run_query_message, FakeFirestore, FakeResponse,
+    };
     use futures::TryStreamExt;
     use gcloud_sdk::google::firestore::v1::{
         DocumentChange, DocumentDelete, DocumentRemove, TargetChange,
     };
+    use gcloud_sdk::tonic::Code;
     use std::time::Duration;
 
     const DOCS: &str = "projects/test/databases/(default)/documents";
@@ -1130,6 +1132,98 @@ mod tests {
             panic!("add_collection did not fail with a cache error");
         };
         assert_eq!(error.public.code, "CacheShutdown");
+    }
+
+    fn document(id: &str) -> FirestoreDocument {
+        FirestoreDocument {
+            name: doc_path("a", id),
+            ..Default::default()
+        }
+    }
+
+    async fn failing_partway_server() -> FakeFirestore {
+        FakeFirestore::start(|_, _| {
+            (
+                "RunQuery".to_string(),
+                FakeResponse::MessagesThenStatus(
+                    vec![run_query_message(document("one"))],
+                    Code::Internal,
+                ),
+            )
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_preload_that_fails_partway_fails_load() {
+        let backend = preloaded(&[("a", 1000)]);
+        let server = failing_partway_server().await;
+
+        let FirestoreError::DatabaseError(error) = backend
+            .load(&FirestoreCacheOptions::new("partial".into()), &server.db)
+            .await
+            .unwrap_err()
+        else {
+            panic!("load did not fail with the stream's database error");
+        };
+        assert_eq!(error.public.code, "Internal");
+    }
+
+    #[tokio::test]
+    async fn a_preload_that_fails_partway_fails_add_collection_and_publishes_nothing() {
+        let backend = preloaded(&[]);
+        let server = failing_partway_server().await;
+
+        let FirestoreError::DatabaseError(error) = backend
+            .add_collection(
+                &FirestoreCacheOptions::new("partial".into()),
+                &server.db,
+                FirestoreCacheCollectionConfiguration::new(
+                    "a",
+                    FirestoreListenerTarget::new(1000),
+                    FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+                ),
+            )
+            .await
+            .unwrap_err()
+        else {
+            panic!("add_collection did not fail with the stream's database error");
+        };
+        assert_eq!(error.public.code, "Internal");
+        assert!(backend.config().collections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_watched_documents_preload_that_fails_partway_fails_load() {
+        let config = FirestoreCacheConfiguration::new().add_collection_config_at(
+            DOCS,
+            FirestoreCacheCollectionConfiguration::new(
+                "a",
+                FirestoreListenerTarget::new(1000),
+                FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+            )
+            .with_documents(["one", "two"]),
+        );
+        let backend = FirestoreMemoryCacheBackend::new(config).expect("backend");
+        let server = FakeFirestore::start(|_, _| {
+            (
+                "BatchGetDocuments".to_string(),
+                FakeResponse::MessagesThenStatus(
+                    vec![batch_get_found_message(document("one"))],
+                    Code::Internal,
+                ),
+            )
+        })
+        .await;
+
+        let FirestoreError::DatabaseError(error) = backend
+            .load(&FirestoreCacheOptions::new("partial".into()), &server.db)
+            .await
+            .unwrap_err()
+        else {
+            panic!("load did not fail with the batch get's database error");
+        };
+        assert_eq!(error.public.code, "Internal");
     }
 
     #[tokio::test]
