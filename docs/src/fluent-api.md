@@ -70,6 +70,8 @@ db.fluent()
 # }
 ```
 
+[Create, update and delete documents](./basic-writes.md) covers the write calls above in detail.
+
 The low level "support" traits are crate private. The
 [migration guide](https://github.com/abdolence/firestore-rs/blob/master/MIGRATION.md) lists the fluent replacement of every removed method.
 

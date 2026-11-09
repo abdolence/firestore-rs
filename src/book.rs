@@ -42,6 +42,9 @@ mod timestamps {}
 #[doc = include_str!("../docs/src/nested-collections.md")]
 mod nested_collections {}
 
+#[doc = include_str!("../docs/src/basic-writes.md")]
+mod basic_writes {}
+
 #[doc = include_str!("../docs/src/transactions.md")]
 mod transactions {}
 

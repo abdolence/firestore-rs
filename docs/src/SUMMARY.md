@@ -27,6 +27,7 @@
 
 # Writes and transactions
 
+- [Create, update and delete documents](./basic-writes.md)
 - [Transactions](./transactions.md)
 - [Batch writes](./batch-writes.md)
 - [Document transformations](./document-transformations.md)
