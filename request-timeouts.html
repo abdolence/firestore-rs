@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-4836e0b5.js";
+            window.path_to_searchindex_js = "searchindex-eae8ce63.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-bf8dc4ac.js"></script>
@@ -217,30 +217,57 @@ let unlimited_db = db.clone_with_request_timeout(None);
 </span><span class="boring">}</span></code></pre>
 <h2 id="retries"><a class="header" href="#retries">Retries</a></h2>
 <p>The limit applies to each attempt. A request that runs out of it fails with a <code>DatabaseError</code> with the code
-<code>DeadlineExceeded</code> and <code>retry_possible</code> set, and it is retried wherever a dropped connection is:</p>
+<code>DeadlineExceeded</code> and <code>retry_possible</code> set. Reads and simple batch writes retry it:</p>
 <ul>
 <li>gets, lists, list collection IDs and the start of queries, aggregations, pipelines and SQL reads, up to <code>max_retries</code>
 times;</li>
 <li>simple batch writes, until <code>retry_max_elapsed_time</code>. A retried batch may apply twice, for example an <code>increment</code>,
 as it can after a dropped connection.</li>
 </ul>
+<p><code>insert()</code>, <code>update()</code> and <code>delete()</code> return a request timeout that ran out without a retry, see
+<a href="#single-writes">Single writes</a>.</p>
 <p>A read makes <code>max_retries + 1</code> attempts, and the error that comes back after the last one still has <code>retry_possible</code> set.
 A pipeline or SQL write makes one attempt and clears the flag, see
 <a href="./pipeline-writes.html#retries-and-listeners">Retries and listeners</a>. A pipeline that a cache session answers sends no
 request, so no timeout or retry applies to it.</p>
 <p>Batch gets, partition queries, a query or aggregation stream that has already started and transaction commits return
-the error without a retry. A commit is never retried, because its writes may already be applied.</p>
+the error without a retry. A transaction commit is never retried, because its writes may already be applied.</p>
 <p>The reads in the first item also retry a <code>DEADLINE_EXCEEDED</code> that Firestore itself answers with, up to <code>max_retries</code>
-times, with or without a request timeout set. Writes, batch gets, partition queries and streams that have already
-started return it with <code>retry_possible</code> unset.</p>
+times, with or without a request timeout set. Inserts, updates, deletes, batch gets, partition queries and streams that
+have already started return it with <code>retry_possible</code> unset.</p>
+<h3 id="single-writes"><a class="header" href="#single-writes">Single writes</a></h3>
+<p><code>insert()</code>, <code>update()</code> and <code>delete()</code> run with <code>.execute()</code> are sent again up to <code>max_retries</code> times after
+<code>RESOURCE_EXHAUSTED</code> and <code>UNAVAILABLE</code>. A connection lost while a request is in flight is retried like <code>UNAVAILABLE</code>.</p>
+<p>These are the codes that Google’s Firestore server libraries for Java, Go and Python retry a write on. They send every
+single write, a delete included, as a commit, so one list covers all three. The Node.js library also retries <code>ABORTED</code>
+on a commit. The library does not, see <a href="./basic-writes.html#when-a-write-fails">When a write fails</a>.</p>
+<p>Any other code is returned at once, whatever <code>retry_possible</code> says: <code>INTERNAL</code>, <code>ABORTED</code> and <code>DEADLINE_EXCEEDED</code>
+included, the request timeout running out among them.</p>
+<p>A write that is sent again can find that the first attempt was applied, since <code>UNAVAILABLE</code> and a lost connection do not
+say whether it was. Then:</p>
+<ul>
+<li>an <code>insert()</code> fails with <code>ALREADY_EXISTS</code> when the first attempt created the document;</li>
+<li>an <code>update()</code> or <code>delete()</code> with an <code>UpdateTime</code> <a href="./preconditions.html">precondition</a> fails with <code>FAILED_PRECONDITION</code>,
+since the document no longer has that update time. The write went through, and the error reports that it did not;</li>
+<li>an <code>update()</code> with <code>FirestoreWritePrecondition::Exists(false)</code> fails with <code>ALREADY_EXISTS</code> when the first attempt
+created the document;</li>
+<li>a <code>delete()</code> with <code>FirestoreWritePrecondition::Exists(true)</code> fails with <code>NOT_FOUND</code> when the first attempt deleted the
+document;</li>
+<li>a <code>delete()</code> without a precondition finds the document already gone, which is not an error;</li>
+<li>an <code>update()</code> with <a href="./document-transformations.html">transformations</a> applies them again: an <code>increment</code> adds its value
+twice. Do not use such an update where a repeated increment is wrong; run it in a transaction or set <code>max_retries</code>
+to <code>0</code>.</li>
+</ul>
+<p>Writes queued with <code>add_to_transaction</code> or <code>add_to_batch</code>, transaction commits, and pipeline and SQL writes are not
+retried this way.</p>
 <p>Be aware not to set <code>retry_max_elapsed_time</code> to <code>None</code> on a simple batch writer when you set a request timeout: against
 a Firestore that stopped answering, it then retries forever, one timeout per attempt. The 60 second default is checked
 between attempts, so the last attempt can still run for a whole timeout past it.</p>
 <h3 id="retry-limits"><a class="header" href="#retry-limits">Retry limits</a></h3>
-<p>Reads, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
-next retry, each delay randomised by up to a third either way. They differ in when they stop:</p>
+<p>Reads, single writes, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by
+1.5 times for each next retry, each delay randomised by up to a third either way. They differ in when they stop:</p>
 <ul>
-<li>reads stop after <code>max_retries</code> of <code>FirestoreDbOptions</code>, 3 by default, with no time limit;</li>
+<li>reads and single writes stop after <code>max_retries</code> of <code>FirestoreDbOptions</code>, 3 by default, with no time limit;</li>
 <li>simple batch writes stop after <code>retry_max_elapsed_time</code> of <code>FirestoreSimpleBatchWriteOptions</code>, 60 seconds by default,
 and ignore <code>max_retries</code>;</li>
 <li>transactions stop after <code>max_retries</code> of <code>FirestoreTransactionOptions</code>, 4 by default, and, when set, after

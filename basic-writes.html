@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-4836e0b5.js";
+            window.path_to_searchindex_js = "searchindex-eae8ce63.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-bf8dc4ac.js"></script>
@@ -213,8 +213,9 @@ let object_returned: MyTestStructure = db
 <p>The conflict is reported as <code>FirestoreError::DataConflictError</code>.</p>
 <p><code>.execute()</code> returns the stored document deserialised into the type you ask for. Use
 <code>.execute::&lt;()&gt;()</code> when you do not need it.</p>
-<p>To let Firestore choose the ID, call <code>.generate_document_id()</code> instead of <code>.document_id(..)</code>.
-The generated ID comes back in a field marked with the <code>_firestore_id</code> alias, see
+<p>To have an ID chosen for you, call <code>.generate_document_id()</code> instead of <code>.document_id(..)</code>. The library generates it as
+Firestore’s own clients do: 20 random letters and digits. A write that is sent again after a failure carries the same
+ID, so it cannot create a second document. The generated ID comes back in a field marked with the <code>_firestore_id</code> alias, see
 <a href="./document-metadata.html">Document metadata as struct fields</a>:</p>
 <pre><code class="language-rust no_run"><span class="boring">use firestore::*;
 </span><span class="boring">use serde::{Deserialize, Serialize};
@@ -299,6 +300,25 @@ an error:</p>
 </span><span class="boring">}</span></code></pre>
 <p>Documents in the subcollections of a deleted document stay in place. To remove a whole collection
 see <a href="./bulk-delete.html">Bulk delete</a>.</p>
+<h2 id="when-a-write-fails"><a class="header" href="#when-a-write-fails">When a write fails</a></h2>
+<p>The library sends <code>insert()</code>, <code>update()</code> and <code>delete()</code> again after <code>RESOURCE_EXHAUSTED</code> and <code>UNAVAILABLE</code>, up to
+<code>max_retries</code> times with a growing delay. These are the codes that Google’s Firestore server libraries retry a write on,
+see <a href="./request-timeouts.html#single-writes">Single writes</a>. When the error still comes back after the last retry, the
+write may or may not be applied.</p>
+<p>Other failures to expect from a single write:</p>
+<ul>
+<li><code>ABORTED</code>: Firestore received too many updates for one document per second, and answers with “Too much contention on
+these datastore entities. Please try again.” Google’s Java, Go and Python server libraries do not retry it on a
+single write, and neither does the library. Lower the rate of writes to that document;</li>
+<li><code>ALREADY_EXISTS</code>, as <code>FirestoreError::DataConflictError</code>: an <code>insert()</code> of an ID that exists, or an <code>update()</code> with
+<code>Exists(false)</code> on a document that exists. After a retried write it can mean that the first attempt created the
+document;</li>
+<li><code>NOT_FOUND</code>, as <code>FirestoreError::DataNotFoundError</code>: a <code>delete()</code> with <code>Exists(true)</code> on a document that does not
+exist. After a retried <code>delete()</code> it can mean that the first attempt deleted the document;</li>
+<li><code>FAILED_PRECONDITION</code>: the precondition of the write did not hold, see
+<a href="./preconditions.html">Update/delete preconditions</a>. After a retried write with an <code>UpdateTime</code> precondition it can mean
+that the first attempt was applied.</li>
+</ul>
 <p>All three builders accept <code>.parent(..)</code> for documents in <a href="./nested-collections.html">nested collections</a>.
 <code>insert()</code> and <code>update()</code> accept <code>.document(..)</code> instead of <code>.object(..)</code> for
 <a href="./dynamic-documents.html">working on dynamic/document level</a>.</p>

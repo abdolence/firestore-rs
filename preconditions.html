@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-4836e0b5.js";
+            window.path_to_searchindex_js = "searchindex-eae8ce63.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-bf8dc4ac.js"></script>
@@ -200,6 +200,18 @@
 <span class="boring">let _ = object_updated;
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
+<h2 id="concurrent-writes-to-one-document"><a class="header" href="#concurrent-writes-to-one-document">Concurrent writes to one document</a></h2>
+<p>Single writes to the same document are applied one after another, and the last one wins. There is no conflict error
+between them: an <code>update()</code> overwrites the fields an earlier write stored, whether or not its sender saw that write.
+A document that gets more writes per second than it can take fails them with <code>ABORTED</code>, see
+<a href="./basic-writes.html#when-a-write-fails">When a write fails</a>.</p>
+<p><code>FirestoreWritePrecondition::UpdateTime</code> makes a write conditional on the document not having changed since it was
+read. A write that finds a different update time fails with <code>FAILED_PRECONDITION</code>, as a <code>DatabaseError</code> with the code
+<code>FailedPrecondition</code>. The library does not retry it, and sending the same write again fails the same way. The error also
+comes back when the library sent the write again after a first attempt that was applied, see
+<a href="./request-timeouts.html#single-writes">Single writes</a>.</p>
+<p>To read a document and write a value computed from it, use <code>run_transaction</code>, which runs the whole function again when
+the document changed, see <a href="./transactions.html">Transactions</a>.</p>
 
                     </main>
 
