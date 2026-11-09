@@ -8,8 +8,8 @@ env:
   GCP_ENTERPRISE_DATABASE_ID: firestore-rs-enterprise
   GCP_PROJECT_ID: 288860578009
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_protected && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 jobs:
   build:
     # Same-repository branches already run on push; pull_request runs only for forks.
