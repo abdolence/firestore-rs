@@ -791,19 +791,26 @@ async fn first_change_is_delivered_when_targets_resume_differently() -> TestResu
             .await?;
             let resumed_target = FirestoreListenerTarget::try_from(RESUMED_TARGET)?;
             let token_stored = eventually_within(CHANGE_TIMEOUT, CHANGE_POLL, || async {
-                Ok(storage.get_token(&resumed_target).await.is_some()
-                    && count_target_changes(
-                        &first_events.snapshot(),
-                        FirestoreListenerTargetChangeType::Current,
-                        FRESH_TARGET,
-                    ) > 0)
+                Ok(storage.get_token(&resumed_target).await.is_some())
+            })
+            .await?;
+            let fresh_current = eventually_within(CHANGE_TIMEOUT, CHANGE_POLL, || async {
+                Ok(count_target_changes(
+                    &first_events.snapshot(),
+                    FirestoreListenerTargetChangeType::Current,
+                    FRESH_TARGET,
+                ) > 0)
             })
             .await?;
             first.shutdown().await?;
-            let token = storage.get_token(&resumed_target).await;
-            let Some(token) = token.filter(|_| token_stored) else {
-                return TestResult::Ok(None);
-            };
+            if !fresh_current {
+                return Err("the fresh target never became current on the first listener".into());
+            }
+            let token = storage
+                .get_token(&resumed_target)
+                .await
+                .filter(|_| token_stored)
+                .ok_or("the first listener stored no resume token for the resumed target")?;
 
             let (mut second, second_events) = start_listener(
                 &db,
@@ -838,7 +845,7 @@ async fn first_change_is_delivered_when_targets_resume_differently() -> TestResu
             .await?;
             info!(elapsed = ?written_at.elapsed(), received, "Waited for the first change.");
             second.shutdown().await?;
-            Ok(Some((both_current, received)))
+            TestResult::Ok((both_current, received))
         }
         .await;
 
@@ -848,8 +855,7 @@ async fn first_change_is_delivered_when_targets_resume_differently() -> TestResu
             &[&seeded_doc_ids[0], &seeded_doc_ids[1], &changed_doc_id],
         )
         .await?;
-        let (both_current, received) =
-            observed?.ok_or("the first listener stored no resume token for its target")?;
+        let (both_current, received) = observed?;
         assert!(both_current, "the targets never became current");
         assert!(
             received,

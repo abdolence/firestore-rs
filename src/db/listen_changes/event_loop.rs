@@ -88,7 +88,7 @@ where
                 continue;
             }
             debug!(
-                num_targets = on_stream.len(),
+                num_opening_targets = on_stream.len(),
                 "Start listening on targets..."
             );
 
@@ -126,7 +126,8 @@ where
         mut listen_stream: BoxStream<'_, FirestoreResult<ListenResponse>>,
         on_stream: &mut FirestoreListenerStreamTargets,
     ) -> FirestoreResult<()> {
-        // The targets the opening request held back go on the open stream.
+        // The targets the opening request held back, and any registered while connecting, go on
+        // the open stream.
         self.add_due_targets(on_stream).await?;
         // When the stream last had nothing left to handle while Firestore owed it an answer.
         let mut silent_since: Option<Instant> = None;

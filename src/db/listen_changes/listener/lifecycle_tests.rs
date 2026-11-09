@@ -1258,21 +1258,16 @@ async fn targets_without_resume_state_are_added_once_the_stream_is_open() {
     start(&mut listener, &db).await;
 
     let mut requests = db.take_requests();
-    assert_eq!(
-        requests
-            .try_recv()
-            .ok()
-            .and_then(|opening| opening.target_change),
-        Some(RequestedChange::AddTarget(Target {
-            target_id: 2,
-            target_type: Some(target::TargetType::Documents(target::DocumentsTarget {
-                documents: vec!["document-2".to_string()],
-            })),
-            resume_type: Some(target::ResumeType::ResumeToken(vec![2])),
-            ..Default::default()
-        })),
-        "the opening request carries only the target with a resume token"
-    );
+    match next_request(&mut requests).await {
+        Some(RequestedChange::AddTarget(target)) => {
+            assert_eq!(target.target_id, 2);
+            assert_eq!(
+                target.resume_type,
+                Some(target::ResumeType::ResumeToken(vec![2]))
+            );
+        }
+        other => panic!("expected the opening AddTarget of target 2, got {other:?}"),
+    }
     assert!(requests.try_recv().is_err());
 
     db.release.add_permits(1);

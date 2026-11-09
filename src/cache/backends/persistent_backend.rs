@@ -291,7 +291,9 @@ impl FirestorePersistentCacheBackend {
 
     async fn preload_collections(&self, db: &FirestoreDb) -> Result<(), FirestoreError> {
         for (collection_path, config) in &self.config().collections {
-            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path.as_str());
+            // Reads of a collection with no table fail, and a preload of a collection that is
+            // empty in Firestore writes nothing to create one.
+            self.create_collection_table(collection_path)?;
 
             match config.collection_load_mode {
                 FirestoreCacheCollectionLoadMode::PreloadAllDocs
@@ -372,16 +374,7 @@ impl FirestorePersistentCacheBackend {
                         updated_records, "Preloading collection has been finished.",
                     );
                 }
-                FirestoreCacheCollectionLoadMode::PreloadNone => {
-                    let tx = self
-                        .open_db()?
-                        .as_ref()
-                        .expect("database checked open")
-                        .begin_write()?;
-                    debug!(collection_path, "Creating corresponding collection table.",);
-                    tx.open_table(td)?;
-                    tx.commit()?;
-                }
+                FirestoreCacheCollectionLoadMode::PreloadNone => {}
             }
         }
         Ok(())
@@ -475,7 +468,6 @@ impl FirestorePersistentCacheBackend {
         Ok(existed)
     }
 
-    /// Whether any configured collection holds documents.
     fn holds_documents(&self) -> FirestoreResult<bool> {
         for collection_path in self.config().collections.keys() {
             if self.table_len(collection_path)? > 0 {
@@ -545,13 +537,10 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         let holds_earlier_documents = self.holds_documents()?;
         self.preload_collections(db).await?;
 
-        // Every target of the listener's stream resumes the same way: Firestore holds back the
-        // first change of a stream whose targets mix resuming with listening from scratch for
-        // tens of seconds.
-        //
-        // A cache holding documents from an earlier run leaves each target to its stored resume
-        // token, or to a replay without one. An empty cache resumes from `read_from_time`, before
-        // which it holds nothing.
+        // A new cache is complete as of `read_from_time`, which was captured before the preload
+        // read anything, so resuming from it loses nothing. A cache that holds documents from an
+        // earlier run must not resume from it: it would skip what changed while the cache was
+        // closed. Its targets resume from their stored tokens, or replay without one.
         let resume_type = if holds_earlier_documents {
             None
         } else {
