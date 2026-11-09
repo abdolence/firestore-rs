@@ -206,6 +206,43 @@ impl FirestoreUpdateSupport for MockDatabase {
         unreachable!()
     }
 
+    async fn update_obj_with_transforms<I, O, S>(
+        &self,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
+    async fn update_obj_with_transforms_at<I, O, S>(
+        &self,
+        parent: &str,
+        collection_id: &str,
+        document_id: S,
+        obj: &I,
+        update_only: Option<Vec<String>>,
+        return_only_fields: Option<Vec<String>>,
+        precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
+    ) -> FirestoreResult<O>
+    where
+        I: Serialize + Sync + Send,
+        for<'de> O: Deserialize<'de>,
+        S: AsRef<str> + Send,
+    {
+        unreachable!()
+    }
+
     async fn update_doc(
         &self,
         collection_id: &str,

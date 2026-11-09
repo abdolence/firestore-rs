@@ -407,6 +407,9 @@ where
     /// Serializes the object, sends the update to Firestore, and deserializes the stored result
     /// into `O`.
     ///
+    /// With [`transforms`](Self::transforms) set, the object and the transforms are sent as one
+    /// atomic write, and the result is the document as stored by that write.
+    ///
     /// Returns an error if serialization or the request fails, if a precondition was set and
     /// does not hold, or if the result does not deserialize into `O`.
     ///
@@ -436,34 +439,60 @@ where
     where
         for<'de> O: Deserialize<'de>,
     {
-        if let Some(parent) = self.parent {
-            self.db
-                .update_obj_at(
-                    parent.as_str(),
-                    self.collection_id.as_str(),
-                    self.document_id,
-                    self.object,
-                    self.update_only_fields,
-                    self.return_only_fields,
-                    self.precondition,
-                    // Note: The current FirestoreUpdateSupport::update_obj_at doesn't take transforms.
-                    // This might be an oversight or transforms are handled differently for object updates.
-                    // If transforms are intended here, the trait method needs adjustment.
-                    // For now, passing an empty vec or ignoring self.transforms if not supported by the trait.
-                )
-                .await
-        } else {
-            self.db
-                .update_obj(
-                    self.collection_id.as_str(),
-                    self.document_id,
-                    self.object,
-                    self.update_only_fields,
-                    self.return_only_fields,
-                    self.precondition,
-                    // Similar note as above for transforms.
-                )
-                .await
+        let has_transforms = !self.transforms.is_empty();
+        match (self.parent, has_transforms) {
+            (Some(parent), false) => {
+                self.db
+                    .update_obj_at(
+                        parent.as_str(),
+                        self.collection_id.as_str(),
+                        self.document_id,
+                        self.object,
+                        self.update_only_fields,
+                        self.return_only_fields,
+                        self.precondition,
+                    )
+                    .await
+            }
+            (None, false) => {
+                self.db
+                    .update_obj(
+                        self.collection_id.as_str(),
+                        self.document_id,
+                        self.object,
+                        self.update_only_fields,
+                        self.return_only_fields,
+                        self.precondition,
+                    )
+                    .await
+            }
+            (Some(parent), true) => {
+                self.db
+                    .update_obj_with_transforms_at(
+                        parent.as_str(),
+                        self.collection_id.as_str(),
+                        self.document_id,
+                        self.object,
+                        self.update_only_fields,
+                        self.return_only_fields,
+                        self.precondition,
+                        self.transforms,
+                    )
+                    .await
+            }
+            (None, true) => {
+                self.db
+                    .update_obj_with_transforms(
+                        self.collection_id.as_str(),
+                        self.document_id,
+                        self.object,
+                        self.update_only_fields,
+                        self.return_only_fields,
+                        self.precondition,
+                        self.transforms,
+                    )
+                    .await
+            }
         }
     }
 

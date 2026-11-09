@@ -88,6 +88,9 @@ say whether it was. Then:
 - an `update()` or `delete()` with an `UpdateTime` [precondition](./preconditions.md) fails with `FAILED_PRECONDITION`,
   since the document no longer has that update time. The write went through, and the error reports that it did not;
 - a `delete()` without a precondition finds the document already gone, which is not an error.
+- an `update()` with [transformations](./document-transformations.md) applies them again: an `increment` adds its value
+  twice. Do not use such an update where a repeated increment is wrong; run it in a transaction or set `max_retries`
+  to `0`.
 
 Writes queued with `add_to_transaction` or `add_to_batch`, transaction commits, and pipeline and SQL writes are not
 retried this way.
