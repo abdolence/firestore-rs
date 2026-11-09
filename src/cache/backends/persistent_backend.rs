@@ -495,6 +495,25 @@ impl FirestorePersistentCacheBackend {
         Ok(existed)
     }
 
+    /// Whether any configured collection already holds documents, as the collections of a cache
+    /// reopened over an earlier run's data do.
+    fn holds_documents(&self) -> FirestoreResult<bool> {
+        let read_tx = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_read()?;
+        for collection_path in self.config().collections.keys() {
+            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path.as_str());
+            match read_tx.open_table(td) {
+                Ok(table) if table.len()? > 0 => return Ok(true),
+                Ok(_) | Err(redb::TableError::TableDoesNotExist(_)) => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+        Ok(false)
+    }
+
     fn table_len(&self, collection_id: &str) -> FirestoreResult<u64> {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id);
         let read_tx = self
@@ -547,21 +566,27 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
         let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
 
+        let reopened = self.holds_documents()?;
         self.preload_collections(db).await?;
+
+        // Every target of the listener's stream resumes the same way. Firestore holds back the first
+        // change of a stream whose targets mix resuming from a read time with listening from
+        // scratch for tens of seconds, and then reports a deletion only as a changed document
+        // count, which forces a resynchronisation.
+        //
+        // Documents left by an earlier run may be stale, so a reopened cache listens from scratch
+        // to refresh them; a new one is complete as of `read_from_time`.
+        let resume_type = if reopened {
+            None
+        } else {
+            Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
+        };
 
         Ok(self
             .config()
             .collections
-            .iter()
-            .map(|(collection_path, collection_config)| {
-                let collection_table_len = self.table_len(collection_path).ok().unwrap_or(0);
-                let resume_type = if collection_table_len == 0 {
-                    Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
-                } else {
-                    None
-                };
-                collection_config.listener_target_params(resume_type)
-            })
+            .values()
+            .map(|collection_config| collection_config.listener_target_params(resume_type.clone()))
             .collect())
     }
 
