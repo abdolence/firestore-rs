@@ -1,7 +1,7 @@
 # Document transformations
 
-The library supports server side document transformations in [transactions](./transactions.md) and
-[batch writes](./batch-writes.md):
+The library supports server side document transformations in [transactions](./transactions.md),
+[batch writes](./batch-writes.md) and single updates:
 
 ```rust,no_run
 # use firestore::*;
@@ -43,3 +43,33 @@ db.fluent()
 # Ok(())
 # }
 ```
+
+A single update with `.execute()` applies the object and then the transformations, in this order and atomically, and
+returns the document as stored by that write:
+
+```rust,no_run
+# use firestore::*;
+# use serde::{Deserialize, Serialize};
+# #[derive(Debug, Clone, Deserialize, Serialize)]
+# struct MyTestStructure { some_num: i32, some_array: Vec<i32> }
+# const TEST_COLLECTION_NAME: &str = "test";
+# async fn example(db: FirestoreDb, my_obj: MyTestStructure) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+let updated: MyTestStructure = db
+    .fluent()
+    .update()
+    .in_col(TEST_COLLECTION_NAME)
+    .document_id("test-5")
+    .object(&my_obj)
+    .transforms(|t| t.fields([t.field(path!(MyTestStructure::some_num)).increment(10)]))
+    .execute()
+    .await?;
+# Ok(())
+# }
+```
+
+The update is sent as a commit, and the document is read back at the time of that commit, with `.object(..)` as with
+`.document(..)`. When the read fails, `.execute()` returns its error although the write was applied. A
+transformation-only update with `.only_transform()` has no `.execute()`: queue it on a transaction or a batch.
+
+Be aware that a sent-again update applies a transformation such as `increment` twice when the first attempt was
+applied, see [Single writes](./request-timeouts.md#single-writes).

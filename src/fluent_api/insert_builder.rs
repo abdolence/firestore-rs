@@ -38,7 +38,7 @@ where
 /// A builder for specifying the document ID for an insert operation.
 ///
 /// This stage allows either providing a specific document ID or opting for
-/// Firestore to auto-generate one.
+/// the library to generate one.
 #[derive(Clone, Debug)]
 pub struct FirestoreInsertDocIdBuilder<'a, D>
 where
@@ -72,7 +72,9 @@ where
         )
     }
 
-    /// Configures the operation to let Firestore auto-generate the document ID.
+    /// Configures the operation to generate the document ID in the library, as Firestore's own
+    /// clients do: 20 random letters and digits. The ID is the same on every attempt of the
+    /// request, so a retry cannot create a second document.
     #[inline]
     pub fn generate_document_id(self) -> FirestoreInsertDocObjBuilder<'a, D> {
         FirestoreInsertDocObjBuilder::new(self.db, self.collection_id, None)

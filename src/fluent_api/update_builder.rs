@@ -169,6 +169,7 @@ where
             document,
             self.return_only_fields,
             self.precondition,
+            self.transforms,
         )
     }
 
@@ -205,6 +206,7 @@ where
     document: Document,
     return_only_fields: Option<Vec<String>>,
     precondition: Option<FirestoreWritePrecondition>,
+    transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, D> FirestoreUpdateDocExecuteBuilder<'a, D>
@@ -219,6 +221,7 @@ where
         document: Document,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> Self {
         Self {
             db,
@@ -227,10 +230,15 @@ where
             document,
             return_only_fields,
             precondition,
+            transforms,
         }
     }
 
     /// Sends the update to Firestore and returns the document as stored.
+    ///
+    /// With [`transforms`](FirestoreUpdateDocObjBuilder::transforms) set, the document and the
+    /// transforms are sent as one atomic write, and the result is the document as stored by that
+    /// write.
     ///
     /// Returns an error if the request fails, or if a precondition was set and does not hold.
     pub async fn execute(self) -> FirestoreResult<Document> {
@@ -244,6 +252,7 @@ where
                 self.update_only_fields,
                 self.return_only_fields,
                 self.precondition,
+                self.transforms,
             )
             .await
     }
@@ -407,6 +416,9 @@ where
     /// Serializes the object, sends the update to Firestore, and deserializes the stored result
     /// into `O`.
     ///
+    /// With [`transforms`](Self::transforms) set, the object and the transforms are sent as one
+    /// atomic write, and the result is the document as stored by that write.
+    ///
     /// Returns an error if serialization or the request fails, if a precondition was set and
     /// does not hold, or if the result does not deserialize into `O`.
     ///
@@ -446,10 +458,7 @@ where
                     self.update_only_fields,
                     self.return_only_fields,
                     self.precondition,
-                    // Note: The current FirestoreUpdateSupport::update_obj_at doesn't take transforms.
-                    // This might be an oversight or transforms are handled differently for object updates.
-                    // If transforms are intended here, the trait method needs adjustment.
-                    // For now, passing an empty vec or ignoring self.transforms if not supported by the trait.
+                    self.transforms,
                 )
                 .await
         } else {
@@ -461,7 +470,7 @@ where
                     self.update_only_fields,
                     self.return_only_fields,
                     self.precondition,
-                    // Similar note as above for transforms.
+                    self.transforms,
                 )
                 .await
         }

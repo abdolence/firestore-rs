@@ -179,6 +179,7 @@ impl FirestoreUpdateSupport for MockDatabase {
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<O>
     where
         I: Serialize + Sync + Send,
@@ -197,6 +198,7 @@ impl FirestoreUpdateSupport for MockDatabase {
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<O>
     where
         I: Serialize + Sync + Send,
@@ -213,6 +215,7 @@ impl FirestoreUpdateSupport for MockDatabase {
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<Document> {
         unreachable!()
     }

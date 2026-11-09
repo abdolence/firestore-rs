@@ -81,6 +81,7 @@ pub trait FirestoreUpdateSupport {
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<O>
     where
         I: Serialize + Sync + Send,
@@ -96,6 +97,7 @@ pub trait FirestoreUpdateSupport {
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<O>
     where
         I: Serialize + Sync + Send,
@@ -109,6 +111,7 @@ pub trait FirestoreUpdateSupport {
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<Document>;
 }
 

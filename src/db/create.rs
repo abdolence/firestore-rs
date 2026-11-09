@@ -4,14 +4,14 @@ use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
-use gcloud_sdk::RequestTimeouts;
+use rand::distr::{Alphanumeric, SampleString};
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
 /// Validates the IDs for a create request before it reaches the server.
 ///
-/// `document_id` is validated only when `Some`: `None` means "let Firestore generate one", and
-/// that empty placeholder must not be rejected as an invalid document ID.
+/// `document_id` is validated only when `Some`: `None` means "generate one", and that empty
+/// placeholder must not be rejected as an invalid document ID.
 fn validate_create_doc_ids<S: AsRef<str>>(
     collection_id: &str,
     document_id: Option<&S>,
@@ -21,6 +21,17 @@ fn validate_create_doc_ids<S: AsRef<str>>(
         validate_path_segment(document_id.as_ref(), "document_id")?;
     }
     Ok(())
+}
+
+const GENERATED_ID_LENGTH: usize = 20;
+
+/// Makes a document ID the way Firestore's own clients do: 20 characters from `A-Za-z0-9`, each
+/// equally likely.
+///
+/// The ID is made before the request is sent, so that sending the request again after a failure
+/// cannot create a second document.
+fn generate_document_id() -> String {
+    Alphanumeric.sample_string(&mut rand::rng(), GENERATED_ID_LENGTH)
 }
 
 #[async_trait]
@@ -71,7 +82,7 @@ impl FirestoreCreateSupport for FirestoreDb {
             document_id: document_id
                 .as_ref()
                 .map(|id| id.as_ref().to_string())
-                .unwrap_or_default(),
+                .unwrap_or_else(generate_document_id),
             mask: return_only_fields.as_ref().map(|masks| DocumentMask {
                 field_paths: masks.clone(),
             }),
@@ -83,10 +94,11 @@ impl FirestoreCreateSupport for FirestoreDb {
         let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
         let create_response = self
-            .client()
-            .get()
-            .create_document(
-                self.request_with_timeout(create_document_request, RequestTimeouts::with_total),
+            .retry_write(
+                &span,
+                "create document",
+                &create_document_request,
+                |mut client, request| async move { client.create_document(request).await },
             )
             .await?;
 
@@ -95,9 +107,7 @@ impl FirestoreCreateSupport for FirestoreDb {
 
         span.record("/firestore/response_time", query_duration.as_millis());
 
-        let response_inner = create_response.into_inner();
-
-        span.record("/firestore/document_name", &response_inner.name);
+        span.record("/firestore/document_name", &create_response.name);
 
         span.in_scope(|| {
             debug!(
@@ -107,7 +117,7 @@ impl FirestoreCreateSupport for FirestoreDb {
             );
         });
 
-        Ok(response_inner)
+        Ok(create_response)
     }
 
     async fn create_obj<I, O, S>(
@@ -184,7 +194,7 @@ mod tests {
 
     #[test]
     fn none_document_id_is_always_valid() {
-        // `None` means "let Firestore generate an ID"; it must never be validated as an ID.
+        // `None` means "generate an ID"; it must never be validated as an ID.
         assert!(validate_create_doc_ids::<String>("users", None).is_ok());
     }
 }

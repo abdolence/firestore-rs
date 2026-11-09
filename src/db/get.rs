@@ -395,6 +395,31 @@ impl FirestoreDb {
 
         let _return_only_fields_empty = return_only_fields.is_none();
 
+        let doc = self
+            .fetch_doc(
+                collection_id,
+                document_path,
+                return_only_fields,
+                self.session_params.consistency_selector.as_ref(),
+            )
+            .await?;
+
+        #[cfg(feature = "caching")]
+        if _return_only_fields_empty {
+            self.offer_doc_update_to_cache(&doc).await?;
+        }
+        Ok(doc)
+    }
+
+    /// Reads `document_path` at `consistency_selector`, bypassing the cache, with the retries of any
+    /// read.
+    pub(crate) async fn fetch_doc(
+        &self,
+        collection_id: String,
+        document_path: String,
+        return_only_fields: Option<Vec<String>>,
+        consistency_selector: Option<&FirestoreConsistencySelector>,
+    ) -> FirestoreResult<Document> {
         let span = span!(
             Level::DEBUG,
             "Firestore Get Doc",
@@ -406,10 +431,7 @@ impl FirestoreDb {
 
         let request = GetDocumentRequest {
             name: document_path.clone(),
-            consistency_selector: self
-                .session_params
-                .consistency_selector
-                .as_ref()
+            consistency_selector: consistency_selector
                 .map(|selector| selector.try_into())
                 .transpose()?,
             request_options: self.resolve_request_options(None),
@@ -444,10 +466,6 @@ impl FirestoreDb {
             );
         });
 
-        #[cfg(feature = "caching")]
-        if _return_only_fields_empty {
-            self.offer_doc_update_to_cache(&doc).await?;
-        }
         Ok(doc)
     }
 
