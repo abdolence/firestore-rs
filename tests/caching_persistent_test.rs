@@ -1,8 +1,7 @@
-use crate::common::{delete_documents, eventually_async, populate_collection, setup, unique_name};
+use crate::common::{delete_documents, eventually_within, populate_collection, setup, unique_name};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use tokio::time::sleep;
 
 mod common;
 use firestore::errors::FirestoreError;
@@ -16,6 +15,12 @@ struct MyTestStructure {
 }
 
 const DOCUMENT_COUNT: usize = 10;
+
+/// The first change Firestore delivers after the listener starts can take about 30 seconds to
+/// arrive when a `preload_none` collection shares the cache with a `preload_all` one, so the wait
+/// for a change to reach the cache is well above that.
+const PROPAGATION_TIMEOUT: Duration = Duration::from_secs(90);
+const PROPAGATION_POLL: Duration = Duration::from_millis(200);
 
 fn test_document(i: usize) -> MyTestStructure {
     MyTestStructure {
@@ -51,7 +56,6 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         |ms| ms.some_id.clone(),
     )
     .await?;
-    sleep(Duration::from_secs(1)).await;
 
     let temp_db_dir = tempfile::tempdir()?;
 
@@ -167,7 +171,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
 
     let cached_db = db.read_cached_only(&cache);
     assert!(
-        eventually_async(10, Duration::from_millis(500), move || {
+        eventually_within(PROPAGATION_TIMEOUT, PROPAGATION_POLL, move || {
             let cached_db = cached_db.clone();
             async move {
                 let my_struct: Option<MyTestStructure> = cached_db
@@ -218,7 +222,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
 
     let cached_db = db.read_cached_only(&cache);
     assert!(
-        eventually_async(10, Duration::from_millis(500), move || {
+        eventually_within(PROPAGATION_TIMEOUT, PROPAGATION_POLL, move || {
             let cached_db = cached_db.clone();
             async move {
                 let all_items = cached_db
