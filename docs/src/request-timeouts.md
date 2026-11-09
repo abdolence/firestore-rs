@@ -77,18 +77,17 @@ codes the official Google Firestore clients retry them on:
 - `delete()`: `RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `INTERNAL` and `DEADLINE_EXCEEDED`, the request timeout running out
   included.
 
-Any other code is returned at once, whatever `retry_possible` says. `ABORTED` and `DEADLINE_EXCEEDED` are not retried
-for `insert()` and `update()` because the outcome of the first attempt is unknown: Firestore may have applied the write
-before it failed. `UNAVAILABLE` can leave the same doubt, and a retry after it has these effects:
-- an `update()` with [transforms](./document-transformations.md), such as `increment`, applies them twice when the first
-  attempt was applied;
-- an `insert()` fails with `ALREADY_EXISTS` when the first attempt created the document;
-- an `insert()` with `.generate_document_id()` creates a second document with another ID when the first attempt created
-  one, since Firestore chooses that ID for each request. Choose the ID with `.document_id(..)` to get the
-  `ALREADY_EXISTS` failure instead.
+A connection lost while a request is in flight is retried like `UNAVAILABLE`, as in Google's clients.
 
-A `delete()` that is sent again finds the document already gone when the first attempt deleted it, which is not an
-error unless the delete carries a [precondition](./preconditions.md).
+Any other code is returned at once, whatever `retry_possible` says. Google's clients retry `ABORTED` only on batch
+writes, not on creates, updates or deletes, and `DEADLINE_EXCEEDED` only on deletes, and the library follows them.
+
+A write that is sent again can find that the first attempt was applied, since `UNAVAILABLE` and a lost connection do not
+say whether it was. Then:
+- an `insert()` fails with `ALREADY_EXISTS` when the first attempt created the document;
+- an `update()` or `delete()` with an `UpdateTime` [precondition](./preconditions.md) fails with `FAILED_PRECONDITION`,
+  since the document no longer has that update time. The write went through, and the error reports that it did not;
+- a `delete()` without a precondition finds the document already gone, which is not an error.
 
 Writes queued with `add_to_transaction` or `add_to_batch`, transaction commits, and pipeline and SQL writes are not
 retried this way.
@@ -99,8 +98,8 @@ between attempts, so the last attempt can still run for a whole timeout past it.
 
 ### Retry limits
 
-Reads, single writes, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
-next retry, each delay randomised by up to a third either way. They differ in when they stop:
+Reads, single writes, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by
+1.5 times for each next retry, each delay randomised by up to a third either way. They differ in when they stop:
 - reads and single writes stop after `max_retries` of `FirestoreDbOptions`, 3 by default, with no time limit;
 - simple batch writes stop after `retry_max_elapsed_time` of `FirestoreSimpleBatchWriteOptions`, 60 seconds by default,
   and ignore `max_retries`;

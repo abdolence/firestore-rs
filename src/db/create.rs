@@ -1,4 +1,4 @@
-use crate::db::retry::INSERT_AND_UPDATE_RETRIED_CODES;
+use crate::db::retry::CREATE_AND_UPDATE_RETRIED_CODES;
 use crate::db::support::FirestoreCreateSupport;
 use crate::db::validate_path_segment;
 use crate::FirestoreInstant;
@@ -10,8 +10,8 @@ use tracing::*;
 
 /// Validates the IDs for a create request before it reaches the server.
 ///
-/// `document_id` is validated only when `Some`: `None` means "let Firestore generate one", and
-/// that empty placeholder must not be rejected as an invalid document ID.
+/// `document_id` is validated only when `Some`: `None` means "generate one", and that empty
+/// placeholder must not be rejected as an invalid document ID.
 fn validate_create_doc_ids<S: AsRef<str>>(
     collection_id: &str,
     document_id: Option<&S>,
@@ -21,6 +21,39 @@ fn validate_create_doc_ids<S: AsRef<str>>(
         validate_path_segment(document_id.as_ref(), "document_id")?;
     }
     Ok(())
+}
+
+const GENERATED_ID_ALPHABET: &[u8; 62] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const GENERATED_ID_LENGTH: usize = 20;
+
+/// The highest random byte that maps onto the alphabet evenly: 248 values, four for each of its
+/// 62 characters. A higher byte is dropped, or the first 8 characters would come up more often.
+const GENERATED_ID_MAX_BYTE: u8 = 62 * 4 - 1;
+
+/// Makes a document ID the way Firestore's own clients do: 20 characters from `A-Za-z0-9`, each
+/// equally likely.
+///
+/// The ID is made before the request is sent, so that sending the request again after a failure
+/// cannot create a second document.
+fn generate_document_id() -> String {
+    let mut id = String::with_capacity(GENERATED_ID_LENGTH);
+    while id.len() < GENERATED_ID_LENGTH {
+        let mut random_bytes = [0u8; 40];
+        rand::fill(&mut random_bytes);
+        id.extend(
+            random_bytes
+                .into_iter()
+                .filter(|byte| *byte <= GENERATED_ID_MAX_BYTE)
+                .map(|byte| {
+                    char::from(
+                        GENERATED_ID_ALPHABET[usize::from(byte) % GENERATED_ID_ALPHABET.len()],
+                    )
+                })
+                .take(GENERATED_ID_LENGTH - id.len()),
+        );
+    }
+    id
 }
 
 #[async_trait]
@@ -71,7 +104,7 @@ impl FirestoreCreateSupport for FirestoreDb {
             document_id: document_id
                 .as_ref()
                 .map(|id| id.as_ref().to_string())
-                .unwrap_or_default(),
+                .unwrap_or_else(generate_document_id),
             mask: return_only_fields.as_ref().map(|masks| DocumentMask {
                 field_paths: masks.clone(),
             }),
@@ -87,7 +120,7 @@ impl FirestoreCreateSupport for FirestoreDb {
                 &span,
                 "create document",
                 &create_document_request,
-                &INSERT_AND_UPDATE_RETRIED_CODES,
+                &CREATE_AND_UPDATE_RETRIED_CODES,
                 |mut client, request| async move { client.create_document(request).await },
             )
             .await?;
@@ -97,9 +130,7 @@ impl FirestoreCreateSupport for FirestoreDb {
 
         span.record("/firestore/response_time", query_duration.as_millis());
 
-        let response_inner = create_response;
-
-        span.record("/firestore/document_name", &response_inner.name);
+        span.record("/firestore/document_name", &create_response.name);
 
         span.in_scope(|| {
             debug!(
@@ -109,7 +140,7 @@ impl FirestoreCreateSupport for FirestoreDb {
             );
         });
 
-        Ok(response_inner)
+        Ok(create_response)
     }
 
     async fn create_obj<I, O, S>(
@@ -186,7 +217,7 @@ mod tests {
 
     #[test]
     fn none_document_id_is_always_valid() {
-        // `None` means "let Firestore generate an ID"; it must never be validated as an ID.
+        // `None` means "generate an ID"; it must never be validated as an ID.
         assert!(validate_create_doc_ids::<String>("users", None).is_ok());
     }
 }

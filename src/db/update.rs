@@ -1,4 +1,4 @@
-use crate::db::retry::INSERT_AND_UPDATE_RETRIED_CODES;
+use crate::db::retry::CREATE_AND_UPDATE_RETRIED_CODES;
 use crate::db::safe_document_path;
 use crate::db::support::FirestoreUpdateSupport;
 use crate::FirestoreInstant;
@@ -107,7 +107,7 @@ impl FirestoreUpdateSupport for FirestoreDb {
                 &span,
                 "update document",
                 &update_document_request,
-                &INSERT_AND_UPDATE_RETRIED_CODES,
+                &CREATE_AND_UPDATE_RETRIED_CODES,
                 |mut client, request| async move { client.update_document(request).await },
             )
             .await?;

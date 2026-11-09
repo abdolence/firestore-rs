@@ -21,7 +21,7 @@ pub(crate) const RETRY_BACKOFF: ExponentialBuilder = ExponentialBuilder::new()
 
 /// The codes a create or an update is sent again after, as in the retry policy of Google's
 /// Firestore clients (`google/firestore/v1/firestore_grpc_service_config.json`).
-pub(crate) const INSERT_AND_UPDATE_RETRIED_CODES: [Code; 2] =
+pub(crate) const CREATE_AND_UPDATE_RETRIED_CODES: [Code; 2] =
     [Code::ResourceExhausted, Code::Unavailable];
 
 /// The codes a delete is sent again after, as in the retry policy of Google's Firestore clients
@@ -93,8 +93,9 @@ impl FirestoreDb {
     /// retry is logged in `span` as "Failed to `action`".
     ///
     /// Only the codes in `retried_codes` are sent again, whatever the error's `retry_possible`
-    /// says: it is also set for `ABORTED` and `CANCELLED`, which leave the outcome of a write
-    /// unknown.
+    /// says: it is also set for `ABORTED` and `CANCELLED`, which Google's clients do not retry a
+    /// create or an update on. A connection lost in the middle of a call counts as `UNAVAILABLE`,
+    /// as it does in Google's clients.
     pub(crate) async fn retry_write<R, T, F, Fut>(
         &self,
         span: &Span,
@@ -115,8 +116,14 @@ impl FirestoreDb {
             RequestTimeouts::with_total,
             send,
             |status| {
-                let retry = retried_codes.contains(&status.code());
-                (FirestoreError::from(status), retry)
+                let code = status.code();
+                let error = FirestoreError::from(status);
+                let code = if code == Code::Unknown && error.retry_possible() {
+                    Code::Unavailable
+                } else {
+                    code
+                };
+                (error, retried_codes.contains(&code))
             },
         )
         .await
@@ -149,9 +156,11 @@ impl FirestoreDb {
                 Ok(response) => return Ok(response.into_inner()),
                 Err(status) => classify(status),
             };
-            let delay = match delays.next() {
-                Some(delay) if retry && retries < max_retries => delay,
-                _ => return Err(error),
+            if !retry || retries >= max_retries {
+                return Err(error);
+            }
+            let Some(delay) = delays.next() else {
+                return Err(error);
             };
             span.in_scope(|| {
                 warn!(
@@ -183,13 +192,12 @@ mod tests {
     use crate::db::support::{
         FirestoreCreateSupport, FirestoreDeleteSupport, FirestoreUpdateSupport,
     };
-    use gcloud_sdk::google::firestore::v1::Document;
-    use gcloud_sdk::tonic::Code;
+    use gcloud_sdk::google::firestore::v1::{CreateDocumentRequest, Document};
+    use gcloud_sdk::prost::Message as _;
 
     #[derive(Clone, Copy, Debug)]
     enum SingleWrite {
         Insert,
-        InsertWithGeneratedId,
         Update,
         Delete,
     }
@@ -197,7 +205,7 @@ mod tests {
     impl SingleWrite {
         fn rpc(self) -> &'static str {
             match self {
-                Self::Insert | Self::InsertWithGeneratedId => "CreateDocument",
+                Self::Insert => "CreateDocument",
                 Self::Update => "UpdateDocument",
                 Self::Delete => "DeleteDocument",
             }
@@ -207,10 +215,6 @@ mod tests {
             match self {
                 Self::Insert => db
                     .create_doc("items", Some("a"), Document::default(), None)
-                    .await
-                    .map(drop),
-                Self::InsertWithGeneratedId => db
-                    .create_doc("items", None::<&str>, Document::default(), None)
                     .await
                     .map(drop),
                 Self::Update => {
@@ -241,89 +245,39 @@ mod tests {
         .await
     }
 
-    const INSERT_AND_UPDATE_RETRIED: [Code; 2] = [Code::ResourceExhausted, Code::Unavailable];
-    const DELETE_RETRIED: [Code; 4] = [
-        Code::ResourceExhausted,
-        Code::Unavailable,
-        Code::Internal,
-        Code::DeadlineExceeded,
-    ];
-
     #[tokio::test]
-    async fn insert_and_update_retry_resource_exhausted_and_unavailable() {
+    async fn every_single_write_retries_unavailable() {
         for write in [
             SingleWrite::Insert,
-            SingleWrite::InsertWithGeneratedId,
             SingleWrite::Update,
+            SingleWrite::Delete,
         ] {
-            for code in INSERT_AND_UPDATE_RETRIED {
-                let server = failing_once(write, FakeResponse::Status(code)).await;
+            let server = failing_once(write, FakeResponse::Status(Code::Unavailable)).await;
 
-                write
-                    .run(&server.db)
-                    .await
-                    .unwrap_or_else(|error| panic!("{write:?} must retry {code:?}, got {error:?}"));
+            write.run(&server.db).await.unwrap();
 
-                assert_eq!(server.calls(), [write.rpc(); 2], "{write:?} after {code:?}");
-            }
+            assert_eq!(server.calls(), [write.rpc(); 2], "{write:?}");
         }
     }
 
     #[tokio::test]
-    async fn insert_and_update_do_not_retry_other_codes() {
-        let not_retried = [
-            Code::Aborted,
-            Code::DeadlineExceeded,
-            Code::Internal,
-            Code::Cancelled,
-            Code::InvalidArgument,
-            Code::FailedPrecondition,
-        ];
-        for write in [
-            SingleWrite::Insert,
-            SingleWrite::InsertWithGeneratedId,
-            SingleWrite::Update,
-        ] {
-            for code in not_retried {
-                let server = failing_once(write, FakeResponse::Status(code)).await;
+    async fn a_connection_lost_mid_call_is_retried_like_unavailable() {
+        let server = failing_once(SingleWrite::Delete, FakeResponse::Drop).await;
 
-                let error = write.run(&server.db).await.unwrap_err();
+        SingleWrite::Delete.run(&server.db).await.unwrap();
 
-                assert!(
-                    matches!(error, FirestoreError::DatabaseError(ref error)
-                        if error.public.code == format!("{code:?}")),
-                    "{write:?} after {code:?}: got {error:?}"
-                );
-                assert_eq!(server.calls(), [write.rpc(); 1], "{write:?} after {code:?}");
-            }
-        }
+        assert_eq!(server.calls(), ["DeleteDocument"; 2]);
     }
 
     #[tokio::test]
-    async fn delete_retries_the_codes_google_clients_retry() {
-        for code in DELETE_RETRIED {
-            let server = failing_once(SingleWrite::Delete, FakeResponse::Status(code)).await;
+    async fn a_write_does_not_retry_aborted() {
+        let server = failing_once(SingleWrite::Insert, FakeResponse::Status(Code::Aborted)).await;
 
-            SingleWrite::Delete
-                .run(&server.db)
-                .await
-                .unwrap_or_else(|error| panic!("delete must retry {code:?}, got {error:?}"));
+        let error = SingleWrite::Insert.run(&server.db).await.unwrap_err();
 
-            assert_eq!(server.calls(), ["DeleteDocument"; 2], "after {code:?}");
-        }
-    }
-
-    #[tokio::test]
-    async fn delete_does_not_retry_aborted() {
-        let server = failing_once(SingleWrite::Delete, FakeResponse::Status(Code::Aborted)).await;
-
-        let error = SingleWrite::Delete.run(&server.db).await.unwrap_err();
-
-        assert!(
-            matches!(error, FirestoreError::DatabaseError(ref error) if error.public.code == "Aborted"),
-            "got {error:?}"
-        );
-        assert_eq!(server.calls(), ["DeleteDocument"; 1]);
+        assert!(matches!(error, FirestoreError::DatabaseError(ref error)
+            if error.public.code == "Aborted"));
+        assert_eq!(server.calls(), ["CreateDocument"; 1]);
     }
 
     #[tokio::test]
@@ -348,29 +302,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn single_writes_stop_retrying_at_max_retries() {
-        for write in [
-            SingleWrite::Insert,
-            SingleWrite::Update,
-            SingleWrite::Delete,
-        ] {
-            let server = FakeFirestore::start_with_max_retries(1, move |_, _| {
-                (
-                    write.rpc().to_string(),
-                    FakeResponse::Status(Code::Unavailable),
-                )
-            })
-            .await;
+    async fn generated_id_insert_sends_the_same_client_made_id_on_each_attempt() {
+        let attempts = std::sync::Mutex::new(0);
+        let server = FakeFirestore::start(move |_, request| {
+            let id = CreateDocumentRequest::decode(request).unwrap().document_id;
+            let mut attempts = attempts.lock().unwrap();
+            *attempts += 1;
+            let response = if *attempts == 1 {
+                FakeResponse::Status(Code::Unavailable)
+            } else {
+                FakeResponse::empty()
+            };
+            (id, response)
+        })
+        .await;
 
-            let error = write.run(&server.db).await.unwrap_err();
+        server
+            .db
+            .fluent()
+            .insert()
+            .into("items")
+            .generate_document_id()
+            .document(Document::default())
+            .execute()
+            .await
+            .unwrap();
 
-            assert!(
-                matches!(error, FirestoreError::DatabaseError(ref error)
-                    if error.public.code == "Unavailable"),
-                "{write:?}: got {error:?}"
-            );
-            assert_eq!(server.calls(), [write.rpc(); 2], "{write:?}");
-        }
+        let ids = server.calls();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], ids[1]);
+        assert_eq!(ids[0].len(), 20);
+        assert!(ids[0].chars().all(|c| c.is_ascii_alphanumeric()), "{ids:?}");
     }
 
     #[test]
