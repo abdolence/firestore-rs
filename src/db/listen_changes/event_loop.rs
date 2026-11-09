@@ -81,14 +81,14 @@ where
 
             let (requests, request_reader) = tokio::sync::mpsc::unbounded_channel();
             let mut on_stream = FirestoreListenerStreamTargets::new(requests);
-            self.add_due_targets(&mut on_stream).await?;
+            self.add_opening_targets(&mut on_stream).await?;
             if on_stream.is_empty() {
                 // Every target was removed while its resume state was read. A stream opened with
                 // no target could wait for an answer that never comes.
                 continue;
             }
             debug!(
-                num_targets = on_stream.len(),
+                num_opening_targets = on_stream.len(),
                 "Start listening on targets..."
             );
 
@@ -126,6 +126,9 @@ where
         mut listen_stream: BoxStream<'_, FirestoreResult<ListenResponse>>,
         on_stream: &mut FirestoreListenerStreamTargets,
     ) -> FirestoreResult<()> {
+        // The targets the opening request held back, and any registered while connecting, go on
+        // the open stream.
+        self.add_due_targets(on_stream).await?;
         // When the stream last had nothing left to handle while Firestore owed it an answer.
         let mut silent_since: Option<Instant> = None;
         loop {
@@ -425,13 +428,45 @@ where
         &self,
         on_stream: &mut FirestoreListenerStreamTargets,
     ) -> FirestoreResult<()> {
-        let due = on_stream.take_due(&self.targets_state.read(), Instant::now());
-        for target in due {
-            if let Some((target_params, registration)) = self.resolve_target(&target).await {
-                on_stream.add(&self.db, target_params, registration)?;
-            }
+        for (target_params, registration) in self.resolve_due_targets(on_stream).await {
+            on_stream.add(&self.db, target_params, registration)?;
         }
         Ok(())
+    }
+
+    /// Adds the targets for the request that opens the stream. Targets with no resume state stay
+    /// off it whenever another target has one, and go on once the stream is open: Firestore holds
+    /// back the first change of a stream that opens with both kinds for tens of seconds, while a
+    /// target added to a stream already open is not held back.
+    async fn add_opening_targets(
+        &self,
+        on_stream: &mut FirestoreListenerStreamTargets,
+    ) -> FirestoreResult<()> {
+        let mut due = self.resolve_due_targets(on_stream).await;
+        if due
+            .iter()
+            .any(|(target_params, _)| target_params.resume_type.is_some())
+        {
+            due.retain(|(target_params, _)| target_params.resume_type.is_some());
+        }
+        for (target_params, registration) in due {
+            on_stream.add(&self.db, target_params, registration)?;
+        }
+        Ok(())
+    }
+
+    async fn resolve_due_targets(
+        &self,
+        on_stream: &mut FirestoreListenerStreamTargets,
+    ) -> Vec<(FirestoreListenerTargetParams, FirestoreListenerRegistration)> {
+        let due = on_stream.take_due(&self.targets_state.read(), Instant::now());
+        let mut resolved = Vec::with_capacity(due.len());
+        for target in due {
+            if let Some(resolved_target) = self.resolve_target(&target).await {
+                resolved.push(resolved_target);
+            }
+        }
+        resolved
     }
 
     /// The target's parameters with its resume state filled in from the storage if it holds none

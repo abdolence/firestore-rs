@@ -61,7 +61,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
 
     let cache = FirestorePersistentCache::builder(&db)
         .name("example-persistent-cache")
-        .data_dir(temp_db_dir.keep())
+        .data_dir(temp_db_dir.path())
         .collection_with(no_preload_collection, |c| {
             c.preload_none().listener_target(1000)
         })
@@ -225,17 +225,30 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         eventually_within(PROPAGATION_TIMEOUT, PROPAGATION_POLL, move || {
             let cached_db = cached_db.clone();
             async move {
-                let all_items = cached_db
-                    .fluent()
-                    .list()
-                    .from(preload_collection)
-                    .obj::<MyTestStructure>()
-                    .stream_all_with_errors()
-                    .await?
-                    .try_collect::<Vec<_>>()
-                    .await?;
+                // A resynchronisation suspends the collection, so a listing is refused until
+                // Firestore has replayed it. That means "not yet"; any other error is a failure.
+                let listed: FirestoreResult<Vec<MyTestStructure>> = async {
+                    cached_db
+                        .fluent()
+                        .list()
+                        .from(preload_collection)
+                        .obj::<MyTestStructure>()
+                        .stream_all_with_errors()
+                        .await?
+                        .try_collect()
+                        .await
+                }
+                .await;
 
-                Ok(!all_items.iter().any(|i| i.some_id == "test-3"))
+                match listed {
+                    Ok(items) => Ok(!items.iter().any(|i| i.some_id == "test-3")),
+                    Err(FirestoreError::CacheError(err))
+                        if err.public.code == "CacheIncompleteCollection" =>
+                    {
+                        Ok(false)
+                    }
+                    Err(err) => Err(err.into()),
+                }
             }
         })
         .await?
@@ -248,6 +261,50 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         .collect();
     delete_documents(&db, no_preload_collection, &document_ids).await?;
     delete_documents(&db, preload_collection, &document_ids).await?;
+
+    Ok(())
+}
+
+/// A preloaded collection that holds no documents in Firestore leaves nothing to write, yet the
+/// cache has to open and answer reads of it.
+#[tokio::test]
+async fn preloading_an_empty_collection_builds_and_serves_reads(
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let db = setup().await?;
+    let empty_name = unique_name("integration-test-caching-persistent-empty");
+    let empty_collection = empty_name.as_str();
+
+    let temp_db_dir = tempfile::tempdir()?;
+    let cache = FirestorePersistentCache::builder(&db)
+        .name("example-persistent-cache-empty")
+        .data_dir(temp_db_dir.path())
+        .collection_with(empty_collection, |c| c.preload_all().listener_target(1000))
+        .build()
+        .await?;
+
+    let listed = db
+        .read_cached_only(&cache)
+        .fluent()
+        .list()
+        .from(empty_collection)
+        .obj::<MyTestStructure>()
+        .stream_all_with_errors()
+        .await?
+        .try_collect::<Vec<_>>()
+        .await?;
+    assert!(listed.is_empty());
+
+    let found: Option<MyTestStructure> = db
+        .read_cached_only(&cache)
+        .fluent()
+        .select()
+        .by_id_in(empty_collection)
+        .obj()
+        .one("missing")
+        .await?;
+    assert!(found.is_none());
+
+    cache.shutdown().await?;
 
     Ok(())
 }

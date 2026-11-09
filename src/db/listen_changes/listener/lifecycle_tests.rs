@@ -1248,6 +1248,34 @@ async fn a_current_once_target_is_removed_without_a_remove_target() {
 }
 
 #[tokio::test]
+async fn targets_without_resume_state_are_added_once_the_stream_is_open() {
+    let (mut listener, db) = listener(TestDb::new(Wait::Connect), never_retrying()).await;
+    listener.add_target(target_params(2)).unwrap();
+    db.tokens
+        .lock()
+        .unwrap()
+        .insert(FirestoreListenerTarget::new(2), vec![2].into());
+    start(&mut listener, &db).await;
+
+    let mut requests = db.take_requests();
+    match next_request(&mut requests).await {
+        Some(RequestedChange::AddTarget(target)) => {
+            assert_eq!(target.target_id, 2);
+            assert_eq!(
+                target.resume_type,
+                Some(target::ResumeType::ResumeToken(vec![2]))
+            );
+        }
+        other => panic!("expected the opening AddTarget of target 2, got {other:?}"),
+    }
+    assert!(requests.try_recv().is_err());
+
+    db.release.add_permits(1);
+    assert_eq!(added_targets(&mut requests, 1).await, vec![1]);
+    within(listener.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
 async fn a_resumed_target_firestore_rejects_as_failed_precondition_is_added_back_from_scratch() {
     let (db, feed) = TestDb::fed(Wait::Never);
     let mut listener = FirestoreListener::new(db.clone(), db.clone(), retrying_at_once())
