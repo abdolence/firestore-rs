@@ -7,6 +7,7 @@ use moka::future::{Cache, CacheBuilder};
 use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::*;
 
@@ -58,6 +59,10 @@ pub struct FirestoreMemoryCacheBackend {
     /// mid-replay. They must not answer `list`/`query` until the replay completes, because what
     /// they hold in the meantime is a partial view that would look like a complete one.
     suspended_collections: std::sync::RwLock<HashSet<String>>,
+    /// Set by `shutdown`. The listener has stopped by then, so whatever the cache still held or
+    /// took in afterwards would go stale, and an emptied collection would read as a complete one.
+    /// A shut down cache therefore answers nothing and stores nothing.
+    shut_down: AtomicBool,
 }
 
 /// The maximum number of documents kept per collection unless configured otherwise.
@@ -196,6 +201,7 @@ impl FirestoreMemoryCacheBackend {
             collection_caches: std::sync::RwLock::new(Arc::new(collection_caches)),
             collection_mem_options: Box::new(collection_mem_options),
             suspended_collections: std::sync::RwLock::new(HashSet::new()),
+            shut_down: AtomicBool::new(false),
         })
     }
 
@@ -222,6 +228,10 @@ impl FirestoreMemoryCacheBackend {
             .read()
             .expect("cache collections lock poisoned")
             .clone()
+    }
+
+    fn is_shut_down(&self) -> bool {
+        self.shut_down.load(Ordering::Acquire)
     }
 
     /// Stops a collection answering `list`/`query` until Firestore reports it consistent again.
@@ -522,7 +532,10 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         let Some(collection_config) = config.collections.get(collection_path) else {
             return Ok(None);
         };
-        if !self.count_authoritative || !collection_config.collection_load_mode.is_preloading() {
+        if self.is_shut_down()
+            || !self.count_authoritative
+            || !collection_config.collection_load_mode.is_preloading()
+        {
             return Ok(None);
         }
 
@@ -543,10 +556,15 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         // `FirestoreDb` it is attached to - so releasing the documents here rather than waiting to
         // be dropped is what actually frees the memory.
         debug!("Releasing the cached documents of the in-memory cache.");
+        self.shut_down.store(true, Ordering::Release);
         self.invalidate_all().await
     }
 
     async fn on_listen_event(&self, event: FirestoreListenEvent) -> FirestoreResult<()> {
+        if self.is_shut_down() {
+            return Ok(());
+        }
+
         match event {
             FirestoreListenEvent::DocumentChange(doc_change) => {
                 if let Some(doc) = doc_change.document {
@@ -640,6 +658,10 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
         &self,
         document_path: &str,
     ) -> FirestoreResult<Option<FirestoreDocument>> {
+        if self.is_shut_down() {
+            return Ok(None);
+        }
+
         let (collection_path, document_id) = split_document_path(document_path);
 
         match self.collection_cache(collection_path) {
@@ -649,6 +671,10 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
     }
 
     async fn update_doc_by_path(&self, document: &FirestoreDocument) -> FirestoreResult<()> {
+        if self.is_shut_down() {
+            return Ok(());
+        }
+
         let (collection_path, document_id) = split_document_path(&document.name);
 
         if !self
@@ -674,7 +700,8 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
         collection_path: &str,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if !self.config().is_collection_listable(collection_path)
+        if self.is_shut_down()
+            || !self.config().is_collection_listable(collection_path)
             || self.is_suspended(collection_path)
         {
             return Ok(FirestoreCachedValue::SkipCache);
@@ -698,7 +725,8 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
         query: &FirestoreQueryParams,
     ) -> FirestoreResult<FirestoreCachedValue<BoxStream<'b, FirestoreResult<FirestoreDocument>>>>
     {
-        if !self.config().is_collection_listable(collection_path)
+        if self.is_shut_down()
+            || !self.config().is_collection_listable(collection_path)
             || self.is_suspended(collection_path)
         {
             return Ok(FirestoreCachedValue::SkipCache);
@@ -1033,6 +1061,48 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn a_shut_down_cache_reports_no_comparable_count() {
+        let backend = preloaded(&[("a", 1000)]);
+        seed(&backend, "a", "one").await;
+        backend.shutdown().await.unwrap();
+
+        assert_eq!(
+            backend
+                .authoritative_doc_count(&format!("{DOCS}/a"))
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_shut_down_cache_stores_nothing() {
+        let backend = preloaded(&[("a", 1000)]);
+        backend.shutdown().await.unwrap();
+        let document = FirestoreDocument {
+            name: doc_path("a", "one"),
+            ..Default::default()
+        };
+
+        backend
+            .on_listen_event(FirestoreListenEvent::DocumentChange(DocumentChange {
+                document: Some(document.clone()),
+                ..Default::default()
+            }))
+            .await
+            .expect("event handled");
+        backend
+            .update_doc_by_path(&document)
+            .await
+            .expect("write-back");
+
+        let mem_cache = backend
+            .collection_cache(&format!("{DOCS}/a"))
+            .expect("configured collection");
+        assert!(mem_cache.get("one").await.is_none());
     }
 
     #[tokio::test]

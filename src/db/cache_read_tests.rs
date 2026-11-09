@@ -419,3 +419,40 @@ async fn a_batch_get_with_a_field_mask_is_not_answered_from_the_cache() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn cached_only_reads_fail_once_the_cache_is_shut_down() {
+    let (server, cache) = cached_document_fixture().await;
+    let cached_only = server.db.read_cached_only(&cache);
+    cache.shutdown().await.unwrap();
+
+    for read in [Read::Query, Read::List] {
+        let calls_before = answered_calls(&server);
+        let FirestoreError::CacheError(error) = read.source(&cached_only).await.unwrap_err() else {
+            panic!("{read:?} did not fail with a cache error");
+        };
+        assert_eq!(error.public.code, "CacheIncompleteCollection", "{read:?}");
+        assert_eq!(answered_calls(&server), calls_before, "{read:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_read_through_a_shut_down_cache_does_not_write_the_cache() {
+    let (server, cache) = cached_document_fixture().await;
+    let through_cache = server.db.read_through_cache(&cache);
+    cache.shutdown().await.unwrap();
+    let name = format!("{}/{COLLECTION}/other", server.db.get_documents_path());
+
+    let document = through_cache
+        .get_doc(COLLECTION, "other", None)
+        .await
+        .unwrap();
+
+    assert_eq!(source(&document), FROM_FIRESTORE);
+    assert!(cache
+        .backend()
+        .get_doc_by_path(&name)
+        .await
+        .unwrap()
+        .is_none());
+}
