@@ -66,7 +66,7 @@ regex = "1.13"
 serde_json = "1"
 # Default features would add a dependency that grows the stack while parsing; the translator caps
 # the parser's nesting instead.
-sqlparser = { version = "0.63", default-features = false, features = ["std"], optional = true }
+sqlparser = { version = "0.64", default-features = false, features = ["std"], optional = true }
 syn = { version = "3", default-features = false, features = ["full", "parsing"], optional = true }
 prettyplease = { version = "0.3", optional = true }
 heck = { version = "0.5", optional = true }
