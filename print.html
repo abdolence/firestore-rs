@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-eae8ce63.js";
+            window.path_to_searchindex_js = "searchindex-b4f0fff6.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-bf8dc4ac.js"></script>
@@ -3407,6 +3407,7 @@ documents. A bare ID is a document of the <code>FROM</code> collection, and a pa
 <tr><td>Text and geo search</td><td><code>document_matches('query')</code> and <code>geo_distance(field, geo_point(lat, lng)) &lt;= meters</code> as top-level <code>AND</code> conditions of the <code>WHERE</code>, see <a href="#search">Search</a></td></tr>
 <tr><td>Subqueries</td><td>scalar <code>(SELECT ..)</code>, <code>[NOT] EXISTS</code>, <code>[NOT] IN (SELECT ..)</code> and <code>ARRAY(SELECT ..)</code>, see <a href="#joins-and-subqueries">Joins and subqueries</a></td></tr>
 <tr><td>Derived tables, <code>WITH</code></td><td>non-recursive CTEs</td></tr>
+<tr><td><code>TABLESAMPLE</code></td><td><code>BERNOULLI (p PERCENT)</code> on a table, see <a href="#sampling-1">Sampling</a></td></tr>
 <tr><td>Joins</td><td><code>[INNER] JOIN</code>, <code>LEFT JOIN</code>, <code>CROSS JOIN</code>, a comma in <code>FROM</code>, and <code>UNNEST(array) AS x [WITH OFFSET AS pos]</code></td></tr>
 <tr><td>Writes</td><td><code>INSERT .. VALUES</code>, <code>INSERT .. SELECT</code>, <code>INSERT OR REPLACE</code>, <code>INSERT .. ON CONFLICT</code>, <code>UPDATE</code>, <code>DELETE</code>, see <a href="#writes-1">Writes</a></td></tr>
 <tr><td>Operators</td><td><code>+ - * / %</code>, `</td></tr>
@@ -3430,6 +3431,45 @@ condition, on a collection or collection group source and before any join. <code
 selects the relevance, and <code>ORDER BY score() DESC</code> or <code>ORDER BY geo_distance(..)</code> as the only sort
 key becomes the search’s own sort. A search needs a search index, see
 <a href="#search-indexes">Search indexes</a>.</p>
+<h3 id="sampling-1"><a class="header" href="#sampling-1">Sampling</a></h3>
+<p><code>TABLESAMPLE BERNOULLI (p PERCENT)</code> keeps each document with probability <code>p / 100</code>, independently
+of the others, so the count varies from run to run, and the input order is kept. <em>Bernoulli
+sampling</em> decides for each item separately, as a coin toss does. It becomes the <code>sample</code> stage, see
+<a href="#sampling">Sampling</a> in the pipeline chapter.</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let about_a_tenth = db
+    .fluent()
+    .sql("SELECT title FROM books AS b TABLESAMPLE BERNOULLI (10 PERCENT) WHERE b.rating &gt; 4")
+    .query()
+    .await?;
+<span class="boring">let _ = about_a_tenth;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>As in SQL, the sample is drawn from the whole table before <code>WHERE</code>, so the <code>WHERE</code> filters the
+documents that were drawn: in the example, each document that matches is in the result with
+probability 0.1. The clause follows the table and its alias. <code>p</code> is a literal or a parameter,
+<code>@name</code> or <code>?</code>. Firestore refuses a value outside 0 to 100.</p>
+<p><code>TABLESAMPLE</code> is refused with <code>InvalidParametersError</code> in these places:</p>
+<ul>
+<li>a derived table, a joined table and a subquery, and a derived table or a CTE that holds a
+<code>TABLESAMPLE</code> and is read by a join or a subquery. Firestore runs a join and a subquery once for
+each row of the outer query, which would draw the sample again every time;</li>
+<li><code>UPDATE</code> and <code>DELETE</code>;</li>
+<li>a statement with a search, <code>document_matches(..)</code> or <code>geo_distance(..)</code>, which reads the
+collection directly and cannot follow a sample.</li>
+</ul>
+<p>A CTE that holds a <code>TABLESAMPLE</code> draws a new sample at each reference, since a CTE referenced twice
+runs twice.</p>
+<p>These forms are refused too, since no sampling of the stage matches them:</p>
+<ul>
+<li><code>SYSTEM</code> and <code>BLOCK</code>, since Firestore has no block sampling;</li>
+<li><code>REPEATABLE</code> and <code>SEED</code>, since the stage takes no seed and every run draws a new sample;</li>
+<li><code>BUCKET</code> and the <code>SAMPLE</code> keyword;</li>
+<li>a sample with <code>ROWS</code>, or with no unit or method.</li>
+</ul>
+<p><code>RESERVOIR (n ROWS)</code> does not parse. A fixed number of documents is
+<code>.sample(FirestoreSampleSize::Documents(n))</code> in the <a href="#sampling">pipeline API</a>.</p>
 <h3 id="refused-constructs"><a class="header" href="#refused-constructs">Refused constructs</a></h3>
 <p>A construct with no pipeline form fails with <code>InvalidParametersError</code> that names it, before any
 request. Anything in a parsed statement that the translator does not map is refused and never
@@ -3453,7 +3493,7 @@ dropped, so a statement does not run with a clause missing.</p>
 <tr><td><code>DISTINCT ON</code>, <code>GROUP BY ALL</code>, <code>ROLLUP</code>, <code>CUBE</code>, <code>GROUPING SETS</code></td><td>no pipeline stage keeps one row per key or groups in these ways</td></tr>
 <tr><td><code>ANY_VALUE</code>, <code>STRING_AGG</code>, <code>LOGICAL_AND</code>, <code>LOGICAL_OR</code></td><td>no accumulator with that meaning</td></tr>
 <tr><td><code>LIKE .. ESCAPE</code>, <code>LIKE ANY</code></td><td>a backslash escapes in <code>LIKE</code> without it</td></tr>
-<tr><td><code>TABLESAMPLE</code>, <code>FOR UPDATE</code>, <code>FETCH</code>, <code>SELECT AS STRUCT</code> and the other clauses of other dialects</td><td>no pipeline form</td></tr>
+<tr><td><code>FOR UPDATE</code>, <code>FETCH</code>, <code>SELECT AS STRUCT</code> and the other clauses of other dialects</td><td>no pipeline form</td></tr>
 <tr><td>Searches inside <code>OR</code> or after a join</td><td>Firestore accepts a search only right after the source, and fails the request otherwise</td></tr>
 <tr><td>An unaliased computed column, or an unaliased nested field such as <code>awards.hugo</code> in a query that groups, <code>ORDER BY</code> or <code>GROUP BY</code> a constant or a position</td><td>the column needs a name, since a nested path cannot name an output field; a constant orders and groups nothing</td></tr>
 </tbody>
@@ -4156,7 +4196,7 @@ A null, a map or an array is a <code>&amp;serde_json::Value</code>.</p>
 <p><code>fluent_rust(..)</code> covers:</p>
 <ul>
 <li>reads of one collection, a path to a nested collection, or a collection group, with <code>WHERE</code>,
-<code>ORDER BY</code>, <code>LIMIT</code>, <code>OFFSET</code> and a select list;</li>
+<code>ORDER BY</code>, <code>LIMIT</code>, <code>OFFSET</code>, <code>TABLESAMPLE</code> and a select list;</li>
 <li>aggregates, with and without <code>GROUP BY</code>, and <code>DISTINCT</code>;</li>
 <li>text and geo search, <code>document_matches(..)</code> and <code>geo_distance(..)</code>, see
 <a href="#search">Search</a>. Vector distance is a function like any other and is shown as one.</li>
@@ -4171,10 +4211,10 @@ subquery and an <code>UNNEST</code>, see <a href="#joins-and-subqueries">Reads, 
 <li><code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, index statements, <code>EXPLAIN</code> and <code>SHOW</code>: a statement that is not a
 <code>SELECT</code> runs with the <a href="#setup">SQL builder</a>, and has no fluent code to show;</li>
 <li>a parameter whose value the translation reads when it builds the pipeline, since the snippet has
-no value to put in its place. Such a parameter is <code>LIMIT @n</code> and <code>OFFSET @n</code>, <code>__name__ = @id</code>
-and the other comparisons on <code>__name__</code>, the key of a subscript as in <code>x[@key]</code>, and the
-arguments of search such as <code>document_matches(@query)</code>. Write the value in the text instead. A
-parameter anywhere else becomes an argument of the function.</li>
+no value to put in its place. Such a parameter is <code>LIMIT @n</code> and <code>OFFSET @n</code>, the percentage of
+<code>TABLESAMPLE</code>, <code>__name__ = @id</code> and the other comparisons on <code>__name__</code>, the key of a subscript as
+in <code>x[@key]</code>, and the arguments of search such as <code>document_matches(@query)</code>. Write the value in
+the text instead. A parameter anywhere else becomes an argument of the function.</li>
 </ul>
 <hr>
 <ol class="footnote-definition">

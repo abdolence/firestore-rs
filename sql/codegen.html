@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-eae8ce63.js";
+            window.path_to_searchindex_js = "../searchindex-b4f0fff6.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-bf8dc4ac.js"></script>
@@ -328,7 +328,7 @@ A null, a map or an array is a <code>&amp;serde_json::Value</code>.</p>
 <p><code>fluent_rust(..)</code> covers:</p>
 <ul>
 <li>reads of one collection, a path to a nested collection, or a collection group, with <code>WHERE</code>,
-<code>ORDER BY</code>, <code>LIMIT</code>, <code>OFFSET</code> and a select list;</li>
+<code>ORDER BY</code>, <code>LIMIT</code>, <code>OFFSET</code>, <code>TABLESAMPLE</code> and a select list;</li>
 <li>aggregates, with and without <code>GROUP BY</code>, and <code>DISTINCT</code>;</li>
 <li>text and geo search, <code>document_matches(..)</code> and <code>geo_distance(..)</code>, see
 <a href="./reads.html#search">Search</a>. Vector distance is a function like any other and is shown as one.</li>
@@ -343,10 +343,10 @@ subquery and an <code>UNNEST</code>, see <a href="./reads.html#joins-and-subquer
 <li><code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, index statements, <code>EXPLAIN</code> and <code>SHOW</code>: a statement that is not a
 <code>SELECT</code> runs with the <a href="../sql.html#setup">SQL builder</a>, and has no fluent code to show;</li>
 <li>a parameter whose value the translation reads when it builds the pipeline, since the snippet has
-no value to put in its place. Such a parameter is <code>LIMIT @n</code> and <code>OFFSET @n</code>, <code>__name__ = @id</code>
-and the other comparisons on <code>__name__</code>, the key of a subscript as in <code>x[@key]</code>, and the
-arguments of search such as <code>document_matches(@query)</code>. Write the value in the text instead. A
-parameter anywhere else becomes an argument of the function.</li>
+no value to put in its place. Such a parameter is <code>LIMIT @n</code> and <code>OFFSET @n</code>, the percentage of
+<code>TABLESAMPLE</code>, <code>__name__ = @id</code> and the other comparisons on <code>__name__</code>, the key of a subscript as
+in <code>x[@key]</code>, and the arguments of search such as <code>document_matches(@query)</code>. Write the value in
+the text instead. A parameter anywhere else becomes an argument of the function.</li>
 </ul>
 <hr>
 <ol class="footnote-definition">
