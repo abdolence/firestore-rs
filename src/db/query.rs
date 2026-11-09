@@ -100,6 +100,7 @@ impl FirestoreDb {
                     Err(crate::cache_incomplete_collection_error(
                         &group_id.join(","),
                         "collection group queries cannot be served from a cache",
+                        None,
                     ))
                 } else {
                     Ok(FirestoreCachedValue::SkipCache)
@@ -159,9 +160,12 @@ impl FirestoreDb {
                                 });
                                 Err(crate::cache_incomplete_collection_error(
                                     collection_id,
-                                    "either the collection is not configured to be preloaded, or \
-                                     the query uses features the cached query engine does not \
-                                     support",
+                                    &format!(
+                                        "the query uses features the cached query engine does \
+                                         not support, or {}",
+                                        crate::CACHE_COLLECTION_SKIP_REASONS
+                                    ),
+                                    Some(crate::CACHE_COLLECTION_SKIP_ADVICE),
                                 ))
                             } else {
                                 span.in_scope(|| {

@@ -655,8 +655,9 @@ impl FirestoreDb {
     /// Firestore.
     ///
     /// Reads by ID return `None` when the document is not cached. Requests that the cache cannot
-    /// answer *completely* - a `list` or `query` on a collection that is not preloaded, on a
-    /// collection the cache does not know about, or a collection group query - return a
+    /// answer *completely* - a `list` or `query` on a collection that is not in the cache
+    /// configuration, is not preloaded, is watched by document ID or is being replayed from
+    /// Firestore, on a cache that has been shut down, or a collection group query - return a
     /// [`FirestoreError::CacheError`](crate::errors::FirestoreError::CacheError) rather than a
     /// partial result that would look complete.
     ///

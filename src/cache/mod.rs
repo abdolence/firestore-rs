@@ -162,23 +162,40 @@ use crate::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Why a backend declines a `list` or `query` of a collection. A backend answers `SkipCache` for
+/// all of these without saying which, so an error built from it names every one.
+pub(crate) const CACHE_COLLECTION_SKIP_REASONS: &str = "the collection is not in the cache \
+     configuration, is not preloaded, is watched by document ID, is being replayed from Firestore, \
+     or the cache has been shut down";
+
+/// What to do about each of [`CACHE_COLLECTION_SKIP_REASONS`] that the caller can act on.
+pub(crate) const CACHE_COLLECTION_SKIP_ADVICE: &str = "To make the collection listable, configure \
+     it with FirestoreCacheCollectionLoadMode::PreloadAllDocs (or PreloadAllIfEmpty) and without \
+     document IDs. If it is being replayed, read it again once the replay has finished.";
+
 /// Builds the error returned when a `read_cached_only` session asks for a `list`/`query` that the
 /// cache cannot answer completely.
 ///
 /// Returning an error rather than a partial result is deliberate: a silently incomplete
 /// collection is far more damaging than a loud failure.
+///
+/// `advice` is appended after the reason when something the caller can do about that particular
+/// reason is known; the fallback to Firestore and the partial-results opt-out are always named.
 pub(crate) fn cache_incomplete_collection_error(
     collection_id: &str,
     reason: &str,
+    advice: Option<&str>,
 ) -> FirestoreError {
+    let advice = advice
+        .map(|advice| format!("{advice} "))
+        .unwrap_or_default();
     FirestoreError::CacheError(FirestoreCacheError::new(
         FirestoreErrorPublicGenericDetails::new("CacheIncompleteCollection".into()),
         format!(
             "The cache cannot serve this request for collection `{collection_id}` completely: \
              {reason}. Reading it from the cache would silently return partial results. \
-             Either configure the collection with FirestoreCacheCollectionLoadMode::PreloadAllDocs \
-             (or PreloadAllIfEmpty), or use `db.read_through_cache(&cache)` to fall back to \
-             Firestore. To opt back into the previous partial-result behaviour, set \
+             {advice}To fall back to Firestore, use `db.read_through_cache(&cache)`. To opt back \
+             into the previous partial-result behaviour, set \
              FirestoreCacheIncompleteCollectionPolicy::PartialResults on the cache configuration."
         ),
     ))
