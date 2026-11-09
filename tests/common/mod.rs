@@ -59,6 +59,18 @@ pub async fn setup_enterprise_unseeded(
     Ok(FirestoreDb::with_options(options).await?)
 }
 
+/// `name` with a suffix no other run uses, for collections and documents a test writes to and
+/// deletes from. Runs against one project overlap (consecutive pushes to master, local runs
+/// beside CI), and a fixed name makes them overwrite and delete each other's documents.
+#[allow(dead_code)]
+pub fn unique_name(name: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is past the Unix epoch")
+        .as_nanos();
+    format!("{name}-{nanos}")
+}
+
 #[allow(dead_code)]
 pub async fn populate_collection<T, DF>(
     db: &FirestoreDb,

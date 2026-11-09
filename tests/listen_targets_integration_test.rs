@@ -3,7 +3,7 @@
 
 mod common;
 
-use crate::common::{eventually_async, setup};
+use crate::common::{eventually_async, setup, unique_name};
 use firestore::gcloud_sdk::google::firestore::v1::{
     listen_request, target, ListenRequest, StructuredQuery, Target, TargetChange,
 };
@@ -11,7 +11,7 @@ use firestore::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use tracing::info;
 
@@ -53,13 +53,8 @@ impl RecordedEvents {
 
 type TestListener = FirestoreListener<FirestoreDb, FirestoreMemListenStateStorage>;
 
-/// A document ID no other run uses, so that concurrent runs do not see each other's writes.
 fn unique_doc_id(name: &str) -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("the clock is past the Unix epoch")
-        .as_nanos();
-    format!("listen-targets-{name}-{nanos}")
+    unique_name(&format!("listen-targets-{name}"))
 }
 
 async fn start_listener(

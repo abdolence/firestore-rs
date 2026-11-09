@@ -1,4 +1,4 @@
-use crate::common::{eventually_async, populate_collection, setup};
+use crate::common::{eventually_async, populate_collection, setup, unique_name};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -15,16 +15,35 @@ struct MyTestStructure {
     some_string: String,
 }
 
+/// Removes the documents `populate_collection` wrote to a collection that only this run uses.
+async fn delete_populated_documents(
+    db: &FirestoreDb,
+    collection: &str,
+    count: usize,
+) -> Result<(), FirestoreError> {
+    for i in 0..count {
+        db.fluent()
+            .delete()
+            .from(collection)
+            .document_id(format!("test-{i}"))
+            .execute()
+            .await?;
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = setup().await?;
 
-    const TEST_COLLECTION_NAME_NO_PRELOAD: &str = "integration-test-caching-persistent-no-preload";
-    const TEST_COLLECTION_NAME_PRELOAD: &str = "integration-test-caching-persistent-preload";
+    let no_preload_name = unique_name("integration-test-caching-persistent-no-preload");
+    let no_preload_collection = no_preload_name.as_str();
+    let preload_name = unique_name("integration-test-caching-persistent-preload");
+    let preload_collection = preload_name.as_str();
 
     populate_collection(
         &db,
-        TEST_COLLECTION_NAME_NO_PRELOAD,
+        no_preload_collection,
         10,
         |i| MyTestStructure {
             some_id: format!("test-{}", i),
@@ -37,7 +56,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
 
     populate_collection(
         &db,
-        TEST_COLLECTION_NAME_PRELOAD,
+        preload_collection,
         10,
         |i| MyTestStructure {
             some_id: format!("test-{}", i),
@@ -54,10 +73,10 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     let cache = FirestorePersistentCache::builder(&db)
         .name("example-persistent-cache")
         .data_dir(temp_db_dir.keep())
-        .collection_with(TEST_COLLECTION_NAME_NO_PRELOAD, |c| {
+        .collection_with(no_preload_collection, |c| {
             c.preload_none().listener_target(1000)
         })
-        .collection_with(TEST_COLLECTION_NAME_PRELOAD, |c| {
+        .collection_with(preload_collection, |c| {
             c.preload_all().listener_target(1001)
         })
         .build()
@@ -67,7 +86,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         .read_cached_only(&cache)
         .fluent()
         .select()
-        .by_id_in(TEST_COLLECTION_NAME_NO_PRELOAD)
+        .by_id_in(no_preload_collection)
         .obj()
         .one("test-0")
         .await?;
@@ -78,7 +97,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         .read_cached_only(&cache)
         .fluent()
         .select()
-        .by_id_in(TEST_COLLECTION_NAME_PRELOAD)
+        .by_id_in(preload_collection)
         .obj()
         .one("test-0")
         .await?;
@@ -88,7 +107,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     db.read_through_cache(&cache)
         .fluent()
         .select()
-        .by_id_in(TEST_COLLECTION_NAME_NO_PRELOAD)
+        .by_id_in(no_preload_collection)
         .obj::<MyTestStructure>()
         .one("test-1")
         .await?;
@@ -97,7 +116,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         .read_cached_only(&cache)
         .fluent()
         .select()
-        .by_id_in(TEST_COLLECTION_NAME_NO_PRELOAD)
+        .by_id_in(no_preload_collection)
         .obj()
         .one("test-1")
         .await?;
@@ -111,7 +130,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     let listing_result = cached_db
         .fluent()
         .list()
-        .from(TEST_COLLECTION_NAME_NO_PRELOAD)
+        .from(no_preload_collection)
         .obj::<MyTestStructure>()
         .stream_all_with_errors()
         .await;
@@ -126,7 +145,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         .read_through_cache(&cache)
         .fluent()
         .list()
-        .from(TEST_COLLECTION_NAME_NO_PRELOAD)
+        .from(no_preload_collection)
         .obj::<MyTestStructure>()
         .stream_all_with_errors()
         .await?
@@ -139,7 +158,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     let all_items = cached_db
         .fluent()
         .list()
-        .from(TEST_COLLECTION_NAME_PRELOAD)
+        .from(preload_collection)
         .obj::<MyTestStructure>()
         .stream_all_with_errors()
         .await?
@@ -151,7 +170,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     db.fluent()
         .update()
         .fields(paths!(MyTestStructure::some_string))
-        .in_col(TEST_COLLECTION_NAME_PRELOAD)
+        .in_col(preload_collection)
         .document_id("test-2")
         .object(&MyTestStructure {
             some_id: "test-2".to_string(),
@@ -169,7 +188,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
                 let my_struct: Option<MyTestStructure> = cached_db
                     .fluent()
                     .select()
-                    .by_id_in(TEST_COLLECTION_NAME_PRELOAD)
+                    .by_id_in(preload_collection)
                     .obj()
                     .one("test-2")
                     .await?;
@@ -187,7 +206,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     let queried = cached_db
         .fluent()
         .select()
-        .from(TEST_COLLECTION_NAME_PRELOAD)
+        .from(preload_collection)
         .filter(|q| {
             q.for_all([q
                 .field(path!(MyTestStructure::some_num))
@@ -207,7 +226,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     // in the cache forever.
     db.fluent()
         .delete()
-        .from(TEST_COLLECTION_NAME_PRELOAD)
+        .from(preload_collection)
         .document_id("test-3")
         .execute()
         .await?;
@@ -220,7 +239,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
                 let all_items = cached_db
                     .fluent()
                     .list()
-                    .from(TEST_COLLECTION_NAME_PRELOAD)
+                    .from(preload_collection)
                     .obj::<MyTestStructure>()
                     .stream_all_with_errors()
                     .await?
@@ -234,6 +253,9 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     );
 
     cache.shutdown().await?;
+
+    delete_populated_documents(&db, no_preload_collection, 10).await?;
+    delete_populated_documents(&db, preload_collection, 10).await?;
 
     Ok(())
 }
