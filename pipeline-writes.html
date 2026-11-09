@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-293fb92a.js";
+            window.path_to_searchindex_js = "searchindex-4836e0b5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-bf8dc4ac.js"></script>
@@ -198,6 +198,48 @@ println!("Deleted {} documents", deleted.documents_modified);
 <p>A write returns a count, <code>documents_modified</code>, and not the documents. It has no <code>explain</code>,
 <code>query</code> or <code>obj</code>, and a write pipeline that calls them does not compile.</p>
 <p>Full example available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/pipeline-writes.rs">here</a>.</p>
+<h2 id="when-to-use-a-pipeline-write"><a class="header" href="#when-to-use-a-pipeline-write">When to use a pipeline write</a></h2>
+<p>Core has no write by query. To change the documents a query matches, the program reads them,
+computes the new values and writes each one back, with <code>update</code> or a
+<a href="./batch-writes.html">batch writer</a>. A pipeline write selects and writes in one request, and
+Firestore runs both on the server:</p>
+<ul>
+<li>no document is sent to the client, and the response is the count <code>documents_modified</code>;</li>
+<li>a value can be an expression over the fields of the document it is set on, so the program does
+not read a field to compute from it;</li>
+<li><code>insert</code> and <code>upsert</code> take their documents from another collection, or from the output of a
+<a href="./pipeline-aggregations-and-joins.html">join, aggregation</a> or <a href="./pipeline-search.html">search</a>;</li>
+<li><code>.atomic()</code> makes the write apply in full or not at all, see <a href="#atomic-writes">Atomic writes</a>;</li>
+<li>many literal rows go in one request, each named by a field with <code>.document_id(..)</code>.</li>
+</ul>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">use serde::Serialize;
+</span><span class="boring">#[derive(Debug, Clone, Serialize)]
+</span><span class="boring">struct Item { sku: String, price: f64, stock: i64 }
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>// Raises the price of every item in stock by a tenth, on the server
+let repriced = db
+    .fluent()
+    .pipeline()
+    .update(|e| [e.field(path!(Item::price)).multiply(1.1).alias(path!(Item::price))])
+    .in_col("items")
+    .filter(|q| q.field(path!(Item::stock)).greater_than(0))
+    .execute()
+    .await?;
+<span class="boring">let _ = repriced;
+</span><span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>A write to one document whose ID the program knows stays Core: it works on a Standard edition
+database too, and it can be buffered in a transaction. What a pipeline write costs:</p>
+<ul>
+<li>it needs an Enterprise edition database, and fails on Standard with <code>FAILED_PRECONDITION</code>, see
+<a href="./editions.html">Standard and Enterprise editions</a>;</li>
+<li>it returns a count and not the documents;</li>
+<li>an atomic write has size limits, see <a href="#write-limits">Write limits</a>;</li>
+<li>the library never retries it, see <a href="#retries-and-listeners">Retries and listeners</a>;</li>
+<li>a transaction takes pipeline writes or buffered writes, not both, see
+<a href="#writes-in-a-transaction">Writes in a transaction</a>.</li>
+</ul>
 <h2 id="the-four-writes"><a class="header" href="#the-four-writes">The four writes</a></h2>
 <ul>
 <li><code>delete()</code> deletes each selected document;</li>
