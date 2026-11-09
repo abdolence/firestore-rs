@@ -169,6 +169,7 @@ where
             document,
             self.return_only_fields,
             self.precondition,
+            self.transforms,
         )
     }
 
@@ -205,6 +206,7 @@ where
     document: Document,
     return_only_fields: Option<Vec<String>>,
     precondition: Option<FirestoreWritePrecondition>,
+    transforms: Vec<FirestoreFieldTransform>,
 }
 
 impl<'a, D> FirestoreUpdateDocExecuteBuilder<'a, D>
@@ -219,6 +221,7 @@ where
         document: Document,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> Self {
         Self {
             db,
@@ -227,10 +230,15 @@ where
             document,
             return_only_fields,
             precondition,
+            transforms,
         }
     }
 
     /// Sends the update to Firestore and returns the document as stored.
+    ///
+    /// With [`transforms`](FirestoreUpdateDocObjBuilder::transforms) set, the document and the
+    /// transforms are sent as one atomic write, and the result is the document as stored by that
+    /// write.
     ///
     /// Returns an error if the request fails, or if a precondition was set and does not hold.
     pub async fn execute(self) -> FirestoreResult<Document> {
@@ -244,6 +252,7 @@ where
                 self.update_only_fields,
                 self.return_only_fields,
                 self.precondition,
+                self.transforms,
             )
             .await
     }
@@ -439,60 +448,31 @@ where
     where
         for<'de> O: Deserialize<'de>,
     {
-        let has_transforms = !self.transforms.is_empty();
-        match (self.parent, has_transforms) {
-            (Some(parent), false) => {
-                self.db
-                    .update_obj_at(
-                        parent.as_str(),
-                        self.collection_id.as_str(),
-                        self.document_id,
-                        self.object,
-                        self.update_only_fields,
-                        self.return_only_fields,
-                        self.precondition,
-                    )
-                    .await
-            }
-            (None, false) => {
-                self.db
-                    .update_obj(
-                        self.collection_id.as_str(),
-                        self.document_id,
-                        self.object,
-                        self.update_only_fields,
-                        self.return_only_fields,
-                        self.precondition,
-                    )
-                    .await
-            }
-            (Some(parent), true) => {
-                self.db
-                    .update_obj_with_transforms_at(
-                        parent.as_str(),
-                        self.collection_id.as_str(),
-                        self.document_id,
-                        self.object,
-                        self.update_only_fields,
-                        self.return_only_fields,
-                        self.precondition,
-                        self.transforms,
-                    )
-                    .await
-            }
-            (None, true) => {
-                self.db
-                    .update_obj_with_transforms(
-                        self.collection_id.as_str(),
-                        self.document_id,
-                        self.object,
-                        self.update_only_fields,
-                        self.return_only_fields,
-                        self.precondition,
-                        self.transforms,
-                    )
-                    .await
-            }
+        if let Some(parent) = self.parent {
+            self.db
+                .update_obj_at(
+                    parent.as_str(),
+                    self.collection_id.as_str(),
+                    self.document_id,
+                    self.object,
+                    self.update_only_fields,
+                    self.return_only_fields,
+                    self.precondition,
+                    self.transforms,
+                )
+                .await
+        } else {
+            self.db
+                .update_obj(
+                    self.collection_id.as_str(),
+                    self.document_id,
+                    self.object,
+                    self.update_only_fields,
+                    self.return_only_fields,
+                    self.precondition,
+                    self.transforms,
+                )
+                .await
         }
     }
 

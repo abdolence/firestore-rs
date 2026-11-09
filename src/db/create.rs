@@ -1,10 +1,10 @@
-use crate::db::retry::CREATE_AND_UPDATE_RETRIED_CODES;
 use crate::db::support::FirestoreCreateSupport;
 use crate::db::validate_path_segment;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
+use rand::distr::{Alphanumeric, SampleString};
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
@@ -23,13 +23,7 @@ fn validate_create_doc_ids<S: AsRef<str>>(
     Ok(())
 }
 
-const GENERATED_ID_ALPHABET: &[u8; 62] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const GENERATED_ID_LENGTH: usize = 20;
-
-/// The highest random byte that maps onto the alphabet evenly: 248 values, four for each of its
-/// 62 characters. A higher byte is dropped, or the first 8 characters would come up more often.
-const GENERATED_ID_MAX_BYTE: u8 = 62 * 4 - 1;
 
 /// Makes a document ID the way Firestore's own clients do: 20 characters from `A-Za-z0-9`, each
 /// equally likely.
@@ -37,23 +31,7 @@ const GENERATED_ID_MAX_BYTE: u8 = 62 * 4 - 1;
 /// The ID is made before the request is sent, so that sending the request again after a failure
 /// cannot create a second document.
 fn generate_document_id() -> String {
-    let mut id = String::with_capacity(GENERATED_ID_LENGTH);
-    while id.len() < GENERATED_ID_LENGTH {
-        let mut random_bytes = [0u8; 40];
-        rand::fill(&mut random_bytes);
-        id.extend(
-            random_bytes
-                .into_iter()
-                .filter(|byte| *byte <= GENERATED_ID_MAX_BYTE)
-                .map(|byte| {
-                    char::from(
-                        GENERATED_ID_ALPHABET[usize::from(byte) % GENERATED_ID_ALPHABET.len()],
-                    )
-                })
-                .take(GENERATED_ID_LENGTH - id.len()),
-        );
-    }
-    id
+    Alphanumeric.sample_string(&mut rand::rng(), GENERATED_ID_LENGTH)
 }
 
 #[async_trait]
@@ -120,7 +98,6 @@ impl FirestoreCreateSupport for FirestoreDb {
                 &span,
                 "create document",
                 &create_document_request,
-                &CREATE_AND_UPDATE_RETRIED_CODES,
                 |mut client, request| async move { client.create_document(request).await },
             )
             .await?;

@@ -81,37 +81,6 @@ pub trait FirestoreUpdateSupport {
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-
-    async fn update_obj_at<I, O, S>(
-        &self,
-        parent: &str,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        update_only: Option<Vec<String>>,
-        return_only_fields: Option<Vec<String>>,
-        precondition: Option<FirestoreWritePrecondition>,
-    ) -> FirestoreResult<O>
-    where
-        I: Serialize + Sync + Send,
-        for<'de> O: Deserialize<'de>,
-        S: AsRef<str> + Send;
-
-    /// Like [`update_obj`](Self::update_obj), applying `transforms` atomically after the object
-    /// is written. Returns the document as stored right after that write.
-    async fn update_obj_with_transforms<I, O, S>(
-        &self,
-        collection_id: &str,
-        document_id: S,
-        obj: &I,
-        update_only: Option<Vec<String>>,
-        return_only_fields: Option<Vec<String>>,
-        precondition: Option<FirestoreWritePrecondition>,
         transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<O>
     where
@@ -119,9 +88,7 @@ pub trait FirestoreUpdateSupport {
         for<'de> O: Deserialize<'de>,
         S: AsRef<str> + Send;
 
-    /// Same as [`update_obj_with_transforms`](Self::update_obj_with_transforms), at an explicit
-    /// `parent` path.
-    async fn update_obj_with_transforms_at<I, O, S>(
+    async fn update_obj_at<I, O, S>(
         &self,
         parent: &str,
         collection_id: &str,
@@ -144,6 +111,7 @@ pub trait FirestoreUpdateSupport {
         update_only: Option<Vec<String>>,
         return_only_fields: Option<Vec<String>>,
         precondition: Option<FirestoreWritePrecondition>,
+        transforms: Vec<FirestoreFieldTransform>,
     ) -> FirestoreResult<Document>;
 }
 

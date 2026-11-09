@@ -51,11 +51,11 @@ The limit applies to each attempt. A request that runs out of it fails with a `D
 `DeadlineExceeded` and `retry_possible` set, and it is retried wherever a dropped connection is:
 - gets, lists, list collection IDs and the start of queries, aggregations, pipelines and SQL reads, up to `max_retries`
   times;
-- `delete()`, up to `max_retries` times, see [Single writes](#single-writes);
 - simple batch writes, until `retry_max_elapsed_time`. A retried batch may apply twice, for example an `increment`,
   as it can after a dropped connection.
 
-`insert()` and `update()` return a request timeout that ran out without a retry.
+`insert()`, `update()` and `delete()` return a request timeout that ran out without a retry, see
+[Single writes](#single-writes).
 
 A read makes `max_retries + 1` attempts, and the error that comes back after the last one still has `retry_possible` set.
 A pipeline or SQL write makes one attempt and clears the flag, see
@@ -65,29 +65,28 @@ request, so no timeout or retry applies to it.
 Batch gets, partition queries, a query or aggregation stream that has already started and transaction commits return
 the error without a retry. A commit is never retried, because its writes may already be applied.
 
-The reads in the first item and `delete()` also retry a `DEADLINE_EXCEEDED` that Firestore itself answers with, up to
-`max_retries` times, with or without a request timeout set. Inserts, updates, batch gets, partition queries and streams
-that have already started return it with `retry_possible` unset.
+The reads in the first item also retry a `DEADLINE_EXCEEDED` that Firestore itself answers with, up to `max_retries`
+times, with or without a request timeout set. Inserts, updates, deletes, batch gets, partition queries and streams that
+have already started return it with `retry_possible` unset.
 
 ### Single writes
 
-`insert()`, `update()` and `delete()` run with `.execute()` are sent again up to `max_retries` times, after the
-codes the official Google Firestore clients retry them on:
-- `insert()` and `update()`: `RESOURCE_EXHAUSTED` and `UNAVAILABLE`;
-- `delete()`: `RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `INTERNAL` and `DEADLINE_EXCEEDED`, the request timeout running out
-  included.
+`insert()`, `update()` and `delete()` run with `.execute()` are sent again up to `max_retries` times after
+`RESOURCE_EXHAUSTED` and `UNAVAILABLE`. A connection lost while a request is in flight is retried like `UNAVAILABLE`.
 
-A connection lost while a request is in flight is retried like `UNAVAILABLE`, as in Google's clients.
+These are the codes that Google's Firestore server libraries for Java, Go and Python retry a write on. They send every
+single write, a delete included, as a commit, and the library follows them. The Node.js library additionally retries
+`ABORTED` on a commit; the library does not, see [When a write fails](./basic-writes.md#when-a-write-fails).
 
-Any other code is returned at once, whatever `retry_possible` says. Google's clients retry `ABORTED` only on batch
-writes, not on creates, updates or deletes, and `DEADLINE_EXCEEDED` only on deletes, and the library follows them.
+Any other code is returned at once, whatever `retry_possible` says: `INTERNAL`, `ABORTED` and `DEADLINE_EXCEEDED`
+included, the request timeout running out among them.
 
 A write that is sent again can find that the first attempt was applied, since `UNAVAILABLE` and a lost connection do not
 say whether it was. Then:
 - an `insert()` fails with `ALREADY_EXISTS` when the first attempt created the document;
 - an `update()` or `delete()` with an `UpdateTime` [precondition](./preconditions.md) fails with `FAILED_PRECONDITION`,
   since the document no longer has that update time. The write went through, and the error reports that it did not;
-- a `delete()` without a precondition finds the document already gone, which is not an error.
+- a `delete()` without a precondition finds the document already gone, which is not an error;
 - an `update()` with [transformations](./document-transformations.md) applies them again: an `increment` adds its value
   twice. Do not use such an update where a repeated increment is wrong; run it in a transaction or set `max_retries`
   to `0`.

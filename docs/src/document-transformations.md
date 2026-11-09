@@ -67,9 +67,9 @@ let updated: MyTestStructure = db
 # }
 ```
 
-The update is sent as a commit, and the document is read back at the time of that commit. The write is applied when the
-read fails, although `.execute()` returns the error. A transformation-only update with `.only_transform()` has no
-`.execute()`: queue it on a transaction or a batch.
+The update is sent as a commit, and the document is read back at the time of that commit, with `.object(..)` as with
+`.document(..)`. When the read fails, `.execute()` returns its error although the write was applied. A
+transformation-only update with `.only_transform()` has no `.execute()`: queue it on a transaction or a batch.
 
 Be aware that a sent-again update applies a transformation such as `increment` twice when the first attempt was
 applied, see [Single writes](./request-timeouts.md#single-writes).

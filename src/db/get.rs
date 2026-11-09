@@ -411,7 +411,8 @@ impl FirestoreDb {
         Ok(doc)
     }
 
-    /// Sends one `GetDocument` for `document_path` at `consistency_selector`, bypassing the cache.
+    /// Reads `document_path` at `consistency_selector`, bypassing the cache, with the retries of any
+    /// read.
     pub(crate) async fn fetch_doc(
         &self,
         collection_id: String,

@@ -1,4 +1,3 @@
-use crate::db::retry::DELETE_RETRIED_CODES;
 use crate::db::safe_document_path;
 use crate::db::support::FirestoreDeleteSupport;
 use crate::FirestoreInstant;
@@ -58,7 +57,6 @@ impl FirestoreDeleteSupport for FirestoreDb {
             &span,
             "delete document",
             &request,
-            &DELETE_RETRIED_CODES,
             |mut client, request| async move { client.delete_document(request).await },
         )
         .await?;
