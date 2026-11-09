@@ -4,7 +4,8 @@ use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::ops::Mul;
-use tokio::time::sleep;
+use std::time::Duration;
+use tokio::time::{sleep, Instant};
 use tracing::*;
 
 #[cfg(feature = "admin")]
@@ -148,6 +149,32 @@ where
         }
     }
     .boxed()
+}
+
+/// Calls `f` every `interval` until it returns `true`, or `timeout` has passed.
+///
+/// Unlike [`eventually_async`], the wait between calls does not grow, so a condition that turns
+/// true is noticed within one `interval`.
+#[allow(dead_code)]
+pub async fn eventually_within<F, Fut>(
+    timeout: Duration,
+    interval: Duration,
+    f: F,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<bool, Box<dyn std::error::Error + Send + Sync>>>,
+{
+    let deadline = Instant::now() + timeout;
+    loop {
+        if f().await? {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        sleep(interval).await;
+    }
 }
 
 #[derive(Debug)]
