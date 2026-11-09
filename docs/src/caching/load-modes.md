@@ -4,8 +4,11 @@
 - `PreloadAllDocs` (`.collection_with(name, |c| c.preload_all())`): preload all documents in the
   collection;
 - `PreloadAllIfEmpty` (`.collection_with(name, |c| c.preload_all_if_empty())`): preload all
-  documents only if the cache is empty. This is useful for the persistent cache; for the memory
-  cache it is the same as `PreloadAllDocs`, since an in-memory cache always starts empty.
+  documents only if the cache is empty. This is useful for the persistent cache, where the saving
+  applies when the cache loads; for the memory cache it is the same as `PreloadAllDocs`, since an
+  in-memory cache always starts empty. A persistent cache whose process stopped in the middle of a
+  download can hold part of a collection, and `PreloadAllIfEmpty` then treats it as complete. Use
+  `PreloadAllDocs` where that matters.
 
 `.preloaded_collection(name)` picks the appropriate preloading mode for the backend.
 

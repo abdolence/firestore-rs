@@ -4,9 +4,12 @@ use crate::{FirestoreDb, FirestoreDbOptions};
 use gcloud_sdk::google::firestore::admin::v1::{
     BulkDeleteDocumentsMetadata, Field as ProtoField, Index as ProtoIndex,
 };
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 use gcloud_sdk::google::firestore::v1::{
-    batch_get_documents_response, get_document_request, BatchGetDocumentsResponse,
-    BeginTransactionResponse, CommitResponse, Document, GetDocumentRequest, RunQueryResponse,
+    batch_get_documents_response, BatchGetDocumentsResponse, Document, RunQueryResponse,
+};
+use gcloud_sdk::google::firestore::v1::{
+    get_document_request, BeginTransactionResponse, CommitResponse, GetDocumentRequest,
 };
 #[cfg(feature = "admin")]
 use gcloud_sdk::google::longrunning::{operation, Operation};
@@ -96,6 +99,7 @@ pub(crate) enum FakeResponse {
     /// A stream of framed messages that then ends with a `grpc-status` trailer of `code`: a stream
     /// that fails after the client has already received part of it. Never `Code::Ok`; use
     /// [`FakeResponse::Message`] or [`FakeResponse::Paced`].
+    #[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
     MessagesThenStatus(Vec<Vec<u8>>, Code),
     /// A Trailers-Only error response with no body - the only way a streaming call's error is
     /// visible at its initial `await` rather than only once polled. Never `Code::Ok`: a unary
@@ -147,6 +151,7 @@ pub(super) fn begin_failure(code: Code) -> (String, FakeResponse) {
     )
 }
 
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 /// A framed `RunQuery` stream message carrying `document`.
 pub(crate) fn run_query_message(document: Document) -> Vec<u8> {
     RunQueryResponse {
@@ -156,6 +161,7 @@ pub(crate) fn run_query_message(document: Document) -> Vec<u8> {
     .encode_to_vec()
 }
 
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
 /// A framed `BatchGetDocuments` stream message carrying `document` as found.
 pub(crate) fn batch_get_found_message(document: Document) -> Vec<u8> {
     BatchGetDocumentsResponse {
@@ -434,6 +440,7 @@ async fn answer(
         FakeResponse::Paced(messages, interval) => {
             send_messages(respond, messages, interval, Code::Ok).await
         }
+        #[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
         FakeResponse::MessagesThenStatus(messages, code) => {
             assert_ne!(
                 code,

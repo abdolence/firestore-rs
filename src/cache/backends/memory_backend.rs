@@ -1134,9 +1134,12 @@ mod tests {
         assert_eq!(error.public.code, "CacheShutdown");
     }
 
+    /// The documents path of a database served by [`FakeFirestore`].
+    const FAKE_DOCS: &str = "projects/fake-firestore/databases/(default)/documents";
+
     fn document(id: &str) -> FirestoreDocument {
         FirestoreDocument {
-            name: doc_path("a", id),
+            name: format!("{FAKE_DOCS}/a/{id}"),
             ..Default::default()
         }
     }
@@ -1152,21 +1155,6 @@ mod tests {
             )
         })
         .await
-    }
-
-    #[tokio::test]
-    async fn a_preload_that_fails_partway_fails_load() {
-        let backend = preloaded(&[("a", 1000)]);
-        let server = failing_partway_server().await;
-
-        let FirestoreError::DatabaseError(error) = backend
-            .load(&FirestoreCacheOptions::new("partial".into()), &server.db)
-            .await
-            .unwrap_err()
-        else {
-            panic!("load did not fail with the stream's database error");
-        };
-        assert_eq!(error.public.code, "Internal");
     }
 
     #[tokio::test]

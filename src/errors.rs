@@ -59,6 +59,16 @@ impl FirestoreError {
         ))
     }
 
+    /// Builds the [`CacheError`](FirestoreError::CacheError) of adding a collection that a cache
+    /// already holds.
+    #[cfg(feature = "caching")]
+    pub(crate) fn collection_already_cached(collection_path: &str) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("CacheCollectionAlreadyCached".into()),
+            format!("The collection `{collection_path}` is already cached."),
+        ))
+    }
+
     /// Builds the [`DeserializeError`](FirestoreError::DeserializeError) of a value read as a
     /// [`FirestoreVector`](crate::FirestoreVector) that is not a vector.
     pub(crate) fn not_a_vector() -> Self {

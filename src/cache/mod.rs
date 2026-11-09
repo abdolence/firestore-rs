@@ -569,6 +569,16 @@ where
             Some(target) => {
                 let target = FirestoreListenerTarget::new(target);
                 target.validate()?;
+                if config
+                    .collections
+                    .values()
+                    .any(|cached| cached.listener_target == target)
+                {
+                    return Err(FirestoreError::invalid_parameters(
+                        "listener_target",
+                        format!("The listener target {} is already in use.", target.value()),
+                    ));
+                }
                 target
             }
             None => {
@@ -584,10 +594,7 @@ where
         let collection_path = collection_config.resolve_collection_path(documents_path);
 
         if config.collections.contains_key(&collection_path) {
-            return Err(FirestoreError::CacheError(FirestoreCacheError::new(
-                FirestoreErrorPublicGenericDetails::new("CacheCollectionAlreadyCached".into()),
-                format!("The collection `{collection_path}` is already cached."),
-            )));
+            return Err(FirestoreError::collection_already_cached(&collection_path));
         }
 
         let target_params = self
@@ -596,7 +603,21 @@ where
             .add_collection(&self.inner.options, &self.inner.db, collection_config)
             .await?;
 
-        self.inner.listener.lock().await.add_target(target_params)?;
+        let added = self.inner.listener.lock().await.add_target(target_params);
+        if let Err(error) = added {
+            // The backend publishes the collection before the listener accepts its target. Left
+            // there, the collection would be listable with no target keeping it current, and its
+            // removal would drop whichever target holds the same ID.
+            if let Err(removal_error) = self.inner.backend.remove_collection(&collection_path).await
+            {
+                error!(
+                    ?removal_error,
+                    collection_path,
+                    "Could not roll back a collection whose listener target was refused."
+                );
+            }
+            return Err(error);
+        }
 
         info!(collection_path, "Added a collection to the cache.");
         Ok(())
@@ -1356,5 +1377,70 @@ mod target_change_tests {
         );
 
         assert!(suspended(action).is_empty());
+    }
+}
+
+#[cfg(all(test, feature = "caching-memory"))]
+mod add_collection_tests {
+    use super::*;
+    use crate::db::fake_firestore::{FakeFirestore, FakeResponse};
+
+    async fn cache_holding_a() -> (FakeFirestore, FirestoreMemoryCache) {
+        let server =
+            FakeFirestore::start(|method, _| (method.to_string(), FakeResponse::empty())).await;
+        let cache = FirestoreCache::memory(&server.db)
+            .preloaded_collection("a")
+            .build()
+            .await
+            .expect("cache");
+        (server, cache)
+    }
+
+    fn cached_collections(cache: &FirestoreMemoryCache) -> usize {
+        cache.backend().cache_configuration().collections.len()
+    }
+
+    #[tokio::test]
+    async fn a_requested_listener_target_that_is_in_use_is_refused() {
+        let (_server, cache) = cache_holding_a().await;
+        let in_use = *cache
+            .backend()
+            .cache_configuration()
+            .collections
+            .values()
+            .next()
+            .expect("collection a")
+            .listener_target
+            .value();
+
+        let error = cache
+            .add_collection(
+                FirestoreCacheCollection::new("b")
+                    .preload_all()
+                    .listener_target(in_use),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, FirestoreError::InvalidParametersError(_)));
+        assert_eq!(cached_collections(&cache), 1);
+        cache
+            .add_collection(FirestoreCacheCollection::new("b").preload_all())
+            .await
+            .expect("b is still free to be added");
+    }
+
+    #[tokio::test]
+    async fn a_collection_whose_target_the_listener_refuses_is_not_left_cached() {
+        let (_server, cache) = cache_holding_a().await;
+        cache.inner.listener.lock().await.shutdown().await.ok();
+
+        let error = cache
+            .add_collection(FirestoreCacheCollection::new("b").preload_all())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, FirestoreError::InvalidParametersError(_)));
+        assert_eq!(cached_collections(&cache), 1);
     }
 }
