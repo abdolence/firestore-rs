@@ -101,7 +101,7 @@ impl FirestoreSqlTranslator<'_> {
         let on = match constraint {
             JoinConstraint::On(on) => Some(on),
             JoinConstraint::None => None,
-            JoinConstraint::Using(_) => {
+            JoinConstraint::Using(_) | JoinConstraint::UsingAlias(..) => {
                 return Err(FirestoreError::unsupported_sql("JOIN USING", start))
             }
             JoinConstraint::Natural => {

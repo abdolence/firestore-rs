@@ -299,9 +299,7 @@ pub(super) fn expr_start(mut expr: &Expr) -> Option<FirestoreSqlLocation> {
             | Expr::IsNotUnknown(first)
             | Expr::IsDistinctFrom(first, _)
             | Expr::IsNotDistinctFrom(first, _)
-            | Expr::InList { expr: first, .. }
-            | Expr::InSubquery { expr: first, .. }
-            | Expr::InUnnest { expr: first, .. }
+            | Expr::In { expr: first, .. }
             | Expr::Between { expr: first, .. }
             | Expr::Like { expr: first, .. }
             | Expr::ILike { expr: first, .. }

@@ -24,7 +24,7 @@ use crate::{
     FirestoreQueryDirection, FirestoreSqlCreateIndex, FirestoreSqlDropIndex,
 };
 #[cfg(feature = "admin")]
-use sqlparser::ast::{Expr, SqlOption, Value as SqlValue};
+use sqlparser::ast::{Expr, ObjectNamePart, SqlOption, Value as SqlValue};
 #[cfg(feature = "admin")]
 use sqlparser::keywords::Keyword;
 
@@ -469,6 +469,13 @@ impl FirestoreSqlTranslator<'_> {
                     "OPTIONS",
                     "an option is written key = value",
                     start,
+                ));
+            };
+            let [ObjectNamePart::Identifier(key)] = key.0.as_slice() else {
+                return Err(FirestoreError::invalid_sql(
+                    "OPTIONS",
+                    "an option name is a single identifier",
+                    name_start(&key),
                 ));
             };
             let name = key.value.to_lowercase();
