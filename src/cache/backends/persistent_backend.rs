@@ -328,8 +328,7 @@ impl FirestorePersistentCacheBackend {
                         continue;
                     }
 
-                    self.download_collection(db, collection_path, config)
-                        .await?;
+                    self.preload_collection(db, collection_path, config).await?;
 
                     let updated_records = if matches!(
                         config.collection_load_mode,
@@ -352,9 +351,10 @@ impl FirestorePersistentCacheBackend {
         Ok(())
     }
 
-    /// Streams every document of a collection into its table. A stream that fails partway fails
-    /// the download, because the table would otherwise pass as the complete collection.
-    async fn download_collection(
+    /// Streams every document of a collection into its table. A stream that fails partway
+    /// returns its error and drops the table: the chunks already committed would otherwise pass
+    /// as the complete collection, and a later `PreloadAllIfEmpty` would skip downloading the rest.
+    async fn preload_collection(
         &self,
         db: &FirestoreDb,
         collection_path: &str,
@@ -369,7 +369,7 @@ impl FirestorePersistentCacheBackend {
             db.fluent().select().from(config.collection_name.as_str())
         };
 
-        params
+        let preloaded = params
             .stream_query_with_errors()
             .await?
             .enumerate()
@@ -386,7 +386,17 @@ impl FirestorePersistentCacheBackend {
             .ready_chunks(100)
             .map(|docs| docs.into_iter().collect::<FirestoreResult<Vec<_>>>())
             .try_for_each(|docs| async move { self.write_batch_docs(collection_path, docs) })
-            .await
+            .await;
+
+        if preloaded.is_err() {
+            if let Err(drop_error) = self.drop_collection_table(collection_path) {
+                error!(
+                    ?drop_error,
+                    collection_path, "Could not drop the table of a failed preload."
+                );
+            }
+        }
+        preloaded
     }
 
     fn write_batch_docs(&self, collection_path: &str, docs: Vec<Document>) -> FirestoreResult<()> {
@@ -602,6 +612,10 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
         let collection_path = collection_config.resolve_collection_path(db.get_documents_path());
 
+        if self.config().collections.contains_key(&collection_path) {
+            return Err(FirestoreError::collection_already_cached(&collection_path));
+        }
+
         // A collection added at runtime starts from nothing, whatever an earlier run left in its
         // table: the target attaches from `read_from_time`, so it never reports what was deleted
         // while the cache was closed. Both preloading modes therefore mean the same thing here.
@@ -638,7 +652,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                 return Ok(target_params);
             }
 
-            self.download_collection(db, &collection_path, &collection_config)
+            self.preload_collection(db, &collection_path, &collection_config)
                 .await?;
 
             info!(
@@ -1083,35 +1097,43 @@ mod tests {
         }
     }
 
-    fn collection_a(
-        load_mode: FirestoreCacheCollectionLoadMode,
-    ) -> FirestoreCacheCollectionConfiguration {
+    fn collection_a() -> FirestoreCacheCollectionConfiguration {
         FirestoreCacheCollectionConfiguration::new(
             "a",
             FirestoreListenerTarget::new(1000),
-            load_mode,
+            FirestoreCacheCollectionLoadMode::PreloadAllDocs,
         )
     }
 
+    fn run_query_messages(ids: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<Vec<u8>> {
+        ids.into_iter()
+            .map(|id| run_query_message(fake_document(id.as_ref())))
+            .collect()
+    }
+
+    /// Answers every query with `response`, built afresh for each call.
     async fn query_server(
-        documents: Vec<FirestoreDocument>,
-        failure: Option<Code>,
+        response: impl Fn() -> FakeResponse + Send + Sync + 'static,
     ) -> FakeFirestore {
-        FakeFirestore::start(move |_, _| {
-            let messages = documents.iter().cloned().map(run_query_message).collect();
-            let response = match failure {
-                Some(code) => FakeResponse::MessagesThenStatus(messages, code),
-                None => FakeResponse::Paced(messages, Duration::ZERO),
-            };
-            ("RunQuery".to_string(), response)
+        FakeFirestore::start(move |_, _| ("RunQuery".to_string(), response())).await
+    }
+
+    /// More documents than one write chunk holds, so that part of them is committed before the
+    /// stream fails.
+    async fn query_server_failing_after_several_chunks() -> FakeFirestore {
+        query_server(|| {
+            FakeResponse::MessagesThenStatus(
+                run_query_messages((0..250).map(|id| id.to_string())),
+                Code::Internal,
+            )
         })
         .await
     }
 
     #[tokio::test]
-    async fn a_preload_that_fails_partway_fails_load() {
+    async fn a_preload_that_fails_partway_fails_load_and_keeps_no_rows() {
         let backend = preloaded(&[("a", 1000)]);
-        let server = query_server(vec![fake_document("one")], Some(Code::Internal)).await;
+        let server = query_server_failing_after_several_chunks().await;
 
         let FirestoreError::DatabaseError(error) = backend
             .load(&FirestoreCacheOptions::new("partial".into()), &server.db)
@@ -1121,16 +1143,14 @@ mod tests {
             panic!("load did not fail with the stream's database error");
         };
         assert_eq!(error.public.code, "Internal");
+        assert_eq!(backend.table_len(&format!("{DOCS}/a")).unwrap(), 0);
     }
 
     #[tokio::test]
     async fn a_watched_documents_preload_that_fails_partway_fails_load() {
         let backend = backend_over(
-            FirestoreCacheConfiguration::new().add_collection_config_at(
-                DOCS,
-                collection_a(FirestoreCacheCollectionLoadMode::PreloadAllDocs)
-                    .with_documents(["one", "two"]),
-            ),
+            FirestoreCacheConfiguration::new()
+                .add_collection_config_at(DOCS, collection_a().with_documents(["one", "two"])),
         );
         let server = FakeFirestore::start(|_, _| {
             (
@@ -1154,15 +1174,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_preload_that_fails_partway_fails_add_collection_and_publishes_nothing() {
+    async fn a_preload_that_fails_partway_fails_add_collection_and_keeps_nothing() {
         let backend = preloaded(&[]);
-        let server = query_server(vec![fake_document("one")], Some(Code::Internal)).await;
+        let server = query_server_failing_after_several_chunks().await;
 
         let FirestoreError::DatabaseError(error) = backend
             .add_collection(
                 &FirestoreCacheOptions::new("partial".into()),
                 &server.db,
-                collection_a(FirestoreCacheCollectionLoadMode::PreloadAllDocs),
+                collection_a(),
             )
             .await
             .unwrap_err()
@@ -1171,6 +1191,7 @@ mod tests {
         };
         assert_eq!(error.public.code, "Internal");
         assert!(backend.config().collections.is_empty());
+        assert_eq!(backend.table_len(&format!("{FAKE_DOCS}/a")).unwrap(), 0);
     }
 
     #[tokio::test]
@@ -1196,13 +1217,15 @@ mod tests {
             data_file,
         )
         .expect("backend");
-        let server = query_server(vec![fake_document("kept")], None).await;
+        let server =
+            query_server(|| FakeResponse::Paced(run_query_messages(["kept"]), Duration::ZERO))
+                .await;
 
         backend
             .add_collection(
                 &FirestoreCacheOptions::new("reopened".into()),
                 &server.db,
-                collection_a(FirestoreCacheCollectionLoadMode::PreloadAllDocs),
+                collection_a(),
             )
             .await
             .expect("added");
@@ -1214,6 +1237,29 @@ mod tests {
             .await
             .unwrap()
             .is_some());
+    }
+
+    #[tokio::test]
+    async fn add_collection_refuses_a_collection_that_is_already_cached() {
+        let backend = preloaded(&[]);
+        let server =
+            query_server(|| FakeResponse::Paced(run_query_messages(["kept"]), Duration::ZERO))
+                .await;
+        let options = FirestoreCacheOptions::new("twice".into());
+        backend
+            .add_collection(&options, &server.db, collection_a())
+            .await
+            .expect("added");
+
+        let FirestoreError::CacheError(error) = backend
+            .add_collection(&options, &server.db, collection_a())
+            .await
+            .unwrap_err()
+        else {
+            panic!("the second add_collection did not fail with a cache error");
+        };
+        assert_eq!(error.public.code, "CacheCollectionAlreadyCached");
+        assert_eq!(backend.table_len(&format!("{FAKE_DOCS}/a")).unwrap(), 1);
     }
 
     #[tokio::test]
