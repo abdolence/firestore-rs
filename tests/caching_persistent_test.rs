@@ -16,10 +16,10 @@ struct MyTestStructure {
 
 const DOCUMENT_COUNT: usize = 10;
 
-/// The first change Firestore delivers after the listener starts can take about 30 seconds to
-/// arrive when a `preload_none` collection shares the cache with a `preload_all` one, so the wait
-/// for a change to reach the cache is well above that.
-const PROPAGATION_TIMEOUT: Duration = Duration::from_secs(90);
+/// Firestore delivers a change to a listening cache in well under a second. The wait leaves room
+/// for a loaded CI runner, and stays short enough to fail on a stream that stalls for tens of
+/// seconds.
+const PROPAGATION_TIMEOUT: Duration = Duration::from_secs(10);
 const PROPAGATION_POLL: Duration = Duration::from_millis(200);
 
 fn test_document(i: usize) -> MyTestStructure {
