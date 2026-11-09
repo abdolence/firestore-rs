@@ -6,9 +6,11 @@
 - `PreloadAllIfEmpty` (`.collection_with(name, |c| c.preload_all_if_empty())`): preload all
   documents only if the cache is empty. This is useful for the persistent cache, where the saving
   applies when the cache loads; for the memory cache it is the same as `PreloadAllDocs`, since an
-  in-memory cache always starts empty. A persistent cache whose process stopped in the middle of a
-  download can hold part of a collection, and `PreloadAllIfEmpty` then treats it as complete. Use
-  `PreloadAllDocs` where that matters.
+  in-memory cache always starts empty. The persistent cache records when the download of a
+  collection has finished, and skips the download only for a collection with that record. A
+  collection whose download was interrupted, for example because the process was killed, is
+  discarded and downloaded again on the next start. A persistent cache written before this record
+  existed downloads each such collection once more on its first start.
 
 `.preloaded_collection(name)` picks the appropriate preloading mode for the backend.
 
