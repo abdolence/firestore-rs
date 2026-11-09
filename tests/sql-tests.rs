@@ -194,6 +194,35 @@ async fn select_distinct_returns_one_row_per_value() -> TestResult {
 }
 
 #[tokio::test]
+async fn a_bernoulli_sample_of_0_percent_keeps_no_row_and_of_100_percent_every_row() -> TestResult {
+    let db = setup_enterprise().await?;
+    let books: Vec<Value> = db
+        .fluent()
+        .sql("SELECT title FROM `pipeline-books` ORDER BY title")
+        .obj()
+        .query()
+        .await?;
+
+    let none: Vec<Value> = db
+        .fluent()
+        .sql("SELECT title FROM `pipeline-books` TABLESAMPLE BERNOULLI (0 PERCENT) ORDER BY title")
+        .obj()
+        .query()
+        .await?;
+    let all: Vec<Value> = db
+        .fluent()
+        .sql("SELECT title FROM `pipeline-books` TABLESAMPLE BERNOULLI (@share PERCENT) ORDER BY title")
+        .param("share", 100)
+        .obj()
+        .query()
+        .await?;
+
+    assert!(none.is_empty());
+    assert_eq!(all, books);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_union_appends_the_rows_of_the_other_collection() -> TestResult {
     let db = setup_enterprise().await?;
 

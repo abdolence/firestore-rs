@@ -50,6 +50,11 @@ mod review_documents;
 #[rustfmt::skip]
 mod book_roll;
 
+#[path = "codegen/book_sample.rs"]
+#[allow(dead_code)] // compiled to prove the snippet builds, never called
+#[rustfmt::skip]
+mod book_sample;
+
 const BOOKS: &str = "SELECT title, author, rating, publishedAt, tags, edition FROM books
 WHERE genre = @genre AND rating >= @min_rating ORDER BY rating DESC LIMIT 20";
 
@@ -219,6 +224,18 @@ fn a_function_without_arguments_is_written_raw_with_a_typed_list() -> FirestoreR
     Ok(())
 }
 
+#[test]
+fn a_tablesample_is_written_as_a_sample_stage() -> FirestoreResult<()> {
+    let snippet = FirestoreSqlStatement::fluent_rust(
+        "SELECT title FROM books TABLESAMPLE BERNOULLI (25 PERCENT) WHERE rating > 4",
+        &FirestoreSqlParameters::new(),
+        &[],
+    )?;
+
+    assert_eq!(snippet, include_str!("codegen/book_sample.rs"));
+    Ok(())
+}
+
 const RESTAURANT_MEDIA: &str = "SELECT name, owner, location, photo, thumbnail FROM restaurants
 WHERE owner = @owner AND location = @spot AND token = @token";
 
@@ -327,6 +344,11 @@ fn a_parameter_whose_value_the_translation_reads_is_refused() {
             "SELECT title FROM books LIMIT ?",
             FirestoreSqlParameters::new().params([10]),
             "?",
+        ),
+        (
+            "SELECT title FROM books TABLESAMPLE BERNOULLI (@p PERCENT)",
+            FirestoreSqlParameters::new().param("p", 5),
+            "@p",
         ),
         (
             "SELECT title FROM books WHERE __name__ = @id",

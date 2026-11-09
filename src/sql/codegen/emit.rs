@@ -6,9 +6,9 @@ use crate::{
     FirestoreCollectionSource, FirestoreDistinctStage, FirestoreExpr, FirestoreFieldsStage,
     FirestoreFunction, FirestoreGeoSearch, FirestoreIndexHint, FirestoreLimitStage,
     FirestoreOffsetStage, FirestorePipeline, FirestorePipelineOrdering, FirestorePipelineSource,
-    FirestorePipelineStage, FirestoreQueryDirection, FirestoreResult, FirestoreSearch,
-    FirestoreSearchQuery, FirestoreSelection, FirestoreSortStage, FirestoreTextSearch,
-    FirestoreValue, FirestoreWhereStage,
+    FirestorePipelineStage, FirestoreQueryDirection, FirestoreResult, FirestoreSampleSize,
+    FirestoreSampleStage, FirestoreSearch, FirestoreSearchQuery, FirestoreSelection,
+    FirestoreSortStage, FirestoreTextSearch, FirestoreValue, FirestoreWhereStage,
 };
 use gcloud_sdk::google::firestore::v1::value::ValueType;
 use gcloud_sdk::google::firestore::v1::{ArrayValue, Value};
@@ -284,6 +284,16 @@ impl<'a> FirestoreSqlEmitter<'a> {
             FirestorePipelineStage::Offset(FirestoreOffsetStage { offset }) => {
                 return Ok(format!(".offset({offset})"))
             }
+            FirestorePipelineStage::Sample(FirestoreSampleStage { size }) => match size {
+                FirestoreSampleSize::Fraction(fraction) => {
+                    return Ok(format!(
+                        ".sample(FirestoreSampleSize::Fraction({}))",
+                        Self::double(*fraction)
+                    ))
+                }
+                // Only `TABLESAMPLE BERNOULLI` builds a sample, and it keeps a fraction.
+                FirestoreSampleSize::Documents(_) => "a stage that no SELECT translates to",
+            },
             FirestorePipelineStage::Aggregate(FirestoreAggregateStage {
                 accumulators,
                 groups,
@@ -301,7 +311,6 @@ impl<'a> FirestoreSqlEmitter<'a> {
             FirestorePipelineStage::DefineVariables(_) => "a JOIN or a correlated subquery",
             // No `SELECT` translates to these, which only the fluent API or a write builds.
             FirestorePipelineStage::Raw(_)
-            | FirestorePipelineStage::Sample(_)
             | FirestorePipelineStage::FindNearest(_)
             | FirestorePipelineStage::ReplaceWith(_) => "a stage that no SELECT translates to",
         };

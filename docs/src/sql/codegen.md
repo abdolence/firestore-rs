@@ -173,7 +173,7 @@ A null, a map or an array is a `&serde_json::Value`.
 `fluent_rust(..)` covers:
 
 - reads of one collection, a path to a nested collection, or a collection group, with `WHERE`,
-  `ORDER BY`, `LIMIT`, `OFFSET` and a select list;
+  `ORDER BY`, `LIMIT`, `OFFSET`, `TABLESAMPLE` and a select list;
 - aggregates, with and without `GROUP BY`, and `DISTINCT`;
 - text and geo search, `document_matches(..)` and `geo_distance(..)`, see
   [Search](./reads.md#search). Vector distance is a function like any other and is shown as one.
@@ -188,7 +188,7 @@ and its message names the construct:
 - `INSERT`, `UPDATE`, `DELETE`, index statements, `EXPLAIN` and `SHOW`: a statement that is not a
   `SELECT` runs with the [SQL builder](../sql.md#setup), and has no fluent code to show;
 - a parameter whose value the translation reads when it builds the pipeline, since the snippet has
-  no value to put in its place. Such a parameter is `LIMIT @n` and `OFFSET @n`, `__name__ = @id`
-  and the other comparisons on `__name__`, the key of a subscript as in `x[@key]`, and the
-  arguments of search such as `document_matches(@query)`. Write the value in the text instead. A
-  parameter anywhere else becomes an argument of the function.
+  no value to put in its place. Such a parameter is `LIMIT @n` and `OFFSET @n`, the percentage of
+  `TABLESAMPLE`, `__name__ = @id` and the other comparisons on `__name__`, the key of a subscript as
+  in `x[@key]`, and the arguments of search such as `document_matches(@query)`. Write the value in
+  the text instead. A parameter anywhere else becomes an argument of the function.
