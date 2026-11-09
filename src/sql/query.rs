@@ -402,6 +402,7 @@ impl FirestoreSqlTranslator<'_> {
             )?;
             let name = alias.as_ref().map(Self::alias).transpose()?;
             let branch = self.query(subquery, place.for_rows())?;
+            Self::refuse_sampled_source(&branch.pipeline, children, None)?;
             let relation = FirestoreSqlRelation {
                 name,
                 collection_path: None,
@@ -451,6 +452,7 @@ impl FirestoreSqlTranslator<'_> {
         let (source, relation) = match args {
             None => match self.referenced_cte(name, alias.as_deref(), start)? {
                 Some((mut pipeline, relation)) => {
+                    Self::refuse_sampled_source(&pipeline, children, start)?;
                     pipeline
                         .stages
                         .extend(sample.map(FirestorePipelineStage::Sample));

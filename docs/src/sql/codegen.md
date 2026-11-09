@@ -188,7 +188,7 @@ and its message names the construct:
 - `INSERT`, `UPDATE`, `DELETE`, index statements, `EXPLAIN` and `SHOW`: a statement that is not a
   `SELECT` runs with the [SQL builder](../sql.md#setup), and has no fluent code to show;
 - a parameter whose value the translation reads when it builds the pipeline, since the snippet has
-  no value to put in its place. Such a parameter is `LIMIT @n` and `OFFSET @n`, the quantity of `TABLESAMPLE`, `__name__ = @id`
-  and the other comparisons on `__name__`, the key of a subscript as in `x[@key]`, and the
-  arguments of search such as `document_matches(@query)`. Write the value in the text instead. A
-  parameter anywhere else becomes an argument of the function.
+  no value to put in its place. Such a parameter is `LIMIT @n` and `OFFSET @n`, the percentage of
+  `TABLESAMPLE`, `__name__ = @id` and the other comparisons on `__name__`, the key of a subscript as
+  in `x[@key]`, and the arguments of search such as `document_matches(@query)`. Write the value in
+  the text instead. A parameter anywhere else becomes an argument of the function.

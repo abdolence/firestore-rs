@@ -783,6 +783,12 @@ impl FirestoreSqlTranslator<'_> {
             ));
         }
         let (mut pipeline, relation) = self.table(relation, FirestoreSqlPlace::top(), false)?;
+        if matches!(
+            pipeline.stages.first(),
+            Some(FirestorePipelineStage::Sample(_))
+        ) {
+            return Err(FirestoreError::unsupported_sql("TABLESAMPLE", start));
+        }
         let (FirestorePipelineSource::Collection(_), true) =
             (&pipeline.source, pipeline.stages.is_empty())
         else {

@@ -226,19 +226,13 @@ fn a_function_without_arguments_is_written_raw_with_a_typed_list() -> FirestoreR
 
 #[test]
 fn a_tablesample_is_written_as_a_sample_stage() -> FirestoreResult<()> {
-    let reservoir = FirestoreSqlStatement::fluent_rust(
-        "SELECT title FROM books TABLESAMPLE RESERVOIR (5 ROWS) WHERE rating > 4",
-        &FirestoreSqlParameters::new(),
-        &[],
-    )?;
-    let bernoulli = FirestoreSqlStatement::fluent_rust(
-        "SELECT title FROM books TABLESAMPLE BERNOULLI (25 PERCENT)",
+    let snippet = FirestoreSqlStatement::fluent_rust(
+        "SELECT title FROM books TABLESAMPLE BERNOULLI (25 PERCENT) WHERE rating > 4",
         &FirestoreSqlParameters::new(),
         &[],
     )?;
 
-    assert_eq!(reservoir, include_str!("codegen/book_sample.rs"));
-    assert!(bernoulli.contains(".sample(FirestoreSampleSize::Fraction(0.25))"));
+    assert_eq!(snippet, include_str!("codegen/book_sample.rs"));
     Ok(())
 }
 
@@ -352,9 +346,9 @@ fn a_parameter_whose_value_the_translation_reads_is_refused() {
             "?",
         ),
         (
-            "SELECT title FROM books TABLESAMPLE RESERVOIR (@n ROWS)",
-            FirestoreSqlParameters::new().param("n", 5),
-            "@n",
+            "SELECT title FROM books TABLESAMPLE BERNOULLI (@p PERCENT)",
+            FirestoreSqlParameters::new().param("p", 5),
+            "@p",
         ),
         (
             "SELECT title FROM books WHERE __name__ = @id",

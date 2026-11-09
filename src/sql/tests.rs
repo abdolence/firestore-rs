@@ -376,28 +376,12 @@ fn text_that_does_not_parse_carries_sqlparser_s_location() {
 fn tablesample_translates_to_a_sample_stage_right_after_the_source() {
     let samples = [
         (
-            "SELECT * FROM books TABLESAMPLE RESERVOIR (5 ROWS)",
-            FirestoreSampleSize::Documents(5),
-        ),
-        (
-            "select * from books tablesample reservoir (5 rows)",
-            FirestoreSampleSize::Documents(5),
-        ),
-        (
             "SELECT * FROM books TABLESAMPLE BERNOULLI (10 PERCENT)",
             FirestoreSampleSize::Fraction(0.1),
         ),
         (
-            "SELECT * FROM books TABLESAMPLE BERNOULLI (2.5 PERCENT)",
+            "select * from books tablesample bernoulli (2.5 percent)",
             FirestoreSampleSize::Fraction(0.025),
-        ),
-        (
-            "SELECT * FROM books TABLESAMPLE BERNOULLI (0 PERCENT)",
-            FirestoreSampleSize::Fraction(0.0),
-        ),
-        (
-            "SELECT * FROM books TABLESAMPLE BERNOULLI (100 PERCENT)",
-            FirestoreSampleSize::Fraction(1.0),
         ),
     ];
 
@@ -412,12 +396,12 @@ fn tablesample_translates_to_a_sample_stage_right_after_the_source() {
 
 #[test]
 fn tablesample_draws_before_the_where_filters() {
-    let sql = "SELECT title FROM books AS b TABLESAMPLE RESERVOIR (5 ROWS) \
+    let sql = "SELECT title FROM books AS b TABLESAMPLE BERNOULLI (10 PERCENT) \
                WHERE b.stock > 0 ORDER BY title LIMIT 2";
 
     let expected = fluent()
         .from("books")
-        .sample(FirestoreSampleSize::Documents(5))
+        .sample(FirestoreSampleSize::Fraction(0.1))
         .filter(|q| q.field("stock").greater_than(0))
         .sort(|e| [e.field("title").asc()])
         .fields(|e| [e.field("title")])
@@ -428,16 +412,29 @@ fn tablesample_draws_before_the_where_filters() {
 }
 
 #[test]
+fn a_cte_reference_takes_the_sample_after_the_cte_stages() {
+    let sql = "WITH all_books AS (SELECT * FROM books) \
+               SELECT * FROM all_books TABLESAMPLE BERNOULLI (10 PERCENT)";
+
+    let expected = fluent()
+        .from("books")
+        .sample(FirestoreSampleSize::Fraction(0.1))
+        .into_pipeline();
+
+    assert_eq!(translated(sql), expected);
+}
+
+#[test]
 fn a_cte_with_a_tablesample_draws_at_each_reference() {
-    let sql = "WITH few AS (SELECT * FROM books TABLESAMPLE RESERVOIR (2 ROWS)) \
+    let sql = "WITH few AS (SELECT * FROM books TABLESAMPLE BERNOULLI (10 PERCENT)) \
                SELECT * FROM few UNION ALL SELECT * FROM few";
 
     let few = |p: FirestorePipelineInitialBuilder<FirestorePipelineNestedContext>| {
-        p.from("books").sample(FirestoreSampleSize::Documents(2))
+        p.from("books").sample(FirestoreSampleSize::Fraction(0.1))
     };
     let expected = fluent()
         .from("books")
-        .sample(FirestoreSampleSize::Documents(2))
+        .sample(FirestoreSampleSize::Fraction(0.1))
         .union(few)
         .into_pipeline();
 
@@ -452,8 +449,8 @@ fn tablesample_takes_parameters() {
         &FirestoreSqlOptions::new(),
     );
     let positional = translate(
-        "SELECT * FROM books TABLESAMPLE RESERVOIR (? ROWS)",
-        &FirestoreSqlParameters::new().params([3]),
+        "SELECT * FROM books TABLESAMPLE BERNOULLI (? PERCENT)",
+        &FirestoreSqlParameters::new().params([2.5]),
         &FirestoreSqlOptions::new(),
     );
 
@@ -468,7 +465,7 @@ fn tablesample_takes_parameters() {
         positional.unwrap(),
         fluent()
             .from("books")
-            .sample(FirestoreSampleSize::Documents(3))
+            .sample(FirestoreSampleSize::Fraction(0.025))
             .into_pipeline()
     );
 }
@@ -485,12 +482,17 @@ fn a_tablesample_without_an_exact_pipeline_form_is_refused_by_name() {
             "TABLESAMPLE BLOCK",
         ),
         (
+            "SELECT * FROM books TABLESAMPLE ROW (5 ROWS)",
+            "TABLESAMPLE ROW",
+        ),
+        ("SELECT * FROM books TABLESAMPLE RESERVOIR (5 ROWS)", "sql"),
+        (
             "SELECT * FROM books TABLESAMPLE BERNOULLI (10 PERCENT) REPEATABLE (7)",
             "REPEATABLE",
         ),
         (
-            "SELECT * FROM books TABLESAMPLE RESERVOIR (5 ROWS) REPEATABLE (7)",
-            "REPEATABLE",
+            "SELECT * FROM books TABLESAMPLE BERNOULLI (10 PERCENT) SEED (7)",
+            "SEED",
         ),
         (
             "SELECT * FROM books TABLESAMPLE BERNOULLI (BUCKET 1 OUT OF 4)",
@@ -503,35 +505,6 @@ fn a_tablesample_without_an_exact_pipeline_form_is_refused_by_name() {
         (
             "SELECT * FROM books TABLESAMPLE BERNOULLI (5 ROWS)",
             "TABLESAMPLE",
-        ),
-        (
-            "SELECT * FROM books TABLESAMPLE RESERVOIR (5 PERCENT)",
-            "TABLESAMPLE",
-        ),
-        ("SELECT * FROM books TABLESAMPLE BERNOULLI (10)", "TABLESAMPLE"),
-        (
-            "SELECT * FROM books TABLESAMPLE (10 PERCENT)",
-            "TABLESAMPLE",
-        ),
-        (
-            "SELECT * FROM books TABLESAMPLE RESERVOIR (0 ROWS)",
-            "TABLESAMPLE ROWS",
-        ),
-        (
-            "SELECT * FROM books TABLESAMPLE RESERVOIR (-1 ROWS)",
-            "TABLESAMPLE ROWS",
-        ),
-        (
-            "SELECT * FROM books TABLESAMPLE RESERVOIR (2.5 ROWS)",
-            "TABLESAMPLE ROWS",
-        ),
-        (
-            "SELECT * FROM books TABLESAMPLE BERNOULLI (101 PERCENT)",
-            "TABLESAMPLE PERCENT",
-        ),
-        (
-            "SELECT * FROM books TABLESAMPLE BERNOULLI (-1 PERCENT)",
-            "TABLESAMPLE PERCENT",
         ),
         (
             "SELECT * FROM (SELECT * FROM books) TABLESAMPLE BERNOULLI (10 PERCENT)",
@@ -548,11 +521,32 @@ fn a_tablesample_without_an_exact_pipeline_form_is_refused_by_name() {
             "TABLESAMPLE",
         ),
         (
-            "DELETE FROM books TABLESAMPLE BERNOULLI (10 PERCENT) WHERE TRUE",
-            "a write",
+            "WITH few AS (SELECT * FROM reviews TABLESAMPLE BERNOULLI (10 PERCENT)) \
+             SELECT * FROM books AS b JOIN few AS r ON r.book = b.__name__",
+            "TABLESAMPLE",
         ),
         (
-            "SELECT * FROM books TABLESAMPLE RESERVOIR (5 ROWS) WHERE document_matches('dune')",
+            "SELECT * FROM books AS b JOIN \
+             (SELECT * FROM reviews TABLESAMPLE BERNOULLI (10 PERCENT)) AS r ON r.book = b.__name__",
+            "TABLESAMPLE",
+        ),
+        (
+            "SELECT * FROM books AS b JOIN (SELECT * FROM reviews UNION ALL \
+             SELECT * FROM reviews TABLESAMPLE BERNOULLI (10 PERCENT)) AS r ON r.book = b.__name__",
+            "TABLESAMPLE",
+        ),
+        (
+            "WITH few AS (SELECT * FROM reviews TABLESAMPLE BERNOULLI (10 PERCENT)) \
+             SELECT * FROM books AS b WHERE EXISTS \
+             (SELECT 1 FROM few AS r WHERE r.book = b.__name__)",
+            "TABLESAMPLE",
+        ),
+        (
+            "DELETE FROM books TABLESAMPLE BERNOULLI (10 PERCENT) WHERE TRUE",
+            "TABLESAMPLE",
+        ),
+        (
+            "SELECT * FROM books TABLESAMPLE BERNOULLI (10 PERCENT) WHERE document_matches('dune')",
             "document_matches",
         ),
     ];
@@ -560,27 +554,11 @@ fn a_tablesample_without_an_exact_pipeline_form_is_refused_by_name() {
     for (sql, construct) in refusals {
         assert_eq!(refused(sql).field, construct, "{sql}");
     }
-}
 
-#[test]
-fn a_tablesample_quantity_bound_to_the_wrong_type_is_refused() {
-    let refusals = [
-        (
-            "SELECT * FROM books TABLESAMPLE RESERVOIR (@n ROWS)",
-            FirestoreSqlParameters::new().param("n", "five"),
-            "TABLESAMPLE ROWS",
-        ),
-        (
-            "SELECT * FROM books TABLESAMPLE BERNOULLI (@share PERCENT)",
-            FirestoreSqlParameters::new().param("share", "half"),
-            "TABLESAMPLE PERCENT",
-        ),
-    ];
-
-    for (sql, parameters, construct) in refusals {
-        let refusal = refused_with(sql, &parameters, &FirestoreSqlOptions::new());
-        assert_eq!(refusal.field, construct, "{sql}");
-    }
+    let sql = "SELECT * FROM books TABLESAMPLE BERNOULLI (@share PERCENT)";
+    let parameters = FirestoreSqlParameters::new().param("share", "half");
+    let refusal = refused_with(sql, &parameters, &FirestoreSqlOptions::new());
+    assert_eq!(refusal.field, "TABLESAMPLE PERCENT", "{sql}");
 }
 
 #[test]

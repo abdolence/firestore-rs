@@ -63,7 +63,7 @@ A name compared with a column, such as the `__name__` of a joined table, is desc
 | Text and geo search | `document_matches('query')` and `geo_distance(field, geo_point(lat, lng)) <= meters` as top-level `AND` conditions of the `WHERE`, see [Search](#search) |
 | Subqueries | scalar `(SELECT ..)`, `[NOT] EXISTS`, `[NOT] IN (SELECT ..)` and `ARRAY(SELECT ..)`, see [Joins and subqueries](#joins-and-subqueries) |
 | Derived tables, `WITH` | non-recursive CTEs |
-| `TABLESAMPLE` | `RESERVOIR (n ROWS)` and `BERNOULLI (p PERCENT)` on the first table of the outermost `FROM`, see [Sampling](#sampling) |
+| `TABLESAMPLE` | `BERNOULLI (p PERCENT)` on a table, see [Sampling](#sampling) |
 | Joins | `[INNER] JOIN`, `LEFT JOIN`, `CROSS JOIN`, a comma in `FROM`, and `UNNEST(array) AS x [WITH OFFSET AS pos]` |
 | Writes | `INSERT .. VALUES`, `INSERT .. SELECT`, `INSERT OR REPLACE`, `INSERT .. ON CONFLICT`, `UPDATE`, `DELETE`, see [Writes](../sql.md#writes) |
 | Operators | `+ - * / %`, `||` |
@@ -90,50 +90,50 @@ key becomes the search's own sort. A search needs a search index, see
 
 ### Sampling
 
-`TABLESAMPLE` keeps a random sample of a table and becomes the `sample` stage, see
-[Sampling](../pipeline-aggregations-and-joins.md#sampling) in the pipeline chapter:
-
-| SQL | Keeps |
-|---|---|
-| `TABLESAMPLE RESERVOIR (n ROWS)` | exactly `n` documents, every set of `n` equally likely, or all of them when the table has fewer. *Reservoir sampling* draws a fixed number of items in one pass over input of unknown size |
-| `TABLESAMPLE BERNOULLI (p PERCENT)` | each document with probability `p`, independently of the others, so the count varies from run to run; `p` is from 0 to 100, and the input order is kept. *Bernoulli sampling* decides for each item separately, as a coin toss does |
+`TABLESAMPLE BERNOULLI (p PERCENT)` keeps each document with probability `p / 100`, independently
+of the others, so the count varies from run to run, and the input order is kept. *Bernoulli
+sampling* decides for each item separately, as a coin toss does. It becomes the `sample` stage, see
+[Sampling](../pipeline-aggregations-and-joins.md#sampling) in the pipeline chapter.
 
 ```rust,no_run
 # use firestore::*;
 # async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-let ten_books = db
-    .fluent()
-    .sql("SELECT title FROM books TABLESAMPLE RESERVOIR (10 ROWS)")
-    .query()
-    .await?;
-
 let about_a_tenth = db
     .fluent()
     .sql("SELECT title FROM books AS b TABLESAMPLE BERNOULLI (10 PERCENT) WHERE b.rating > 4")
     .query()
     .await?;
-# let _ = (ten_books, about_a_tenth);
+# let _ = about_a_tenth;
 # Ok(())
 # }
 ```
 
 As in SQL, the sample is drawn from the whole table before `WHERE`, so the `WHERE` filters the
-documents that were drawn. In the second statement each document that matches is in the result
-with probability 0.1. With `RESERVOIR (10 ROWS)` and a `WHERE`, the result holds at most 10
-documents, and none when the 10 drawn do not match. The clause follows the table and its alias.
-`n` and `p` are literals or parameters, `@name` or `?`, and `n` is a positive integer.
+documents that were drawn: in the example, each document that matches is in the result with
+probability 0.1. The clause follows the table and its alias. `p` is a literal or a parameter,
+`@name` or `?`. Firestore refuses a value outside 0 to 100.
 
-`TABLESAMPLE` is accepted on the first table of the outermost `FROM`, and refused on a derived
-table, on a joined table, in a subquery and in `UPDATE` or `DELETE`. A joined table and a subquery
-run once for each row of the outer query, which would draw the sample again every time. A CTE that
-holds a `TABLESAMPLE` draws a new sample at each reference, since a CTE referenced twice runs
-twice. A search, `document_matches(..)` or `geo_distance(..)`, reads the collection directly, and
-is refused after a sample.
+`TABLESAMPLE` is refused with `InvalidParametersError` in these places:
 
-Every other form is refused with `InvalidParametersError`, since no sampling of the stage matches
-it: `SYSTEM` and `BLOCK`, since Firestore has no block sampling; `REPEATABLE` and `SEED`, since the
-stage takes no seed and every run draws a new sample; `BUCKET`; the `SAMPLE` keyword; `BERNOULLI`
-with `ROWS`, `RESERVOIR` with `PERCENT`, and a method or a unit that is left out.
+- a derived table, a joined table and a subquery, and a derived table or a CTE that holds a
+  `TABLESAMPLE` and is read by a join or a subquery. Firestore runs a join and a subquery once for
+  each row of the outer query, which would draw the sample again every time;
+- `UPDATE` and `DELETE`;
+- a statement with a search, `document_matches(..)` or `geo_distance(..)`, which reads the
+  collection directly and cannot follow a sample.
+
+A CTE that holds a `TABLESAMPLE` draws a new sample at each reference, since a CTE referenced twice
+runs twice.
+
+These forms are refused too, since no sampling of the stage matches them:
+
+- `SYSTEM` and `BLOCK`, since Firestore has no block sampling;
+- `REPEATABLE` and `SEED`, since the stage takes no seed and every run draws a new sample;
+- `BUCKET` and the `SAMPLE` keyword;
+- a sample with `ROWS`, or with no unit or method.
+
+`RESERVOIR (n ROWS)` does not parse. A fixed number of documents is
+`.sample(FirestoreSampleSize::Documents(n))` in the [pipeline API](../pipeline-aggregations-and-joins.md#sampling).
 
 ### Refused constructs
 

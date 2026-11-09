@@ -1,46 +1,22 @@
 use super::translator::{expr_start, FirestoreSqlTranslator};
 use crate::errors::{FirestoreError, FirestoreSqlLocation};
-use crate::{FirestoreResult, FirestoreSampleSize, FirestoreSampleStage};
+use crate::{
+    FirestorePipeline, FirestorePipelineStage, FirestoreResult, FirestoreSampleSize,
+    FirestoreSampleStage,
+};
 use gcloud_sdk::google::firestore::v1::value::ValueType;
 use sqlparser::ast::{
     Expr, TableSample, TableSampleKind, TableSampleMethod, TableSampleModifier,
-    TableSampleSeedModifier, TableSampleUnit,
+    TableSampleQuantity, TableSampleSeedModifier, TableSampleUnit,
 };
-use sqlparser::keywords::Keyword;
-use sqlparser::tokenizer::{Token, TokenWithSpan};
-
-// GoogleSQL names fixed-size sampling RESERVOIR, which sqlparser does not know: it stops at the
-// name. Renaming the word to ROW, a method it parses, lets the statement through, and the
-// translator reads `ROW` as RESERVOIR. Call before parsing.
-pub(super) fn rename_reservoir(tokens: &mut [TokenWithSpan]) {
-    let mut after_tablesample = false;
-    for TokenWithSpan { token, .. } in tokens {
-        match token {
-            Token::Whitespace(_) => continue,
-            Token::Word(word) if word.keyword == Keyword::TABLESAMPLE => {
-                after_tablesample = true;
-                continue;
-            }
-            Token::Word(word)
-                if after_tablesample
-                    && word.quote_style.is_none()
-                    && word.value.eq_ignore_ascii_case("RESERVOIR") =>
-            {
-                *token = Token::make_keyword("ROW");
-            }
-            _ => {}
-        }
-        after_tablesample = false;
-    }
-}
 
 impl FirestoreSqlTranslator<'_> {
     // The `sample` stage of a `TABLESAMPLE` on a table. `children` says the table is a joined
     // one or in a subquery, which a sample is refused on.
     //
-    // `BERNOULLI (p PERCENT)` keeps each document with probability p/100, and
-    // `RESERVOIR (n ROWS)` keeps n documents, or all of them when there are fewer. Anything else
-    // would sample differently from what its name says, and is refused.
+    // `BERNOULLI (p PERCENT)` keeps each document with probability p/100. Any other form would
+    // sample differently from what its name says, and is refused. A `p` outside 0 to 100 is left
+    // for Firestore to refuse.
     pub(super) fn table_sample(
         &mut self,
         sample: &TableSampleKind,
@@ -57,94 +33,84 @@ impl FirestoreSqlTranslator<'_> {
             bucket,
             offset,
         } = sample.as_ref();
-        let refuse = |construct: &str| Err(FirestoreError::unsupported_sql(construct, start));
         if children {
-            return Err(FirestoreError::invalid_sql(
-                "TABLESAMPLE",
-                "TABLESAMPLE applies to the first table of the outermost FROM, not to a joined table or a subquery",
-                start,
-            ));
+            return Err(Self::sample_per_row(start));
         }
-        if *modifier == TableSampleModifier::Sample {
-            return refuse("SAMPLE");
-        }
-        if let Some(seed) = seed {
-            return refuse(match seed.modifier {
+        let refused = match (modifier, name, seed, bucket, offset) {
+            (TableSampleModifier::Sample, ..) => Some("SAMPLE"),
+            (_, _, Some(seed), ..) => Some(match seed.modifier {
                 TableSampleSeedModifier::Repeatable => "REPEATABLE",
                 TableSampleSeedModifier::Seed => "SEED",
-            });
-        }
-        if bucket.is_some() {
-            return refuse("BUCKET");
-        }
-        if offset.is_some() {
-            return refuse("TABLESAMPLE OFFSET");
-        }
-        match name {
-            Some(TableSampleMethod::System) => return refuse("TABLESAMPLE SYSTEM"),
-            Some(TableSampleMethod::Block) => return refuse("TABLESAMPLE BLOCK"),
-            _ => {}
-        }
-        let Some(quantity) = quantity else {
-            return refuse("TABLESAMPLE");
-        };
-        match (name, quantity.unit) {
-            (Some(TableSampleMethod::Bernoulli), Some(TableSampleUnit::Percent)) => {
-                let percent = self.percent(&quantity.value)?;
-                Ok(FirestoreSampleStage::new(FirestoreSampleSize::Fraction(
-                    percent / 100.0,
-                )))
-            }
-            // RESERVOIR, which `rename_reservoir` wrote as ROW.
-            (Some(TableSampleMethod::Row), Some(TableSampleUnit::Rows)) => {
-                let rows = self.rows(&quantity.value)?;
-                Ok(FirestoreSampleStage::new(FirestoreSampleSize::Documents(
-                    rows,
-                )))
-            }
-            _ => refuse("TABLESAMPLE"),
-        }
-    }
-
-    fn rows(&mut self, expr: &Expr) -> FirestoreResult<u32> {
-        match self.sample_quantity(expr, "TABLESAMPLE ROWS")? {
-            Some(ValueType::IntegerValue(rows)) => {
-                u32::try_from(rows).ok().filter(|rows| *rows > 0)
-            }
+            }),
+            (_, _, _, Some(_), _) => Some("BUCKET"),
+            (_, _, _, _, Some(_)) => Some("TABLESAMPLE OFFSET"),
+            (_, Some(TableSampleMethod::System), ..) => Some("TABLESAMPLE SYSTEM"),
+            (_, Some(TableSampleMethod::Block), ..) => Some("TABLESAMPLE BLOCK"),
+            (_, Some(TableSampleMethod::Row), ..) => Some("TABLESAMPLE ROW"),
             _ => None,
+        };
+        if let Some(construct) = refused {
+            return Err(FirestoreError::unsupported_sql(construct, start));
         }
-        .ok_or_else(|| {
-            FirestoreError::invalid_sql(
-                "TABLESAMPLE ROWS",
-                "ROWS takes a positive integer literal or parameter",
-                expr_start(expr),
-            )
-        })
+        let (
+            Some(TableSampleMethod::Bernoulli),
+            Some(TableSampleQuantity {
+                value,
+                unit: Some(TableSampleUnit::Percent),
+                ..
+            }),
+        ) = (name, quantity)
+        else {
+            return Err(FirestoreError::unsupported_sql("TABLESAMPLE", start));
+        };
+        let percent = self.percent(value)?;
+        Ok(FirestoreSampleStage::new(FirestoreSampleSize::Fraction(
+            percent / 100.0,
+        )))
     }
 
     fn percent(&mut self, expr: &Expr) -> FirestoreResult<f64> {
-        match self.sample_quantity(expr, "TABLESAMPLE PERCENT")? {
-            Some(ValueType::IntegerValue(percent)) => Some(percent as f64),
-            Some(ValueType::DoubleValue(percent)) => Some(percent),
+        let value = self.bound_value(expr, "TABLESAMPLE PERCENT")?;
+        match value.as_ref().and_then(|value| value.constant_value()) {
+            Some(ValueType::IntegerValue(percent)) => Some(*percent as f64),
+            Some(ValueType::DoubleValue(percent)) => Some(*percent),
             _ => None,
         }
-        .filter(|percent| (0.0..=100.0).contains(percent))
         .ok_or_else(|| {
             FirestoreError::invalid_sql(
                 "TABLESAMPLE PERCENT",
-                "PERCENT takes a number literal or parameter from 0 to 100",
+                "PERCENT takes a number literal or parameter",
                 expr_start(expr),
             )
         })
     }
 
-    fn sample_quantity(
-        &mut self,
-        expr: &Expr,
-        construct: &str,
-    ) -> FirestoreResult<Option<ValueType>> {
-        Ok(self
-            .bound_value(expr, construct)?
-            .and_then(|value| value.constant_value().cloned()))
+    // Fails for a source that carries a `Sample` stage, which a join or a subquery runs once for
+    // each row of the outer query: the pipeline a derived table or a CTE reference stands for.
+    pub(super) fn refuse_sampled_source(
+        pipeline: &FirestorePipeline,
+        children: bool,
+        start: Option<FirestoreSqlLocation>,
+    ) -> FirestoreResult<()> {
+        match children && Self::holds_sample(pipeline) {
+            true => Err(Self::sample_per_row(start)),
+            false => Ok(()),
+        }
+    }
+
+    fn holds_sample(pipeline: &FirestorePipeline) -> bool {
+        pipeline.stages.iter().any(|stage| match stage {
+            FirestorePipelineStage::Sample(_) => true,
+            FirestorePipelineStage::Union(union) => Self::holds_sample(&union.other),
+            _ => false,
+        })
+    }
+
+    fn sample_per_row(start: Option<FirestoreSqlLocation>) -> FirestoreError {
+        FirestoreError::invalid_sql(
+            "TABLESAMPLE",
+            "a joined table and a subquery run once for each row of the outer query, which would draw the sample again every time",
+            start,
+        )
     }
 }

@@ -1,4 +1,4 @@
-// SELECT title FROM books TABLESAMPLE RESERVOIR (5 ROWS) WHERE rating > 4
+// SELECT title FROM books TABLESAMPLE BERNOULLI (25 PERCENT) WHERE rating > 4
 use firestore::*;
 use serde::Deserialize;
 
@@ -12,7 +12,7 @@ async fn query_books(db: &FirestoreDb) -> FirestoreResult<Vec<BooksRow>> {
         .pipeline()
         .select()
         .from("books")
-        .sample(FirestoreSampleSize::Documents(5))
+        .sample(FirestoreSampleSize::Fraction(0.25))
         .filter(|q| q.field("rating").greater_than(4))
         .fields(|e| [e.field("title")])
         .obj::<BooksRow>()

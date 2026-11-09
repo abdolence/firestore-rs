@@ -284,17 +284,16 @@ impl<'a> FirestoreSqlEmitter<'a> {
             FirestorePipelineStage::Offset(FirestoreOffsetStage { offset }) => {
                 return Ok(format!(".offset({offset})"))
             }
-            FirestorePipelineStage::Sample(FirestoreSampleStage { size }) => {
-                let size = match size {
-                    FirestoreSampleSize::Documents(count) => {
-                        format!("FirestoreSampleSize::Documents({count})")
-                    }
-                    FirestoreSampleSize::Fraction(fraction) => {
-                        format!("FirestoreSampleSize::Fraction({})", Self::double(*fraction))
-                    }
-                };
-                return Ok(format!(".sample({size})"));
-            }
+            FirestorePipelineStage::Sample(FirestoreSampleStage { size }) => match size {
+                FirestoreSampleSize::Fraction(fraction) => {
+                    return Ok(format!(
+                        ".sample(FirestoreSampleSize::Fraction({}))",
+                        Self::double(*fraction)
+                    ))
+                }
+                // Only `TABLESAMPLE BERNOULLI` builds a sample, and it keeps a fraction.
+                FirestoreSampleSize::Documents(_) => "a stage that no SELECT translates to",
+            },
             FirestorePipelineStage::Aggregate(FirestoreAggregateStage {
                 accumulators,
                 groups,
