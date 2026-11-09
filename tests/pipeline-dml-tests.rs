@@ -3,7 +3,7 @@
 //! Every write stays in the DML collections: [`guarded`] checks each pipeline write before it is
 //! sent, and each test diffs snapshots of both collections taken around its writes.
 
-use crate::common::setup_enterprise;
+use crate::common::{delete_documents, setup_enterprise};
 use firestore::errors::{BackoffError, FirestoreError};
 use firestore::gcloud_sdk::google::firestore::v1::value::ValueType;
 use firestore::*;
@@ -182,15 +182,7 @@ async fn remove_documents(db: &FirestoreDb, collection: &str, ids: &[&str]) -> T
         DML_COLLECTIONS.contains(&collection),
         "{collection} is not a DML collection"
     );
-    for id in ids {
-        db.fluent()
-            .delete()
-            .from(collection)
-            .document_id(*id)
-            .execute()
-            .await?;
-    }
-    Ok(())
+    Ok(delete_documents(db, collection, ids).await?)
 }
 
 async fn listen(

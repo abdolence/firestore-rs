@@ -3,7 +3,7 @@
 
 mod common;
 
-use crate::common::{eventually_async, setup};
+use crate::common::{delete_documents, eventually_async, setup, unique_name};
 use firestore::gcloud_sdk::google::firestore::v1::{
     listen_request, target, ListenRequest, StructuredQuery, Target, TargetChange,
 };
@@ -11,7 +11,7 @@ use firestore::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use tracing::info;
 
@@ -53,13 +53,8 @@ impl RecordedEvents {
 
 type TestListener = FirestoreListener<FirestoreDb, FirestoreMemListenStateStorage>;
 
-/// A document ID no other run uses, so that concurrent runs do not see each other's writes.
 fn unique_doc_id(name: &str) -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("the clock is past the Unix epoch")
-        .as_nanos();
-    format!("listen-targets-{name}-{nanos}")
+    unique_name(&format!("listen-targets-{name}"))
 }
 
 async fn start_listener(
@@ -139,18 +134,6 @@ async fn write_tagged(
         })
         .execute::<()>()
         .await
-}
-
-async fn delete_documents(db: &FirestoreDb, doc_ids: &[&str]) -> FirestoreResult<()> {
-    for doc_id in doc_ids {
-        db.fluent()
-            .delete()
-            .from(TEST_COLLECTION_NAME)
-            .document_id(*doc_id)
-            .execute()
-            .await?;
-    }
-    Ok(())
 }
 
 fn as_target_change(event: &FirestoreListenEvent) -> Option<&TargetChange> {
@@ -251,7 +234,7 @@ async fn target_added_to_running_listener_receives_changes() -> TestResult {
     info!(elapsed = ?written_at.elapsed(), received, "Waited for the added target's change.");
 
     let stopped = listener.shutdown().await;
-    delete_documents(&db, &[&added_doc_id]).await?;
+    delete_documents(&db, TEST_COLLECTION_NAME, &[&added_doc_id]).await?;
     stopped?;
 
     assert!(
@@ -355,7 +338,7 @@ async fn reused_target_id_follows_only_new_query() -> TestResult {
         ))
     }
     .await;
-    delete_documents(&db, &[&old_doc_id, &new_doc_id]).await?;
+    delete_documents(&db, TEST_COLLECTION_NAME, &[&old_doc_id, &new_doc_id]).await?;
     let (first_current, second_current, new_change_received, events) = observed?;
 
     assert!(first_current, "the first registration never became current");
@@ -590,7 +573,7 @@ async fn listener_reconnects_at_once_after_removal_crosses_once_target_end() -> 
         .await?;
 
     let stopped = listener.shutdown().await;
-    delete_documents(&db, &[&healthy_doc_id]).await?;
+    delete_documents(&db, TEST_COLLECTION_NAME, &[&healthy_doc_id]).await?;
     stopped?;
 
     assert!(
@@ -656,7 +639,7 @@ async fn permanently_rejected_target_ends_alone() -> TestResult {
         .await?;
 
     let stopped = listener.shutdown().await;
-    delete_documents(&db, &[&healthy_doc_id]).await?;
+    delete_documents(&db, TEST_COLLECTION_NAME, &[&healthy_doc_id]).await?;
     stopped?;
 
     assert!(rejected, "Firestore never removed the unindexed query");
@@ -726,7 +709,7 @@ async fn once_target_ends_after_initial_snapshot() -> TestResult {
         TestResult::Ok((ended, unregistered, events.snapshot()))
     }
     .await;
-    delete_documents(&db, &[&once_doc_id]).await?;
+    delete_documents(&db, TEST_COLLECTION_NAME, &[&once_doc_id]).await?;
     let (ended, unregistered, events) = observed?;
 
     assert!(ended, "the once target never ended");
