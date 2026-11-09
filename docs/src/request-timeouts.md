@@ -51,8 +51,11 @@ The limit applies to each attempt. A request that runs out of it fails with a `D
 `DeadlineExceeded` and `retry_possible` set, and it is retried wherever a dropped connection is:
 - gets, lists, list collection IDs and the start of queries, aggregations, pipelines and SQL reads, up to `max_retries`
   times;
+- `delete()`, up to `max_retries` times, see [Single writes](#single-writes);
 - simple batch writes, until `retry_max_elapsed_time`. A retried batch may apply twice, for example an `increment`,
   as it can after a dropped connection.
+
+`insert()` and `update()` return a request timeout that ran out without a retry.
 
 A read makes `max_retries + 1` attempts, and the error that comes back after the last one still has `retry_possible` set.
 A pipeline or SQL write makes one attempt and clears the flag, see
@@ -62,9 +65,33 @@ request, so no timeout or retry applies to it.
 Batch gets, partition queries, a query or aggregation stream that has already started and transaction commits return
 the error without a retry. A commit is never retried, because its writes may already be applied.
 
-The reads in the first item also retry a `DEADLINE_EXCEEDED` that Firestore itself answers with, up to `max_retries`
-times, with or without a request timeout set. Writes, batch gets, partition queries and streams that have already
-started return it with `retry_possible` unset.
+The reads in the first item and `delete()` also retry a `DEADLINE_EXCEEDED` that Firestore itself answers with, up to
+`max_retries` times, with or without a request timeout set. Inserts, updates, batch gets, partition queries and streams
+that have already started return it with `retry_possible` unset.
+
+### Single writes
+
+`insert()`, `update()` and `delete()` run with `.execute()` are sent again up to `max_retries` times, after the
+codes the official Google Firestore clients retry them on:
+- `insert()` and `update()`: `RESOURCE_EXHAUSTED` and `UNAVAILABLE`;
+- `delete()`: `RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `INTERNAL` and `DEADLINE_EXCEEDED`, the request timeout running out
+  included.
+
+Any other code is returned at once, whatever `retry_possible` says. `ABORTED` and `DEADLINE_EXCEEDED` are not retried
+for `insert()` and `update()` because the outcome of the first attempt is unknown: Firestore may have applied the write
+before it failed. `UNAVAILABLE` can leave the same doubt, and a retry after it has these effects:
+- an `update()` with [transforms](./document-transformations.md), such as `increment`, applies them twice when the first
+  attempt was applied;
+- an `insert()` fails with `ALREADY_EXISTS` when the first attempt created the document;
+- an `insert()` with `.generate_document_id()` creates a second document with another ID when the first attempt created
+  one, since Firestore chooses that ID for each request. Choose the ID with `.document_id(..)` to get the
+  `ALREADY_EXISTS` failure instead.
+
+A `delete()` that is sent again finds the document already gone when the first attempt deleted it, which is not an
+error unless the delete carries a [precondition](./preconditions.md).
+
+Writes queued with `add_to_transaction` or `add_to_batch`, transaction commits, and pipeline and SQL writes are not
+retried this way.
 
 Be aware not to set `retry_max_elapsed_time` to `None` on a simple batch writer when you set a request timeout: against
 a Firestore that stopped answering, it then retries forever, one timeout per attempt. The 60 second default is checked
@@ -72,9 +99,9 @@ between attempts, so the last attempt can still run for a whole timeout past it.
 
 ### Retry limits
 
-Reads, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
+Reads, single writes, simple batch writes and transactions wait the same delays between retries: 500 ms, growing by 1.5 times for each
 next retry, each delay randomised by up to a third either way. They differ in when they stop:
-- reads stop after `max_retries` of `FirestoreDbOptions`, 3 by default, with no time limit;
+- reads and single writes stop after `max_retries` of `FirestoreDbOptions`, 3 by default, with no time limit;
 - simple batch writes stop after `retry_max_elapsed_time` of `FirestoreSimpleBatchWriteOptions`, 60 seconds by default,
   and ignore `max_retries`;
 - transactions stop after `max_retries` of `FirestoreTransactionOptions`, 4 by default, and, when set, after

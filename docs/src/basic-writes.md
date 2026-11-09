@@ -145,6 +145,23 @@ db.fluent()
 Documents in the subcollections of a deleted document stay in place. To remove a whole collection
 see [Bulk delete](./bulk-delete.md).
 
+## When a write fails
+
+The library sends a write again after a temporary failure: `insert()` and `update()` after `RESOURCE_EXHAUSTED` and
+`UNAVAILABLE`, and `delete()` also after `INTERNAL` and `DEADLINE_EXCEEDED`, up to `max_retries` times with a growing
+delay. The codes are the ones the official Google Firestore clients retry on, see
+[Single writes](./request-timeouts.md#single-writes) for the reasons the others are not retried. When the error still
+comes back after the last retry, the write may or may not be applied.
+
+Other failures to expect from a single write:
+- `ABORTED`: Firestore received too many updates for one document per second, and answers with "Too much contention on
+  these datastore entities. Please try again." The library does not retry it, since sending the write again adds load to
+  the document that is already too busy. Lower the rate of writes to that document instead;
+- `ALREADY_EXISTS`, as `FirestoreError::DataConflictError`: an `insert()` of an ID that exists. After a retried
+  `insert()` it can mean that the first attempt created the document;
+- `FAILED_PRECONDITION`: the precondition of the write did not hold, see
+  [Update/delete preconditions](./preconditions.md).
+
 All three builders accept `.parent(..)` for documents in [nested collections](./nested-collections.md).
 `insert()` and `update()` accept `.document(..)` instead of `.object(..)` for
 [working on dynamic/document level](./dynamic-documents.md).
