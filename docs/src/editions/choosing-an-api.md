@@ -30,8 +30,8 @@ A pipeline adds:
 - grouped aggregations, computed fields, `distinct`, `unnest` and `union`;
 - [joins](../pipeline-aggregations-and-joins.md) through subqueries;
 - [text and geo search](../pipeline-search.md);
-- [writes by query](../pipeline-writes.md): update, delete, insert and upsert of the documents a
-  pipeline selects;
+- [writes by query](../pipeline-writes.md#when-to-use-a-pipeline-write): update, delete, insert and
+  upsert of the documents a pipeline selects, in one request and without reading them first;
 - Query Explain on Enterprise, where the Core `.explain()` is rejected with `INVALID_ARGUMENT`.
 
 ## When to use SQL

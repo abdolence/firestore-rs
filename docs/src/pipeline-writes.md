@@ -26,6 +26,52 @@ A write returns a count, `documents_modified`, and not the documents. It has no 
 
 Full example available [here](https://github.com/abdolence/firestore-rs/blob/master/examples/pipeline-writes.rs).
 
+## When to use a pipeline write
+
+Core has no write by query. To change the documents a query matches, the program reads them,
+computes the new values and writes each one back, with `update` or a
+[batch writer](./batch-writes.md). A pipeline write selects and writes in one request, and
+Firestore runs both on the server:
+
+- no document is sent to the client, and the response is the count `documents_modified`;
+- a value can be an expression over the fields of the document it is set on, so the program does
+  not read a field to compute from it;
+- `insert` and `upsert` take their documents from another collection, or from the output of a
+  [join, aggregation](./pipeline-aggregations-and-joins.md) or [search](./pipeline-search.md);
+- `.atomic()` makes the write apply in full or not at all, see [Atomic writes](#atomic-writes);
+- many literal rows go in one request, each named by a field with `.document_id(..)`.
+
+```rust,no_run
+# use firestore::*;
+# use serde::Serialize;
+# #[derive(Debug, Clone, Serialize)]
+# struct Item { sku: String, price: f64, stock: i64 }
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+// Raises the price of every item in stock by a tenth, on the server
+let repriced = db
+    .fluent()
+    .pipeline()
+    .update(|e| [e.field(path!(Item::price)).multiply(1.1).alias(path!(Item::price))])
+    .in_col("items")
+    .filter(|q| q.field(path!(Item::stock)).greater_than(0))
+    .execute()
+    .await?;
+# let _ = repriced;
+# Ok(())
+# }
+```
+
+A write to one document whose ID the program knows stays Core: it works on a Standard edition
+database too, and it can be buffered in a transaction. What a pipeline write costs:
+
+- it needs an Enterprise edition database, and fails on Standard with `FAILED_PRECONDITION`, see
+  [Standard and Enterprise editions](./editions.md);
+- it returns a count and not the documents;
+- an atomic write has size limits, see [Write limits](#write-limits);
+- the library never retries it, see [Retries and listeners](#retries-and-listeners);
+- a transaction takes pipeline writes or buffered writes, not both, see
+  [Writes in a transaction](#writes-in-a-transaction).
+
 ## The four writes
 
 - `delete()` deletes each selected document;
