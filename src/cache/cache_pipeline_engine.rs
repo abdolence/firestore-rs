@@ -155,7 +155,8 @@ impl From<FirestoreCachePipelineMiss> for FirestoreError {
             FirestoreCachePipelineMiss::IncompleteCollection(collection_path) => {
                 crate::cache_incomplete_collection_error(
                     &collection_path,
-                    crate::CACHE_COLLECTION_NOT_SERVABLE,
+                    crate::CACHE_COLLECTION_SKIP_REASONS,
+                    Some(crate::CACHE_COLLECTION_SKIP_ADVICE),
                 )
             }
         }

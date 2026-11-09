@@ -425,8 +425,10 @@ impl FirestoreDb {
     /// Serves a `list` request from the cache when the session's cache mode allows it.
     ///
     /// Returns [`FirestoreCachedValue::SkipCache`] when there is no cache attached, the
-    /// collection is not preloaded, or `params` asks for ordering, a field projection or a page -
-    /// none of which the cached listing path supports. Returns an error only in
+    /// collection is not in the cache configuration, is not preloaded, is watched by document ID,
+    /// is being replayed from Firestore, or the cache has been shut down, or when `params` asks
+    /// for ordering, a field projection or a page - none of which the cached listing path
+    /// supports. Returns an error only in
     /// [`FirestoreDbSessionCacheMode::ReadCachedOnly`], when the cache cannot serve the request
     /// completely and there is nowhere else to fall back to. A session with a consistency
     /// selector (a transaction or a read time) never reads the cache, and fails in
@@ -502,11 +504,17 @@ impl FirestoreDb {
                         self.session_params.cache_mode,
                         FirestoreDbSessionCacheMode::ReadCachedOnly(_)
                     ) {
-                        let reason = if list_params_supported(params) {
-                            crate::CACHE_COLLECTION_NOT_SERVABLE
+                        let (reason, advice) = if list_params_supported(params) {
+                            (
+                                crate::CACHE_COLLECTION_SKIP_REASONS,
+                                Some(crate::CACHE_COLLECTION_SKIP_ADVICE),
+                            )
                         } else {
-                            "the request uses ordering, field projection or paging, which the \
-                             cached listing path does not support"
+                            (
+                                "the request uses ordering, field projection or paging, which the \
+                                 cached listing path does not support",
+                                None,
+                            )
                         };
                         span.in_scope(|| {
                             debug!(
@@ -517,6 +525,7 @@ impl FirestoreDb {
                         Err(crate::cache_incomplete_collection_error(
                             &params.collection_id,
                             reason,
+                            advice,
                         ))
                     } else {
                         span.in_scope(|| {
