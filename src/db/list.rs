@@ -503,8 +503,7 @@ impl FirestoreDb {
                         FirestoreDbSessionCacheMode::ReadCachedOnly(_)
                     ) {
                         let reason = if list_params_supported(params) {
-                            "the collection is not configured to be preloaded, so the cache only \
-                             holds an arbitrary subset of it"
+                            crate::CACHE_COLLECTION_NOT_SERVABLE
                         } else {
                             "the request uses ordering, field projection or paging, which the \
                              cached listing path does not support"

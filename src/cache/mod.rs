@@ -162,6 +162,11 @@ use crate::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Why a backend declines a `list` or `query` of a collection. A backend answers `SkipCache` for
+/// all of these without saying which, so an error built from it names every one.
+pub(crate) const CACHE_COLLECTION_NOT_SERVABLE: &str = "the collection is not preloaded, is being \
+     reloaded from Firestore, or the cache has been shut down";
+
 /// Builds the error returned when a `read_cached_only` session asks for a `list`/`query` that the
 /// cache cannot answer completely.
 ///
@@ -176,9 +181,11 @@ pub(crate) fn cache_incomplete_collection_error(
         format!(
             "The cache cannot serve this request for collection `{collection_id}` completely: \
              {reason}. Reading it from the cache would silently return partial results. \
-             Either configure the collection with FirestoreCacheCollectionLoadMode::PreloadAllDocs \
-             (or PreloadAllIfEmpty), or use `db.read_through_cache(&cache)` to fall back to \
-             Firestore. To opt back into the previous partial-result behaviour, set \
+             If the collection is not preloaded, configure it with \
+             FirestoreCacheCollectionLoadMode::PreloadAllDocs (or PreloadAllIfEmpty). If it is \
+             being reloaded, read it again once the reload has finished. Or use \
+             `db.read_through_cache(&cache)` to fall back to Firestore. To opt back into the \
+             previous partial-result behaviour, set \
              FirestoreCacheIncompleteCollectionPolicy::PartialResults on the cache configuration."
         ),
     ))

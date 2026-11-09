@@ -159,9 +159,11 @@ impl FirestoreDb {
                                 });
                                 Err(crate::cache_incomplete_collection_error(
                                     collection_id,
-                                    "either the collection is not configured to be preloaded, or \
-                                     the query uses features the cached query engine does not \
-                                     support",
+                                    &format!(
+                                        "the query uses features the cached query engine does \
+                                         not support, or {}",
+                                        crate::CACHE_COLLECTION_NOT_SERVABLE
+                                    ),
                                 ))
                             } else {
                                 span.in_scope(|| {

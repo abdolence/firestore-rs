@@ -155,7 +155,7 @@ impl From<FirestoreCachePipelineMiss> for FirestoreError {
             FirestoreCachePipelineMiss::IncompleteCollection(collection_path) => {
                 crate::cache_incomplete_collection_error(
                     &collection_path,
-                    "the collection is not preloaded, or is being replayed",
+                    crate::CACHE_COLLECTION_NOT_SERVABLE,
                 )
             }
         }
