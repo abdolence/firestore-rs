@@ -61,7 +61,9 @@ pub struct FirestoreMemoryCacheBackend {
     suspended_collections: std::sync::RwLock<HashSet<String>>,
     /// Set by `shutdown`. The listener has stopped by then, so whatever the cache still held or
     /// took in afterwards would go stale, and an emptied collection would read as a complete one.
-    /// A shut down cache therefore answers nothing and stores nothing.
+    /// A shut down cache therefore answers nothing and refuses to be filled again; a write-back
+    /// already in flight when it is set can still land, and the read guards keep that document
+    /// from ever being served.
     shut_down: AtomicBool,
 }
 
@@ -234,6 +236,17 @@ impl FirestoreMemoryCacheBackend {
         self.shut_down.load(Ordering::Acquire)
     }
 
+    fn ensure_open(&self) -> FirestoreResult<()> {
+        if self.is_shut_down() {
+            return Err(FirestoreError::CacheError(FirestoreCacheError::new(
+                FirestoreErrorPublicGenericDetails::new("CacheShutdown".into()),
+                "This in-memory cache has been shut down and no longer holds its documents."
+                    .to_string(),
+            )));
+        }
+        Ok(())
+    }
+
     /// Stops a collection answering `list`/`query` until Firestore reports it consistent again.
     fn suspend_collection(&self, collection_path: &str) {
         self.suspended_collections
@@ -391,6 +404,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
+        self.ensure_open()?;
         let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
 
         self.preload_collections(db).await?;
@@ -426,6 +440,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         db: &FirestoreDb,
         collection_config: FirestoreCacheCollectionConfiguration,
     ) -> FirestoreResult<FirestoreListenerTargetParams> {
+        self.ensure_open()?;
         // Captured before reading anything, so that writes landing during the preload are still
         // delivered once the listener target attaches from this point in time.
         let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
@@ -439,12 +454,15 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         }
 
         // Published only now: until this point the collection does not exist as far as reads are
-        // concerned, so no listing can see it half filled.
+        // concerned, so no listing can see it half filled. The shutdown check shares the lock with
+        // the insert, because `shutdown` empties only the caches published by the time it looks:
+        // a shutdown that finished during the preload must not be followed by a published cache.
         {
             let mut caches = self
                 .collection_caches
                 .write()
                 .expect("cache collections lock poisoned");
+            self.ensure_open()?;
             let mut updated = (**caches).clone();
             updated.insert(collection_path.clone(), mem_cache);
             *caches = Arc::new(updated);
@@ -532,10 +550,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         let Some(collection_config) = config.collections.get(collection_path) else {
             return Ok(None);
         };
-        if self.is_shut_down()
-            || !self.count_authoritative
-            || !collection_config.collection_load_mode.is_preloading()
-        {
+        if !self.count_authoritative || !collection_config.collection_load_mode.is_preloading() {
             return Ok(None);
         }
 
@@ -561,10 +576,6 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
     }
 
     async fn on_listen_event(&self, event: FirestoreListenEvent) -> FirestoreResult<()> {
-        if self.is_shut_down() {
-            return Ok(());
-        }
-
         match event {
             FirestoreListenEvent::DocumentChange(doc_change) => {
                 if let Some(doc) = doc_change.document {
@@ -1064,38 +1075,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_shut_down_cache_reports_no_comparable_count() {
-        let backend = preloaded(&[("a", 1000)]);
-        seed(&backend, "a", "one").await;
-        backend.shutdown().await.unwrap();
-
-        assert_eq!(
-            backend
-                .authoritative_doc_count(&format!("{DOCS}/a"))
-                .await
-                .unwrap(),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn a_shut_down_cache_stores_nothing() {
+    async fn a_shut_down_cache_stores_no_write_back() {
         let backend = preloaded(&[("a", 1000)]);
         backend.shutdown().await.unwrap();
-        let document = FirestoreDocument {
-            name: doc_path("a", "one"),
-            ..Default::default()
-        };
 
         backend
-            .on_listen_event(FirestoreListenEvent::DocumentChange(DocumentChange {
-                document: Some(document.clone()),
+            .update_doc_by_path(&FirestoreDocument {
+                name: doc_path("a", "one"),
                 ..Default::default()
-            }))
-            .await
-            .expect("event handled");
-        backend
-            .update_doc_by_path(&document)
+            })
             .await
             .expect("write-back");
 
@@ -1103,6 +1091,45 @@ mod tests {
             .collection_cache(&format!("{DOCS}/a"))
             .expect("configured collection");
         assert!(mem_cache.get("one").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_shut_down_cache_refuses_to_be_filled_again() {
+        let backend = preloaded(&[("a", 1000)]);
+        backend.shutdown().await.unwrap();
+        let server = crate::db::fake_firestore::FakeFirestore::start(|method, _| {
+            (
+                method.to_string(),
+                crate::db::fake_firestore::FakeResponse::empty(),
+            )
+        })
+        .await;
+
+        let FirestoreError::CacheError(error) = backend
+            .load(&FirestoreCacheOptions::new("shut-down".into()), &server.db)
+            .await
+            .unwrap_err()
+        else {
+            panic!("load did not fail with a cache error");
+        };
+        assert_eq!(error.public.code, "CacheShutdown");
+
+        let FirestoreError::CacheError(error) = backend
+            .add_collection(
+                &FirestoreCacheOptions::new("shut-down".into()),
+                &server.db,
+                FirestoreCacheCollectionConfiguration::new(
+                    "b",
+                    FirestoreListenerTarget::new(1001),
+                    FirestoreCacheCollectionLoadMode::PreloadNone,
+                ),
+            )
+            .await
+            .unwrap_err()
+        else {
+            panic!("add_collection did not fail with a cache error");
+        };
+        assert_eq!(error.public.code, "CacheShutdown");
     }
 
     #[tokio::test]
