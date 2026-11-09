@@ -174,10 +174,28 @@ let tags = db
 
 ## Replacing documents
 
-`.replace_with(expr, mode)` replaces each document with the map `expr` evaluates to.
-`FirestoreReplaceWithMode::FullReplace` makes the map the document; `MergeOverwriteExisting` adds
-the map's fields and replaces the fields of the same name; `MergeKeepExisting` adds them and keeps
-the fields of the same name.
+`.replace_with(expr, mode)` reshapes each document in the pipeline's output and changes nothing in
+storage. The stored documents stay as they are; only the documents the pipeline returns have the
+new shape. Stored documents change only through the write stages, see
+[Pipeline writes](./pipeline-writes.md).
+
+`expr` must evaluate to a map. The mode says how the map and the document combine:
+
+- `FirestoreReplaceWithMode::FullReplace`: the map becomes the document, and the document's own
+  fields are dropped;
+- `FirestoreReplaceWithMode::MergeOverwriteExisting`: the map's fields are added to the document,
+  and replace its fields of the same name;
+- `FirestoreReplaceWithMode::MergeKeepExisting`: the map's fields are added to the document, and
+  its fields of the same name stay.
+
+For `books/book-10`, which has the fields `title` ("Dune"), `author`, `genre`, `awards` (a map of
+`hugo` and `nebula`) and others, each mode outputs:
+
+| `expr` | Mode | Output document |
+|---|---|---|
+| the field `awards` | `FullReplace` | `hugo: true` and `nebula: true`, and no other field |
+| the map `title: "Overwritten", extra: 1` | `MergeOverwriteExisting` | every field of the book, with `title` "Overwritten" and the new field `extra` 1 |
+| the map `title: "Overwritten", extra: 1` | `MergeKeepExisting` | every field of the book, with `title` still "Dune" and the new field `extra` 1 |
 
 ```rust,no_run
 # use firestore::*;
@@ -191,6 +209,32 @@ let awards = db
     .query()
     .await?;
 # let _ = awards;
+# Ok(())
+# }
+```
+
+The query returns the two award fields, and a read of `books/book-10` afterwards still returns the
+whole book. The same holds for the two merge modes.
+
+A write stage stores what the stages before it output, so a write after `replace_with` stores the
+replaced documents. This `insert` stores the awards of `books/book-10` as the document
+`book-awards/book-10`, and leaves `books/book-10` as it is:
+
+```rust,no_run
+# use firestore::*;
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+let written = db
+    .fluent()
+    .pipeline()
+    .insert()
+    .into("book-awards")
+    .document_id(|e| e.constant("book-10"))
+    .documents(["books/book-10"])
+    .replace_with(|e| e.field("awards"), FirestoreReplaceWithMode::FullReplace)
+    .atomic()
+    .execute()
+    .await?;
+# let _ = written;
 # Ok(())
 # }
 ```
