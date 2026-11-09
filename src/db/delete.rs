@@ -1,10 +1,10 @@
+use crate::db::retry::DELETE_RETRIED_CODES;
 use crate::db::safe_document_path;
 use crate::db::support::FirestoreDeleteSupport;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
-use gcloud_sdk::RequestTimeouts;
 use tracing::*;
 
 #[async_trait]
@@ -54,10 +54,14 @@ impl FirestoreDeleteSupport for FirestoreDb {
         };
 
         let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
-        self.client()
-            .get()
-            .delete_document(self.request_with_timeout(request, RequestTimeouts::with_total))
-            .await?;
+        self.retry_write(
+            &span,
+            "delete document",
+            &request,
+            &DELETE_RETRIED_CODES,
+            |mut client, request| async move { client.delete_document(request).await },
+        )
+        .await?;
         let end_query_utc: FirestoreInstant = FirestoreInstant::now();
         let query_duration = end_query_utc.duration_since(begin_query_utc);
 

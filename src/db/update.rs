@@ -1,10 +1,10 @@
+use crate::db::retry::INSERT_AND_UPDATE_RETRIED_CODES;
 use crate::db::safe_document_path;
 use crate::db::support::FirestoreUpdateSupport;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult, FirestoreWritePrecondition};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
-use gcloud_sdk::RequestTimeouts;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
@@ -103,10 +103,12 @@ impl FirestoreUpdateSupport for FirestoreDb {
 
         let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
         let update_response = self
-            .client()
-            .get()
-            .update_document(
-                self.request_with_timeout(update_document_request, RequestTimeouts::with_total),
+            .retry_write(
+                &span,
+                "update document",
+                &update_document_request,
+                &INSERT_AND_UPDATE_RETRIED_CODES,
+                |mut client, request| async move { client.update_document(request).await },
             )
             .await?;
         let end_query_utc: FirestoreInstant = FirestoreInstant::now();
@@ -118,6 +120,6 @@ impl FirestoreUpdateSupport for FirestoreDb {
             debug!(collection_id, document_id, "Updated the document.");
         });
 
-        Ok(update_response.into_inner())
+        Ok(update_response)
     }
 }

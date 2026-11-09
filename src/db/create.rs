@@ -1,10 +1,10 @@
+use crate::db::retry::INSERT_AND_UPDATE_RETRIED_CODES;
 use crate::db::support::FirestoreCreateSupport;
 use crate::db::validate_path_segment;
 use crate::FirestoreInstant;
 use crate::{FirestoreDb, FirestoreResult};
 use async_trait::async_trait;
 use gcloud_sdk::google::firestore::v1::*;
-use gcloud_sdk::RequestTimeouts;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 
@@ -83,10 +83,12 @@ impl FirestoreCreateSupport for FirestoreDb {
         let begin_query_utc: FirestoreInstant = FirestoreInstant::now();
 
         let create_response = self
-            .client()
-            .get()
-            .create_document(
-                self.request_with_timeout(create_document_request, RequestTimeouts::with_total),
+            .retry_write(
+                &span,
+                "create document",
+                &create_document_request,
+                &INSERT_AND_UPDATE_RETRIED_CODES,
+                |mut client, request| async move { client.create_document(request).await },
             )
             .await?;
 
@@ -95,7 +97,7 @@ impl FirestoreCreateSupport for FirestoreDb {
 
         span.record("/firestore/response_time", query_duration.as_millis());
 
-        let response_inner = create_response.into_inner();
+        let response_inner = create_response;
 
         span.record("/firestore/document_name", &response_inner.name);
 
