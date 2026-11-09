@@ -417,14 +417,16 @@ pub enum FirestoreCacheCollectionLoadMode {
     ///
     /// Enables cached `list` and `query`.
     PreloadAllDocs,
-    /// Download every document only if the cache is currently empty.
+    /// Download every document unless an earlier run finished downloading the collection.
     ///
-    /// Enables cached `list` and `query`. Mainly useful for the persistent backend, where it
-    /// avoids re-downloading a collection that a previous run already stored in full when the
-    /// cache loads; a collection whose earlier download did not finish is downloaded again;
-    /// [`add_collection`](crate::FirestoreCache::add_collection) always downloads it again. For
-    /// the in-memory backend this is equivalent to [`PreloadAllDocs`](Self::PreloadAllDocs), since
-    /// an in-memory cache always starts empty.
+    /// Enables cached `list` and `query`. Mainly useful for the persistent backend, which keeps a
+    /// marker for each collection whose download has finished and skips the download when the
+    /// cache loads. [`invalidate_all`](crate::FirestoreCache::invalidate_all) and a resync after
+    /// Firestore resets the listener target remove the marker, so the next start downloads the
+    /// collection again, as does a download the process did not survive.
+    /// [`add_collection`](crate::FirestoreCache::add_collection) always downloads the collection.
+    /// For the in-memory backend this is equivalent to [`PreloadAllDocs`](Self::PreloadAllDocs),
+    /// since an in-memory cache always starts empty.
     PreloadAllIfEmpty,
     /// Do not preload anything; fill the cache lazily as documents are read through it.
     ///

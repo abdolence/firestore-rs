@@ -206,7 +206,8 @@ impl FirestoreCacheCollection {
         }
     }
 
-    /// Downloads every document only when the cache is empty. Enables cached `list` and `query`.
+    /// Downloads every document unless an earlier run finished downloading the collection.
+    /// Enables cached `list` and `query`.
     #[inline]
     pub fn preload_all_if_empty(self) -> Self {
         Self {

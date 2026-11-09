@@ -4,13 +4,14 @@
 - `PreloadAllDocs` (`.collection_with(name, |c| c.preload_all())`): preload all documents in the
   collection;
 - `PreloadAllIfEmpty` (`.collection_with(name, |c| c.preload_all_if_empty())`): preload all
-  documents only if the cache is empty. This is useful for the persistent cache, where the saving
-  applies when the cache loads; for the memory cache it is the same as `PreloadAllDocs`, since an
-  in-memory cache always starts empty. The persistent cache records when the download of a
-  collection has finished, and skips the download only for a collection with that record. A
-  collection whose download was interrupted, for example because the process was killed, is
-  discarded and downloaded again on the next start. A persistent cache written before this record
-  existed downloads each such collection once more on its first start.
+  documents unless an earlier run finished downloading the collection. This is useful for the
+  persistent cache, where the saving applies when the cache loads; for the memory cache it is the
+  same as `PreloadAllDocs`, since an in-memory cache always starts empty. The persistent cache
+  keeps a marker for each collection whose download has finished, and skips the download only for
+  a collection with a marker. A collection whose download was interrupted, for example because the
+  process was killed, has no marker: its rows are discarded and it is downloaded again on the next
+  start. `invalidate_all` and a resync after Firestore resets the listener target remove the
+  marker too, and each costs one more download on the next start.
 
 `.preloaded_collection(name)` picks the appropriate preloading mode for the backend.
 
