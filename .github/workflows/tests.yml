@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 env:
   GCP_PROJECT: latestbit
-  GCP_ENTERPRISE_DATABASE_ID: firestore-rs-enterprise
+  GCP_ENTERPRISE_DATABASE_ID: firestore-rs-enterprise-eu
   GCP_PROJECT_ID: 288860578009
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
