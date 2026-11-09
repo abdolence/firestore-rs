@@ -9,7 +9,7 @@ use crate::{
 use gcloud_sdk::google::firestore::v1::{value::ValueType, ArrayValue, Value};
 use sqlparser::ast::{
     AccessExpr, Array, BinaryOperator, CaseWhen, CeilFloorKind, DateTimeField, Expr, Ident,
-    Subscript, TrimWhereField, UnaryOperator, Value as SqlValue, ValueWithSpan,
+    InTarget, Subscript, TrimWhereField, UnaryOperator, Value as SqlValue, ValueWithSpan,
 };
 use sqlparser::tokenizer::Span;
 use std::borrow::Cow;
@@ -75,10 +75,11 @@ impl FirestoreSqlTranslator<'_> {
             Expr::IsNotDistinctFrom(left, right) => {
                 self.comparison(scope, left, right, FirestoreExpr::equal)
             }
-            Expr::InList {
+            Expr::In {
                 expr: operand,
-                list,
+                target: InTarget::List(list),
                 negated,
+                global: false,
             } => self.in_list(scope, operand, list, *negated),
             Expr::Between {
                 expr: operand,
@@ -166,18 +167,20 @@ impl FirestoreSqlTranslator<'_> {
             Expr::Array(Array { elem, named: _ }) => self.array_literal(scope, elem),
             Expr::Subquery(query) => self.scalar_subquery(scope, query),
             Expr::Exists { subquery, negated } => self.exists(scope, subquery, *negated),
-            Expr::InSubquery {
+            Expr::In {
                 expr: operand,
-                subquery,
+                target: InTarget::Subquery(subquery),
                 negated,
+                global: false,
             } => {
                 let operand = self.expr(scope, operand)?;
                 self.in_subquery(scope, operand, subquery, *negated)
             }
-            Expr::InUnnest {
+            Expr::In {
                 expr: operand,
-                array_expr,
+                target: InTarget::Unnest(array_expr),
                 negated,
+                global: false,
             } => self.in_unnest(scope, operand, array_expr, *negated),
             Expr::Cast { .. } => Err(FirestoreError::unsupported_sql("CAST", expr_start(expr))),
             Expr::Ceil { .. } | Expr::Floor { .. } => Err(FirestoreError::unsupported_sql(

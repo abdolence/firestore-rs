@@ -419,7 +419,8 @@ impl FirestoreSqlTranslator<'_> {
             partitions,
             json_path,
             sample,
-            index_hints,
+            index_directives,
+            inheritance,
         } = factor
         else {
             let construct = match factor {
@@ -440,7 +441,8 @@ impl FirestoreSqlTranslator<'_> {
                 (*with_ordinality, "WITH ORDINALITY"),
                 (!partitions.is_empty(), "PARTITION"),
                 (json_path.is_some(), "a JSON path"),
-                (!index_hints.is_empty(), "an index hint"),
+                (!index_directives.is_empty(), "an index hint"),
+                (inheritance.is_some(), "ONLY or a trailing *"),
             ],
             start,
         )?;

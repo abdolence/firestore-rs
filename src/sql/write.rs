@@ -143,6 +143,8 @@ impl FirestoreSqlTranslator<'_> {
             partitioned,
             after_columns,
             has_table_keyword,
+            by_name,
+            overriding,
             on,
             returning,
             output,
@@ -174,6 +176,8 @@ impl FirestoreSqlTranslator<'_> {
                 (partitioned.is_some(), "PARTITION"),
                 (!after_columns.is_empty(), "columns after PARTITION"),
                 (*has_table_keyword, "INSERT TABLE"),
+                (*by_name, "INSERT BY NAME"),
+                (overriding.is_some(), "OVERRIDING"),
                 (returning.is_some(), "RETURNING"),
                 (output.is_some(), "OUTPUT"),
                 (priority.is_some(), "an INSERT priority"),
@@ -446,6 +450,7 @@ impl FirestoreSqlTranslator<'_> {
             update_token,
             optimizer_hints,
             table,
+            on_cluster,
             assignments,
             from,
             selection,
@@ -454,17 +459,20 @@ impl FirestoreSqlTranslator<'_> {
             or,
             order_by,
             limit,
+            settings,
         } = update;
         let start = at(update_token.0.span);
         refuse_set(
             &[
                 (!optimizer_hints.is_empty(), "an optimizer hint"),
+                (on_cluster.is_some(), "ON CLUSTER"),
                 (from.is_some(), "FROM"),
                 (returning.is_some(), "RETURNING"),
                 (output.is_some(), "OUTPUT"),
                 (or.is_some(), "UPDATE OR"),
                 (!order_by.is_empty(), "ORDER BY"),
                 (limit.is_some(), "LIMIT"),
+                (settings.is_some(), "SETTINGS"),
             ],
             start,
         )?;
@@ -548,8 +556,18 @@ impl FirestoreSqlTranslator<'_> {
         rows: &FirestoreSqlRows,
         start: Option<FirestoreSqlLocation>,
     ) -> FirestoreResult<()> {
+        if let Some(ConflictTarget::Columns {
+            predicate: Some(predicate),
+            ..
+        }) = conflict_target
+        {
+            return Err(FirestoreError::unsupported_sql(
+                "WHERE in an ON CONFLICT target",
+                expr_start(predicate),
+            ));
+        }
         let on_name = match conflict_target {
-            Some(ConflictTarget::Columns(columns)) => {
+            Some(ConflictTarget::Columns { columns, .. }) => {
                 matches!(columns.as_slice(), [column] if column.value == SQL_DOCUMENT_NAME_FIELD)
             }
             Some(ConflictTarget::OnConstraint(_)) => false,
@@ -732,23 +750,27 @@ impl FirestoreSqlTranslator<'_> {
             optimizer_hints,
             tables,
             from,
+            on_cluster,
             using,
             selection,
             returning,
             output,
             order_by,
             limit,
+            settings,
         } = delete;
         let start = at(delete_token.0.span);
         refuse_set(
             &[
                 (!optimizer_hints.is_empty(), "an optimizer hint"),
                 (!tables.is_empty(), "a multi-table DELETE"),
+                (on_cluster.is_some(), "ON CLUSTER"),
                 (using.is_some(), "USING"),
                 (returning.is_some(), "RETURNING"),
                 (output.is_some(), "OUTPUT"),
                 (!order_by.is_empty(), "ORDER BY"),
                 (limit.is_some(), "LIMIT"),
+                (settings.is_some(), "SETTINGS"),
             ],
             start,
         )?;

@@ -1439,6 +1439,11 @@ fn writes_outside_their_forms_are_refused_by_name() {
             "ON CONFLICT",
         ),
         (
+            "INSERT INTO items (__name__) VALUES ('a') \
+             ON CONFLICT (__name__) WHERE stock > 0 DO NOTHING",
+            "WHERE in an ON CONFLICT target",
+        ),
+        (
             "INSERT INTO items (__name__, stock) VALUES ('a', 1) \
              ON CONFLICT DO UPDATE SET stock = 0",
             "ON CONFLICT",
@@ -2037,6 +2042,7 @@ fn joins_subqueries_and_ctes_outside_their_forms_are_refused_by_name() {
             "FULL JOIN",
         ),
         ("SELECT * FROM a JOIN b USING (k)", "JOIN USING"),
+        ("SELECT * FROM a JOIN b USING (k) AS j", "JOIN USING"),
         ("SELECT * FROM a NATURAL JOIN b", "NATURAL JOIN"),
         ("SELECT * FROM a JOIN b", "JOIN"),
         (
