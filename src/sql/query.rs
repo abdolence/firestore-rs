@@ -439,15 +439,23 @@ impl FirestoreSqlTranslator<'_> {
                 (*with_ordinality, "WITH ORDINALITY"),
                 (!partitions.is_empty(), "PARTITION"),
                 (json_path.is_some(), "a JSON path"),
-                (sample.is_some(), "TABLESAMPLE"),
                 (!index_hints.is_empty(), "an index hint"),
             ],
             start,
         )?;
+        let sample = sample
+            .as_ref()
+            .map(|sample| self.table_sample(sample, children, start))
+            .transpose()?;
         let alias = alias.as_ref().map(Self::alias).transpose()?;
         let (source, relation) = match args {
             None => match self.referenced_cte(name, alias.as_deref(), start)? {
-                Some(table) => return Ok(table),
+                Some((mut pipeline, relation)) => {
+                    pipeline
+                        .stages
+                        .extend(sample.map(FirestorePipelineStage::Sample));
+                    return Ok((pipeline, relation));
+                }
                 None => self.collection(name, alias)?,
             },
             Some(TableFunctionArgs { args, settings }) => {
@@ -457,7 +465,11 @@ impl FirestoreSqlTranslator<'_> {
                 self.table_function(name, args, alias, children)?
             }
         };
-        Ok((FirestorePipeline::new(source), relation))
+        let mut pipeline = FirestorePipeline::new(source);
+        pipeline
+            .stages
+            .extend(sample.map(FirestorePipelineStage::Sample));
+        Ok((pipeline, relation))
     }
 
     fn referenced_cte(
@@ -875,14 +887,7 @@ impl FirestoreSqlTranslator<'_> {
     }
 
     fn count(&mut self, expr: &Expr, clause: &str) -> FirestoreResult<u32> {
-        let value = match expr {
-            Expr::Value(value) => Some(self.value(value)?),
-            Expr::Identifier(ident) if is_parameter(ident) => Some(self.parameter(ident)?),
-            _ => None,
-        };
-        if let Some(value) = &value {
-            value.require_value(clause, expr_start(expr))?;
-        }
+        let value = self.bound_value(expr, clause)?;
         match value.as_ref().and_then(FirestoreExpr::constant_value) {
             Some(ValueType::IntegerValue(count)) => u32::try_from(*count).ok(),
             _ => None,
@@ -894,6 +899,24 @@ impl FirestoreSqlTranslator<'_> {
                 expr_start(expr),
             )
         })
+    }
+
+    // The value of a literal or a parameter, which `clause` reads while it translates, and so
+    // codegen cannot show a parameter for. `None` for any other expression.
+    pub(super) fn bound_value(
+        &mut self,
+        expr: &Expr,
+        clause: &str,
+    ) -> FirestoreResult<Option<FirestoreExpr>> {
+        let value = match expr {
+            Expr::Value(value) => Some(self.value(value)?),
+            Expr::Identifier(ident) if is_parameter(ident) => Some(self.parameter(ident)?),
+            _ => None,
+        };
+        if let Some(value) = &value {
+            value.require_value(clause, expr_start(expr))?;
+        }
+        Ok(value)
     }
 }
 

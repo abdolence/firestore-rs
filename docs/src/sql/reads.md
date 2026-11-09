@@ -63,6 +63,7 @@ A name compared with a column, such as the `__name__` of a joined table, is desc
 | Text and geo search | `document_matches('query')` and `geo_distance(field, geo_point(lat, lng)) <= meters` as top-level `AND` conditions of the `WHERE`, see [Search](#search) |
 | Subqueries | scalar `(SELECT ..)`, `[NOT] EXISTS`, `[NOT] IN (SELECT ..)` and `ARRAY(SELECT ..)`, see [Joins and subqueries](#joins-and-subqueries) |
 | Derived tables, `WITH` | non-recursive CTEs |
+| `TABLESAMPLE` | `RESERVOIR (n ROWS)` and `BERNOULLI (p PERCENT)` on the first table of the outermost `FROM`, see [Sampling](#sampling) |
 | Joins | `[INNER] JOIN`, `LEFT JOIN`, `CROSS JOIN`, a comma in `FROM`, and `UNNEST(array) AS x [WITH OFFSET AS pos]` |
 | Writes | `INSERT .. VALUES`, `INSERT .. SELECT`, `INSERT OR REPLACE`, `INSERT .. ON CONFLICT`, `UPDATE`, `DELETE`, see [Writes](../sql.md#writes) |
 | Operators | `+ - * / %`, `||` |
@@ -87,6 +88,53 @@ selects the relevance, and `ORDER BY score() DESC` or `ORDER BY geo_distance(..)
 key becomes the search's own sort. A search needs a search index, see
 [Search indexes](../pipeline-search.md#search-indexes).
 
+### Sampling
+
+`TABLESAMPLE` keeps a random sample of a table and becomes the `sample` stage, see
+[Sampling](../pipeline-aggregations-and-joins.md#sampling) in the pipeline chapter:
+
+| SQL | Keeps |
+|---|---|
+| `TABLESAMPLE RESERVOIR (n ROWS)` | exactly `n` documents, every set of `n` equally likely, or all of them when the table has fewer. *Reservoir sampling* draws a fixed number of items in one pass over input of unknown size |
+| `TABLESAMPLE BERNOULLI (p PERCENT)` | each document with probability `p`, independently of the others, so the count varies from run to run; `p` is from 0 to 100, and the input order is kept. *Bernoulli sampling* decides for each item separately, as a coin toss does |
+
+```rust,no_run
+# use firestore::*;
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+let ten_books = db
+    .fluent()
+    .sql("SELECT title FROM books TABLESAMPLE RESERVOIR (10 ROWS)")
+    .query()
+    .await?;
+
+let about_a_tenth = db
+    .fluent()
+    .sql("SELECT title FROM books AS b TABLESAMPLE BERNOULLI (10 PERCENT) WHERE b.rating > 4")
+    .query()
+    .await?;
+# let _ = (ten_books, about_a_tenth);
+# Ok(())
+# }
+```
+
+As in SQL, the sample is drawn from the whole table before `WHERE`, so the `WHERE` filters the
+documents that were drawn. In the second statement each document that matches is in the result
+with probability 0.1. With `RESERVOIR (10 ROWS)` and a `WHERE`, the result holds at most 10
+documents, and none when the 10 drawn do not match. The clause follows the table and its alias.
+`n` and `p` are literals or parameters, `@name` or `?`, and `n` is a positive integer.
+
+`TABLESAMPLE` is accepted on the first table of the outermost `FROM`, and refused on a derived
+table, on a joined table, in a subquery and in `UPDATE` or `DELETE`. A joined table and a subquery
+run once for each row of the outer query, which would draw the sample again every time. A CTE that
+holds a `TABLESAMPLE` draws a new sample at each reference, since a CTE referenced twice runs
+twice. A search, `document_matches(..)` or `geo_distance(..)`, reads the collection directly, and
+is refused after a sample.
+
+Every other form is refused with `InvalidParametersError`, since no sampling of the stage matches
+it: `SYSTEM` and `BLOCK`, since Firestore has no block sampling; `REPEATABLE` and `SEED`, since the
+stage takes no seed and every run draws a new sample; `BUCKET`; the `SAMPLE` keyword; `BERNOULLI`
+with `ROWS`, `RESERVOIR` with `PERCENT`, and a method or a unit that is left out.
+
 ### Refused constructs
 
 A construct with no pipeline form fails with `InvalidParametersError` that names it, before any
@@ -108,7 +156,7 @@ dropped, so a statement does not run with a clause missing.
 | `DISTINCT ON`, `GROUP BY ALL`, `ROLLUP`, `CUBE`, `GROUPING SETS` | no pipeline stage keeps one row per key or groups in these ways |
 | `ANY_VALUE`, `STRING_AGG`, `LOGICAL_AND`, `LOGICAL_OR` | no accumulator with that meaning |
 | `LIKE .. ESCAPE`, `LIKE ANY` | a backslash escapes in `LIKE` without it |
-| `TABLESAMPLE`, `FOR UPDATE`, `FETCH`, `SELECT AS STRUCT` and the other clauses of other dialects | no pipeline form |
+| `FOR UPDATE`, `FETCH`, `SELECT AS STRUCT` and the other clauses of other dialects | no pipeline form |
 | Searches inside `OR` or after a join | Firestore accepts a search only right after the source, and fails the request otherwise |
 | An unaliased computed column, or an unaliased nested field such as `awards.hugo` in a query that groups, `ORDER BY` or `GROUP BY` a constant or a position | the column needs a name, since a nested path cannot name an output field; a constant orders and groups nothing |
 

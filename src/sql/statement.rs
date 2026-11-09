@@ -1,5 +1,6 @@
 use super::ddl::starts_ddl;
 use super::parameters::FirestoreSqlBinding;
+use super::sample::rename_reservoir;
 use super::translator::FirestoreSqlTranslator;
 use crate::errors::FirestoreError;
 use crate::{
@@ -152,9 +153,10 @@ impl FirestoreSqlStatement {
             ));
         }
         let dialect = BigQueryDialect {};
-        let tokens = Tokenizer::new(&dialect, sql)
+        let mut tokens = Tokenizer::new(&dialect, sql)
             .tokenize_with_location()
             .map_err(FirestoreError::from_sql_tokenizer)?;
+        rename_reservoir(&mut tokens);
         let binding = FirestoreSqlBinding::new(&tokens, parameters)?;
         let mut translator = FirestoreSqlTranslator::new(documents_path, options, binding);
         let mut parser = Parser::new(&dialect)

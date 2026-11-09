@@ -28,6 +28,8 @@ pub use parameters::*;
 
 mod query;
 
+mod sample;
+
 mod scope;
 
 mod search;
