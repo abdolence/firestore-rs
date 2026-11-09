@@ -3,7 +3,7 @@
 
 mod common;
 
-use crate::common::{delete_documents, eventually_async, setup, unique_name};
+use crate::common::{delete_documents, eventually_async, eventually_within, setup, unique_name};
 use firestore::gcloud_sdk::google::firestore::v1::{
     listen_request, target, ListenRequest, StructuredQuery, Target, TargetChange,
 };
@@ -27,6 +27,13 @@ const FIRESTORE_ANSWER_POLL: Duration = Duration::from_millis(100);
 const FIRESTORE_ANSWER_RETRIES: u32 = 12;
 /// Several retry delays long, so that a target the listener adds back would show up within it.
 const LISTENER_QUIET_PERIOD: Duration = Duration::from_secs(5);
+/// Firestore delivers a change within a second. A stream it holds back stays silent for tens of
+/// seconds.
+const CHANGE_TIMEOUT: Duration = Duration::from_secs(10);
+const CHANGE_POLL: Duration = Duration::from_millis(100);
+/// Firestore holds back the first change on most, not all, streams that open with mixed resume
+/// states, so one stream is not enough to catch it.
+const MIXED_STREAMS: usize = 4;
 /// A field no index covers: ordering by it after an equality filter on another field needs a
 /// composite index, which this collection does not have, so Firestore rejects the query.
 const UNINDEXED_ORDER_FIELD: &str = "listen_targets_unindexed_rank";
@@ -62,9 +69,24 @@ async fn start_listener(
     retry_delay: Duration,
     targets: Vec<FirestoreListenerTargetParams>,
 ) -> TestResult<(TestListener, RecordedEvents)> {
+    start_listener_with_storage(
+        db,
+        FirestoreMemListenStateStorage::new(),
+        retry_delay,
+        targets,
+    )
+    .await
+}
+
+async fn start_listener_with_storage(
+    db: &FirestoreDb,
+    storage: FirestoreMemListenStateStorage,
+    retry_delay: Duration,
+    targets: Vec<FirestoreListenerTargetParams>,
+) -> TestResult<(TestListener, RecordedEvents)> {
     let mut listener = db
         .create_listener_with_params(
-            FirestoreMemListenStateStorage::new(),
+            storage,
             FirestoreListenerParams::new().with_retry_delay(retry_delay),
         )
         .await?;
@@ -731,5 +753,108 @@ async fn once_target_ends_after_initial_snapshot() -> TestResult {
         1,
         "the once target was added back"
     );
+    Ok(())
+}
+
+/// A stream opened with one target resuming from a token and another from scratch delivers its
+/// first change at once, instead of Firestore holding it back.
+#[tokio::test]
+async fn first_change_is_delivered_when_targets_resume_differently() -> TestResult {
+    const RESUMED_TARGET: i32 = 1;
+    const FRESH_TARGET: i32 = 2;
+
+    let db = setup().await?;
+
+    for _ in 0..MIXED_STREAMS {
+        let resumed_tag = unique_doc_id("mixed-resumed");
+        let fresh_tag = unique_doc_id("mixed-fresh");
+        let seeded_doc_ids = [
+            unique_doc_id("mixed-resumed-seed"),
+            unique_doc_id("mixed-fresh-seed"),
+        ];
+        let changed_doc_id = unique_doc_id("mixed-resumed-change");
+
+        let observed = async {
+            write_tagged(&db, &seeded_doc_ids[0], &resumed_tag, 0).await?;
+            write_tagged(&db, &seeded_doc_ids[1], &fresh_tag, 0).await?;
+
+            let storage = FirestoreMemListenStateStorage::new();
+            let (mut first, first_events) = start_listener_with_storage(
+                &db,
+                storage.clone(),
+                LISTENER_RETRY_DELAY,
+                vec![
+                    tag_query_target(RESUMED_TARGET, &resumed_tag)?,
+                    tag_query_target(FRESH_TARGET, &fresh_tag)?,
+                ],
+            )
+            .await?;
+            let resumed_target = FirestoreListenerTarget::try_from(RESUMED_TARGET)?;
+            let token_stored = eventually_within(CHANGE_TIMEOUT, CHANGE_POLL, || async {
+                Ok(storage.get_token(&resumed_target).await.is_some()
+                    && count_target_changes(
+                        &first_events.snapshot(),
+                        FirestoreListenerTargetChangeType::Current,
+                        FRESH_TARGET,
+                    ) > 0)
+            })
+            .await?;
+            first.shutdown().await?;
+            let token = storage.get_token(&resumed_target).await;
+            let Some(token) = token.filter(|_| token_stored) else {
+                return TestResult::Ok(None);
+            };
+
+            let (mut second, second_events) = start_listener(
+                &db,
+                LISTENER_RETRY_DELAY,
+                vec![
+                    tag_query_target(RESUMED_TARGET, &resumed_tag)?
+                        .with_resume_type(FirestoreListenerTargetResumeType::Token(token)),
+                    tag_query_target(FRESH_TARGET, &fresh_tag)?,
+                ],
+            )
+            .await?;
+            let both_current = eventually_within(CHANGE_TIMEOUT, CHANGE_POLL, || async {
+                let events = second_events.snapshot();
+                Ok([RESUMED_TARGET, FRESH_TARGET].iter().all(|target| {
+                    count_target_changes(
+                        &events,
+                        FirestoreListenerTargetChangeType::Current,
+                        *target,
+                    ) > 0
+                }))
+            })
+            .await?;
+
+            let written_at = Instant::now();
+            write_tagged(&db, &changed_doc_id, &resumed_tag, 1).await?;
+            let received = eventually_within(CHANGE_TIMEOUT, CHANGE_POLL, || async {
+                Ok(second_events
+                    .snapshot()
+                    .iter()
+                    .any(|event| is_document_change(event, RESUMED_TARGET, &changed_doc_id)))
+            })
+            .await?;
+            info!(elapsed = ?written_at.elapsed(), received, "Waited for the first change.");
+            second.shutdown().await?;
+            Ok(Some((both_current, received)))
+        }
+        .await;
+
+        delete_documents(
+            &db,
+            TEST_COLLECTION_NAME,
+            &[&seeded_doc_ids[0], &seeded_doc_ids[1], &changed_doc_id],
+        )
+        .await?;
+        let (both_current, received) =
+            observed?.ok_or("the first listener stored no resume token for its target")?;
+        assert!(both_current, "the targets never became current");
+        assert!(
+            received,
+            "the first change was held back on a stream with mixed resume states"
+        );
+    }
     Ok(())
 }

@@ -296,21 +296,7 @@ impl FirestorePersistentCacheBackend {
             match config.collection_load_mode {
                 FirestoreCacheCollectionLoadMode::PreloadAllDocs
                 | FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty => {
-                    let existing_records = {
-                        let read_tx = self
-                            .open_db()?
-                            .as_ref()
-                            .expect("database checked open")
-                            .begin_read()?;
-                        if read_tx
-                            .list_tables()?
-                            .any(|t| t.name() == collection_path.as_str())
-                        {
-                            read_tx.open_table(td)?.len()?
-                        } else {
-                            0
-                        }
-                    };
+                    let existing_records = self.table_len(collection_path)?;
 
                     if matches!(
                         config.collection_load_mode,
@@ -376,13 +362,7 @@ impl FirestorePersistentCacheBackend {
                         FirestoreCacheCollectionLoadMode::PreloadAllDocs
                     ) || existing_records == 0
                     {
-                        let read_tx = self
-                            .open_db()?
-                            .as_ref()
-                            .expect("database checked open")
-                            .begin_read()?;
-                        let table = read_tx.open_table(td)?;
-                        table.len()?
+                        self.table_len(collection_path)?
                     } else {
                         existing_records
                     };
@@ -495,34 +475,30 @@ impl FirestorePersistentCacheBackend {
         Ok(existed)
     }
 
-    /// Whether any configured collection already holds documents, as the collections of a cache
-    /// reopened over an earlier run's data do.
+    /// Whether any configured collection holds documents.
     fn holds_documents(&self) -> FirestoreResult<bool> {
-        let read_tx = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_read()?;
         for collection_path in self.config().collections.keys() {
-            let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path.as_str());
-            match read_tx.open_table(td) {
-                Ok(table) if table.len()? > 0 => return Ok(true),
-                Ok(_) | Err(redb::TableError::TableDoesNotExist(_)) => {}
-                Err(err) => return Err(err.into()),
+            if self.table_len(collection_path)? > 0 {
+                return Ok(true);
             }
         }
         Ok(false)
     }
 
-    fn table_len(&self, collection_id: &str) -> FirestoreResult<u64> {
-        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_id);
+    /// The number of documents in a collection's table; a collection that has no table yet holds
+    /// none.
+    fn table_len(&self, collection_path: &str) -> FirestoreResult<u64> {
+        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
         let read_tx = self
             .open_db()?
             .as_ref()
             .expect("database checked open")
             .begin_read()?;
-        let len = read_tx.open_table(td)?.len()?;
-        Ok(len)
+        match read_tx.open_table(td) {
+            Ok(table) => Ok(table.len()?),
+            Err(redb::TableError::TableDoesNotExist(_)) => Ok(0),
+            Err(err) => Err(err.into()),
+        }
     }
 
     async fn query_cached_docs<'b>(
@@ -566,17 +542,17 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
         let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
 
-        let reopened = self.holds_documents()?;
+        let holds_earlier_documents = self.holds_documents()?;
         self.preload_collections(db).await?;
 
-        // Every target of the listener's stream resumes the same way. Firestore holds back the first
-        // change of a stream whose targets mix resuming from a read time with listening from
-        // scratch for tens of seconds, and then reports a deletion only as a changed document
-        // count, which forces a resynchronisation.
+        // Every target of the listener's stream resumes the same way: Firestore holds back the
+        // first change of a stream whose targets mix resuming with listening from scratch for
+        // tens of seconds.
         //
-        // Documents left by an earlier run may be stale, so a reopened cache listens from scratch
-        // to refresh them; a new one is complete as of `read_from_time`.
-        let resume_type = if reopened {
+        // A cache holding documents from an earlier run leaves each target to its stored resume
+        // token, or to a replay without one. An empty cache resumes from `read_from_time`, before
+        // which it holds nothing.
+        let resume_type = if holds_earlier_documents {
             None
         } else {
             Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
