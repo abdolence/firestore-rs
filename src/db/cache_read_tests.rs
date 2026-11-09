@@ -419,3 +419,26 @@ async fn a_batch_get_with_a_field_mask_is_not_answered_from_the_cache() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn reads_of_a_shut_down_cache_go_to_firestore_or_fail() {
+    let (server, cache) = cached_document_fixture().await;
+    let through_cache = server.db.read_through_cache(&cache);
+    let cached_only = server.db.read_cached_only(&cache);
+    cache.shutdown().await.unwrap();
+
+    for read in [Read::Query, Read::List] {
+        assert_eq!(
+            read.source(&through_cache).await.unwrap(),
+            FROM_FIRESTORE,
+            "{read:?}"
+        );
+
+        let calls_before = answered_calls(&server);
+        let FirestoreError::CacheError(error) = read.source(&cached_only).await.unwrap_err() else {
+            panic!("{read:?} did not fail with a cache error");
+        };
+        assert_eq!(error.public.code, "CacheIncompleteCollection", "{read:?}");
+        assert_eq!(answered_calls(&server), calls_before, "{read:?}");
+    }
+}
