@@ -83,8 +83,9 @@ The pipeline tests also need a database of the Enterprise edition, named by
 `GCP_ENTERPRISE_DATABASE_ID`. Create it once per project and keep it:
 
 ```sh
-gcloud firestore databases create --database=firestore-rs-enterprise \
-  --location=nam5 --edition=enterprise --enable-realtime-updates
+gcloud firestore databases create --database=firestore-rs-enterprise-eu \
+  --location=europe-north2 --edition=enterprise --enable-firestore-data-access \
+  --enable-realtime-updates
 ```
 
 The tests seed that database themselves. The first test of a pipeline test binary upserts the
