@@ -1,4 +1,4 @@
-use crate::common::{eventually_async, populate_collection, setup, unique_name};
+use crate::common::{delete_documents, eventually_async, populate_collection, setup, unique_name};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -15,21 +15,14 @@ struct MyTestStructure {
     some_string: String,
 }
 
-/// Removes the documents `populate_collection` wrote to a collection that only this run uses.
-async fn delete_populated_documents(
-    db: &FirestoreDb,
-    collection: &str,
-    count: usize,
-) -> Result<(), FirestoreError> {
-    for i in 0..count {
-        db.fluent()
-            .delete()
-            .from(collection)
-            .document_id(format!("test-{i}"))
-            .execute()
-            .await?;
+const DOCUMENT_COUNT: usize = 10;
+
+fn test_document(i: usize) -> MyTestStructure {
+    MyTestStructure {
+        some_id: format!("test-{i}"),
+        some_num: i as u64,
+        some_string: format!("Test value {i}"),
     }
-    Ok(())
 }
 
 #[tokio::test]
@@ -44,12 +37,8 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     populate_collection(
         &db,
         no_preload_collection,
-        10,
-        |i| MyTestStructure {
-            some_id: format!("test-{}", i),
-            some_num: i as u64,
-            some_string: format!("Test value {}", i),
-        },
+        DOCUMENT_COUNT,
+        test_document,
         |ms| ms.some_id.clone(),
     )
     .await?;
@@ -57,12 +46,8 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
     populate_collection(
         &db,
         preload_collection,
-        10,
-        |i| MyTestStructure {
-            some_id: format!("test-{}", i),
-            some_num: i as u64,
-            some_string: format!("Test value {}", i),
-        },
+        DOCUMENT_COUNT,
+        test_document,
         |ms| ms.some_id.clone(),
     )
     .await?;
@@ -152,7 +137,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         .try_collect::<Vec<_>>()
         .await?;
 
-    assert_eq!(all_items.len(), 10);
+    assert_eq!(all_items.len(), DOCUMENT_COUNT);
 
     // The preloaded collection is complete, so it is served from the cache.
     let all_items = cached_db
@@ -165,7 +150,7 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
         .try_collect::<Vec<_>>()
         .await?;
 
-    assert_eq!(all_items.len(), 10);
+    assert_eq!(all_items.len(), DOCUMENT_COUNT);
 
     db.fluent()
         .update()
@@ -254,8 +239,11 @@ async fn precondition_tests() -> Result<(), Box<dyn std::error::Error + Send + S
 
     cache.shutdown().await?;
 
-    delete_populated_documents(&db, no_preload_collection, 10).await?;
-    delete_populated_documents(&db, preload_collection, 10).await?;
+    let document_ids: Vec<String> = (0..DOCUMENT_COUNT)
+        .map(|i| test_document(i).some_id)
+        .collect();
+    delete_documents(&db, no_preload_collection, &document_ids).await?;
+    delete_documents(&db, preload_collection, &document_ids).await?;
 
     Ok(())
 }
