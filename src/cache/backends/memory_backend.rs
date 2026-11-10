@@ -444,6 +444,10 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
         let collection_path = collection_config.resolve_collection_path(db.get_documents_path());
 
+        if self.config().collections.contains_key(&collection_path) {
+            return Err(FirestoreError::collection_already_cached(&collection_path));
+        }
+
         let mem_cache = (self.collection_mem_options)(collection_path.as_str()).build();
 
         if collection_config.collection_load_mode.is_preloading() {
@@ -1179,6 +1183,44 @@ mod tests {
         };
         assert_eq!(error.public.code, "Internal");
         assert!(backend.config().collections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_collection_refuses_a_collection_that_is_already_cached() {
+        let backend = preloaded(&[]);
+        let server = FakeFirestore::start(|_, _| {
+            (
+                "RunQuery".to_string(),
+                FakeResponse::Paced(vec![run_query_message(document("one"))], Duration::ZERO),
+            )
+        })
+        .await;
+        let options = FirestoreCacheOptions::new("twice".into());
+        let collection_a = || {
+            FirestoreCacheCollectionConfiguration::new(
+                "a",
+                FirestoreListenerTarget::new(1000),
+                FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+            )
+        };
+        backend
+            .add_collection(&options, &server.db, collection_a())
+            .await
+            .expect("added");
+
+        let FirestoreError::CacheError(error) = backend
+            .add_collection(&options, &server.db, collection_a())
+            .await
+            .unwrap_err()
+        else {
+            panic!("the second add_collection did not fail with a cache error");
+        };
+        assert_eq!(error.public.code, "CacheCollectionAlreadyCached");
+        assert!(backend
+            .get_doc_by_path(&document("one").name)
+            .await
+            .unwrap()
+            .is_some());
     }
 
     #[tokio::test]
