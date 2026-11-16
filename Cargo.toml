@@ -55,7 +55,7 @@ serde = { version = "1", features = ["derive"] }
 tokio = { version = "1" }
 tokio-stream = "0.1"
 futures = "0.3"
-jiff = { version = "0.2.35", features = ["std", "serde"], default-features = false }
+jiff = { version = "1.0.0", features = ["std", "serde"], default-features = false }
 async-trait = "0.1"
 hex = "0.4"
 backon = { version = "1.6", default-features = false, features = ["std", "tokio-sleep"] }
