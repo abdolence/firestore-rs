@@ -1,5 +1,35 @@
 # Migration guide
 
+## 0.66
+
+### jiff 1.0
+
+The crate depends on jiff 1.0, which it re-exports as `firestore::jiff`. `FirestoreInstant` is `jiff::Timestamp` and
+`FirestoreDuration` is `jiff::SignedDuration` of that version, so a crate that uses jiff directly with these types moves
+to jiff 1 as well: a jiff 0.2 value does not convert to them. The jiff 1.0 changes that code using firestore types can meet:
+
+- `Zoned` is renamed to `ZonedDateTime`, and `Timestamp::to_zoned` to `Timestamp::to_zoned_datetime`;
+- `Timestamp - Timestamp` returns a `SignedDuration`, where it returned a `Span`;
+- `Offset::saturating_add` returns a `Result`;
+- `ToSpan` is sealed, so it cannot be implemented outside of jiff.
+
+The full list is in the [jiff changelog](https://github.com/BurntSushi/jiff/blob/master/CHANGELOG.md).
+
+### `FirestoreTimestamp` to `SystemTime` is fallible
+
+`From<FirestoreTimestamp> for std::time::SystemTime` is replaced by `TryFrom`, with `FirestoreError` as the error, the
+same as the conversion in the other direction. The range of a `SystemTime` depends on the platform, and the conversion
+fails when the instant is outside of it: `.into()` becomes `.try_into()?`.
+
+```rust,ignore
+let system_time: SystemTime = timestamp.try_into()?;
+```
+
+### gcloud-sdk 0.34
+
+The crate depends on gcloud-sdk 0.34, which moves to jiff 1.0 as well. A crate that uses `gcloud_sdk` types beside
+firestore moves to 0.34 too.
+
 ## 0.65
 
 ### `FirestoreIndexSupport` has four more methods

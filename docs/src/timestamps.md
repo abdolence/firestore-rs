@@ -58,7 +58,7 @@ converted from/to `std::time::SystemTime`:
 # fn example() -> Result<(), Box<dyn std::error::Error>> {
 let now = FirestoreTimestamp::now();
 let from_system_time: FirestoreTimestamp = SystemTime::now().try_into()?;
-let back_to_system_time: SystemTime = now.into();
+let back_to_system_time: SystemTime = now.try_into()?;
 # let _ = (from_system_time, back_to_system_time);
 # Ok(())
 # }

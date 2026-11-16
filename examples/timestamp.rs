@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // And converted back to a `SystemTime` when you need to hand them over to
     // other libraries
-    let created_at_system_time: SystemTime = my_struct.created_at.into();
+    let created_at_system_time: SystemTime = my_struct.created_at.try_into()?;
     println!("Created at, as a SystemTime: {created_at_system_time:?}");
 
     db.fluent()
