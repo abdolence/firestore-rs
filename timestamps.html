@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-509a96d6.js";
+            window.path_to_searchindex_js = "searchindex-d3c19927.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-bf8dc4ac.js"></script>
@@ -224,7 +224,7 @@ converted from/to <code>std::time::SystemTime</code>:</p>
 </span><span class="boring">fn example() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
 </span>let now = FirestoreTimestamp::now();
 let from_system_time: FirestoreTimestamp = SystemTime::now().try_into()?;
-let back_to_system_time: SystemTime = now.into();
+let back_to_system_time: SystemTime = now.try_into()?;
 <span class="boring">let _ = (from_system_time, back_to_system_time);
 </span><span class="boring">Ok(())
 </span><span class="boring">}</span></code></pre>
