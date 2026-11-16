@@ -95,11 +95,14 @@ impl From<FirestoreTimestamp> for FirestoreInstant {
     }
 }
 
-/// Converting to a `SystemTime` is infallible, since every representable
-/// timestamp fits into it.
-impl From<FirestoreTimestamp> for std::time::SystemTime {
-    fn from(ts: FirestoreTimestamp) -> Self {
-        ts.0.into()
+/// Converting to a `SystemTime` is fallible, since the range of a `SystemTime`
+/// depends on the platform and may be narrower than the range of a
+/// `FirestoreTimestamp`. It fails when the instant is outside of that range.
+impl TryFrom<FirestoreTimestamp> for std::time::SystemTime {
+    type Error = crate::errors::FirestoreError;
+
+    fn try_from(ts: FirestoreTimestamp) -> Result<Self, Self::Error> {
+        Ok(std::time::SystemTime::try_from(ts.0)?)
     }
 }
 
@@ -665,7 +668,7 @@ mod tests {
         );
         assert_eq!(exact.0.subsec_nanosecond(), 123_456_789);
 
-        let _ = SystemTime::from(exact);
+        let _ = SystemTime::try_from(exact).unwrap();
     }
 
     #[test]
@@ -679,8 +682,8 @@ mod tests {
         // Display round trips through FromStr
         assert_eq!(FirestoreTimestamp::from_str(&ts.to_string()).unwrap(), ts);
 
-        // SystemTime, infallible one way and fallible back
-        let system_time: SystemTime = ts.into();
+        // SystemTime, fallible both ways
+        let system_time: SystemTime = ts.try_into().unwrap();
         assert_eq!(FirestoreTimestamp::try_from(system_time).unwrap(), ts);
 
         // Google protobuf timestamps
