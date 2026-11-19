@@ -132,7 +132,7 @@ impl FirestorePersistentCacheBackend {
 
         let mut db = Database::create(data_file_path)?;
 
-        db.compact()?;
+        db.compact(CompactionMode::Balanced)?;
 
         let write_txn = db.begin_write()?;
         write_txn.open_table(PRELOADED_COLLECTIONS)?;
