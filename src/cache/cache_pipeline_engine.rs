@@ -818,10 +818,10 @@ impl<'a> CachedCondition<'a> {
                     right.evaluate(document).as_deref(),
                 )?))
             }
-            Self::EqualAny([searched, search_space]) => Ok(Some(Self::is_in(
+            Self::EqualAny([searched, search_space]) => Self::is_in(
                 searched.evaluate(document).as_deref(),
                 search_space.evaluate(document).as_deref(),
-            )?)),
+            ),
             Self::ArrayContains(kind, operands) => {
                 let [array, searched] = operands;
                 kind.found(
@@ -854,18 +854,18 @@ impl<'a> CachedCondition<'a> {
         })
     }
 
+    /// False for a search space that is not an array, and `None`, which is null, for a null or
+    /// absent one.
     fn is_in(
         searched: Option<&ValueType>,
         search_space: Option<&ValueType>,
-    ) -> Result<bool, FirestoreCachePipelineMiss> {
-        let Some(ValueType::ArrayValue(search_space)) = search_space else {
-            return Err(FirestoreCachePipelineMiss::unsupported(
-                "equal_any of a search space that is not an array",
-            ));
-        };
-        match searched {
-            Some(searched) => contains(&search_space.values, searched),
-            None => Ok(false),
+    ) -> Result<Option<bool>, FirestoreCachePipelineMiss> {
+        match (searched, search_space) {
+            (_, Some(ValueType::NullValue(_)) | None) => Ok(None),
+            (Some(searched), Some(ValueType::ArrayValue(search_space))) => {
+                contains(&search_space.values, searched).map(Some)
+            }
+            _ => Ok(Some(false)),
         }
     }
 }

@@ -932,14 +932,21 @@ async fn membership_matches_firestore() -> TestResult {
         let pipeline = differential.edge_where(condition);
         differential.same(case, Expect::Rows, pipeline).await;
     }
-    let not_an_array = differential.edge_where(field("value").equal_any(field("text")));
-    differential
-        .same(
+    // `text` holds a string, a number, null or nothing. Firestore answers a search space that is
+    // neither an array nor null with false, and a null or absent one with null.
+    for (case, condition) in [
+        (
             "equal_any of a field that is not an array",
-            Expect::Failure,
-            not_an_array,
-        )
-        .await;
+            field("value").equal_any(field("text")),
+        ),
+        (
+            "not_equal_any of a field that is not an array",
+            field("value").not_equal_any(field("text")),
+        ),
+    ] {
+        let pipeline = differential.edge_where(condition);
+        differential.same(case, Expect::Rows, pipeline).await;
+    }
 
     differential.finish().await
 }
@@ -1447,10 +1454,14 @@ async fn sql_reads_match_firestore() -> TestResult {
             "SELECT __name__, rank FROM `pipeline-cache-edge` ORDER BY rank DESC LIMIT 3 OFFSET 1",
             Expect::RowsInOrder,
         ),
-        // `tags` holds a string in one document.
+        // `tags` holds a string in one document, and Firestore finds no element in it.
         (
             "SELECT * FROM `pipeline-cache-edge` WHERE 'a' IN UNNEST(tags)",
-            Expect::Failure,
+            Expect::Rows,
+        ),
+        (
+            "SELECT * FROM `pipeline-cache-edge` WHERE 'a' NOT IN UNNEST(tags)",
+            Expect::Rows,
         ),
     ];
     for (statement, expect) in statements {
