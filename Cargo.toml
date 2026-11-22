@@ -1,6 +1,6 @@
 [package]
 name = "firestore"
-version = "0.66.0"
+version = "0.67.0"
 authors = ["Abdulla Abdurakhmanov <me@abdolence.dev>"]
 edition = "2021"
 # Minimum supported Rust version, taken as the maximum across all features so that enabling a
