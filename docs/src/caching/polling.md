@@ -23,23 +23,25 @@ starts one interval after the cache loads, and a collection whose documents the 
 earlier run, rather than downloading them, is read at once. In each round the cache reads:
 
 - a collection watched by document ID: those documents, whatever its load mode;
-- any other preloaded collection: all its documents. The ones Firestore no longer has are removed,
-  while every document present before and after stays readable;
+- any other preloaded collection: all its documents, and the ones Firestore no longer has are
+  removed;
 - any other collection: only the documents it already holds, so polling never fills a lazily
   filled collection further.
 
-A document is written to the cache only when Firestore holds a later version of it than the cache.
-An unchanged document is left as it is: a poll resets neither its `time_to_live` nor its
-`time_to_idle`, and a persistent cache rewrites nothing. A read through the cache while a round
-runs can store a newer version of a document, and the round keeps it.
+A document is written only when its `update_time` differs from the one the cache held as the round
+began. An unchanged document keeps its `time_to_live` and `time_to_idle`, and a persistent cache
+rewrites nothing. A preloaded collection is read in full every round, so the reads a cache makes
+grow with its collections and with how often it polls. A collection that fails to be read keeps
+what it holds and is read again in the next round, and the error is logged. Collections added or
+removed at runtime are polled from the next round on.
 
-A preloaded collection is read in full every round, so the reads a cache makes grow with its
-collections and with how often it polls. A collection that fails to be read keeps what it holds
-and is read again in the next round, and the error is logged. Collections added or removed at
-runtime are polled from the next round on, and a collection emptied or removed while a round reads
-it is left as that change made it.
+`listener_params` together with `poll_changes` fails the build with an `InvalidParametersError`,
+and `listen_state_storage` has no effect on a cache that polls.
 
-The cache reads Firestore at its latest state, even when it was built from a `FirestoreDb` that
-reads through another cache or at a read time. `listener_params` together with `poll_changes`
-fails the build with an `InvalidParametersError`, and `listen_state_storage` has no effect on a
-cache that polls.
+## Limits
+
+- `invalidate_all`, or removing a collection and adding it again, while a round reads that
+  collection can leave it partial or stale until the next round;
+- a `load` or `add_collection` still running at `shutdown` runs to its end and then fails;
+- a document read through the cache while a round runs can be replaced by the version the round
+  read, until the next round.

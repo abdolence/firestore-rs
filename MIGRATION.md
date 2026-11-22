@@ -24,12 +24,6 @@ The builder's `listener_params` is unchanged.
 `FirestoreCacheOptions` and `FirestoreCachePollParams` cannot be written as struct expressions outside the crate:
 build them with `new` and the `with_` methods. A `match` on `FirestoreCacheSyncMode` needs a wildcard arm.
 
-### Polling needs the builder
-
-A cache that polls, with `FirestoreCacheSyncMode::Poll`, is built with `FirestoreCache::memory` or
-`FirestoreCache::persistent` and `poll_changes`. `FirestoreCache::with_options` refuses options that poll with an
-`InvalidParametersError`, so a cache over a custom backend keeps a listener.
-
 ### Persistent `PreloadAllDocs` collections drop deleted documents at load
 
 A persistent `PreloadAllDocs` collection removes, at load, the documents deleted while the cache was closed. A
