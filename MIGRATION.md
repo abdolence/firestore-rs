@@ -30,6 +30,12 @@ A cache that polls, with `FirestoreCacheSyncMode::Poll`, is built with `Firestor
 `FirestoreCache::persistent` and `poll_changes`. `FirestoreCache::with_options` refuses options that poll with an
 `InvalidParametersError`, so a cache over a custom backend keeps a listener.
 
+### Persistent `PreloadAllDocs` collections drop deleted documents at load
+
+A persistent `PreloadAllDocs` collection removes, at load, the documents deleted while the cache was closed. A
+listening cache that holds rows from an earlier run only in such collections resumes from the load time, rather than
+from its stored resume tokens.
+
 ## 0.66
 
 ### jiff 1.0

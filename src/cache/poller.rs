@@ -100,6 +100,9 @@ impl FirestoreCachePoller {
         if !self.transition(Created, Loading) {
             return Err(match *self.state.borrow() {
                 ShutDown => FirestoreError::cache_shut_down(),
+                Loading => {
+                    FirestoreError::invalid_parameters("cache", "This cache is being loaded.")
+                }
                 _ => FirestoreError::invalid_parameters(
                     "cache",
                     "This cache has already been loaded.",
@@ -135,20 +138,14 @@ impl FirestoreCachePoller {
         Ok(())
     }
 
-    /// Runs `add`, which adds a collection to the backend, unless polling has stopped, so that a
-    /// collection is never downloaded for a cache that nothing keeps current.
+    /// Runs `add`, which adds a collection to the backend, unless the cache has been shut down, so
+    /// that a collection is never downloaded for a cache that nothing keeps current.
     pub(crate) async fn add_collection<T>(
         &self,
         add: impl Future<Output = FirestoreResult<T>>,
     ) -> FirestoreResult<T> {
-        match *self.state.borrow() {
-            FirestoreCachePollerState::ShutDown => return Err(FirestoreError::cache_shut_down()),
-            FirestoreCachePollerState::Polling if self.polling.is_closed() => {
-                return Err(FirestoreError::system_error(
-                    "The poller of this cache has stopped.",
-                ))
-            }
-            _ => {}
+        if *self.state.borrow() == FirestoreCachePollerState::ShutDown {
+            return Err(FirestoreError::cache_shut_down());
         }
         self.until_shut_down(add).await
     }

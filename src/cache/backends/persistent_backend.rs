@@ -350,12 +350,18 @@ impl FirestorePersistentCacheBackend {
         collection_config: &FirestoreCacheCollectionConfiguration,
     ) -> FirestoreResult<()> {
         debug!(collection_path, "Preloading collection.");
-        let Some(snapshot) = self.poll_snapshot(collection_path)? else {
-            return Ok(());
+        let complete = match self.poll_snapshot(collection_path)? {
+            Some(snapshot) => {
+                self.read_into_table(db, collection_path, collection_config, snapshot)
+                    .await
+            }
+            None => Ok(false),
         };
-        let downloaded = self
-            .read_into_table(db, collection_path, collection_config, snapshot)
-            .await;
+        let downloaded = complete.and_then(|complete| {
+            complete
+                .then_some(())
+                .ok_or_else(|| FirestoreError::collection_changed_while_downloaded(collection_path))
+        });
         if downloaded.is_err() {
             if let Err(drop_error) = self.drop_collection_table(collection_path) {
                 error!(
@@ -368,14 +374,15 @@ impl FirestorePersistentCacheBackend {
     }
 
     /// Reads a collection from Firestore and brings its table in line with what was read, from a
-    /// snapshot taken before the read.
+    /// snapshot taken before the read. Returns `false` once a write is refused, because the
+    /// collection was removed, added again or emptied since the snapshot.
     async fn read_into_table(
         &self,
         db: &FirestoreDb,
         collection_path: &str,
         collection_config: &FirestoreCacheCollectionConfiguration,
         snapshot: FirestorePersistentCachePollSnapshot,
-    ) -> FirestoreResult<()> {
+    ) -> FirestoreResult<bool> {
         let FirestorePersistentCachePollSnapshot {
             generation,
             stored_versions,
@@ -605,14 +612,14 @@ impl FirestorePersistentCacheBackend {
     }
 
     /// Makes the table hold exactly `documents`, a complete read of the collection that began
-    /// after `stored_versions` was taken.
+    /// after `stored_versions` was taken. Returns `false` once a write is refused.
     async fn reconcile_collection(
         &self,
         collection_path: &str,
         generation: u64,
         stored_versions: &HashMap<String, Option<Timestamp>>,
         documents: BoxStream<'_, FirestoreResult<FirestoreDocument>>,
-    ) -> FirestoreResult<()> {
+    ) -> FirestoreResult<bool> {
         let mut chunks = documents
             .ready_chunks(FIRESTORE_CACHE_DOCUMENTS_PER_CHUNK)
             .map(|docs| docs.into_iter().collect::<FirestoreResult<Vec<_>>>());
@@ -631,7 +638,7 @@ impl FirestorePersistentCacheBackend {
             if !changed.is_empty()
                 && !self.write_polled(collection_path, generation, changed, &[], false)?
             {
-                return Ok(());
+                return Ok(false);
             }
         }
 
@@ -640,13 +647,12 @@ impl FirestorePersistentCacheBackend {
             .filter(|(document_id, _)| !read_ids.contains(*document_id))
             .map(|(document_id, stored_version)| (document_id.clone(), *stored_version))
             .collect();
-        self.write_polled(collection_path, generation, Vec::new(), &gone, true)?;
-        Ok(())
+        self.write_polled(collection_path, generation, Vec::new(), &gone, true)
     }
 
     /// Reads these documents of the collection, a chunk at a time, and stores the ones found and
     /// removes the ones reported missing. The write of the last chunk completes the poll of a
-    /// preloaded collection.
+    /// preloaded collection. Returns `false` once a write is refused.
     async fn reconcile_documents(
         &self,
         db: &FirestoreDb,
@@ -655,7 +661,7 @@ impl FirestorePersistentCacheBackend {
         generation: u64,
         stored_versions: &HashMap<String, Option<Timestamp>>,
         document_ids: Vec<String>,
-    ) -> FirestoreResult<()> {
+    ) -> FirestoreResult<bool> {
         let chunks: Vec<&[String]> = document_ids
             .chunks(FIRESTORE_CACHE_DOCUMENTS_PER_CHUNK)
             .collect();
@@ -689,13 +695,13 @@ impl FirestorePersistentCacheBackend {
             if (completes || !found.is_empty() || !gone.is_empty())
                 && !self.write_polled(collection_path, generation, found, &gone, completes)?
             {
-                return Ok(());
+                return Ok(false);
             }
         }
         if chunks.is_empty() && collection_config.collection_load_mode.is_preloading() {
-            self.write_polled(collection_path, generation, Vec::new(), &[], true)?;
+            return self.write_polled(collection_path, generation, Vec::new(), &[], true);
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Removes a collection's marker inside the transaction that changes or drops its table, so
@@ -755,6 +761,36 @@ impl FirestorePersistentCacheBackend {
         }
     }
 
+    /// Preloads the collections, and returns their listener targets with the collections the load
+    /// kept from an earlier run.
+    async fn load_collections(
+        &self,
+        db: &FirestoreDb,
+    ) -> FirestoreResult<(Vec<FirestoreListenerTargetParams>, Vec<String>)> {
+        let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
+
+        let kept_collections = self.collections_kept_from_an_earlier_run()?;
+        self.preload_collections(db).await?;
+
+        // A new cache is complete as of `read_from_time`, which was captured before the preload
+        // read anything, so resuming from it loses nothing. A cache that holds documents from an
+        // earlier run must not resume from it: it would skip what changed while the cache was
+        // closed. Its targets resume from their stored tokens, or replay without one.
+        let resume_type = if kept_collections.is_empty() {
+            Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
+        } else {
+            None
+        };
+
+        let targets = self
+            .config()
+            .collections
+            .values()
+            .map(|collection_config| collection_config.listener_target_params(resume_type.clone()))
+            .collect();
+        Ok((targets, kept_collections))
+    }
+
     async fn query_cached_docs<'b>(
         &self,
         collection_path: &str,
@@ -790,27 +826,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
-
-        let keeps_earlier_documents = !self.collections_kept_from_an_earlier_run()?.is_empty();
-        self.preload_collections(db).await?;
-
-        // A new cache is complete as of `read_from_time`, which was captured before the preload
-        // read anything, so resuming from it loses nothing. A cache that holds documents from an
-        // earlier run must not resume from it: it would skip what changed while the cache was
-        // closed. Its targets resume from their stored tokens, or replay without one.
-        let resume_type = if keeps_earlier_documents {
-            None
-        } else {
-            Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
-        };
-
-        Ok(self
-            .config()
-            .collections
-            .values()
-            .map(|collection_config| collection_config.listener_target_params(resume_type.clone()))
-            .collect())
+        Ok(self.load_collections(db).await?.0)
     }
 
     async fn invalidate_all(&self) -> FirestoreResult<()> {
@@ -882,17 +898,17 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             let mut updated = (**config).clone();
             let removed = updated.collections.remove(collection_path);
             *config = Arc::new(updated);
-            self.generations
-                .lock()
-                .expect("cache generations lock poisoned")
-                .by_collection
-                .remove(collection_path);
             removed
         };
 
         let Some(removed) = removed else {
             return Ok(None);
         };
+        self.generations
+            .lock()
+            .expect("cache generations lock poisoned")
+            .by_collection
+            .remove(collection_path);
 
         debug!(
             collection_path,
@@ -1030,12 +1046,10 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
 impl FirestoreCachePolledBackend for FirestorePersistentCacheBackend {
     async fn load_for_polling(
         &self,
-        options: &FirestoreCacheOptions,
+        _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> FirestoreResult<Vec<String>> {
-        let kept_collections = self.collections_kept_from_an_earlier_run()?;
-        self.load(options, db).await?;
-        Ok(kept_collections)
+        Ok(self.load_collections(db).await?.1)
     }
 
     async fn poll_collection(
@@ -1052,8 +1066,10 @@ impl FirestoreCachePolledBackend for FirestorePersistentCacheBackend {
         let Some(collection_config) = config.collections.get(collection_path) else {
             return Ok(());
         };
+        // Refused writes leave the collection to the next round.
         self.read_into_table(db, collection_path, collection_config, snapshot)
-            .await
+            .await?;
+        Ok(())
     }
 }
 
@@ -2024,6 +2040,25 @@ mod tests {
             .expect("polled");
 
         assert!(backend.is_preloaded(&collection_path_a()).unwrap());
+    }
+
+    #[tokio::test]
+    async fn removing_a_collection_still_being_added_leaves_the_addition_whole() {
+        let backend = backend_over(FirestoreCacheConfiguration::new());
+        let server = serving_versions(&[("one", 1), ("two", 1)], Duration::from_millis(100)).await;
+        let options = FirestoreCacheOptions::new("racing".into());
+
+        let (added, removed) = tokio::join!(
+            backend.add_collection(&options, &server.db, collection_a()),
+            async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                backend.remove_collection(&collection_path_a()).await
+            },
+        );
+
+        added.expect("added");
+        assert!(removed.expect("removal").is_none());
+        assert_eq!(stored_ids(&backend).await, vec!["one", "two"]);
     }
 
     #[tokio::test]
