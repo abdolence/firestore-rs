@@ -4,7 +4,7 @@ Cargo.toml:
 
 ```toml
 [dependencies]
-firestore = "0.63"
+firestore = "0.67"
 ```
 
 Pipelines and SQL need a database of the Enterprise edition, see
