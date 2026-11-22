@@ -1,0 +1,5 @@
+/* Inline code has no break points, so one long identifier in a table cell pushes the whole table
+   past the content column and hides its last columns behind a horizontal scrollbar. */
+table code {
+    overflow-wrap: anywhere;
+}
