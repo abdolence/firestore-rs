@@ -19,7 +19,16 @@ pub const FIRESTORE_CACHE_DEFAULT_LISTENER_TARGET_BASE: u32 = 1000;
 pub const FIRESTORE_CACHE_DEFAULT_NAME: &str = "firestore-cache";
 
 mod sealed {
-    pub trait Sealed {}
+    use super::*;
+
+    pub trait Sealed {
+        /// The kind's backend as a poller reads through it.
+        fn polled_backend(
+            backend: Arc<<Self as FirestoreCacheBackendKind>::Backend>,
+        ) -> Arc<dyn FirestoreCachePolledBackend + Send + Sync>
+        where
+            Self: FirestoreCacheBackendKind;
+    }
 }
 
 /// Describes a cache backend flavour - in-memory or persistent - for [`FirestoreCacheBuilder`].
@@ -29,7 +38,7 @@ mod sealed {
 /// [`FirestoreCacheBackend`] and construct [`FirestoreCache`] directly.
 pub trait FirestoreCacheBackendKind: sealed::Sealed + Sized {
     /// The backend this kind builds.
-    type Backend: FirestoreCacheBackend + FirestoreCachePolledBackend + Send + Sync + 'static;
+    type Backend: FirestoreCacheBackend + Send + Sync + 'static;
     /// Backend-specific tuning options.
     type Options: Default;
     /// The listener state storage used unless overridden.
@@ -53,7 +62,13 @@ pub trait FirestoreCacheBackendKind: sealed::Sealed + Sized {
 pub struct FirestoreMemoryCacheKind;
 
 #[cfg(feature = "caching-memory")]
-impl sealed::Sealed for FirestoreMemoryCacheKind {}
+impl sealed::Sealed for FirestoreMemoryCacheKind {
+    fn polled_backend(
+        backend: Arc<FirestoreMemoryCacheBackend>,
+    ) -> Arc<dyn FirestoreCachePolledBackend + Send + Sync> {
+        backend
+    }
+}
 
 #[cfg(feature = "caching-memory")]
 impl FirestoreCacheBackendKind for FirestoreMemoryCacheKind {
@@ -86,7 +101,13 @@ impl FirestoreCacheBackendKind for FirestoreMemoryCacheKind {
 pub struct FirestorePersistentCacheKind;
 
 #[cfg(feature = "caching-persistent")]
-impl sealed::Sealed for FirestorePersistentCacheKind {}
+impl sealed::Sealed for FirestorePersistentCacheKind {
+    fn polled_backend(
+        backend: Arc<FirestorePersistentCacheBackend>,
+    ) -> Arc<dyn FirestoreCachePolledBackend + Send + Sync> {
+        backend
+    }
+}
 
 #[cfg(feature = "caching-persistent")]
 impl FirestoreCacheBackendKind for FirestorePersistentCacheKind {
@@ -552,7 +573,7 @@ where
                 super::FirestoreCacheSync::Poller(super::FirestoreCachePoller::new(
                     options.name.clone(),
                     poll_params,
-                    backend.clone(),
+                    K::polled_backend(backend.clone()),
                 ))
             }
         };

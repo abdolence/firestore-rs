@@ -256,33 +256,40 @@ impl FirestoreMemoryCacheBackend {
 
     /// Drops everything cached for one collection.
     async fn invalidate_collection(&self, collection_path: &str) {
-        let emptied = {
-            let mut caches = self
-                .collection_caches
-                .write()
-                .expect("cache collections lock poisoned");
-            if caches.contains_key(collection_path) {
-                let mut updated = (**caches).clone();
-                let emptied = updated.insert(
-                    collection_path.to_string(),
-                    (self.collection_mem_options)(collection_path).build(),
-                );
-                *caches = Arc::new(updated);
-                emptied
-            } else {
-                None
-            }
-        };
-        if let Some(mem_cache) = emptied {
+        let empty = (self.collection_mem_options)(collection_path).build();
+        if let Some(emptied) = self.swap_collection_cache(collection_path, empty) {
             debug!(collection_path, "Invalidating cache for collection.");
-            Self::release(mem_cache).await;
+            Self::release(emptied).await;
         }
     }
 
-    /// Frees the documents of a cache that has been replaced by an empty one.
+    /// Gives a cached collection `mem_cache` as its cache, and returns the one it replaced. Does
+    /// nothing for a collection no longer cached, or once the cache has been shut down: the check
+    /// shares the lock with the swap, so that no cache is published after `shutdown` emptied them.
+    fn swap_collection_cache(
+        &self,
+        collection_path: &str,
+        mem_cache: FirestoreMemCache,
+    ) -> Option<FirestoreMemCache> {
+        let mut caches = self
+            .collection_caches
+            .write()
+            .expect("cache collections lock poisoned");
+        if self.is_shut_down() {
+            return None;
+        }
+        let replaced = caches.get(collection_path).cloned()?;
+        let mut updated = (**caches).clone();
+        updated.insert(collection_path.to_string(), mem_cache);
+        *caches = Arc::new(updated);
+        Some(replaced)
+    }
+
+    /// Frees the documents of a cache that has been replaced.
     ///
-    /// A collection is emptied by replacing its cache rather than by clearing it, so that a poll
-    /// that began before goes on writing to the cache it started with, where no reader looks.
+    /// A collection is emptied or loaded by replacing its cache rather than by changing it, so that
+    /// a poll that began before goes on writing to the cache it started with, where no reader
+    /// looks, and a load cut short leaves nothing a later one would keep.
     async fn release(mem_cache: FirestoreMemCache) {
         mem_cache.invalidate_all();
         mem_cache.run_pending_tasks().await;
@@ -360,9 +367,11 @@ impl FirestoreMemoryCacheBackend {
             if !config.collection_load_mode.is_preloading() {
                 continue;
             }
-            if let Some(mem_cache) = self.collection_cache(collection_path.as_str()) {
-                self.preload_one_collection(db, collection_path, config, &mem_cache)
-                    .await?;
+            let mem_cache = (self.collection_mem_options)(collection_path).build();
+            self.preload_one_collection(db, collection_path, config, &mem_cache)
+                .await?;
+            if let Some(replaced) = self.swap_collection_cache(collection_path, mem_cache) {
+                Self::release(replaced).await;
             }
         }
         Ok(())
@@ -485,25 +494,8 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
     }
 
     async fn invalidate_all(&self) -> FirestoreResult<()> {
-        let emptied = {
-            let mut caches = self
-                .collection_caches
-                .write()
-                .expect("cache collections lock poisoned");
-            let empty = caches
-                .keys()
-                .map(|collection_path| {
-                    (
-                        collection_path.clone(),
-                        (self.collection_mem_options)(collection_path).build(),
-                    )
-                })
-                .collect();
-            std::mem::replace(&mut *caches, Arc::new(empty))
-        };
-        for (collection_path, mem_cache) in emptied.iter() {
-            debug!(collection_path, "Invalidating cache for collection.");
-            Self::release(mem_cache.clone()).await;
+        for collection_path in self.config().collections.keys() {
+            self.invalidate_collection(collection_path).await;
         }
         Ok(())
     }
@@ -654,7 +646,15 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         // be dropped is what actually frees the memory.
         debug!("Releasing the cached documents of the in-memory cache.");
         self.shut_down.store(true, Ordering::Release);
-        self.invalidate_all().await
+        let caches = self
+            .collection_caches
+            .read()
+            .expect("cache collections lock poisoned")
+            .clone();
+        for mem_cache in caches.values() {
+            Self::release(mem_cache.clone()).await;
+        }
+        Ok(())
     }
 
     async fn on_listen_event(&self, event: FirestoreListenEvent) -> FirestoreResult<()> {
@@ -747,7 +747,6 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
 
 #[async_trait]
 impl FirestoreCachePolledBackend for FirestoreMemoryCacheBackend {
-    /// An in-memory cache starts empty, so its load keeps no documents.
     async fn load_for_polling(
         &self,
         options: &FirestoreCacheOptions,

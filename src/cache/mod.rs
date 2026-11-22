@@ -551,8 +551,8 @@ where
     /// listener and starts it, and the listener then calls the backend's `on_listen_event` for
     /// incoming changes. A cache that [polls](FirestoreCacheSyncMode::Poll) starts its poller
     /// instead, which reads the collections whose documents the load kept from an earlier run at
-    /// once, and every collection one interval later. A polling cache is loaded once, and a
-    /// `shutdown` stops a load in progress.
+    /// once, and every collection one interval later. A polling cache is loaded once, and a load
+    /// in progress fails once `shutdown` begins.
     pub async fn load(&self) -> Result<(), FirestoreError> {
         match &self.inner.sync {
             FirestoreCacheSync::Listener(listener) => {
@@ -591,8 +591,10 @@ where
 
     /// Stops the Firestore listener or the poller and releases the cache backend's resources.
     ///
-    /// A round of polling in progress is interrupted, and nothing reads Firestore for the cache
-    /// once this returns. The in-memory backend drops its cached documents; the persistent backend
+    /// Once this returns, the poller has stopped, and a load or an added collection still in
+    /// progress fails at its next step without reading Firestore or writing the backend again.
+    /// Calling it again finishes a call that was cancelled. The in-memory backend drops its
+    /// cached documents; the persistent backend
     /// closes its database, releasing the exclusive lock on the file so that another cache can be
     /// opened over the same directory. This happens here rather than on drop because handles to
     /// the backend outlive the cache - [`read_through_cache`](crate::FirestoreDb::read_through_cache)
@@ -602,13 +604,15 @@ where
     /// `read_through_cache` falls back to Firestore. `read_cached_only` reports the miss as an
     /// error, as it does for anything else it cannot answer.
     ///
-    /// Returns the error the listener stopped with, if it stopped on its own, or a
-    /// [`FirestoreError::SystemError`] if the poller panicked, once the backend's resources are
-    /// released.
+    /// Returns the error the listener stopped with, if it stopped on its own, once the backend's
+    /// resources are released.
     pub async fn shutdown(&self) -> Result<(), FirestoreError> {
         let stopped_with = match &self.inner.sync {
             FirestoreCacheSync::Listener(listener) => listener.lock().await.shutdown().await,
-            FirestoreCacheSync::Poller(poller) => poller.shutdown().await,
+            FirestoreCacheSync::Poller(poller) => {
+                poller.shutdown().await;
+                Ok(())
+            }
         };
         self.inner.backend.shutdown().await?;
         stopped_with
@@ -824,7 +828,9 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
         collection_config: FirestoreCacheCollectionConfiguration,
     ) -> FirestoreResult<FirestoreListenerTargetParams> {
         let _ = (options, db, collection_config);
-        Err(FirestoreError::cache_backend_unsupported("add_collection"))
+        Err(FirestoreError::cache_dynamic_collections_unsupported(
+            "add_collection",
+        ))
     }
 
     /// Drops everything cached for one collection and stops it answering `list`/`query` until
@@ -863,7 +869,7 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
         collection_path: &str,
     ) -> FirestoreResult<Option<FirestoreListenerTarget>> {
         let _ = collection_path;
-        Err(FirestoreError::cache_backend_unsupported(
+        Err(FirestoreError::cache_dynamic_collections_unsupported(
             "remove_collection",
         ))
     }

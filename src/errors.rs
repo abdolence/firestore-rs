@@ -80,15 +80,14 @@ impl FirestoreError {
     }
 
     /// Builds the [`CacheError`](FirestoreError::CacheError) of a cache backend that does not
-    /// implement `operation`, a method of [`FirestoreCacheBackend`](crate::FirestoreCacheBackend)
-    /// the cache needs for what it was asked to do.
+    /// support `operation`, one of the methods that change its collections at runtime.
     #[cfg(feature = "caching")]
-    pub(crate) fn cache_backend_unsupported(operation: &str) -> Self {
+    pub(crate) fn cache_dynamic_collections_unsupported(operation: &str) -> Self {
         FirestoreError::CacheError(FirestoreCacheError::new(
-            FirestoreErrorPublicGenericDetails::new("CacheBackendUnsupported".into()),
+            FirestoreErrorPublicGenericDetails::new("CacheDynamicCollectionsUnsupported".into()),
             format!(
-                "This cache backend does not implement `{operation}`, which this cache needs. \
-                 Implement it on your FirestoreCacheBackend."
+                "This cache backend does not support `{operation}`. Implement it on your \
+                 FirestoreCacheBackend to add and remove cached collections while the cache runs."
             ),
         ))
     }

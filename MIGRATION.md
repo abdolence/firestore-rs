@@ -19,21 +19,16 @@ let options = FirestoreCacheOptions::new(name)
 
 The builder's `listener_params` is unchanged.
 
-### `FirestoreCacheOptions` and `FirestoreCachePollParams` are `#[non_exhaustive]`
+### The cache options and the sync mode are `#[non_exhaustive]`
 
-Neither can be written as a struct expression outside the crate. Build them with `new` and the `with_` methods.
-
-### `CacheDynamicCollectionsUnsupported` is `CacheBackendUnsupported`
-
-The `CacheError` of a backend that does not implement `add_collection` or `remove_collection` has the code
-`CacheBackendUnsupported`, where it had `CacheDynamicCollectionsUnsupported`. Code that matches on the code moves to
-the new one.
+`FirestoreCacheOptions` and `FirestoreCachePollParams` cannot be written as struct expressions outside the crate:
+build them with `new` and the `with_` methods. A `match` on `FirestoreCacheSyncMode` needs a wildcard arm.
 
 ### Polling needs the builder
 
 A cache that polls, with `FirestoreCacheSyncMode::Poll`, is built with `FirestoreCache::memory` or
-`FirestoreCache::persistent` and `poll_changes`. `FirestoreCache::new` and `FirestoreCache::with_options` refuse options
-that poll with an `InvalidParametersError`, so a cache over a custom backend keeps a listener.
+`FirestoreCache::persistent` and `poll_changes`. `FirestoreCache::with_options` refuses options that poll with an
+`InvalidParametersError`, so a cache over a custom backend keeps a listener.
 
 ## 0.66
 

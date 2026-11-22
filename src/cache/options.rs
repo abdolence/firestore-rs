@@ -26,6 +26,7 @@ pub struct FirestoreCacheOptions {
 
 /// How a [`FirestoreCache`](crate::FirestoreCache) keeps its collections current.
 #[derive(Debug, Eq, PartialEq, Clone)]
+#[non_exhaustive]
 pub enum FirestoreCacheSyncMode {
     /// A Firestore listener with these parameters pushes every change to the cache as it happens.
     /// The default.
