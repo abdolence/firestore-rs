@@ -19,16 +19,7 @@ pub const FIRESTORE_CACHE_DEFAULT_LISTENER_TARGET_BASE: u32 = 1000;
 pub const FIRESTORE_CACHE_DEFAULT_NAME: &str = "firestore-cache";
 
 mod sealed {
-    use super::*;
-
-    pub trait Sealed {
-        /// The kind's backend as a poller reads through it.
-        fn polled_backend(
-            backend: Arc<<Self as FirestoreCacheBackendKind>::Backend>,
-        ) -> Arc<dyn FirestoreCachePolledBackend + Send + Sync>
-        where
-            Self: FirestoreCacheBackendKind;
-    }
+    pub trait Sealed {}
 }
 
 /// Describes a cache backend flavour - in-memory or persistent - for [`FirestoreCacheBuilder`].
@@ -38,7 +29,7 @@ mod sealed {
 /// [`FirestoreCacheBackend`] and construct [`FirestoreCache`] directly.
 pub trait FirestoreCacheBackendKind: sealed::Sealed + Sized {
     /// The backend this kind builds.
-    type Backend: FirestoreCacheBackend + Send + Sync + 'static;
+    type Backend: FirestoreCachePolledBackend + Send + Sync + 'static;
     /// Backend-specific tuning options.
     type Options: Default;
     /// The listener state storage used unless overridden.
@@ -62,13 +53,7 @@ pub trait FirestoreCacheBackendKind: sealed::Sealed + Sized {
 pub struct FirestoreMemoryCacheKind;
 
 #[cfg(feature = "caching-memory")]
-impl sealed::Sealed for FirestoreMemoryCacheKind {
-    fn polled_backend(
-        backend: Arc<FirestoreMemoryCacheBackend>,
-    ) -> Arc<dyn FirestoreCachePolledBackend + Send + Sync> {
-        backend
-    }
-}
+impl sealed::Sealed for FirestoreMemoryCacheKind {}
 
 #[cfg(feature = "caching-memory")]
 impl FirestoreCacheBackendKind for FirestoreMemoryCacheKind {
@@ -101,13 +86,7 @@ impl FirestoreCacheBackendKind for FirestoreMemoryCacheKind {
 pub struct FirestorePersistentCacheKind;
 
 #[cfg(feature = "caching-persistent")]
-impl sealed::Sealed for FirestorePersistentCacheKind {
-    fn polled_backend(
-        backend: Arc<FirestorePersistentCacheBackend>,
-    ) -> Arc<dyn FirestoreCachePolledBackend + Send + Sync> {
-        backend
-    }
-}
+impl sealed::Sealed for FirestorePersistentCacheKind {}
 
 #[cfg(feature = "caching-persistent")]
 impl FirestoreCacheBackendKind for FirestorePersistentCacheKind {
@@ -457,21 +436,9 @@ where
     ///
     /// One background task reads every collection of the cache in turn, whatever their number:
     /// see [Polling instead of listening](https://firestore-rust.abdolence.dev/caching/polling.html)
-    /// for what it reads. A zero `interval`, or
+    /// for an example, what it reads and its limits. A zero `interval`, or
     /// [`listener_params`](Self::listener_params) on the same builder, makes
     /// [`build`](Self::build) fail with [`FirestoreError::InvalidParametersError`].
-    ///
-    /// ```rust,no_run
-    /// # use firestore::*;
-    /// # async fn example(db: &FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    /// let cache = FirestoreCache::memory(db)
-    ///     .preloaded_collection("countries")
-    ///     .poll_changes(std::time::Duration::from_secs(60))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     #[inline]
     pub fn poll_changes(self, interval: std::time::Duration) -> Self {
         Self {
@@ -541,16 +508,6 @@ where
                 (None, Some(poll_params)) => FirestoreCacheSyncMode::Poll(poll_params),
             };
 
-        // Before the backend is created, so that a refused cache leaves no database file behind.
-        if let FirestoreCacheSyncMode::Poll(poll_params) = &sync_mode {
-            if poll_params.interval.is_zero() {
-                return Err(FirestoreError::invalid_parameters(
-                    "interval",
-                    "The interval between two polls of a cache must not be zero.",
-                ));
-            }
-        }
-
         let config = build_configuration(
             self.db.get_documents_path(),
             self.listener_target_base,
@@ -563,22 +520,22 @@ where
             .unwrap_or_else(|| FirestoreCacheName::new(FIRESTORE_CACHE_DEFAULT_NAME.to_string()));
         let options = FirestoreCacheOptions::new(name).with_sync_mode(sync_mode);
 
-        let db = self.db.clone_reading_latest();
         let backend = Arc::new(K::create_backend(self.backend_options, config)?);
         let sync = match &options.sync_mode {
             FirestoreCacheSyncMode::Listen(listener_params) => {
-                super::FirestoreCacheSync::listening(&db, self.storage, listener_params).await?
+                super::FirestoreCacheSync::listening(&self.db, self.storage, listener_params)
+                    .await?
             }
             FirestoreCacheSyncMode::Poll(poll_params) => {
                 super::FirestoreCacheSync::Poller(super::FirestoreCachePoller::new(
                     options.name.clone(),
                     poll_params,
-                    K::polled_backend(backend.clone()),
-                ))
+                    backend.clone(),
+                )?)
             }
         };
 
-        Ok(FirestoreCache::assemble(options, sync, db, backend))
+        Ok(FirestoreCache::assemble(options, sync, self.db, backend))
     }
 }
 

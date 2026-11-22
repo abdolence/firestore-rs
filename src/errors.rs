@@ -69,19 +69,6 @@ impl FirestoreError {
         ))
     }
 
-    /// Builds the [`CacheError`](FirestoreError::CacheError) of a collection that was removed,
-    /// added again or emptied while the cache downloaded it.
-    #[cfg(feature = "caching-persistent")]
-    pub(crate) fn collection_changed_while_downloaded(collection_path: &str) -> Self {
-        FirestoreError::CacheError(FirestoreCacheError::new(
-            FirestoreErrorPublicGenericDetails::new("CacheCollectionChanged".into()),
-            format!(
-                "The collection `{collection_path}` was removed or emptied while it was \
-                 downloaded."
-            ),
-        ))
-    }
-
     /// Builds the [`CacheError`](FirestoreError::CacheError) of a cache asked for something after
     /// it was shut down.
     #[cfg(feature = "caching")]

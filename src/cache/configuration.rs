@@ -1,6 +1,10 @@
+use crate::cache::FIRESTORE_CACHE_DOCUMENTS_PER_CHUNK;
 use crate::errors::FirestoreError;
-use crate::{FirestoreDb, FirestoreDocument, FirestoreListenerTarget, FirestoreResult};
+use crate::{
+    split_document_path, FirestoreDb, FirestoreDocument, FirestoreListenerTarget, FirestoreResult,
+};
 use futures::stream::BoxStream;
+use futures::{StreamExt, TryStreamExt};
 use rvstruct::ValueStruct;
 use std::collections::HashMap;
 
@@ -407,15 +411,6 @@ impl FirestoreCacheCollectionConfiguration {
         }
     }
 
-    /// What a poll of this collection reads from Firestore.
-    pub(crate) fn poll_read(&self) -> FirestoreCachePollRead<'_> {
-        match self.watched_document_ids() {
-            Some(document_ids) => FirestoreCachePollRead::WatchedDocuments(document_ids),
-            None if self.collection_load_mode.is_preloading() => FirestoreCachePollRead::Collection,
-            None => FirestoreCachePollRead::CachedDocuments,
-        }
-    }
-
     /// Streams every document of this collection from Firestore. The stream ends at its first
     /// error.
     pub(crate) async fn read_all_documents<'b>(
@@ -442,17 +437,39 @@ impl FirestoreCacheCollectionConfiguration {
             None => select.batch_with_errors(document_ids).await,
         }
     }
-}
 
-/// What a poll of a cached collection reads from Firestore.
-pub(crate) enum FirestoreCachePollRead<'a> {
-    /// Every document of the collection.
-    Collection,
-    /// The documents a collection watched by document ID is limited to, whatever its load mode.
-    WatchedDocuments(&'a [String]),
-    /// The documents the cache holds, so that polling never fills a lazily filled collection
-    /// further.
-    CachedDocuments,
+    /// Reads what a poll of this collection brings the cache in line with: the documents it is
+    /// limited to, if it is watched by document ID; all its documents, if it is preloaded; and
+    /// otherwise `cached_document_ids`, so that polling never fills a lazily filled collection
+    /// further. Yields each document by ID, with `None` for one Firestore does not have. The
+    /// stream ends at its first error.
+    pub(crate) async fn read_for_poll<'a>(
+        &'a self,
+        db: &'a FirestoreDb,
+        cached_document_ids: Vec<String>,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<FirestoreDocument>)>>> {
+        let document_ids = match self.watched_document_ids() {
+            Some(document_ids) => document_ids.to_vec(),
+            None if self.collection_load_mode.is_preloading() => {
+                let documents = self.read_all_documents(db).await?;
+                return Ok(documents
+                    .map_ok(|document| {
+                        let document_id = split_document_path(&document.name).1.to_string();
+                        (document_id, Some(document))
+                    })
+                    .boxed());
+            }
+            None => cached_document_ids,
+        };
+        let chunks: Vec<Vec<String>> = document_ids
+            .chunks(FIRESTORE_CACHE_DOCUMENTS_PER_CHUNK)
+            .map(<[String]>::to_vec)
+            .collect();
+        Ok(futures::stream::iter(chunks)
+            .then(move |chunk| self.read_documents(db, chunk))
+            .try_flatten()
+            .boxed())
+    }
 }
 
 /// Determines how a cached collection is populated when the cache starts.
