@@ -93,7 +93,7 @@
 //! | `tls-roots` (default) | TLS trust anchors from the platform's native root store |
 //! | `tls-webpki-roots` | TLS trust anchors bundled from the `webpki-roots` crate instead |
 //! | `auth-default-crypto` (default) | The aws-lc-rs rustls crypto provider service account keys sign their tokens with; without it, install a rustls `CryptoProvider` before creating a client |
-//! | `caching-memory` | In-memory collection and document cache, kept current by a listener |
+//! | `caching-memory` | In-memory collection and document cache, kept current by a listener or by polling |
 //! | `caching-persistent` | The same cache backed by an on-disk database |
 //! | `admin` | Declarative index management and bulk delete: composite indexes, vector indexes, single-field overrides, TTL policy, and `BulkDeleteDocuments` |
 //! | `sql` | SQL statements in the BigQuery (GoogleSQL) dialect, translated into pipelines: see `FirestoreExprBuilder::sql` |

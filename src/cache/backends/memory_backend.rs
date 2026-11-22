@@ -1,14 +1,13 @@
-use crate::errors::*;
 use crate::*;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use gcloud_sdk::prost_types::Timestamp;
 use moka::future::{Cache, CacheBuilder};
 
 use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
 use futures::{StreamExt, TryStreamExt};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tracing::*;
 
 #[doc(hidden)]
@@ -49,22 +48,28 @@ pub struct FirestoreMemoryCacheBackend {
     /// The per-collection capacity, above which eviction makes the count meaningless.
     max_capacity: u64,
     /// Behind a lock so that collections can be added and removed while the cache runs. Readers
-    /// clone the `Arc` out and drop the guard, so no guard is ever held across an await.
-    config: std::sync::RwLock<Arc<FirestoreCacheConfiguration>>,
-    collection_caches: std::sync::RwLock<Arc<HashMap<String, FirestoreMemCache>>>,
+    /// clone what they need out and drop the guard, so no guard is ever held across an await.
+    state: RwLock<FirestoreMemoryCacheState>,
     /// Retained so that a collection added at runtime gets a cache configured the same way as the
     /// ones the backend was built with.
     collection_mem_options: Box<dyn Fn(&str) -> FirestoreMemCacheOptions + Send + Sync>,
+}
+
+/// The cached collections, behind one lock so that a collection's configuration and its cache are
+/// published and removed together.
+struct FirestoreMemoryCacheState {
+    config: Arc<FirestoreCacheConfiguration>,
+    collection_caches: HashMap<String, FirestoreMemCache>,
     /// Collections whose listener target Firestore has reset or removed, and which are therefore
     /// mid-replay. They must not answer `list`/`query` until the replay completes, because what
     /// they hold in the meantime is a partial view that would look like a complete one.
-    suspended_collections: std::sync::RwLock<HashSet<String>>,
+    suspended_collections: HashSet<String>,
     /// Set by `shutdown`. The listener has stopped by then, so whatever the cache still held or
     /// took in afterwards would go stale, and an emptied collection would read as a complete one.
     /// A shut down cache therefore answers nothing and refuses to be filled again; a write-back
     /// already in flight when it is set can still land, and the read guards keep that document
     /// from ever being served.
-    shut_down: AtomicBool,
+    shut_down: bool,
 }
 
 /// The maximum number of documents kept per collection unless configured otherwise.
@@ -199,68 +204,56 @@ impl FirestoreMemoryCacheBackend {
             // backend built this way are never comparable with Firestore's.
             count_authoritative: false,
             max_capacity: u64::MAX,
-            config: std::sync::RwLock::new(Arc::new(config)),
-            collection_caches: std::sync::RwLock::new(Arc::new(collection_caches)),
+            state: RwLock::new(FirestoreMemoryCacheState {
+                config: Arc::new(config),
+                collection_caches,
+                suspended_collections: HashSet::new(),
+                shut_down: false,
+            }),
             collection_mem_options: Box::new(collection_mem_options),
-            suspended_collections: std::sync::RwLock::new(HashSet::new()),
-            shut_down: AtomicBool::new(false),
         })
+    }
+
+    fn state(&self) -> RwLockReadGuard<'_, FirestoreMemoryCacheState> {
+        self.state.read().expect("cache state lock poisoned")
+    }
+
+    fn state_mut(&self) -> RwLockWriteGuard<'_, FirestoreMemoryCacheState> {
+        self.state.write().expect("cache state lock poisoned")
     }
 
     /// A snapshot of the collections this backend currently caches.
     pub fn config(&self) -> Arc<FirestoreCacheConfiguration> {
-        self.config
-            .read()
-            .expect("cache configuration lock poisoned")
-            .clone()
+        self.state().config.clone()
     }
 
     /// The cache of one collection. `moka` caches are cheap to clone - they are reference counted
     /// internally - so this hands out a handle rather than borrowing the map.
     fn collection_cache(&self, collection_path: &str) -> Option<FirestoreMemCache> {
-        self.collection_caches
-            .read()
-            .expect("cache collections lock poisoned")
-            .get(collection_path)
-            .cloned()
-    }
-
-    fn all_collection_caches(&self) -> Arc<HashMap<String, FirestoreMemCache>> {
-        self.collection_caches
-            .read()
-            .expect("cache collections lock poisoned")
-            .clone()
+        self.state().collection_caches.get(collection_path).cloned()
     }
 
     fn is_shut_down(&self) -> bool {
-        self.shut_down.load(Ordering::Acquire)
+        self.state().shut_down
     }
 
     fn ensure_open(&self) -> FirestoreResult<()> {
         if self.is_shut_down() {
-            return Err(FirestoreError::CacheError(FirestoreCacheError::new(
-                FirestoreErrorPublicGenericDetails::new("CacheShutdown".into()),
-                "This in-memory cache has been shut down and no longer holds its documents."
-                    .to_string(),
-            )));
+            return Err(FirestoreError::cache_shut_down());
         }
         Ok(())
     }
 
     /// Stops a collection answering `list`/`query` until Firestore reports it consistent again.
     fn suspend_collection(&self, collection_path: &str) {
-        self.suspended_collections
-            .write()
-            .expect("cache suspended collections lock poisoned")
+        self.state_mut()
+            .suspended_collections
             .insert(collection_path.to_string());
     }
 
     /// Whether a collection is mid-replay after Firestore reset or removed its listener target.
     fn is_suspended(&self, collection_path: &str) -> bool {
-        self.suspended_collections
-            .read()
-            .expect("cache suspended collections lock poisoned")
-            .contains(collection_path)
+        self.state().suspended_collections.contains(collection_path)
     }
 
     /// Drops everything cached for one collection.
@@ -300,16 +293,7 @@ impl FirestoreMemoryCacheBackend {
         // A collection watched by document ID is preloaded by reading exactly those documents,
         // rather than downloading the collection and throwing most of it away.
         if let Some(document_ids) = config.watched_document_ids() {
-            let selector = db
-                .fluent()
-                .select()
-                .by_id_in(config.collection_name.as_str());
-            let selector = match &config.parent {
-                Some(parent) => selector.parent(parent),
-                None => selector,
-            };
-
-            let mut stream = selector.batch_with_errors(document_ids.to_vec()).await?;
+            let mut stream = config.read_documents(db, document_ids.to_vec()).await?;
             while let Some(fetched) = stream.next().await {
                 if let (_, Some(doc)) = fetched? {
                     let (_, document_id) = split_document_path(&doc.name);
@@ -326,17 +310,8 @@ impl FirestoreMemoryCacheBackend {
             return Ok(());
         }
 
-        let params = if let Some(parent) = &config.parent {
-            db.fluent()
-                .select()
-                .from(config.collection_name.as_str())
-                .parent(parent)
-        } else {
-            db.fluent().select().from(config.collection_name.as_str())
-        };
-
-        params
-            .stream_query_with_errors()
+        config
+            .read_all_documents(db)
             .await?
             .try_for_each(|doc| async {
                 let (_, document_id) = split_document_path(&doc.name);
@@ -420,10 +395,8 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
     }
 
     async fn invalidate_all(&self) -> FirestoreResult<()> {
-        for (collection_path, mem_cache) in self.all_collection_caches().iter() {
-            debug!(collection_path, "Invalidating cache for collection.");
-            mem_cache.invalidate_all();
-            mem_cache.run_pending_tasks().await;
+        for collection_path in self.config().collections.keys() {
+            self.invalidate_collection(collection_path).await;
         }
         Ok(())
     }
@@ -455,36 +428,24 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                 .await?;
         }
 
-        // Published only now: until this point the collection does not exist as far as reads are
-        // concerned, so no listing can see it half filled. The shutdown check shares the lock with
-        // the insert, because `shutdown` empties only the caches published by the time it looks:
-        // a shutdown that finished during the preload must not be followed by a published cache.
-        {
-            let mut caches = self
-                .collection_caches
-                .write()
-                .expect("cache collections lock poisoned");
-            self.ensure_open()?;
-            let mut updated = (**caches).clone();
-            updated.insert(collection_path.clone(), mem_cache);
-            *caches = Arc::new(updated);
-        }
-
         let target_params = collection_config.listener_target_params(Some(
             FirestoreListenerTargetResumeType::ReadTime(read_from_time),
         ));
 
-        {
-            let mut config = self
-                .config
-                .write()
-                .expect("cache configuration lock poisoned");
-            *config = Arc::new(
-                (**config)
-                    .clone()
-                    .add_collection_config_at(db.get_documents_path(), collection_config),
-            );
+        // Published only now: until this point the collection does not exist as far as reads are
+        // concerned, so no listing can see it half filled. The shutdown check shares the lock with
+        // the publish, because `shutdown` empties only the caches published by the time it looks:
+        // a shutdown that finished during the preload must not be followed by a published cache.
+        let mut state = self.state_mut();
+        if state.shut_down {
+            return Err(FirestoreError::cache_shut_down());
         }
+        state.collection_caches.insert(collection_path, mem_cache);
+        state.config = Arc::new(
+            (*state.config)
+                .clone()
+                .add_collection_config_at(db.get_documents_path(), collection_config),
+        );
 
         Ok(target_params)
     }
@@ -493,32 +454,16 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         &self,
         collection_path: &str,
     ) -> FirestoreResult<Option<FirestoreListenerTarget>> {
-        // The configuration goes first, so reads stop using the collection immediately and any
-        // listener event arriving before the target is dropped is ignored.
-        let removed = {
-            let mut config = self
-                .config
-                .write()
-                .expect("cache configuration lock poisoned");
-            let mut updated = (**config).clone();
-            let removed = updated.collections.remove(collection_path);
-            *config = Arc::new(updated);
-            removed
-        };
-
-        let Some(removed) = removed else {
-            return Ok(None);
-        };
-
-        let mem_cache = {
-            let mut caches = self
-                .collection_caches
-                .write()
-                .expect("cache collections lock poisoned");
-            let mut updated = (**caches).clone();
-            let mem_cache = updated.remove(collection_path);
-            *caches = Arc::new(updated);
-            mem_cache
+        let (removed, mem_cache) = {
+            let mut state = self.state_mut();
+            let Some(removed) = Arc::make_mut(&mut state.config)
+                .collections
+                .remove(collection_path)
+            else {
+                return Ok(None);
+            };
+            state.suspended_collections.remove(collection_path);
+            (removed, state.collection_caches.remove(collection_path))
         };
 
         if let Some(mem_cache) = mem_cache {
@@ -529,11 +474,6 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
             mem_cache.invalidate_all();
             mem_cache.run_pending_tasks().await;
         }
-
-        self.suspended_collections
-            .write()
-            .expect("cache suspended collections lock poisoned")
-            .remove(collection_path);
 
         Ok(Some(removed.listener_target))
     }
@@ -573,7 +513,7 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         // `FirestoreDb` it is attached to - so releasing the documents here rather than waiting to
         // be dropped is what actually frees the memory.
         debug!("Releasing the cached documents of the in-memory cache.");
-        self.shut_down.store(true, Ordering::Release);
+        self.state_mut().shut_down = true;
         self.invalidate_all().await
     }
 
@@ -614,17 +554,11 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                     crate::cache::FirestoreCacheTargetChangeAction::SuspendAndInvalidate(
                         invalidations,
                     ) => {
-                        {
-                            let mut suspended = self
-                                .suspended_collections
-                                .write()
-                                .expect("cache suspended collections lock poisoned");
-                            suspended.extend(
-                                invalidations
-                                    .iter()
-                                    .map(|invalidation| invalidation.collection_path().to_string()),
-                            );
-                        }
+                        self.state_mut().suspended_collections.extend(
+                            invalidations
+                                .iter()
+                                .map(|invalidation| invalidation.collection_path().to_string()),
+                        );
                         for invalidation in &invalidations {
                             match invalidation {
                                 crate::cache::FirestoreCacheInvalidation::Collection(
@@ -645,12 +579,9 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                         }
                     }
                     crate::cache::FirestoreCacheTargetChangeAction::Resume(paths) => {
-                        let mut suspended = self
-                            .suspended_collections
-                            .write()
-                            .expect("cache suspended collections lock poisoned");
+                        let mut state = self.state_mut();
                         for collection_path in &paths {
-                            suspended.remove(collection_path);
+                            state.suspended_collections.remove(collection_path);
                         }
                     }
                     crate::cache::FirestoreCacheTargetChangeAction::Ignore => {}
@@ -662,6 +593,68 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                 Ok(())
             }
         }
+    }
+}
+
+#[async_trait]
+impl FirestoreCachePolledBackend for FirestoreMemoryCacheBackend {
+    async fn load_for_polling(
+        &self,
+        options: &FirestoreCacheOptions,
+        db: &FirestoreDb,
+    ) -> FirestoreResult<Vec<String>> {
+        self.load(options, db).await?;
+        Ok(Vec::new())
+    }
+
+    async fn poll_collection(
+        &self,
+        db: &FirestoreDb,
+        collection_path: &str,
+    ) -> FirestoreResult<()> {
+        let (config, mem_cache) = {
+            let state = self.state();
+            if state.shut_down {
+                return Err(FirestoreError::cache_shut_down());
+            }
+            (
+                state.config.clone(),
+                state.collection_caches.get(collection_path).cloned(),
+            )
+        };
+        let (Some(collection_config), Some(mem_cache)) =
+            (config.collections.get(collection_path), mem_cache)
+        else {
+            return Ok(());
+        };
+
+        // Taken by iterating, which resets no document's idle time.
+        let mut unread_versions: HashMap<String, Option<Timestamp>> = mem_cache
+            .iter()
+            .map(|(document_id, document)| (document_id.to_string(), document.update_time))
+            .collect();
+        let mut read = collection_config
+            .read_for_poll(db, unread_versions.keys().cloned().collect())
+            .await?;
+
+        // A document is stored only when it changed, because an insert restarts its
+        // `time_to_live` and `time_to_idle`.
+        while let Some((document_id, document)) = read.try_next().await? {
+            let cached_version = unread_versions.remove(&document_id);
+            match document {
+                Some(document) if cached_version != Some(document.update_time) => {
+                    mem_cache.insert(document_id, document).await;
+                }
+                Some(_) => {}
+                None => {
+                    mem_cache.remove(&document_id).await;
+                }
+            }
+        }
+        for document_id in unread_versions.keys() {
+            mem_cache.remove(document_id).await;
+        }
+        Ok(())
     }
 }
 
@@ -2057,5 +2050,56 @@ mod tests {
             ],
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn a_poll_leaves_an_unchanged_document_to_expire_from_when_it_was_written() {
+        let config = FirestoreCacheConfiguration::new().add_collection_config_at(
+            FAKE_DOCS,
+            FirestoreCacheCollectionConfiguration::new(
+                "a",
+                FirestoreListenerTarget::new(1000),
+                FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+            ),
+        );
+        let backend = FirestoreMemoryCacheBackend::with_options(
+            config,
+            FirestoreMemoryCacheOptions::new().with_time_to_live(Duration::from_millis(300)),
+        )
+        .expect("backend");
+        let unchanged = FirestoreDocument {
+            update_time: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
+            ..document("one")
+        };
+        let served = run_query_message(unchanged.clone());
+        let server = FakeFirestore::start(move |_, _| {
+            (
+                "RunQuery".to_string(),
+                FakeResponse::Paced(vec![served.clone()], Duration::ZERO),
+            )
+        })
+        .await;
+        backend
+            .update_doc_by_path(&unchanged)
+            .await
+            .expect("cached");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        backend
+            .poll_collection(&server.db, &format!("{FAKE_DOCS}/a"))
+            .await
+            .expect("polled");
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        assert_eq!(
+            backend
+                .get_doc_by_path(&unchanged.name)
+                .await
+                .expect("cache lookup"),
+            None
+        );
     }
 }

@@ -7,24 +7,17 @@ use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
 use futures::{StreamExt, TryStreamExt};
 use gcloud_sdk::google::firestore::v1::Document;
 use gcloud_sdk::prost::Message;
+use gcloud_sdk::prost_types::Timestamp;
 use redb::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tracing::*;
 
 /// Collections whose preload has completed. Collection tables are named by full Firestore
 /// paths, which start with `projects/`, so this name cannot clash with one.
 const PRELOADED_COLLECTIONS: TableDefinition<&str, ()> =
     TableDefinition::new("firestore-rs:preloaded");
-
-/// Where a batch of documents falls in the download of a collection.
-enum PreloadBatch {
-    Partial,
-    /// Commits with the collection's marker, so a crash leaves the documents and the marker in
-    /// step.
-    Last,
-}
 
 /// A disk-backed cache, storing documents as protobuf in a
 /// [redb](https://github.com/cberner/redb) database with one table per collection.
@@ -48,18 +41,38 @@ enum PreloadBatch {
 /// ```
 pub struct FirestorePersistentCacheBackend {
     /// Behind a lock so that collections can be added and removed while the cache runs. Readers
-    /// clone the `Arc` out and drop the guard, so no guard is ever held across an await.
-    config: std::sync::RwLock<Arc<FirestoreCacheConfiguration>>,
+    /// clone what they need out and drop the guard, so no guard is ever held across an await.
+    state: RwLock<FirestorePersistentCacheState>,
+}
+
+struct FirestorePersistentCacheState {
+    config: Arc<FirestoreCacheConfiguration>,
+    /// Collections whose listener target Firestore has reset or removed, and which are therefore
+    /// mid-replay. They must not answer `list`/`query` until the replay completes, because what
+    /// they hold in the meantime is a partial view that would look like a complete one.
+    suspended_collections: HashSet<String>,
     /// `None` once the cache has been shut down.
     ///
     /// The database holds an exclusive lock on its file, so closing it is the only way to release
     /// that lock without dropping every handle to the backend - and handles outlive the cache,
     /// because `read_through_cache` clones one into each `FirestoreDb` it is attached to.
-    redb: std::sync::RwLock<Option<Database>>,
-    /// Collections whose listener target Firestore has reset or removed, and which are therefore
-    /// mid-replay. They must not answer `list`/`query` until the replay completes, because what
-    /// they hold in the meantime is a partial view that would look like a complete one.
-    suspended_collections: std::sync::RwLock<HashSet<String>>,
+    redb: Option<Database>,
+}
+
+impl FirestorePersistentCacheState {
+    fn open_db(&self) -> FirestoreResult<&Database> {
+        self.redb
+            .as_ref()
+            .ok_or_else(FirestoreError::cache_shut_down)
+    }
+}
+
+/// What a load of the backend produced.
+struct FirestorePersistentCacheLoad {
+    listener_targets: Vec<FirestoreListenerTargetParams>,
+    /// The collections whose documents the load kept from an earlier run without reading them
+    /// again.
+    kept_collections: Vec<String>,
 }
 
 /// Tuning options for [`FirestorePersistentCacheBackend`].
@@ -140,58 +153,52 @@ impl FirestorePersistentCacheBackend {
         info!("Successfully opened database for persistent cache.");
 
         Ok(Self {
-            config: std::sync::RwLock::new(Arc::new(config)),
-            redb: std::sync::RwLock::new(Some(db)),
-            suspended_collections: std::sync::RwLock::new(HashSet::new()),
+            state: RwLock::new(FirestorePersistentCacheState {
+                config: Arc::new(config),
+                suspended_collections: HashSet::new(),
+                redb: Some(db),
+            }),
         })
+    }
+
+    fn state(&self) -> RwLockReadGuard<'_, FirestorePersistentCacheState> {
+        self.state.read().expect("cache state lock poisoned")
+    }
+
+    fn state_mut(&self) -> RwLockWriteGuard<'_, FirestorePersistentCacheState> {
+        self.state.write().expect("cache state lock poisoned")
     }
 
     /// A snapshot of the collections this backend currently caches.
     pub fn config(&self) -> Arc<FirestoreCacheConfiguration> {
-        self.config
-            .read()
-            .expect("cache configuration lock poisoned")
-            .clone()
+        self.state().config.clone()
     }
 
-    /// Borrows the open database, or reports that the cache has been shut down.
-    ///
-    /// The guard must not be held across an await - every caller uses it inside a synchronous
-    /// block, which is what keeps `shutdown` able to take the database away promptly.
-    fn open_db(&self) -> FirestoreResult<std::sync::RwLockReadGuard<'_, Option<Database>>> {
-        let guard = self.redb.read().expect("cache database lock poisoned");
-        if guard.is_none() {
-            return Err(FirestoreError::CacheError(FirestoreCacheError::new(
-                FirestoreErrorPublicGenericDetails::new("CacheShutdown".into()),
-                "This persistent cache has been shut down and no longer holds its database."
-                    .to_string(),
-            )));
-        }
-        Ok(guard)
+    /// Holds the state guard while redb waits for the write in progress to finish, so code that
+    /// holds a write transaction must never take the state lock: it would wait for this guard.
+    fn begin_write(&self) -> FirestoreResult<WriteTransaction> {
+        Ok(self.state().open_db()?.begin_write()?)
+    }
+
+    fn begin_read(&self) -> FirestoreResult<ReadTransaction> {
+        Ok(self.state().open_db()?.begin_read()?)
     }
 
     /// Whether the cache is still usable. Reads fall back to Firestore once it is not.
     fn is_open(&self) -> bool {
-        self.redb
-            .read()
-            .expect("cache database lock poisoned")
-            .is_some()
+        self.state().redb.is_some()
     }
 
     /// Stops a collection answering `list`/`query` until Firestore reports it consistent again.
     fn suspend_collection(&self, collection_path: &str) {
-        self.suspended_collections
-            .write()
-            .expect("cache suspended collections lock poisoned")
+        self.state_mut()
+            .suspended_collections
             .insert(collection_path.to_string());
     }
 
     /// Whether a collection is mid-replay after Firestore reset or removed its listener target.
     fn is_suspended(&self, collection_path: &str) -> bool {
-        self.suspended_collections
-            .read()
-            .expect("cache suspended collections lock poisoned")
-            .contains(collection_path)
+        self.state().suspended_collections.contains(collection_path)
     }
 
     /// Drops everything cached for one collection, leaving its table in place.
@@ -201,11 +208,7 @@ impl FirestorePersistentCacheBackend {
         }
 
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-        let write_txn = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_write()?;
+        let write_txn = self.begin_write()?;
         {
             debug!(
                 collection_path,
@@ -219,38 +222,6 @@ impl FirestorePersistentCacheBackend {
         Ok(())
     }
 
-    /// Reads exactly the documents a collection is limited to, rather than downloading the whole
-    /// collection and throwing most of it away.
-    async fn preload_watched_documents(
-        &self,
-        db: &FirestoreDb,
-        collection_path: &str,
-        config: &FirestoreCacheCollectionConfiguration,
-    ) -> FirestoreResult<()> {
-        let Some(document_ids) = config.watched_document_ids() else {
-            return Ok(());
-        };
-
-        let selector = db
-            .fluent()
-            .select()
-            .by_id_in(config.collection_name.as_str());
-        let selector = match &config.parent {
-            Some(parent) => selector.parent(parent),
-            None => selector,
-        };
-
-        let mut stream = selector.batch_with_errors(document_ids.to_vec()).await?;
-        let mut found: Vec<Document> = Vec::new();
-        while let Some(fetched) = stream.next().await {
-            if let (_, Some(doc)) = fetched? {
-                found.push(doc);
-            }
-        }
-
-        self.write_batch(collection_path, found, PreloadBatch::Last)
-    }
-
     /// Removes several documents of one collection in a single transaction.
     fn evict_documents(
         &self,
@@ -262,11 +233,7 @@ impl FirestorePersistentCacheBackend {
         }
 
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-        let write_txn = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_write()?;
+        let write_txn = self.begin_write()?;
         {
             let mut table = write_txn.open_table(td)?;
             for document_id in document_ids {
@@ -292,11 +259,7 @@ impl FirestorePersistentCacheBackend {
         );
 
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-        let write_txn = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_write()?;
+        let write_txn = self.begin_write()?;
         {
             let mut table = write_txn.open_table(td)?;
             table.remove(document_id)?;
@@ -326,21 +289,15 @@ impl FirestorePersistentCacheBackend {
                     // an invalidation and a resync replay all leave them.
                     self.drop_collection_table(collection_path)?;
                     self.create_collection_table(collection_path)?;
-                    self.download_collection(db, collection_path, config)
-                        .await?;
+                    self.download(db, collection_path, config).await?;
                 }
                 FirestoreCacheCollectionLoadMode::PreloadAllDocs => {
                     // The download overwrites rows in place, so the old marker must not vouch for
                     // what a crash leaves half rewritten.
-                    let write_txn = self
-                        .open_db()?
-                        .as_ref()
-                        .expect("database checked open")
-                        .begin_write()?;
+                    let write_txn = self.begin_write()?;
                     Self::forget_preload(&write_txn, collection_path)?;
                     write_txn.commit()?;
-                    self.download_collection(db, collection_path, config)
-                        .await?;
+                    self.download(db, collection_path, config).await?;
                 }
                 FirestoreCacheCollectionLoadMode::PreloadNone => {}
             }
@@ -348,25 +305,25 @@ impl FirestorePersistentCacheBackend {
         Ok(())
     }
 
-    async fn download_collection(
+    /// Reads a preloaded collection into its table as a poll does, setting its marker with the
+    /// last write. A download that fails drops the table, so that no partial collection is left.
+    async fn download(
         &self,
         db: &FirestoreDb,
         collection_path: &str,
-        config: &FirestoreCacheCollectionConfiguration,
+        collection_config: &FirestoreCacheCollectionConfiguration,
     ) -> FirestoreResult<()> {
         debug!(collection_path, "Preloading collection.");
-
-        if config.watched_document_ids().is_some() {
-            self.preload_watched_documents(db, collection_path, config)
-                .await?;
-            info!(
-                collection_path,
-                "Preloading watched documents has been finished.",
-            );
-            return Ok(());
+        let downloaded = self.reconcile(db, collection_path, collection_config).await;
+        if downloaded.is_err() {
+            if let Err(drop_error) = self.drop_collection_table(collection_path) {
+                error!(
+                    ?drop_error,
+                    collection_path, "Could not drop the table of a failed preload."
+                );
+            }
         }
-
-        self.preload_collection(db, collection_path, config).await?;
+        downloaded?;
 
         info!(
             collection_path,
@@ -376,99 +333,122 @@ impl FirestorePersistentCacheBackend {
         Ok(())
     }
 
-    /// Streams every document of a collection into its table. A stream that fails partway
-    /// returns its error and drops the table to free the chunks already committed. Those rows
-    /// carry no marker, so nothing takes them for the complete collection.
-    async fn preload_collection(
+    /// Brings a collection's table in line with what
+    /// [`read_for_poll`](FirestoreCacheCollectionConfiguration::read_for_poll) reads, one chunk per
+    /// write: stores each document whose `update_time` differs from the one stored before the
+    /// read, removes those Firestore no longer has, and has the last write mark a preloaded
+    /// collection complete. Stops once the table is gone.
+    async fn reconcile(
         &self,
         db: &FirestoreDb,
         collection_path: &str,
-        config: &FirestoreCacheCollectionConfiguration,
+        collection_config: &FirestoreCacheCollectionConfiguration,
     ) -> FirestoreResult<()> {
-        let params = if let Some(parent) = &config.parent {
-            db.fluent()
-                .select()
-                .from(config.collection_name.as_str())
-                .parent(parent)
-        } else {
-            db.fluent().select().from(config.collection_name.as_str())
-        };
-
-        let mut chunks = params
-            .stream_query_with_errors()
+        let mut unread_versions = self.stored_versions(collection_path)?;
+        let mut chunks = collection_config
+            .read_for_poll(db, unread_versions.keys().cloned().collect())
             .await?
-            .enumerate()
-            .map(|(index, doc)| {
-                if index > 0 && index % 5000 == 0 {
-                    debug!(
-                        collection_path,
-                        entries_loaded = index,
-                        "Collection preload in progress...",
-                    );
-                }
-                doc
-            })
-            .ready_chunks(100)
-            .map(|docs| docs.into_iter().collect::<FirestoreResult<Vec<_>>>());
+            .ready_chunks(FIRESTORE_CACHE_DOCUMENTS_PER_CHUNK)
+            .map(|chunk| chunk.into_iter().collect::<FirestoreResult<Vec<_>>>());
 
-        // The last chunk is only known once the stream has ended, and it commits with the marker.
-        let preloaded = async {
-            let mut held_back: Option<Vec<Document>> = None;
-            while let Some(docs) = chunks.try_next().await? {
-                if let Some(previous) = held_back.replace(docs) {
-                    self.write_batch(collection_path, previous, PreloadBatch::Partial)?;
+        while let Some(chunk) = chunks.try_next().await? {
+            let mut stored = Vec::new();
+            let mut removed = Vec::new();
+            for (document_id, document) in chunk {
+                let stored_version = unread_versions.remove(&document_id);
+                match document {
+                    Some(document) if stored_version != Some(document.update_time) => {
+                        stored.push(document)
+                    }
+                    Some(_) => {}
+                    None if stored_version.is_some() => removed.push(document_id),
+                    None => {}
                 }
             }
-            self.write_batch(
-                collection_path,
-                held_back.unwrap_or_default(),
-                PreloadBatch::Last,
-            )
-        }
-        .await;
-
-        if preloaded.is_err() {
-            if let Err(drop_error) = self.drop_collection_table(collection_path) {
-                error!(
-                    ?drop_error,
-                    collection_path, "Could not drop the table of a failed preload."
-                );
+            if (!stored.is_empty() || !removed.is_empty())
+                && !self.write_reconciled(collection_path, stored, &removed, false)?
+            {
+                return Ok(());
             }
         }
-        preloaded
+
+        let completes = collection_config.collection_load_mode.is_preloading();
+        if completes || !unread_versions.is_empty() {
+            let removed: Vec<String> = unread_versions.into_keys().collect();
+            self.write_reconciled(collection_path, Vec::new(), &removed, completes)?;
+        }
+        Ok(())
     }
 
-    fn write_batch(
+    /// The `update_time` of every document a collection's table holds, by document ID.
+    fn stored_versions(
         &self,
         collection_path: &str,
-        docs: Vec<Document>,
-        position: PreloadBatch,
-    ) -> FirestoreResult<()> {
-        let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
+    ) -> FirestoreResult<HashMap<String, Option<Timestamp>>> {
+        let read_tx = self.begin_read()?;
+        let table = match read_tx.open_table(TableDefinition::<&str, &[u8]>::new(collection_path)) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(HashMap::new()),
+            Err(err) => return Err(err.into()),
+        };
+        let stored_versions = table
+            .iter()?
+            .map(|record| {
+                let (document_id, document) = record?;
+                Ok((
+                    document_id.value().to_string(),
+                    Self::buf_to_document(document.value())?.update_time,
+                ))
+            })
+            .collect();
+        stored_versions
+    }
 
-        let write_txn = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_write()?;
+    /// One write of a reconcile: stores `stored`, removes `removed` and, if it `completes` the
+    /// reconcile, marks the collection complete. Writes nothing, and returns `false`, once the
+    /// collection's table is gone: `remove_collection` drops it, and redb's single writer puts that
+    /// drop wholly before or after this write.
+    fn write_reconciled(
+        &self,
+        collection_path: &str,
+        stored: Vec<Document>,
+        removed: &[String],
+        completes: bool,
+    ) -> FirestoreResult<bool> {
+        let write_txn = self.begin_write()?;
+        if !write_txn
+            .list_tables()?
+            .any(|table| table.name() == collection_path)
         {
-            let mut table = write_txn.open_table(td)?;
+            write_txn.abort()?;
+            return Ok(false);
+        }
 
-            for doc in docs {
-                let (_, document_id) = split_document_path(&doc.name);
-                let doc_bytes = Self::document_to_buf(&doc)?;
-                table.insert(document_id, doc_bytes.as_slice())?;
+        let mut changed = !stored.is_empty() || !removed.is_empty();
+        {
+            let mut table =
+                write_txn.open_table(TableDefinition::<&str, &[u8]>::new(collection_path))?;
+            for document in stored {
+                let (_, document_id) = split_document_path(&document.name);
+                table.insert(document_id, Self::document_to_buf(&document)?.as_slice())?;
             }
-
-            if matches!(position, PreloadBatch::Last) {
-                write_txn
+            for document_id in removed {
+                table.remove(document_id.as_str())?;
+            }
+            if completes {
+                changed |= write_txn
                     .open_table(PRELOADED_COLLECTIONS)?
-                    .insert(collection_path, ())?;
+                    .insert(collection_path, ())?
+                    .is_none();
             }
         }
-        write_txn.commit()?;
 
-        Ok(())
+        if changed {
+            write_txn.commit()?;
+        } else {
+            write_txn.abort()?;
+        }
+        Ok(true)
     }
 
     fn document_to_buf(doc: &FirestoreDocument) -> FirestoreResult<Vec<u8>> {
@@ -494,11 +474,7 @@ impl FirestorePersistentCacheBackend {
         {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-            let write_txn = self
-                .open_db()?
-                .as_ref()
-                .expect("database checked open")
-                .begin_write()?;
+            let write_txn = self.begin_write()?;
             {
                 let mut table = write_txn.open_table(td)?;
                 let doc_bytes = Self::document_to_buf(doc)?;
@@ -514,11 +490,7 @@ impl FirestorePersistentCacheBackend {
     /// Creates a collection's table if it does not exist yet.
     fn create_collection_table(&self, collection_path: &str) -> FirestoreResult<()> {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-        let tx = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_write()?;
+        let tx = self.begin_write()?;
         tx.open_table(td)?;
         tx.commit()?;
         Ok(())
@@ -527,11 +499,7 @@ impl FirestorePersistentCacheBackend {
     /// Deletes a collection's table entirely. Returns whether there was one.
     fn drop_collection_table(&self, collection_path: &str) -> FirestoreResult<bool> {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-        let tx = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_write()?;
+        let tx = self.begin_write()?;
         let existed = tx.delete_table(td)?;
         Self::forget_preload(&tx, collection_path)?;
         tx.commit()?;
@@ -547,37 +515,36 @@ impl FirestorePersistentCacheBackend {
         Ok(())
     }
 
-    /// Whether any collection keeps documents from an earlier run through this load. Such a cache
-    /// must not resume from the time the load starts, because it would skip what changed while the
-    /// cache was closed.
+    /// The collections whose documents a load keeps from an earlier run without reading them
+    /// again: a `PreloadAllIfEmpty` one with a marker, whatever its row count, and a lazily filled
+    /// one with rows. A `PreloadAllIfEmpty` one without a marker is downloaded afresh, and a
+    /// `PreloadAllDocs` one is brought in line with Firestore.
     ///
-    /// A `PreloadAllIfEmpty` collection keeps its documents exactly when it has a marker, whatever
-    /// its row count: without one the preload discards the rows and downloads afresh, and with one
-    /// an empty table is still the collection as of the earlier run.
-    fn keeps_earlier_documents(&self) -> FirestoreResult<bool> {
+    /// A cache that keeps any must not resume its listener from the time the load starts, because
+    /// it would skip what changed while the cache was closed. A polling cache reads them at once.
+    fn collections_kept_from_an_earlier_run(&self) -> FirestoreResult<Vec<String>> {
+        let mut kept_collections = Vec::new();
         for (collection_path, collection_config) in &self.config().collections {
             let kept = match collection_config.collection_load_mode {
                 FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty => {
                     self.is_preloaded(collection_path)?
                 }
-                _ => self.table_len(collection_path)? > 0,
+                FirestoreCacheCollectionLoadMode::PreloadAllDocs => false,
+                FirestoreCacheCollectionLoadMode::PreloadNone => {
+                    self.table_len(collection_path)? > 0
+                }
             };
-
             if kept {
-                return Ok(true);
+                kept_collections.push(collection_path.clone());
             }
         }
-        Ok(false)
+        Ok(kept_collections)
     }
 
     /// Whether a collection has a marker: a download of it ran to its end and nothing has since
     /// cleared its table.
     fn is_preloaded(&self, collection_path: &str) -> FirestoreResult<bool> {
-        let read_tx = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_read()?;
+        let read_tx = self.begin_read()?;
         Ok(read_tx
             .open_table(PRELOADED_COLLECTIONS)?
             .get(collection_path)?
@@ -588,16 +555,43 @@ impl FirestorePersistentCacheBackend {
     /// none.
     fn table_len(&self, collection_path: &str) -> FirestoreResult<u64> {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-        let read_tx = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_read()?;
+        let read_tx = self.begin_read()?;
         match read_tx.open_table(td) {
             Ok(table) => Ok(table.len()?),
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(0),
             Err(err) => Err(err.into()),
         }
+    }
+
+    async fn load_collections(
+        &self,
+        db: &FirestoreDb,
+    ) -> FirestoreResult<FirestorePersistentCacheLoad> {
+        let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
+
+        let kept_collections = self.collections_kept_from_an_earlier_run()?;
+        self.preload_collections(db).await?;
+
+        // A new cache is complete as of `read_from_time`, which was captured before the preload
+        // read anything, so resuming from it loses nothing. A cache that holds documents from an
+        // earlier run must not resume from it: it would skip what changed while the cache was
+        // closed. Its targets resume from their stored tokens, or replay without one.
+        let resume_type = if kept_collections.is_empty() {
+            Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
+        } else {
+            None
+        };
+
+        let listener_targets = self
+            .config()
+            .collections
+            .values()
+            .map(|collection_config| collection_config.listener_target_params(resume_type.clone()))
+            .collect();
+        Ok(FirestorePersistentCacheLoad {
+            listener_targets,
+            kept_collections,
+        })
     }
 
     async fn query_cached_docs<'b>(
@@ -607,11 +601,7 @@ impl FirestorePersistentCacheBackend {
     ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
         let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-        let read_tx = self
-            .open_db()?
-            .as_ref()
-            .expect("database checked open")
-            .begin_read()?;
+        let read_tx = self.begin_read()?;
         let table = read_tx.open_table(td)?;
         let iter = table.iter()?;
 
@@ -639,27 +629,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         _options: &FirestoreCacheOptions,
         db: &FirestoreDb,
     ) -> Result<Vec<FirestoreListenerTargetParams>, FirestoreError> {
-        let read_from_time = FirestoreCacheCollectionConfiguration::listener_read_time();
-
-        let keeps_earlier_documents = self.keeps_earlier_documents()?;
-        self.preload_collections(db).await?;
-
-        // A new cache is complete as of `read_from_time`, which was captured before the preload
-        // read anything, so resuming from it loses nothing. A cache that holds documents from an
-        // earlier run must not resume from it: it would skip what changed while the cache was
-        // closed. Its targets resume from their stored tokens, or replay without one.
-        let resume_type = if keeps_earlier_documents {
-            None
-        } else {
-            Some(FirestoreListenerTargetResumeType::ReadTime(read_from_time))
-        };
-
-        Ok(self
-            .config()
-            .collections
-            .values()
-            .map(|collection_config| collection_config.listener_target_params(resume_type.clone()))
-            .collect())
+        Ok(self.load_collections(db).await?.listener_targets)
     }
 
     async fn invalidate_all(&self) -> FirestoreResult<()> {
@@ -696,43 +666,8 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         self.create_collection_table(&collection_path)?;
 
         if collection_config.collection_load_mode.is_preloading() {
-            debug!(
-                collection_path = collection_path.as_str(),
-                "Preloading collection."
-            );
-
-            if let Some(document_ids) = collection_config.watched_document_ids() {
-                self.preload_watched_documents(db, &collection_path, &collection_config)
-                    .await?;
-                info!(
-                    collection_path = collection_path.as_str(),
-                    watched_documents = document_ids.len(),
-                    "Preloading watched documents has been finished.",
-                );
-
-                let target_params = collection_config.listener_target_params(Some(
-                    FirestoreListenerTargetResumeType::ReadTime(read_from_time),
-                ));
-                let mut config = self
-                    .config
-                    .write()
-                    .expect("cache configuration lock poisoned");
-                *config = Arc::new(
-                    (**config)
-                        .clone()
-                        .add_collection_config_at(db.get_documents_path(), collection_config),
-                );
-                return Ok(target_params);
-            }
-
-            self.preload_collection(db, &collection_path, &collection_config)
+            self.download(db, &collection_path, &collection_config)
                 .await?;
-
-            info!(
-                collection_path = collection_path.as_str(),
-                updated_records = self.table_len(&collection_path).unwrap_or(0),
-                "Preloading collection has been finished.",
-            );
         }
 
         let target_params = collection_config.listener_target_params(Some(
@@ -740,18 +675,15 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         ));
 
         // Published only now: until this point the collection does not exist as far as reads are
-        // concerned, so no listing can see it half filled.
-        {
-            let mut config = self
-                .config
-                .write()
-                .expect("cache configuration lock poisoned");
-            *config = Arc::new(
-                (**config)
-                    .clone()
-                    .add_collection_config_at(db.get_documents_path(), collection_config),
-            );
-        }
+        // concerned, so no listing can see it half filled. A cache shut down meanwhile publishes
+        // nothing.
+        let mut state = self.state_mut();
+        state.open_db()?;
+        state.config = Arc::new(
+            (*state.config)
+                .clone()
+                .add_collection_config_at(db.get_documents_path(), collection_config),
+        );
 
         Ok(target_params)
     }
@@ -760,21 +692,18 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         &self,
         collection_path: &str,
     ) -> FirestoreResult<Option<FirestoreListenerTarget>> {
-        // The configuration goes first, so reads stop using the collection immediately and any
-        // listener event arriving before the target is dropped is ignored.
+        // The configuration goes before the table, so reads stop using the collection immediately
+        // and any listener event arriving before the target is dropped is ignored.
         let removed = {
-            let mut config = self
-                .config
-                .write()
-                .expect("cache configuration lock poisoned");
-            let mut updated = (**config).clone();
-            let removed = updated.collections.remove(collection_path);
-            *config = Arc::new(updated);
+            let mut state = self.state_mut();
+            let Some(removed) = Arc::make_mut(&mut state.config)
+                .collections
+                .remove(collection_path)
+            else {
+                return Ok(None);
+            };
+            state.suspended_collections.remove(collection_path);
             removed
-        };
-
-        let Some(removed) = removed else {
-            return Ok(None);
         };
 
         debug!(
@@ -782,11 +711,6 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
             "Dropping the table of a removed collection."
         );
         self.drop_collection_table(collection_path)?;
-
-        self.suspended_collections
-            .write()
-            .expect("cache suspended collections lock poisoned")
-            .remove(collection_path);
 
         Ok(Some(removed.listener_target))
     }
@@ -819,11 +743,7 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         // be opened over the same directory in this process. Dropping it here rather than with the
         // backend matters because handles to the backend outlive the cache: `read_through_cache`
         // clones one into every `FirestoreDb` it is attached to.
-        let closed = self
-            .redb
-            .write()
-            .expect("cache database lock poisoned")
-            .take();
+        let closed = self.state_mut().redb.take();
 
         if closed.is_some() {
             debug!("Closing the database of the persistent cache.");
@@ -865,17 +785,11 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                     crate::cache::FirestoreCacheTargetChangeAction::SuspendAndInvalidate(
                         invalidations,
                     ) => {
-                        {
-                            let mut suspended = self
-                                .suspended_collections
-                                .write()
-                                .expect("cache suspended collections lock poisoned");
-                            suspended.extend(
-                                invalidations
-                                    .iter()
-                                    .map(|invalidation| invalidation.collection_path().to_string()),
-                            );
-                        }
+                        self.state_mut().suspended_collections.extend(
+                            invalidations
+                                .iter()
+                                .map(|invalidation| invalidation.collection_path().to_string()),
+                        );
                         for invalidation in &invalidations {
                             match invalidation {
                                 crate::cache::FirestoreCacheInvalidation::Collection(
@@ -889,12 +803,9 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
                         }
                     }
                     crate::cache::FirestoreCacheTargetChangeAction::Resume(paths) => {
-                        let mut suspended = self
-                            .suspended_collections
-                            .write()
-                            .expect("cache suspended collections lock poisoned");
+                        let mut state = self.state_mut();
                         for collection_path in &paths {
-                            suspended.remove(collection_path);
+                            state.suspended_collections.remove(collection_path);
                         }
                     }
                     crate::cache::FirestoreCacheTargetChangeAction::Ignore => {}
@@ -910,6 +821,29 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
 }
 
 #[async_trait]
+impl FirestoreCachePolledBackend for FirestorePersistentCacheBackend {
+    async fn load_for_polling(
+        &self,
+        _options: &FirestoreCacheOptions,
+        db: &FirestoreDb,
+    ) -> FirestoreResult<Vec<String>> {
+        Ok(self.load_collections(db).await?.kept_collections)
+    }
+
+    async fn poll_collection(
+        &self,
+        db: &FirestoreDb,
+        collection_path: &str,
+    ) -> FirestoreResult<()> {
+        let config = self.config();
+        let Some(collection_config) = config.collections.get(collection_path) else {
+            return Ok(());
+        };
+        self.reconcile(db, collection_path, collection_config).await
+    }
+}
+
+#[async_trait]
 impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
     async fn get_doc_by_path(
         &self,
@@ -918,11 +852,7 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         let (collection_path, document_id) = split_document_path(document_path);
         if self.is_open() && self.config().collections.contains_key(collection_path) {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
-            let read_tx = self
-                .open_db()?
-                .as_ref()
-                .expect("database checked open")
-                .begin_read()?;
+            let read_tx = self.begin_read()?;
             let table = read_tx.open_table(td)?;
             let value = table.get(document_id)?;
             value.map(|v| Self::buf_to_document(v.value())).transpose()
@@ -951,11 +881,7 @@ impl FirestoreCacheDocsByPathSupport for FirestorePersistentCacheBackend {
         {
             let td: TableDefinition<&str, &[u8]> = TableDefinition::new(collection_path);
 
-            let read_tx = self
-                .open_db()?
-                .as_ref()
-                .expect("database checked open")
-                .begin_read()?;
+            let read_tx = self.begin_read()?;
             let table = read_tx.open_table(td)?;
             let iter = table.iter()?;
 
@@ -1068,14 +994,41 @@ impl From<redb::CompactionError> for FirestoreError {
 mod tests {
     use super::*;
     use crate::db::fake_firestore::{
-        batch_get_found_message, run_query_message, FakeFirestore, FakeResponse,
+        batch_get_found_message, batch_get_missing_message, run_query_message, FakeFirestore,
+        FakeResponse,
     };
     use futures::TryStreamExt;
-    use gcloud_sdk::google::firestore::v1::{DocumentDelete, DocumentRemove, TargetChange};
+    use gcloud_sdk::google::firestore::v1::{
+        run_query_request, BatchGetDocumentsRequest, DocumentDelete, DocumentRemove,
+        RunQueryRequest, TargetChange,
+    };
     use gcloud_sdk::tonic::Code;
     use std::time::Duration;
 
     const DOCS: &str = "projects/test/databases/(default)/documents";
+
+    /// Writes rows straight into a collection's table, without its marker, as a download cut
+    /// short leaves them.
+    fn write_rows(
+        backend: &FirestorePersistentCacheBackend,
+        collection_path: &str,
+        documents: Vec<FirestoreDocument>,
+    ) {
+        let write_txn = backend.begin_write().expect("write transaction");
+        {
+            let mut table = write_txn
+                .open_table(TableDefinition::<&str, &[u8]>::new(collection_path))
+                .expect("collection table");
+            for document in documents {
+                let encoded =
+                    FirestorePersistentCacheBackend::document_to_buf(&document).expect("encoded");
+                table
+                    .insert(split_document_path(&document.name).1, encoded.as_slice())
+                    .expect("row");
+            }
+        }
+        write_txn.commit().expect("commit");
+    }
 
     struct TestBackend {
         backend: FirestorePersistentCacheBackend,
@@ -1321,13 +1274,11 @@ mod tests {
             data_file.clone(),
         )
         .expect("backend");
-        earlier_run
-            .write_batch(
-                &format!("{FAKE_DOCS}/a"),
-                vec![fake_document("deleted_while_closed"), fake_document("kept")],
-                PreloadBatch::Partial,
-            )
-            .expect("rows of the earlier run");
+        write_rows(
+            &earlier_run,
+            &format!("{FAKE_DOCS}/a"),
+            vec![fake_document("deleted_while_closed"), fake_document("kept")],
+        );
         earlier_run.shutdown().await.expect("shutdown");
 
         let backend = FirestorePersistentCacheBackend::with_options(
@@ -1386,13 +1337,7 @@ mod tests {
             FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty,
         ));
         let collection_path = format!("{FAKE_DOCS}/a");
-        backend
-            .write_batch(
-                &collection_path,
-                vec![fake_document("cut_short")],
-                PreloadBatch::Partial,
-            )
-            .expect("rows of a preload that was cut short");
+        write_rows(&backend, &collection_path, vec![fake_document("cut_short")]);
 
         let targets = load_once(&backend, &serving(&["one", "two"]).await)
             .await
@@ -1666,13 +1611,7 @@ mod tests {
         seed(&backend, "a", "one").await;
         seed(&backend, "a", "two").await;
         let collection_path = format!("{DOCS}/a");
-        let write_txn = backend
-            .open_db()
-            .expect("open database")
-            .as_ref()
-            .expect("database checked open")
-            .begin_write()
-            .expect("write transaction");
+        let write_txn = backend.begin_write().expect("write transaction");
         {
             let mut table = write_txn
                 .open_table(TableDefinition::<&str, &[u8]>::new(&collection_path))
@@ -1691,5 +1630,249 @@ mod tests {
             .await;
 
         assert!(read.is_err());
+    }
+
+    fn versioned(id: &str, version: i64) -> FirestoreDocument {
+        FirestoreDocument {
+            update_time: Some(gcloud_sdk::prost_types::Timestamp {
+                seconds: version,
+                nanos: 0,
+            }),
+            ..fake_document(id)
+        }
+    }
+
+    /// Answers every query with these versions of documents of `a`.
+    async fn serving_versions(versions: &[(&str, i64)]) -> FakeFirestore {
+        let messages: Vec<Vec<u8>> = versions
+            .iter()
+            .map(|(id, version)| run_query_message(versioned(id, *version)))
+            .collect();
+        query_server(move || FakeResponse::Paced(messages.clone(), Duration::ZERO)).await
+    }
+
+    fn collection_path_a() -> String {
+        format!("{FAKE_DOCS}/a")
+    }
+
+    async fn poll_a(
+        backend: &FirestorePersistentCacheBackend,
+        server: &FakeFirestore,
+    ) -> FirestoreResult<()> {
+        backend
+            .poll_collection(&server.db, &collection_path_a())
+            .await
+    }
+
+    async fn stored_ids(backend: &FirestorePersistentCacheBackend) -> Vec<String> {
+        let read_tx = backend.begin_read().expect("read transaction");
+        let table = read_tx
+            .open_table(TableDefinition::<&str, &[u8]>::new(&collection_path_a()))
+            .expect("collection table");
+        let mut ids: Vec<String> = table
+            .iter()
+            .expect("rows")
+            .map(|record| record.expect("row").0.value().to_string())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    async fn loaded_preloading_a(versions: &[(&str, i64)]) -> TestBackend {
+        let backend = backend_for(collection_a_loaded(
+            FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty,
+        ));
+        load_once(&backend, &serving_versions(versions).await)
+            .await
+            .expect("loaded");
+        backend
+    }
+
+    #[tokio::test]
+    async fn a_completed_poll_leaves_exactly_what_was_read_and_the_marker() {
+        let backend = loaded_preloading_a(&[("kept", 1), ("deleted", 1)]).await;
+
+        poll_a(
+            &backend,
+            &serving_versions(&[("kept", 2), ("created", 1)]).await,
+        )
+        .await
+        .expect("polled");
+
+        assert_eq!(stored_ids(&backend).await, vec!["created", "kept"]);
+        assert_eq!(
+            backend
+                .get_doc_by_path(&fake_document("kept").name)
+                .await
+                .unwrap(),
+            Some(versioned("kept", 2))
+        );
+        assert!(backend.is_preloaded(&collection_path_a()).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_poll_that_fails_partway_keeps_every_document_and_the_marker() {
+        let backend = loaded_preloading_a(&[("kept", 1), ("deleted", 1)]).await;
+
+        let FirestoreError::DatabaseError(error) =
+            poll_a(&backend, &query_server_failing_after_several_chunks().await)
+                .await
+                .unwrap_err()
+        else {
+            panic!("the poll did not fail with the stream's database error");
+        };
+
+        assert_eq!(error.public.code, "Internal");
+        let ids = stored_ids(&backend).await;
+        assert!(ids.contains(&"kept".to_string()) && ids.contains(&"deleted".to_string()));
+        assert!(backend.is_preloaded(&collection_path_a()).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_preload_after_a_restart_removes_what_firestore_no_longer_has() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let data_file = dir.path().join("redb");
+        let config = FirestoreCacheConfiguration::new().add_collection_config_at(
+            FAKE_DOCS,
+            collection_a_loaded(FirestoreCacheCollectionLoadMode::PreloadAllDocs),
+        );
+        let earlier_run =
+            FirestorePersistentCacheBackend::with_options(config.clone(), data_file.clone())
+                .expect("backend");
+        load_once(&earlier_run, &serving(&["one", "two"]).await)
+            .await
+            .expect("loaded");
+        earlier_run.shutdown().await.expect("shutdown");
+
+        let backend =
+            FirestorePersistentCacheBackend::with_options(config, data_file).expect("backend");
+        load_once(&backend, &serving(&["one"]).await)
+            .await
+            .expect("loaded again");
+
+        assert_eq!(stored_ids(&backend).await, vec!["one"]);
+    }
+
+    #[tokio::test]
+    async fn a_poll_marks_a_watched_collection_without_documents_complete_again() {
+        let backend = backend_for(
+            collection_a_loaded(FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty)
+                .with_documents(Vec::<String>::new()),
+        );
+        load_once(&backend, &serving_documents(&[]).await)
+            .await
+            .expect("loaded");
+        backend.invalidate_all().await.expect("invalidated");
+
+        poll_a(&backend, &serving_documents(&[]).await)
+            .await
+            .expect("polled");
+
+        assert!(backend.is_preloaded(&collection_path_a()).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_lazy_poll_stores_the_found_and_evicts_the_missing() {
+        let backend = backend_for(collection_a_loaded(
+            FirestoreCacheCollectionLoadMode::PreloadNone,
+        ));
+        for id in ["kept", "deleted", "untouched"] {
+            backend
+                .update_doc_by_path(&versioned(id, 1))
+                .await
+                .expect("a document read through the cache");
+        }
+        let server = FakeFirestore::start(|_, request| {
+            let request = BatchGetDocumentsRequest::decode(request).expect("batch request");
+            let messages = request
+                .documents
+                .into_iter()
+                .map(|name| match split_document_path(&name).1 {
+                    "deleted" => batch_get_missing_message(name),
+                    "kept" => batch_get_found_message(versioned("kept", 2)),
+                    id => batch_get_found_message(versioned(id, 1)),
+                })
+                .collect();
+            (
+                "BatchGetDocuments".to_string(),
+                FakeResponse::Paced(messages, Duration::ZERO),
+            )
+        })
+        .await;
+
+        poll_a(&backend, &server).await.expect("polled");
+
+        assert_eq!(stored_ids(&backend).await, vec!["kept", "untouched"]);
+        assert_eq!(
+            backend
+                .get_doc_by_path(&fake_document("kept").name)
+                .await
+                .unwrap(),
+            Some(versioned("kept", 2))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_polling_cache_reads_at_once_only_the_collections_it_kept_without_downloading() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let hour = Duration::from_secs(3600);
+        let server = FakeFirestore::start(|_, request| {
+            let request = RunQueryRequest::decode(request).expect("query request");
+            let Some(run_query_request::QueryType::StructuredQuery(query)) = request.query_type
+            else {
+                panic!("a structured query");
+            };
+            let collection = &query.from[0].collection_id;
+            let document = FirestoreDocument {
+                name: format!("{}/{collection}/one", request.parent),
+                ..Default::default()
+            };
+            (
+                format!("RunQuery {collection}"),
+                FakeResponse::Paced(vec![run_query_message(document)], Duration::ZERO),
+            )
+        })
+        .await;
+        let earlier_run = FirestoreCache::persistent(&server.db)
+            .data_dir(dir.path())
+            .preloaded_collection("kept")
+            .collection_with("downloaded_again", |c| c.preload_all())
+            .poll_changes(hour)
+            .build()
+            .await
+            .expect("earlier run");
+        earlier_run.shutdown().await.expect("shutdown");
+
+        let cache = FirestoreCache::persistent(&server.db)
+            .data_dir(dir.path())
+            .preloaded_collection("kept")
+            .collection_with("downloaded_again", |c| c.preload_all())
+            .preloaded_collection("downloaded")
+            .poll_changes(hour)
+            .build()
+            .await
+            .expect("cache");
+        // Two loads of `downloaded_again`, one of `downloaded`, `kept` once in each run.
+        tokio::time::timeout(Duration::from_secs(5), server.wait_for_calls(5))
+            .await
+            .expect("the kept collection was polled at once");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let calls = server.calls();
+        let reads_of = |collection: &str| {
+            calls
+                .iter()
+                .filter(|call| **call == format!("RunQuery {collection}"))
+                .count()
+        };
+        assert_eq!(
+            (
+                reads_of("kept"),
+                reads_of("downloaded_again"),
+                reads_of("downloaded")
+            ),
+            (2, 2, 1)
+        );
+        cache.shutdown().await.expect("shutdown");
     }
 }

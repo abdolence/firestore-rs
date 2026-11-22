@@ -69,6 +69,29 @@ impl FirestoreError {
         ))
     }
 
+    /// Builds the [`CacheError`](FirestoreError::CacheError) of a cache asked for something after
+    /// it was shut down.
+    #[cfg(feature = "caching")]
+    pub(crate) fn cache_shut_down() -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("CacheShutdown".into()),
+            "This cache has been shut down.".to_string(),
+        ))
+    }
+
+    /// Builds the [`CacheError`](FirestoreError::CacheError) of a cache backend that does not
+    /// support `operation`, one of the methods that change its collections at runtime.
+    #[cfg(feature = "caching")]
+    pub(crate) fn cache_dynamic_collections_unsupported(operation: &str) -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("CacheDynamicCollectionsUnsupported".into()),
+            format!(
+                "This cache backend does not support `{operation}`. Implement it on your \
+                 FirestoreCacheBackend to add and remove cached collections while the cache runs."
+            ),
+        ))
+    }
+
     /// Builds the [`DeserializeError`](FirestoreError::DeserializeError) of a value read as a
     /// [`FirestoreVector`](crate::FirestoreVector) that is not a vector.
     pub(crate) fn not_a_vector() -> Self {

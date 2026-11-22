@@ -4,10 +4,13 @@
   Firestore and cached;
 - The Firestore listener updates the cache when a document changes, whether the change came from
   your application or from elsewhere;
+- A cache built with `poll_changes` reads its collections again on an interval instead of
+  listening, see [Polling instead of listening](./polling.md);
 - Preloading at startup.
 
-Cached results are eventually consistent: they reflect the last state the listener delivered, so a
-write may take a moment to show up. Do not cache data that must be read at strong consistency.
+Cached results are eventually consistent: they reflect the last state the listener delivered, or
+the last round of polling read, so a write may take a moment to show up. Do not cache data that
+must be read at strong consistency.
 This holds for pipeline and SQL reads that the cache answers too.
 
 Firestore also reports how many documents a target matches. When that disagrees with what a

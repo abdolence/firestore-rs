@@ -2,7 +2,8 @@
 
 The library supports caching for collections and documents. A Firestore listener keeps the cache
 up to date when documents change, so updates are propagated across distributed instances
-automatically.
+automatically. A cache can also read its collections again on an interval instead, see
+[Polling instead of listening](./caching/polling.md).
 
 This avoids reading, and paying for, the same documents repeatedly. It is particularly useful for
 dictionaries, configuration and other data that changes rarely, and can reduce both cost and
@@ -116,7 +117,8 @@ collection or `documents(..)`:
 ## On the Enterprise edition
 
 The listener that keeps a cache current needs real-time updates on a database of the Enterprise
-edition. They are enabled when the database is created:
+edition. A cache that [polls](./caching/polling.md) does not. Real-time updates are
+enabled when the database is created:
 
 ```sh
 gcloud firestore databases create --database=my-database --edition=enterprise \

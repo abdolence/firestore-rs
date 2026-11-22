@@ -171,6 +171,16 @@ pub(crate) fn batch_get_found_message(document: Document) -> Vec<u8> {
     .encode_to_vec()
 }
 
+#[cfg(any(feature = "caching-memory", feature = "caching-persistent"))]
+/// A framed `BatchGetDocuments` stream message reporting the document at `document_path` missing.
+pub(crate) fn batch_get_missing_message(document_path: String) -> Vec<u8> {
+    BatchGetDocumentsResponse {
+        result: Some(batch_get_documents_response::Result::Missing(document_path)),
+        ..Default::default()
+    }
+    .encode_to_vec()
+}
+
 /// The transaction ID, as [`begin_response`] numbers them, that a `GetDocument` request reads in.
 ///
 /// Panics if the read does not belong to a transaction.

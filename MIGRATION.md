@@ -1,5 +1,35 @@
 # Migration guide
 
+## 0.67
+
+### Listener parameters move into the sync mode
+
+`FirestoreCacheOptions` loses `listener_params` and gains `sync_mode`, which says how a cache keeps its collections
+current. The listener parameters are part of `FirestoreCacheSyncMode::Listen`, so options built for
+`FirestoreCache::with_options` move them there:
+
+```rust,ignore
+// Before
+let options = FirestoreCacheOptions::new(name).with_listener_params(listener_params);
+
+// After
+let options = FirestoreCacheOptions::new(name)
+    .with_sync_mode(FirestoreCacheSyncMode::Listen(listener_params));
+```
+
+The builder's `listener_params` is unchanged.
+
+### The cache options and the sync mode are `#[non_exhaustive]`
+
+`FirestoreCacheOptions` and `FirestoreCachePollParams` cannot be written as struct expressions outside the crate:
+build them with `new` and the `with_` methods. A `match` on `FirestoreCacheSyncMode` needs a wildcard arm.
+
+### Persistent `PreloadAllDocs` collections drop deleted documents at load
+
+A persistent `PreloadAllDocs` collection removes, at load, the documents deleted while the cache was closed. A
+listening cache that holds rows from an earlier run only in such collections resumes from the load time, rather than
+from its stored resume tokens.
+
 ## 0.66
 
 ### jiff 1.0

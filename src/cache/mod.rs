@@ -3,7 +3,8 @@
 //! A cache keeps a copy of the documents you read most often, so that repeated reads are served
 //! locally instead of being charged and waited for. A Firestore listener keeps that copy current:
 //! when a document changes - from your application or anywhere else - the change is pushed to the
-//! cache, including across distributed instances.
+//! cache, including across distributed instances. A cache can also read its collections again on
+//! an interval instead, see [Polling instead of listening](#polling-instead-of-listening).
 //!
 //! Caching is opt-in through cargo features:
 //!
@@ -74,16 +75,17 @@
 //! # Consistency
 //!
 //! Cached results are **eventually consistent**. They reflect the last state the listener
-//! delivered, so a write may take a moment to appear. Cached listings are never *partial* by
-//! construction, but they are not guaranteed to be current. Do not cache data that must be read at
-//! strong consistency - read that through Firestore directly, or inside a transaction.
+//! delivered, or the last round of polling read, so a write may take a moment to appear. Cached
+//! listings are never *partial* by construction, but they are not guaranteed to be current. Do not
+//! cache data that must be read at strong consistency - read that through Firestore directly, or
+//! inside a transaction.
 //!
-//! Firestore also reports how many documents a target matches. When that disagrees with what a
-//! preloaded collection holds - which means changes were missed, typically deletes that happened
-//! while the listener was disconnected - the cache drops the collection and has Firestore replay
-//! it. The count is only compared when it can be trusted: a collection the cache expires entries
-//! from, or fills lazily, is never checked this way, because a shortfall there is the cache doing
-//! its job rather than a divergence.
+//! To a listener, Firestore also reports how many documents a target matches. When that disagrees
+//! with what a preloaded collection holds - which means changes were missed, typically deletes
+//! that happened while the listener was disconnected - the cache drops the collection and has
+//! Firestore replay it. The count is only compared when it can be trusted: a collection the cache
+//! expires entries from, or fills lazily, is never checked this way, because a shortfall there is
+//! the cache doing its job rather than a divergence.
 //!
 //! When Firestore resets or removes a listener target - after a reconnect, or when a stored resume
 //! token has expired - the cache drops what it holds for that collection and Firestore replays it.
@@ -92,6 +94,14 @@
 //! complete one. `read_through_cache` falls back to Firestore for the duration;
 //! `read_cached_only` returns a [`FirestoreError::CacheError`](crate::errors::FirestoreError::CacheError).
 //! Reads by ID are unaffected beyond behaving like a cache miss.
+//!
+//! # Polling instead of listening
+//!
+//! A cache built with [`FirestoreCacheBuilder::poll_changes`] opens no listener. One background
+//! task reads its collections again on an interval instead, for an application that does not use
+//! the listen API, or a database of the Enterprise edition created without real-time updates.
+//! [Polling instead of listening](https://firestore-rust.abdolence.dev/caching/polling.html)
+//! shows how to build one, what each round reads, and the limits of polling.
 //!
 //! # Caching named documents instead of a whole collection
 //!
@@ -146,16 +156,17 @@
 //!
 //! # Lifecycle
 //!
-//! [`FirestoreCacheBuilder::build`] creates the cache, preloads it and starts the listener. Call
-//! [`FirestoreCache::shutdown`] when you are done - it stops the listener and releases the
-//! backend's resources, dropping the cached documents and, for the persistent backend, closing its
-//! database file. Because `load` and `shutdown` take `&self`, a built cache can be shared as
-//! `Arc<FirestoreMemoryCache>` in your application state.
+//! [`FirestoreCacheBuilder::build`] creates the cache, preloads it and starts the listener or the
+//! poller. Call [`FirestoreCache::shutdown`] when you are done - it stops the listener or the
+//! poller and releases the backend's resources, dropping the cached documents and, for the
+//! persistent backend, closing its database file. Because `load` and `shutdown` take `&self`, a
+//! built cache can be shared as `Arc<FirestoreMemoryCache>` in your application state.
 //!
 //! # Custom backends
 //!
 //! To store the cache somewhere else, implement [`FirestoreCacheBackend`] and its supertrait
-//! [`FirestoreCacheDocsByPathSupport`], then construct [`FirestoreCache`] with it.
+//! [`FirestoreCacheDocsByPathSupport`], then construct [`FirestoreCache`] with it. Such a cache
+//! listens: polling is for the backends the builder creates.
 
 use crate::errors::{FirestoreCacheError, FirestoreErrorPublicGenericDetails};
 use crate::*;
@@ -242,6 +253,10 @@ pub use builder::*;
 mod backends;
 pub use backends::*;
 
+mod poller;
+pub(crate) use poller::FirestoreCachePolledBackend;
+use poller::FirestoreCachePoller;
+
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures::StreamExt;
@@ -257,9 +272,10 @@ pub(crate) use cache_pipeline_engine::{
 
 /// Manages a cache of Firestore data.
 ///
-/// `FirestoreCache` listens to changes in Firestore for specified targets and updates
-/// a cache backend accordingly. It provides methods to load initial data, manage the
-/// listener lifecycle, and access the underlying cache backend.
+/// `FirestoreCache` keeps a cache backend current, by listening to changes in Firestore or, in
+/// [`FirestoreCacheSyncMode::Poll`], by reading its collections again on an interval. It provides
+/// methods to load initial data, stop keeping the cache current, and access the underlying cache
+/// backend.
 pub struct FirestoreCache<B, LS>
 where
     B: FirestoreCacheBackend + Send + Sync + 'static,
@@ -278,11 +294,8 @@ where
     pub options: FirestoreCacheOptions,
     /// The cache backend implementation.
     pub backend: Arc<B>,
-    /// The Firestore listener for real-time updates.
-    ///
-    /// Behind a mutex so that `load`/`shutdown` can take `&self`, which lets a built cache be
-    /// shared directly as `Arc<FirestoreCache<..>>` in application state.
-    pub listener: tokio::sync::Mutex<FirestoreListener<FirestoreDb, LS>>,
+    /// What keeps the backend current.
+    pub sync: FirestoreCacheSync<LS>,
     /// A clone of the Firestore database client.
     pub db: FirestoreDb,
     /// Serialises adding and removing collections, and holds the next listener target ID to give
@@ -297,6 +310,32 @@ where
     /// reissued in this process, so a resume token that outlived its target cannot end up applied
     /// to a different query.
     pub collection_mutations: tokio::sync::Mutex<u32>,
+}
+
+enum FirestoreCacheSync<LS>
+where
+    LS: FirestoreResumeStateStorage,
+{
+    /// Behind a mutex so that `load`/`shutdown` can take `&self`, which lets a built cache be
+    /// shared directly as `Arc<FirestoreCache<..>>` in application state.
+    Listener(tokio::sync::Mutex<FirestoreListener<FirestoreDb, LS>>),
+    Poller(FirestoreCachePoller),
+}
+
+impl<LS> FirestoreCacheSync<LS>
+where
+    LS: FirestoreResumeStateStorage + Send + Sync + 'static,
+{
+    async fn listening(
+        db: &FirestoreDb,
+        listener_storage: LS,
+        listener_params: &FirestoreListenerParams,
+    ) -> FirestoreResult<Self> {
+        Ok(Self::Listener(tokio::sync::Mutex::new(
+            db.create_listener_with_params(listener_storage, listener_params.clone())
+                .await?,
+        )))
+    }
 }
 
 /// A ready-to-use in-memory cache.
@@ -417,6 +456,9 @@ where
     }
 
     /// Creates a new `FirestoreCache` with the specified options.
+    ///
+    /// Fails with [`FirestoreError::InvalidParametersError`] for options in
+    /// [`FirestoreCacheSyncMode::Poll`]: only the builder creates a cache that polls.
     #[deprecated(
         since = "0.52.0",
         note = "Use the cache builder instead: `FirestoreCache::memory(&db)` or \
@@ -436,8 +478,8 @@ where
         Self::create(options, db, backend, listener_storage).await
     }
 
-    /// Creates a cache without loading it. Shared by the builder and the deprecated
-    /// constructors, so that neither of them calls a deprecated item.
+    /// Creates a cache without loading it. The deprecated constructors share it, so that neither
+    /// of them calls a deprecated item.
     pub(crate) async fn create(
         options: FirestoreCacheOptions,
         db: &FirestoreDb,
@@ -447,28 +489,38 @@ where
     where
         B: FirestoreCacheBackend + Send + Sync + 'static,
     {
-        let listener = if let Some(ref listener_params) = options.listener_params {
-            db.create_listener_with_params(listener_storage, listener_params.clone())
-                .await?
-        } else {
-            db.create_listener(listener_storage).await?
+        let FirestoreCacheSyncMode::Listen(listener_params) = &options.sync_mode else {
+            return Err(FirestoreError::invalid_parameters(
+                "sync_mode",
+                "Only a cache built with FirestoreCache::memory or FirestoreCache::persistent can \
+                 poll.",
+            ));
         };
+        let sync = FirestoreCacheSync::listening(db, listener_storage, listener_params).await?;
+        Ok(Self::assemble(options, sync, db.clone(), Arc::new(backend)))
+    }
 
+    fn assemble(
+        options: FirestoreCacheOptions,
+        sync: FirestoreCacheSync<LS>,
+        db: FirestoreDb,
+        backend: Arc<B>,
+    ) -> Self {
         let next_listener_target = backend
             .cache_configuration()
             .max_listener_target()
             .map(|max| max.saturating_add(1))
             .unwrap_or(FIRESTORE_CACHE_DEFAULT_LISTENER_TARGET_BASE);
 
-        Ok(Self {
+        Self {
             inner: FirestoreCacheInner {
                 options,
-                backend: Arc::new(backend),
-                listener: tokio::sync::Mutex::new(listener),
-                db: db.clone(),
+                backend,
+                sync,
+                db,
                 collection_mutations: tokio::sync::Mutex::new(next_listener_target),
             },
-        })
+        }
     }
 
     /// Returns the name of this cache instance.
@@ -476,43 +528,53 @@ where
         &self.inner.options.name
     }
 
-    /// Loads initial data into the cache and starts the Firestore listener.
+    /// Loads initial data into the cache and starts keeping it current.
     ///
-    /// This method typically calls the backend's `load` method to determine which
-    /// Firestore targets to listen to, adds them to the internal listener, and then
-    /// starts the listener. The listener will then call the backend's `on_listen_event`
-    /// method for incoming changes.
+    /// This calls the backend's `load` method, which preloads the collections that ask for it and
+    /// returns the Firestore targets to listen to. A cache that listens adds them to its internal
+    /// listener and starts it, and the listener then calls the backend's `on_listen_event` for
+    /// incoming changes. A cache that [polls](FirestoreCacheSyncMode::Poll) starts its poller
+    /// instead, which reads the collections whose documents the load kept from an earlier run at
+    /// once, and every collection one interval later.
+    ///
+    /// Either kind of cache is loaded once: a second load fails once its download has finished.
     pub async fn load(&self) -> Result<(), FirestoreError> {
-        let backend_target_params = self
-            .inner
-            .backend
-            .load(&self.inner.options, &self.inner.db)
-            .await?;
+        match &self.inner.sync {
+            FirestoreCacheSync::Listener(listener) => {
+                let backend_target_params = self
+                    .inner
+                    .backend
+                    .load(&self.inner.options, &self.inner.db)
+                    .await?;
 
-        let mut listener = self.inner.listener.lock().await;
+                let mut listener = listener.lock().await;
 
-        for target_params in backend_target_params {
-            listener.add_target(target_params)?;
-        }
-
-        let handler = Arc::new(FirestoreCacheListenHandler::new(
-            self.inner.backend.clone(),
-            listener.control_handle(),
-        ));
-
-        listener
-            .start(move |event| {
-                let handler = handler.clone();
-                async move {
-                    handler.on_listen_event(event).await;
-                    Ok(())
+                for target_params in backend_target_params {
+                    listener.add_target(target_params)?;
                 }
-            })
-            .await?;
-        Ok(())
+
+                let handler = Arc::new(FirestoreCacheListenHandler::new(
+                    self.inner.backend.clone(),
+                    listener.control_handle(),
+                ));
+
+                listener
+                    .start(move |event| {
+                        let handler = handler.clone();
+                        async move {
+                            handler.on_listen_event(event).await;
+                            Ok(())
+                        }
+                    })
+                    .await
+            }
+            FirestoreCacheSync::Poller(poller) => {
+                poller.load(&self.inner.db, &self.inner.options).await
+            }
+        }
     }
 
-    /// Shuts down the Firestore listener and releases the cache backend's resources.
+    /// Stops the Firestore listener or the poller and releases the cache backend's resources.
     ///
     /// The in-memory backend drops its cached documents; the persistent backend closes its
     /// database, releasing the exclusive lock on the file so that another cache can be opened over
@@ -524,12 +586,15 @@ where
     /// `read_through_cache` falls back to Firestore. `read_cached_only` reports the miss as an
     /// error, as it does for anything else it cannot answer.
     ///
-    /// Returns the error the listener stopped with, if it stopped on its own, once the backend's
-    /// resources are released.
+    /// Returns the error the listener stopped with, if it stopped on its own, or the poller's if it
+    /// panicked, once the backend's resources are released.
     pub async fn shutdown(&self) -> Result<(), FirestoreError> {
-        let listener_stopped_with = self.inner.listener.lock().await.shutdown().await;
+        let stopped_with = match &self.inner.sync {
+            FirestoreCacheSync::Listener(listener) => listener.lock().await.shutdown().await,
+            FirestoreCacheSync::Poller(poller) => poller.shutdown().await,
+        };
         self.inner.backend.shutdown().await?;
-        listener_stopped_with
+        stopped_with
     }
 
     /// Starts caching a collection on a running cache, without rebuilding it.
@@ -537,7 +602,7 @@ where
     /// The collection is downloaded first if it is configured to be preloaded, and only becomes
     /// visible to readers once it is fully populated - so a listing never sees it half filled.
     /// The listener then picks it up from the moment the download started, so nothing written in
-    /// the meantime is missed.
+    /// the meantime is missed. A cache that polls reads it from the next round on.
     ///
     /// `FirestoreDb` handles created earlier with
     /// [`read_through_cache`](crate::FirestoreDb::read_through_cache) or
@@ -554,8 +619,9 @@ where
     /// # }
     /// ```
     ///
-    /// Returns an error if the collection is already cached, or if the backend does not support
-    /// changing its collections at runtime.
+    /// Returns an error if the collection is already cached, if the backend does not support
+    /// changing its collections at runtime, if the listener has stopped, or once the cache has been
+    /// shut down.
     pub async fn add_collection(
         &self,
         collection: FirestoreCacheCollection,
@@ -603,27 +669,30 @@ where
             .add_collection(&self.inner.options, &self.inner.db, collection_config)
             .await?;
 
-        let added = self.inner.listener.lock().await.add_target(target_params);
-        if let Err(error) = added {
-            // The backend publishes the collection before the listener accepts its target. Left
-            // there, the collection would be listable with no target keeping it current, and its
-            // removal would drop whichever target holds the same ID.
-            if let Err(removal_error) = self.inner.backend.remove_collection(&collection_path).await
-            {
-                error!(
-                    ?removal_error,
-                    collection_path,
-                    "Could not roll back a collection whose listener target was refused."
-                );
+        if let FirestoreCacheSync::Listener(listener) = &self.inner.sync {
+            let added = listener.lock().await.add_target(target_params);
+            if let Err(error) = added {
+                // The backend publishes the collection before the listener accepts its target.
+                // Left there, the collection would be listable with no target keeping it current,
+                // and its removal would drop whichever target holds the same ID.
+                if let Err(removal_error) =
+                    self.inner.backend.remove_collection(&collection_path).await
+                {
+                    error!(
+                        ?removal_error,
+                        collection_path,
+                        "Could not roll back a collection whose listener target was refused."
+                    );
+                }
+                return Err(error);
             }
-            return Err(error);
         }
 
         info!(collection_path, "Added a collection to the cache.");
         Ok(())
     }
 
-    /// Stops caching a collection, drops its documents and stops listening to it.
+    /// Stops caching a collection, drops its documents and stops listening to it or polling it.
     ///
     /// Returns `false` if the collection was not cached. Use
     /// [`remove_collection_at`](Self::remove_collection_at) for a sub-collection, whose absolute
@@ -652,12 +721,9 @@ where
             return Ok(false);
         };
 
-        self.inner
-            .listener
-            .lock()
-            .await
-            .remove_target(&target)
-            .await?;
+        if let FirestoreCacheSync::Listener(listener) = &self.inner.sync {
+            listener.lock().await.remove_target(&target).await?;
+        }
 
         info!(collection_path, "Removed a collection from the cache.");
         Ok(true)
@@ -737,7 +803,7 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
         collection_config: FirestoreCacheCollectionConfiguration,
     ) -> FirestoreResult<FirestoreListenerTargetParams> {
         let _ = (options, db, collection_config);
-        Err(cache_dynamic_collections_unsupported_error(
+        Err(FirestoreError::cache_dynamic_collections_unsupported(
             "add_collection",
         ))
     }
@@ -778,7 +844,7 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
         collection_path: &str,
     ) -> FirestoreResult<Option<FirestoreListenerTarget>> {
         let _ = collection_path;
-        Err(cache_dynamic_collections_unsupported_error(
+        Err(FirestoreError::cache_dynamic_collections_unsupported(
             "remove_collection",
         ))
     }
@@ -1020,6 +1086,10 @@ pub(crate) fn cache_target_read_time() -> FirestoreInstant {
         .unwrap_or(now)
 }
 
+/// How many documents a backend stores with one write while it downloads or polls a collection,
+/// and a poll reads with one batch get.
+pub(crate) const FIRESTORE_CACHE_DOCUMENTS_PER_CHUNK: usize = 100;
+
 /// Builds the listener target that keeps one cached collection up to date.
 ///
 /// Shared by the backends and by their runtime `add_collection`, so that a collection added later
@@ -1050,17 +1120,6 @@ pub(crate) fn target_params_for_collection(
         std::collections::HashMap::new(),
     )
     .opt_resume_type(resume_type)
-}
-
-/// Builds the error returned when a backend does not support changing its collections at runtime.
-pub(crate) fn cache_dynamic_collections_unsupported_error(operation: &str) -> FirestoreError {
-    FirestoreError::CacheError(FirestoreCacheError::new(
-        FirestoreErrorPublicGenericDetails::new("CacheDynamicCollectionsUnsupported".into()),
-        format!(
-            "This cache backend does not support `{operation}`. Implement it on your \
-             FirestoreCacheBackend to add and remove cached collections while the cache runs."
-        ),
-    ))
 }
 
 /// What a backend should do with the collections a Firestore target change affects.
@@ -1433,7 +1492,10 @@ mod add_collection_tests {
     #[tokio::test]
     async fn a_collection_whose_target_the_listener_refuses_is_not_left_cached() {
         let (_server, cache) = cache_holding_a().await;
-        cache.inner.listener.lock().await.shutdown().await.ok();
+        let FirestoreCacheSync::Listener(listener) = &cache.inner.sync else {
+            panic!("the cache listens");
+        };
+        listener.lock().await.shutdown().await.ok();
 
         let error = cache
             .add_collection(FirestoreCacheCollection::new("b").preload_all())
