@@ -31,7 +31,9 @@ pub enum FirestoreCacheSyncMode {
     /// The default.
     Listen(crate::FirestoreListenerParams),
     /// The cache reads its collections again on an interval, in one background task for the whole
-    /// cache, and opens no listener.
+    /// cache, and opens no listener. Only for a cache built with
+    /// [`FirestoreCache::memory`](crate::FirestoreCache::memory) or
+    /// [`FirestoreCache::persistent`](crate::FirestoreCache::persistent).
     Poll(FirestoreCachePollParams),
 }
 

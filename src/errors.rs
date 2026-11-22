@@ -69,6 +69,16 @@ impl FirestoreError {
         ))
     }
 
+    /// Builds the [`CacheError`](FirestoreError::CacheError) of a cache asked for something after
+    /// it was shut down.
+    #[cfg(feature = "caching")]
+    pub(crate) fn cache_shut_down() -> Self {
+        FirestoreError::CacheError(FirestoreCacheError::new(
+            FirestoreErrorPublicGenericDetails::new("CacheShutdown".into()),
+            "This cache has been shut down.".to_string(),
+        ))
+    }
+
     /// Builds the [`CacheError`](FirestoreError::CacheError) of a cache backend that does not
     /// implement `operation`, a method of [`FirestoreCacheBackend`](crate::FirestoreCacheBackend)
     /// the cache needs for what it was asked to do.

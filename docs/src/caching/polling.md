@@ -1,8 +1,8 @@
 # Polling instead of listening
 
-A cache built with `poll_changes` opens no listener. It reads its collections again on an interval,
-for an application that does not use the listen API, or an Enterprise edition database created
-without real-time updates:
+A cache built with `poll_changes`, on `FirestoreCache::memory` or `FirestoreCache::persistent`,
+opens no listener. It reads its collections again on an interval, for an application that does not
+use the listen API, or an Enterprise edition database created without real-time updates:
 
 ```rust,no_run
 # use firestore::*;

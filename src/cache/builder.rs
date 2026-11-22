@@ -6,6 +6,7 @@
 
 use crate::*;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 /// The first Firestore listener target ID assigned to cached collections.
 ///
@@ -28,7 +29,7 @@ mod sealed {
 /// [`FirestoreCacheBackend`] and construct [`FirestoreCache`] directly.
 pub trait FirestoreCacheBackendKind: sealed::Sealed + Sized {
     /// The backend this kind builds.
-    type Backend: FirestoreCacheBackend + Send + Sync + 'static;
+    type Backend: FirestoreCacheBackend + FirestoreCachePolledBackend + Send + Sync + 'static;
     /// Backend-specific tuning options.
     type Options: Default;
     /// The listener state storage used unless overridden.
@@ -434,7 +435,8 @@ where
     /// listening to them.
     ///
     /// One background task reads every collection of the cache in turn, whatever their number:
-    /// see [`FirestoreCacheBackend::poll_collection`] for what it reads. A zero `interval`, or
+    /// see [Polling instead of listening](https://firestore-rust.abdolence.dev/caching/polling.html)
+    /// for what it reads. A zero `interval`, or
     /// [`listener_params`](Self::listener_params) on the same builder, makes
     /// [`build`](Self::build) fail with [`FirestoreError::InvalidParametersError`].
     ///
@@ -518,6 +520,16 @@ where
                 (None, Some(poll_params)) => FirestoreCacheSyncMode::Poll(poll_params),
             };
 
+        // Before the backend is created, so that a refused cache leaves no database file behind.
+        if let FirestoreCacheSyncMode::Poll(poll_params) = &sync_mode {
+            if poll_params.interval.is_zero() {
+                return Err(FirestoreError::invalid_parameters(
+                    "interval",
+                    "The interval between two polls of a cache must not be zero.",
+                ));
+            }
+        }
+
         let config = build_configuration(
             self.db.get_documents_path(),
             self.listener_target_base,
@@ -530,10 +542,22 @@ where
             .unwrap_or_else(|| FirestoreCacheName::new(FIRESTORE_CACHE_DEFAULT_NAME.to_string()));
         let options = FirestoreCacheOptions::new(name).with_sync_mode(sync_mode);
 
-        let sync = super::FirestoreCacheSync::new(&options, &self.db, self.storage).await?;
-        let backend = K::create_backend(self.backend_options, config)?;
+        let db = self.db.clone_reading_latest();
+        let backend = Arc::new(K::create_backend(self.backend_options, config)?);
+        let sync = match &options.sync_mode {
+            FirestoreCacheSyncMode::Listen(listener_params) => {
+                super::FirestoreCacheSync::listening(&db, self.storage, listener_params).await?
+            }
+            FirestoreCacheSyncMode::Poll(poll_params) => {
+                super::FirestoreCacheSync::Poller(super::FirestoreCachePoller::new(
+                    options.name.clone(),
+                    poll_params,
+                    backend.clone(),
+                ))
+            }
+        };
 
-        FirestoreCache::assemble(options, sync, &self.db, backend)
+        Ok(FirestoreCache::assemble(options, sync, db, backend))
     }
 }
 

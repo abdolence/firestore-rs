@@ -233,11 +233,7 @@ impl FirestoreMemoryCacheBackend {
 
     fn ensure_open(&self) -> FirestoreResult<()> {
         if self.is_shut_down() {
-            return Err(FirestoreError::CacheError(FirestoreCacheError::new(
-                FirestoreErrorPublicGenericDetails::new("CacheShutdown".into()),
-                "This in-memory cache has been shut down and no longer holds its documents."
-                    .to_string(),
-            )));
+            return Err(FirestoreError::cache_shut_down());
         }
         Ok(())
     }
@@ -388,12 +384,11 @@ impl FirestoreMemoryCacheBackend {
             let document_id = split_document_path(&document.name).1.to_string();
             match cached_versions.get(&document_id) {
                 None => created.push((document_id.clone(), document)),
-                Some(cached_version)
-                    if is_later_version(document.update_time.as_ref(), cached_version.as_ref()) =>
-                {
-                    store_polled(mem_cache, document_id.clone(), document).await
+                Some(cached_version) => {
+                    if is_later_version(document.update_time.as_ref(), cached_version.as_ref()) {
+                        store_polled(mem_cache, document_id.clone(), document).await;
+                    }
                 }
-                Some(_) => {}
             }
             read_ids.insert(document_id);
         }
@@ -418,19 +413,17 @@ impl FirestoreMemoryCacheBackend {
         cached_versions: &HashMap<String, Option<Timestamp>>,
         document_ids: Vec<String>,
     ) -> FirestoreResult<()> {
-        for chunk in document_ids.chunks(FIRESTORE_CACHE_POLL_CHUNK_SIZE) {
+        for chunk in document_ids.chunks(FIRESTORE_CACHE_DOCUMENTS_PER_CHUNK) {
             let mut documents = collection_config.read_documents(db, chunk.to_vec()).await?;
             while let Some((document_id, document)) = documents.try_next().await? {
                 let cached_version = cached_versions.get(&document_id);
                 match document {
-                    Some(document)
-                        if cached_version.is_none_or(|cached_version| {
-                            is_later_version(document.update_time.as_ref(), cached_version.as_ref())
-                        }) =>
-                    {
-                        store_polled(mem_cache, document_id, document).await
+                    Some(document) => {
+                        let cached_update_time = cached_version.and_then(Option::as_ref);
+                        if is_later_version(document.update_time.as_ref(), cached_update_time) {
+                            store_polled(mem_cache, document_id, document).await;
+                        }
                     }
-                    Some(_) => {}
                     None => {
                         if let Some(cached_version) = cached_version {
                             evict_polled(mem_cache, &document_id, *cached_version).await;
@@ -655,61 +648,6 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         Ok((count < self.max_capacity).then_some(count))
     }
 
-    fn supports_polling(&self) -> bool {
-        true
-    }
-
-    async fn poll_collection(
-        &self,
-        db: &FirestoreDb,
-        collection_path: &str,
-    ) -> FirestoreResult<()> {
-        self.ensure_open()?;
-        let config = self.config();
-        let (Some(collection_config), Some(mem_cache)) = (
-            config.collections.get(collection_path),
-            self.collection_cache(collection_path),
-        ) else {
-            return Ok(());
-        };
-
-        // Taken before anything is read from Firestore, by iterating, which resets no document's
-        // idle time. A document the read misses is removed only while it still holds the version
-        // recorded here.
-        let cached_versions: HashMap<String, Option<Timestamp>> = mem_cache
-            .iter()
-            .map(|(document_id, document)| (document_id.to_string(), document.update_time))
-            .collect();
-
-        match collection_config.poll_read() {
-            FirestoreCachePollRead::Collection => {
-                let documents = collection_config.read_all_documents(db).await?;
-                Self::reconcile_collection(&mem_cache, &cached_versions, documents).await
-            }
-            FirestoreCachePollRead::WatchedDocuments(document_ids) => {
-                Self::reconcile_documents(
-                    db,
-                    collection_config,
-                    &mem_cache,
-                    &cached_versions,
-                    document_ids.to_vec(),
-                )
-                .await
-            }
-            FirestoreCachePollRead::CachedDocuments => {
-                let document_ids = cached_versions.keys().cloned().collect();
-                Self::reconcile_documents(
-                    db,
-                    collection_config,
-                    &mem_cache,
-                    &cached_versions,
-                    document_ids,
-                )
-                .await
-            }
-        }
-    }
-
     async fn shutdown(&self) -> Result<(), FirestoreError> {
         // Handles to the backend outlive the cache - `read_through_cache` clones one into every
         // `FirestoreDb` it is attached to - so releasing the documents here rather than waiting to
@@ -804,6 +742,74 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
                 Ok(())
             }
         }
+    }
+}
+
+#[async_trait]
+impl FirestoreCachePolledBackend for FirestoreMemoryCacheBackend {
+    /// An in-memory cache starts empty, so its load keeps no documents.
+    async fn load_for_polling(
+        &self,
+        options: &FirestoreCacheOptions,
+        db: &FirestoreDb,
+    ) -> FirestoreResult<Vec<String>> {
+        self.load(options, db).await?;
+        Ok(Vec::new())
+    }
+
+    async fn poll_collection(
+        &self,
+        db: &FirestoreDb,
+        collection_path: &str,
+    ) -> FirestoreResult<()> {
+        self.ensure_open()?;
+        // Read together: `add_collection` publishes a cache before its configuration, and
+        // `remove_collection` drops the configuration before the cache, so a configuration read
+        // under its lock belongs to the cache read beside it, never to one added since.
+        let (collection_config, mem_cache) = {
+            let config = self
+                .config
+                .read()
+                .expect("cache configuration lock poisoned");
+            let caches = self
+                .collection_caches
+                .read()
+                .expect("cache collections lock poisoned");
+            match (
+                config.collections.get(collection_path),
+                caches.get(collection_path),
+            ) {
+                (Some(collection_config), Some(mem_cache)) => {
+                    (collection_config.clone(), mem_cache.clone())
+                }
+                _ => return Ok(()),
+            }
+        };
+
+        // Taken before anything is read from Firestore, by iterating, which resets no document's
+        // idle time. A document the read misses is removed only while it still holds the version
+        // recorded here.
+        let cached_versions: HashMap<String, Option<Timestamp>> = mem_cache
+            .iter()
+            .map(|(document_id, document)| (document_id.to_string(), document.update_time))
+            .collect();
+
+        let document_ids = match collection_config.poll_read() {
+            FirestoreCachePollRead::Collection => {
+                let documents = collection_config.read_all_documents(db).await?;
+                return Self::reconcile_collection(&mem_cache, &cached_versions, documents).await;
+            }
+            FirestoreCachePollRead::WatchedDocuments(document_ids) => document_ids.to_vec(),
+            FirestoreCachePollRead::CachedDocuments => cached_versions.keys().cloned().collect(),
+        };
+        Self::reconcile_documents(
+            db,
+            &collection_config,
+            &mem_cache,
+            &cached_versions,
+            document_ids,
+        )
+        .await
     }
 }
 

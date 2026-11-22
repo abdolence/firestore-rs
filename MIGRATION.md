@@ -1,5 +1,40 @@
 # Migration guide
 
+## 0.67
+
+### Listener parameters move into the sync mode
+
+`FirestoreCacheOptions` loses `listener_params` and gains `sync_mode`, which says how a cache keeps its collections
+current. The listener parameters are part of `FirestoreCacheSyncMode::Listen`, so options built for
+`FirestoreCache::with_options` move them there:
+
+```rust,ignore
+// Before
+let options = FirestoreCacheOptions::new(name).with_listener_params(listener_params);
+
+// After
+let options = FirestoreCacheOptions::new(name)
+    .with_sync_mode(FirestoreCacheSyncMode::Listen(listener_params));
+```
+
+The builder's `listener_params` is unchanged.
+
+### `FirestoreCacheOptions` and `FirestoreCachePollParams` are `#[non_exhaustive]`
+
+Neither can be written as a struct expression outside the crate. Build them with `new` and the `with_` methods.
+
+### `CacheDynamicCollectionsUnsupported` is `CacheBackendUnsupported`
+
+The `CacheError` of a backend that does not implement `add_collection` or `remove_collection` has the code
+`CacheBackendUnsupported`, where it had `CacheDynamicCollectionsUnsupported`. Code that matches on the code moves to
+the new one.
+
+### Polling needs the builder
+
+A cache that polls, with `FirestoreCacheSyncMode::Poll`, is built with `FirestoreCache::memory` or
+`FirestoreCache::persistent` and `poll_changes`. `FirestoreCache::new` and `FirestoreCache::with_options` refuse options
+that poll with an `InvalidParametersError`, so a cache over a custom backend keeps a listener.
+
 ## 0.66
 
 ### jiff 1.0

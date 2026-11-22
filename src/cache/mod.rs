@@ -178,10 +178,8 @@
 //! # Custom backends
 //!
 //! To store the cache somewhere else, implement [`FirestoreCacheBackend`] and its supertrait
-//! [`FirestoreCacheDocsByPathSupport`], then construct [`FirestoreCache`] with it. To poll, the
-//! backend implements [`FirestoreCacheBackend::cache_configuration`],
-//! [`FirestoreCacheBackend::poll_collection`] and [`FirestoreCacheBackend::supports_polling`], and
-//! [`FirestoreCacheOptions::sync_mode`] chooses [`FirestoreCacheSyncMode::Poll`].
+//! [`FirestoreCacheDocsByPathSupport`], then construct [`FirestoreCache`] with it. Such a cache
+//! listens: polling is for the backends the builder creates.
 
 use crate::errors::{FirestoreCacheError, FirestoreErrorPublicGenericDetails};
 use crate::*;
@@ -269,6 +267,7 @@ mod backends;
 pub use backends::*;
 
 mod poller;
+pub(crate) use poller::FirestoreCachePolledBackend;
 use poller::FirestoreCachePoller;
 
 use async_trait::async_trait;
@@ -340,24 +339,15 @@ impl<LS> FirestoreCacheSync<LS>
 where
     LS: FirestoreResumeStateStorage + Send + Sync + 'static,
 {
-    /// Refuses a poll interval of zero. The builder calls this before it creates the backend,
-    /// so that a refused cache leaves no database file behind.
-    async fn new(
-        options: &FirestoreCacheOptions,
+    async fn listening(
         db: &FirestoreDb,
         listener_storage: LS,
+        listener_params: &FirestoreListenerParams,
     ) -> FirestoreResult<Self> {
-        Ok(match &options.sync_mode {
-            FirestoreCacheSyncMode::Listen(listener_params) => {
-                Self::Listener(tokio::sync::Mutex::new(
-                    db.create_listener_with_params(listener_storage, listener_params.clone())
-                        .await?,
-                ))
-            }
-            FirestoreCacheSyncMode::Poll(params) => {
-                Self::Poller(FirestoreCachePoller::new(options.name.clone(), params)?)
-            }
-        })
+        Ok(Self::Listener(tokio::sync::Mutex::new(
+            db.create_listener_with_params(listener_storage, listener_params.clone())
+                .await?,
+        )))
     }
 }
 
@@ -479,6 +469,9 @@ where
     }
 
     /// Creates a new `FirestoreCache` with the specified options.
+    ///
+    /// Fails with [`FirestoreError::InvalidParametersError`] for options in
+    /// [`FirestoreCacheSyncMode::Poll`]: only the builder creates a cache that polls.
     #[deprecated(
         since = "0.52.0",
         note = "Use the cache builder instead: `FirestoreCache::memory(&db)` or \
@@ -509,40 +502,41 @@ where
     where
         B: FirestoreCacheBackend + Send + Sync + 'static,
     {
-        let sync = FirestoreCacheSync::new(&options, db, listener_storage).await?;
-        Self::assemble(options, sync, db, backend)
+        let FirestoreCacheSyncMode::Listen(listener_params) = &options.sync_mode else {
+            return Err(FirestoreError::invalid_parameters(
+                "sync_mode",
+                "Only a cache built with FirestoreCache::memory or FirestoreCache::persistent can \
+                 poll.",
+            ));
+        };
+        let db = db.clone_reading_latest();
+        let sync = FirestoreCacheSync::listening(&db, listener_storage, listener_params).await?;
+        Ok(Self::assemble(options, sync, db, Arc::new(backend)))
     }
 
-    /// Fails for a polling cache over a backend that cannot poll, before anything reads Firestore.
-    ///
-    /// The cache reads through its own handle with the caller's session cache and consistency
-    /// selector left out: a poll or a preload that went through another cache, or read at a fixed
-    /// time, would never see a change.
+    /// `db` reads Firestore itself at its latest state: a poll or a preload that went through
+    /// another cache, or read at a fixed time, would never see a change.
     fn assemble(
         options: FirestoreCacheOptions,
         sync: FirestoreCacheSync<LS>,
-        db: &FirestoreDb,
-        backend: B,
-    ) -> FirestoreResult<Self> {
-        if matches!(sync, FirestoreCacheSync::Poller(_)) && !backend.supports_polling() {
-            return Err(FirestoreError::cache_backend_unsupported("poll_collection"));
-        }
-
+        db: FirestoreDb,
+        backend: Arc<B>,
+    ) -> Self {
         let next_listener_target = backend
             .cache_configuration()
             .max_listener_target()
             .map(|max| max.saturating_add(1))
             .unwrap_or(FIRESTORE_CACHE_DEFAULT_LISTENER_TARGET_BASE);
 
-        Ok(Self {
+        Self {
             inner: FirestoreCacheInner {
                 options,
-                backend: Arc::new(backend),
+                backend,
                 sync,
-                db: db.clone_reading_latest(),
+                db,
                 collection_mutations: tokio::sync::Mutex::new(next_listener_target),
             },
-        })
+        }
     }
 
     /// Returns the name of this cache instance.
@@ -555,8 +549,10 @@ where
     /// This calls the backend's `load` method, which preloads the collections that ask for it and
     /// returns the Firestore targets to listen to. A cache that listens adds them to its internal
     /// listener and starts it, and the listener then calls the backend's `on_listen_event` for
-    /// incoming changes. A cache that [polls](FirestoreCacheSyncMode::Poll) ignores the targets and
-    /// starts its poller, whose first round starts one interval later.
+    /// incoming changes. A cache that [polls](FirestoreCacheSyncMode::Poll) starts its poller
+    /// instead, which reads the collections whose documents the load kept from an earlier run at
+    /// once, and every collection one interval later. A polling cache is loaded once, and a
+    /// `shutdown` stops a load in progress.
     pub async fn load(&self) -> Result<(), FirestoreError> {
         match &self.inner.sync {
             FirestoreCacheSync::Listener(listener) => {
@@ -588,9 +584,7 @@ where
                     .await
             }
             FirestoreCacheSync::Poller(poller) => {
-                poller
-                    .load(&self.inner.backend, &self.inner.db, &self.inner.options)
-                    .await
+                poller.load(&self.inner.db, &self.inner.options).await
             }
         }
     }
@@ -685,31 +679,34 @@ where
             return Err(FirestoreError::collection_already_cached(&collection_path));
         }
 
-        let target_params = self
-            .inner
-            .backend
-            .add_collection(&self.inner.options, &self.inner.db, collection_config)
-            .await?;
-
-        let kept_current = match &self.inner.sync {
+        let add = self.inner.backend.add_collection(
+            &self.inner.options,
+            &self.inner.db,
+            collection_config,
+        );
+        match &self.inner.sync {
             FirestoreCacheSync::Listener(listener) => {
-                listener.lock().await.add_target(target_params)
+                let target_params = add.await?;
+                let added = listener.lock().await.add_target(target_params);
+                if let Err(error) = added {
+                    // The backend publishes the collection before the listener accepts its
+                    // target. Left there, the collection would be listable with no target keeping
+                    // it current, and its removal would drop whichever target holds the same ID.
+                    if let Err(removal_error) =
+                        self.inner.backend.remove_collection(&collection_path).await
+                    {
+                        error!(
+                            ?removal_error,
+                            collection_path,
+                            "Could not roll back a collection whose listener target was refused."
+                        );
+                    }
+                    return Err(error);
+                }
             }
-            FirestoreCacheSync::Poller(poller) => poller.accepts_collections().await,
-        };
-        if let Err(error) = kept_current {
-            // The backend publishes the collection before the listener accepts its target or the
-            // poller is found running. Left there, the collection would be listable with nothing
-            // keeping it current, and with a listener its removal would drop whichever target
-            // holds the same ID.
-            if let Err(removal_error) = self.inner.backend.remove_collection(&collection_path).await
-            {
-                error!(
-                    ?removal_error,
-                    collection_path, "Could not roll back a collection nothing would keep current."
-                );
+            FirestoreCacheSync::Poller(poller) => {
+                poller.add_collection(add).await?;
             }
-            return Err(error);
         }
 
         info!(collection_path, "Added a collection to the cache.");
@@ -869,54 +866,6 @@ pub trait FirestoreCacheBackend: FirestoreCacheDocsByPathSupport {
         Err(FirestoreError::cache_backend_unsupported(
             "remove_collection",
         ))
-    }
-
-    /// Whether the backend implements [`poll_collection`](Self::poll_collection), so that a cache
-    /// in [`FirestoreCacheSyncMode::Poll`] can use it. A polling cache over a backend that
-    /// answers `false`, the default, fails to be created.
-    ///
-    /// A backend that answers `true` also implements
-    /// [`cache_configuration`](Self::cache_configuration): the poller reads its collections from
-    /// it every round, and the default empty configuration would have it read none.
-    fn supports_polling(&self) -> bool {
-        false
-    }
-
-    /// Whether the last [`load`](Self::load) kept documents of a collection from before it ran,
-    /// without reading them from Firestore, as a persistent backend keeps a collection an earlier
-    /// run downloaded. A polling cache reads such a collection as soon as it loads, rather than
-    /// one interval later. The default answers `false`.
-    fn kept_documents_at_load(&self, collection_path: &str) -> bool {
-        let _ = collection_path;
-        false
-    }
-
-    /// Reads one cached collection from Firestore again and brings the backend's copy in line with
-    /// it. A cache in [`FirestoreCacheSyncMode::Poll`] calls this for each of its collections
-    /// every round, one collection at a time.
-    ///
-    /// What is read depends on the collection's configuration:
-    ///
-    /// - a collection watched by document ID: those documents;
-    /// - any other preloaded collection: all its documents, and the backend removes the ones the
-    ///   read did not return;
-    /// - any other collection: the documents the backend holds, so that polling never fills a
-    ///   lazily filled collection further.
-    ///
-    /// A document present before and after stays readable throughout. The backend stores a
-    /// document only over an earlier version or none, and removes one the read did not return only
-    /// while it still holds the version it held before the read, so that a version a read through
-    /// the cache stored in the meantime survives. On an error the backend keeps what it holds and
-    /// returns the error; the next round reads the collection again. A collection the backend does
-    /// not cache is left alone. The default reports that the backend does not support polling; see
-    /// [`supports_polling`](Self::supports_polling).
-    async fn poll_collection(
-        &self,
-        db: &FirestoreDb,
-        collection_path: &str,
-    ) -> FirestoreResult<()> {
-        let _ = (db, collection_path);
-        Err(FirestoreError::cache_backend_unsupported("poll_collection"))
     }
 }
 
@@ -1156,8 +1105,9 @@ pub(crate) fn cache_target_read_time() -> FirestoreInstant {
         .unwrap_or(now)
 }
 
-/// How many documents a poll reads with one batch get, and stores with one write.
-pub(crate) const FIRESTORE_CACHE_POLL_CHUNK_SIZE: usize = 100;
+/// How many documents a backend stores with one write while it downloads or polls a collection,
+/// and a poll reads with one batch get.
+pub(crate) const FIRESTORE_CACHE_DOCUMENTS_PER_CHUNK: usize = 100;
 
 /// Whether `read`, the `update_time` of a document a poll read, names a later version than
 /// `cached`, that of the version the cache holds. A poll stores only a later version, so that it

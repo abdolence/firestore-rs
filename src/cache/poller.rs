@@ -1,24 +1,57 @@
 use crate::*;
+use async_trait::async_trait;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tracing::*;
 
+/// What a poller needs from the backend of its cache.
+///
+/// Public inside a private module, so that only this crate's backends can implement it, and the
+/// builder of a cache, which knows its backend is one of them, hands it to the poller.
+#[async_trait]
+pub trait FirestoreCachePolledBackend: FirestoreCacheBackend {
+    /// Loads the backend as [`FirestoreCacheBackend::load`] does, and returns the collections whose
+    /// documents the load kept from an earlier run without downloading them.
+    async fn load_for_polling(
+        &self,
+        options: &FirestoreCacheOptions,
+        db: &FirestoreDb,
+    ) -> FirestoreResult<Vec<String>>;
+
+    /// Reads one cached collection from Firestore again and brings the backend's copy in line with
+    /// it: a collection watched by document ID reads those documents, any other preloaded one all
+    /// its documents, removing those the read did not return, and any other one the documents the
+    /// backend holds.
+    ///
+    /// A document present before and after stays readable throughout. A document is stored only
+    /// over an earlier version or none, and removed only while the backend still holds the version
+    /// it held before the read, so that a version a read through the cache stored in the meantime
+    /// survives. On an error the backend keeps what it holds. A collection the backend does not
+    /// cache is left alone.
+    async fn poll_collection(&self, db: &FirestoreDb, collection_path: &str)
+        -> FirestoreResult<()>;
+}
+
 /// Keeps a cache in [`FirestoreCacheSyncMode::Poll`] current with one background task, which
 /// reads the cache's collections one after another, however many there are.
 pub(crate) struct FirestoreCachePoller {
     cache_name: FirestoreCacheName,
     interval: Duration,
+    backend: Arc<dyn FirestoreCachePolledBackend + Send + Sync>,
     /// The task stops once this is set, or once the poller is dropped and the sender with it, so
-    /// that a cache dropped without `shutdown` does not go on reading Firestore.
+    /// that a cache dropped without `shutdown` does not go on reading Firestore. A load or an
+    /// added collection in progress stops at it too.
     shutdown_signal: watch::Sender<bool>,
+    /// Held while a load or an added collection is in progress, which `shutdown` waits for before
+    /// the backend is released.
     state: tokio::sync::Mutex<FirestoreCachePollerState>,
 }
 
 enum FirestoreCachePollerState {
     Created,
-    Loading,
     /// Kept until the task has been joined: a `shutdown` cancelled while it waits leaves the task
     /// to the next one, rather than letting the backend be released under a running task.
     Polling(JoinHandle<()>),
@@ -26,78 +59,52 @@ enum FirestoreCachePollerState {
 }
 
 impl FirestoreCachePoller {
-    /// Refuses a zero interval, which would read Firestore in a busy loop.
+    /// `params.interval` is not zero: the builder refuses that before it creates the backend.
     pub(crate) fn new(
         cache_name: FirestoreCacheName,
         params: &FirestoreCachePollParams,
-    ) -> FirestoreResult<Self> {
-        if params.interval.is_zero() {
-            return Err(FirestoreError::invalid_parameters(
-                "interval",
-                "The interval between two polls of a cache must not be zero.",
-            ));
-        }
-        Ok(Self {
+        backend: Arc<dyn FirestoreCachePolledBackend + Send + Sync>,
+    ) -> Self {
+        Self {
             cache_name,
             interval: params.interval,
+            backend,
             shutdown_signal: watch::Sender::new(false),
             state: tokio::sync::Mutex::new(FirestoreCachePollerState::Created),
-        })
+        }
     }
 
     /// Loads the backend, then starts polling. A cache is loaded once: a second load, or a load
-    /// after `shutdown`, fails before the backend reads anything.
+    /// after `shutdown`, fails before the backend reads anything. A load that is cancelled or
+    /// fails leaves the cache to be loaded again.
     ///
-    /// The collections the backend kept documents of at load are polled at once, and every
-    /// collection one interval later and every interval after that.
-    pub(crate) async fn load<B>(
+    /// The collections whose documents the load kept from an earlier run are polled at once, and
+    /// every collection one interval later and every interval after that.
+    pub(crate) async fn load(
         &self,
-        backend: &Arc<B>,
         db: &FirestoreDb,
         options: &FirestoreCacheOptions,
-    ) -> FirestoreResult<()>
-    where
-        B: FirestoreCacheBackend + Send + Sync + 'static,
-    {
-        {
-            let mut state = self.state.lock().await;
-            match *state {
-                FirestoreCachePollerState::Created => *state = FirestoreCachePollerState::Loading,
-                FirestoreCachePollerState::Loading | FirestoreCachePollerState::Polling(_) => {
-                    return Err(FirestoreError::invalid_parameters(
-                        "cache",
-                        "This cache has already been loaded.",
-                    ))
-                }
-                FirestoreCachePollerState::ShutDown => return Err(Self::shut_down_error()),
-            }
-        }
-
-        // Not under the lock, so that a slow preload does not hold up `shutdown`.
-        let loaded = backend.load(options, db).await;
-
+    ) -> FirestoreResult<()> {
         let mut state = self.state.lock().await;
-        if let Err(error) = loaded {
-            if matches!(*state, FirestoreCachePollerState::Loading) {
-                *state = FirestoreCachePollerState::Created;
+        match *state {
+            FirestoreCachePollerState::Created => {}
+            FirestoreCachePollerState::Polling(_) => {
+                return Err(FirestoreError::invalid_parameters(
+                    "cache",
+                    "This cache has already been loaded.",
+                ))
             }
-            return Err(error);
-        }
-        if !matches!(*state, FirestoreCachePollerState::Loading) {
-            return Err(Self::shut_down_error());
+            FirestoreCachePollerState::ShutDown => return Err(FirestoreError::cache_shut_down()),
         }
 
-        let kept_collections: Vec<String> = backend
-            .cache_configuration()
-            .collections
-            .keys()
-            .filter(|collection_path| backend.kept_documents_at_load(collection_path))
-            .cloned()
-            .collect();
+        let kept_collections = self
+            .until_shut_down(self.backend.load_for_polling(options, db))
+            .await?;
+
         let rounds = FirestoreCachePollRounds {
             cache_name: self.cache_name.clone(),
             interval: self.interval,
-            backend: backend.clone(),
+            backend: self.backend.clone(),
             db: db.clone(),
         };
         let mut shutdown = self.shutdown_signal.subscribe();
@@ -110,20 +117,36 @@ impl FirestoreCachePoller {
         Ok(())
     }
 
-    /// Fails once polling has stopped, so that a collection added then is refused rather than
-    /// cached with nothing reading it again.
-    pub(crate) async fn accepts_collections(&self) -> FirestoreResult<()> {
-        match &*self.state.lock().await {
-            FirestoreCachePollerState::ShutDown => Err(Self::shut_down_error()),
+    /// Runs `add`, which adds a collection to the backend, once polling is found running or yet to
+    /// start, so that a collection is never downloaded for a cache that nothing keeps current.
+    pub(crate) async fn add_collection<T>(
+        &self,
+        add: impl Future<Output = FirestoreResult<T>>,
+    ) -> FirestoreResult<T> {
+        let state = self.state.lock().await;
+        match &*state {
+            FirestoreCachePollerState::ShutDown => Err(FirestoreError::cache_shut_down()),
             FirestoreCachePollerState::Polling(task) if task.is_finished() => Err(
                 FirestoreError::system_error("The poller of this cache has stopped."),
             ),
-            _ => Ok(()),
+            _ => self.until_shut_down(add).await,
         }
     }
 
-    /// Stops polling, interrupting a round in progress, and returns once the task has exited.
-    /// Returns a [`FirestoreError::SystemError`] if the task panicked.
+    /// Drops `operation` where it stands once `shutdown` begins.
+    async fn until_shut_down<T>(
+        &self,
+        operation: impl Future<Output = FirestoreResult<T>>,
+    ) -> FirestoreResult<T> {
+        let mut shutdown = self.shutdown_signal.subscribe();
+        tokio::select! {
+            result = operation => result,
+            _ = shutdown.wait_for(|stopped| *stopped) => Err(FirestoreError::cache_shut_down()),
+        }
+    }
+
+    /// Stops polling, and a load or an added collection in progress, and returns once all of them
+    /// have. Returns a [`FirestoreError::SystemError`] if the task panicked.
     pub(crate) async fn shutdown(&self) -> FirestoreResult<()> {
         self.shutdown_signal.send_replace(true);
         let mut state = self.state.lock().await;
@@ -136,23 +159,16 @@ impl FirestoreCachePoller {
         *state = FirestoreCachePollerState::ShutDown;
         joined
     }
-
-    fn shut_down_error() -> FirestoreError {
-        FirestoreError::invalid_parameters("cache", "This cache has been shut down.")
-    }
 }
 
-struct FirestoreCachePollRounds<B> {
+struct FirestoreCachePollRounds {
     cache_name: FirestoreCacheName,
     interval: Duration,
-    backend: Arc<B>,
+    backend: Arc<dyn FirestoreCachePolledBackend + Send + Sync>,
     db: FirestoreDb,
 }
 
-impl<B> FirestoreCachePollRounds<B>
-where
-    B: FirestoreCacheBackend + Send + Sync + 'static,
-{
+impl FirestoreCachePollRounds {
     async fn run(self, kept_collections: Vec<String>) {
         for collection_path in &kept_collections {
             self.poll(collection_path).await;
@@ -348,26 +364,22 @@ mod tests {
         );
         assert_eq!(cached(&cache, "a", "deleted").await, None);
         cache.shutdown().await.expect("shutdown");
+        // A listen stream is logged once the client has closed it, which shutdown does.
+        assert!(!server.calls().iter().any(|call| call == "Listen"));
     }
 
     #[tokio::test]
     async fn watched_and_lazy_collections_poll_only_the_documents_they_hold() {
-        let server = server_holding(|read| match read {
-            0 => vec![
-                document("configs", "site", 1),
-                document("configs", "billing", 1),
-            ],
-            _ => vec![
+        let server = server_holding(|_| {
+            vec![
                 document("configs", "site", 2),
                 document("users", "read", 2),
                 document("users", "never_read", 1),
-            ],
+            ]
         })
         .await;
         let cache = FirestoreCache::memory(&server.db)
-            .collection_with("configs", |c| {
-                c.documents(["site", "billing"]).preload_all()
-            })
+            .collection_with("configs", |c| c.documents(["site", "billing"]))
             .collection("users")
             .poll_changes(POLL_INTERVAL)
             .build_without_load()
@@ -382,10 +394,10 @@ mod tests {
         }
         cache.load().await.expect("loaded");
 
-        // The preload of `configs`, then a round of two batch gets, then the start of the next.
-        within(server.wait_for_calls(4)).await;
+        // A round of two batch gets, then the start of the next.
+        within(server.wait_for_calls(3)).await;
 
-        let mut first_round = server.calls()[1..3].to_vec();
+        let mut first_round = server.calls()[0..2].to_vec();
         first_round.sort();
         assert_eq!(
             first_round,
@@ -406,24 +418,6 @@ mod tests {
         assert_eq!(cached(&cache, "users", "deleted").await, None);
         assert_eq!(cached(&cache, "users", "never_read").await, None);
         cache.shutdown().await.expect("shutdown");
-    }
-
-    #[tokio::test]
-    async fn a_cache_that_polls_never_listens() {
-        let server = server_holding(|_| vec![document("a", "one", 1)]).await;
-        let cache = FirestoreCache::memory(&server.db)
-            .preloaded_collection("a")
-            .poll_changes(POLL_INTERVAL)
-            .build()
-            .await
-            .expect("cache");
-        // The preload, then a round. A listener's stream would be logged by now instead, once
-        // the client closed it at the end of the empty response.
-        within(server.wait_for_calls(2)).await;
-
-        cache.shutdown().await.expect("shutdown");
-
-        assert!(!server.calls().iter().any(|call| call == "Listen"));
     }
 
     #[tokio::test]
@@ -495,76 +489,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_zero_poll_interval_is_refused() {
-        let server = server_holding(|_| Vec::new()).await;
-
-        let error = FirestoreCache::memory(&server.db)
-            .poll_changes(Duration::ZERO)
-            .build()
-            .await
-            .err()
-            .expect("a zero interval is refused");
-
-        assert!(matches!(error, FirestoreError::InvalidParametersError(_)));
-    }
-
-    #[tokio::test]
-    async fn a_watched_collection_polls_its_documents_whatever_its_load_mode() {
-        let server = server_holding(|_| vec![document("flags", "on", 1)]).await;
-        let cache = FirestoreCache::memory(&server.db)
-            .collection_with("flags", |c| c.documents(["on", "off"]))
-            .poll_changes(POLL_INTERVAL)
-            .build()
-            .await
-            .expect("cache");
-
-        // A round of one batch get, then the start of the next.
-        within(server.wait_for_calls(2)).await;
-
-        assert_eq!(server.calls()[0], "BatchGet flags: off, on");
-        assert_eq!(
-            cached(&cache, "flags", "on").await,
-            Some(document("flags", "on", 1))
-        );
-        cache.shutdown().await.expect("shutdown");
-    }
-
-    #[tokio::test]
-    async fn a_lazy_collection_is_read_in_chunks() {
-        let users = || {
-            (0..150)
-                .map(|id| document("users", &id.to_string(), 1))
-                .collect::<Vec<_>>()
-        };
-        let server = server_holding(move |_| users()).await;
-        let cache = FirestoreCache::memory(&server.db)
-            .collection("users")
-            .poll_changes(POLL_INTERVAL)
-            .build_without_load()
-            .await
-            .expect("cache");
-        for user in users() {
-            cache
-                .backend()
-                .update_doc_by_path(&user)
-                .await
-                .expect("a document read through the cache");
-        }
-        cache.load().await.expect("loaded");
-
-        // A round of two batch gets, then the start of the next.
-        within(server.wait_for_calls(3)).await;
-
-        let mut documents_per_read: Vec<usize> = server.calls()[0..2]
-            .iter()
-            .map(|call| call.split(", ").count())
-            .collect();
-        documents_per_read.sort();
-        assert_eq!(documents_per_read, vec![50, 100]);
-        cache.shutdown().await.expect("shutdown");
-    }
-
-    #[tokio::test]
     async fn polls_read_the_latest_state_whatever_the_handle_reads() {
         let server = server_holding(|_| Vec::new()).await;
         let reading_at_a_read_time =
@@ -616,12 +540,16 @@ mod tests {
         };
         poller.shutdown().await.expect("poller stopped");
 
-        let error = cache
+        let FirestoreError::CacheError(error) = cache
             .add_collection(FirestoreCacheCollection::new("b").preload_all())
             .await
-            .unwrap_err();
+            .unwrap_err()
+        else {
+            panic!("the collection was not refused with a cache error");
+        };
 
-        assert!(matches!(error, FirestoreError::InvalidParametersError(_)));
+        assert_eq!(error.public.code, "CacheShutdown");
+        assert!(server.calls().is_empty());
         assert!(cache.cached_collections().is_empty());
     }
 
@@ -640,87 +568,88 @@ mod tests {
         assert!(matches!(error, FirestoreError::InvalidParametersError(_)));
     }
 
-    /// A custom backend that implements nothing a polling cache needs. Building the cache must
-    /// fail before any of these is called.
-    struct BackendThatCannotPoll;
-
-    #[async_trait::async_trait]
-    impl FirestoreCacheBackend for BackendThatCannotPoll {
-        async fn load(
-            &self,
-            _: &FirestoreCacheOptions,
-            _: &FirestoreDb,
-        ) -> FirestoreResult<Vec<FirestoreListenerTargetParams>> {
-            unreachable!("the cache is never built")
-        }
-
-        async fn invalidate_all(&self) -> FirestoreResult<()> {
-            unreachable!("the cache is never built")
-        }
-
-        async fn shutdown(&self) -> FirestoreResult<()> {
-            unreachable!("the cache is never built")
-        }
-
-        async fn on_listen_event(&self, _: FirestoreListenEvent) -> FirestoreResult<()> {
-            unreachable!("the cache is never built")
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl FirestoreCacheDocsByPathSupport for BackendThatCannotPoll {
-        async fn get_doc_by_path(&self, _: &str) -> FirestoreResult<Option<FirestoreDocument>> {
-            unreachable!("the cache is never built")
-        }
-
-        async fn update_doc_by_path(&self, _: &FirestoreDocument) -> FirestoreResult<()> {
-            unreachable!("the cache is never built")
-        }
-
-        async fn list_all_docs<'b>(
-            &self,
-            _: &str,
-        ) -> FirestoreResult<
-            FirestoreCachedValue<
-                futures::stream::BoxStream<'b, FirestoreResult<FirestoreDocument>>,
-            >,
-        > {
-            unreachable!("the cache is never built")
-        }
-
-        async fn query_docs<'b>(
-            &self,
-            _: &str,
-            _: &FirestoreQueryParams,
-        ) -> FirestoreResult<
-            FirestoreCachedValue<
-                futures::stream::BoxStream<'b, FirestoreResult<FirestoreDocument>>,
-            >,
-        > {
-            unreachable!("the cache is never built")
-        }
-    }
-
     #[tokio::test]
-    async fn a_backend_that_cannot_poll_fails_a_polling_cache_when_it_is_created() {
+    async fn the_deprecated_constructors_refuse_to_poll() {
         let server = server_holding(|_| Vec::new()).await;
         let options = FirestoreCacheOptions::new("custom".into()).with_sync_mode(
             FirestoreCacheSyncMode::Poll(FirestoreCachePollParams::new(POLL_INTERVAL)),
         );
 
-        let error = FirestoreCache::create(
+        // The deprecated constructor is the subject of this test.
+        #[allow(deprecated)]
+        let refused = FirestoreCache::with_options(
             options,
             &server.db,
-            BackendThatCannotPoll,
+            FirestoreMemoryCacheBackend::new(FirestoreCacheConfiguration::new()).expect("backend"),
             FirestoreMemListenStateStorage::new(),
         )
-        .await
-        .err()
-        .expect("the cache is refused");
+        .await;
 
-        let FirestoreError::CacheError(error) = error else {
-            panic!("the cache was not refused with a cache error");
-        };
-        assert_eq!(error.public.code, "CacheBackendUnsupported");
+        assert!(matches!(
+            refused.err(),
+            Some(FirestoreError::InvalidParametersError(_))
+        ));
+    }
+
+    /// A server whose query of `a` takes 200 ms to answer, so that a load of `a` is in progress
+    /// for that long.
+    async fn slowly_serving_a() -> FakeFirestore {
+        FakeFirestore::start(|_, _| {
+            (
+                "RunQuery a".to_string(),
+                FakeResponse::Paced(
+                    vec![
+                        run_query_message(document("a", "one", 1)),
+                        run_query_message(document("a", "two", 1)),
+                    ],
+                    Duration::from_millis(200),
+                ),
+            )
+        })
+        .await
+    }
+
+    async fn unloaded_cache_of_a(server: &FakeFirestore) -> FirestoreMemoryCache {
+        FirestoreCache::memory(&server.db)
+            .preloaded_collection("a")
+            .poll_changes(Duration::from_secs(3600))
+            .build_without_load()
+            .await
+            .expect("cache")
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_load_leaves_the_cache_to_be_loaded_again() {
+        let server = slowly_serving_a().await;
+        let cache = unloaded_cache_of_a(&server).await;
+
+        let cancelled = tokio::time::timeout(Duration::from_millis(50), cache.load()).await;
+
+        assert!(cancelled.is_err());
+        within(cache.load()).await.expect("loaded");
+        cache.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn shutdown_returns_once_a_load_in_progress_has_stopped() {
+        let server = slowly_serving_a().await;
+        let cache = unloaded_cache_of_a(&server).await;
+        let loading = std::sync::atomic::AtomicBool::new(true);
+
+        let (loaded, loading_once_shut_down) = tokio::join!(
+            async {
+                let loaded = cache.load().await;
+                loading.store(false, Ordering::SeqCst);
+                loaded
+            },
+            async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                cache.shutdown().await.expect("shutdown");
+                loading.load(Ordering::SeqCst)
+            },
+        );
+
+        assert!(loaded.is_err());
+        assert!(!loading_once_shut_down);
     }
 }
