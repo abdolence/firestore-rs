@@ -407,6 +407,15 @@ impl FirestoreCacheCollectionConfiguration {
         }
     }
 
+    /// What a poll of this collection reads from Firestore.
+    pub(crate) fn poll_read(&self) -> FirestoreCachePollRead<'_> {
+        match self.watched_document_ids() {
+            Some(document_ids) => FirestoreCachePollRead::WatchedDocuments(document_ids),
+            None if self.collection_load_mode.is_preloading() => FirestoreCachePollRead::Collection,
+            None => FirestoreCachePollRead::CachedDocuments,
+        }
+    }
+
     /// Streams every document of this collection from Firestore. The stream ends at its first
     /// error.
     pub(crate) async fn read_all_documents<'b>(
@@ -433,6 +442,17 @@ impl FirestoreCacheCollectionConfiguration {
             None => select.batch_with_errors(document_ids).await,
         }
     }
+}
+
+/// What a poll of a cached collection reads from Firestore.
+pub(crate) enum FirestoreCachePollRead<'a> {
+    /// Every document of the collection.
+    Collection,
+    /// The documents a collection watched by document ID is limited to, whatever its load mode.
+    WatchedDocuments(&'a [String]),
+    /// The documents the cache holds, so that polling never fills a lazily filled collection
+    /// further.
+    CachedDocuments,
 }
 
 /// Determines how a cached collection is populated when the cache starts.

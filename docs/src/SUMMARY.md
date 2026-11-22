@@ -62,6 +62,7 @@
     - [Choosing a cache mode](./caching/modes.md)
     - [Load modes, and why listings need preloading](./caching/load-modes.md)
     - [How the cache is updated](./caching/updates.md)
+    - [Polling instead of listening](./caching/polling.md)
 
 # Administration
 

@@ -2,7 +2,9 @@ use crate::errors::*;
 use crate::*;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use gcloud_sdk::prost_types::Timestamp;
 use moka::future::{Cache, CacheBuilder};
+use moka::ops::compute::Op;
 
 use crate::cache::cache_query_engine::FirestoreCacheQueryEngine;
 use futures::{StreamExt, TryStreamExt};
@@ -225,13 +227,6 @@ impl FirestoreMemoryCacheBackend {
             .cloned()
     }
 
-    fn all_collection_caches(&self) -> Arc<HashMap<String, FirestoreMemCache>> {
-        self.collection_caches
-            .read()
-            .expect("cache collections lock poisoned")
-            .clone()
-    }
-
     fn is_shut_down(&self) -> bool {
         self.shut_down.load(Ordering::Acquire)
     }
@@ -265,11 +260,36 @@ impl FirestoreMemoryCacheBackend {
 
     /// Drops everything cached for one collection.
     async fn invalidate_collection(&self, collection_path: &str) {
-        if let Some(mem_cache) = self.collection_cache(collection_path) {
+        let emptied = {
+            let mut caches = self
+                .collection_caches
+                .write()
+                .expect("cache collections lock poisoned");
+            if caches.contains_key(collection_path) {
+                let mut updated = (**caches).clone();
+                let emptied = updated.insert(
+                    collection_path.to_string(),
+                    (self.collection_mem_options)(collection_path).build(),
+                );
+                *caches = Arc::new(updated);
+                emptied
+            } else {
+                None
+            }
+        };
+        if let Some(mem_cache) = emptied {
             debug!(collection_path, "Invalidating cache for collection.");
-            mem_cache.invalidate_all();
-            mem_cache.run_pending_tasks().await;
+            Self::release(mem_cache).await;
         }
+    }
+
+    /// Frees the documents of a cache that has been replaced by an empty one.
+    ///
+    /// A collection is emptied by replacing its cache rather than by clearing it, so that a poll
+    /// that began before goes on writing to the cache it started with, where no reader looks.
+    async fn release(mem_cache: FirestoreMemCache) {
+        mem_cache.invalidate_all();
+        mem_cache.run_pending_tasks().await;
     }
 
     /// Removes a document from the cache, wherever the listener said it went.
@@ -352,6 +372,76 @@ impl FirestoreMemoryCacheBackend {
         Ok(())
     }
 
+    /// Makes the cache hold exactly `documents`, a complete read of the collection that began
+    /// after `cached_versions` was taken.
+    ///
+    /// Documents the read did not return are removed before the new ones are stored, so that a
+    /// collection near its capacity does not evict live documents to make room.
+    async fn reconcile_collection(
+        mem_cache: &FirestoreMemCache,
+        cached_versions: &HashMap<String, Option<Timestamp>>,
+        mut documents: BoxStream<'_, FirestoreResult<FirestoreDocument>>,
+    ) -> FirestoreResult<()> {
+        let mut read_ids = HashSet::new();
+        let mut created = Vec::new();
+        while let Some(document) = documents.try_next().await? {
+            let document_id = split_document_path(&document.name).1.to_string();
+            match cached_versions.get(&document_id) {
+                None => created.push((document_id.clone(), document)),
+                Some(cached_version)
+                    if is_later_version(document.update_time.as_ref(), cached_version.as_ref()) =>
+                {
+                    store_polled(mem_cache, document_id.clone(), document).await
+                }
+                Some(_) => {}
+            }
+            read_ids.insert(document_id);
+        }
+
+        for (document_id, cached_version) in cached_versions {
+            if !read_ids.contains(document_id) {
+                evict_polled(mem_cache, document_id, *cached_version).await;
+            }
+        }
+        for (document_id, document) in created {
+            store_polled(mem_cache, document_id, document).await;
+        }
+        Ok(())
+    }
+
+    /// Reads these documents of the collection, a chunk at a time, and stores the ones found and
+    /// removes the ones reported missing.
+    async fn reconcile_documents(
+        db: &FirestoreDb,
+        collection_config: &FirestoreCacheCollectionConfiguration,
+        mem_cache: &FirestoreMemCache,
+        cached_versions: &HashMap<String, Option<Timestamp>>,
+        document_ids: Vec<String>,
+    ) -> FirestoreResult<()> {
+        for chunk in document_ids.chunks(FIRESTORE_CACHE_POLL_CHUNK_SIZE) {
+            let mut documents = collection_config.read_documents(db, chunk.to_vec()).await?;
+            while let Some((document_id, document)) = documents.try_next().await? {
+                let cached_version = cached_versions.get(&document_id);
+                match document {
+                    Some(document)
+                        if cached_version.is_none_or(|cached_version| {
+                            is_later_version(document.update_time.as_ref(), cached_version.as_ref())
+                        }) =>
+                    {
+                        store_polled(mem_cache, document_id, document).await
+                    }
+                    Some(_) => {}
+                    None => {
+                        if let Some(cached_version) = cached_version {
+                            evict_polled(mem_cache, &document_id, *cached_version).await;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn query_cached_docs<'b>(
         &self,
         collection_path: &str,
@@ -402,10 +492,25 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
     }
 
     async fn invalidate_all(&self) -> FirestoreResult<()> {
-        for (collection_path, mem_cache) in self.all_collection_caches().iter() {
+        let emptied = {
+            let mut caches = self
+                .collection_caches
+                .write()
+                .expect("cache collections lock poisoned");
+            let empty = caches
+                .keys()
+                .map(|collection_path| {
+                    (
+                        collection_path.clone(),
+                        (self.collection_mem_options)(collection_path).build(),
+                    )
+                })
+                .collect();
+            std::mem::replace(&mut *caches, Arc::new(empty))
+        };
+        for (collection_path, mem_cache) in emptied.iter() {
             debug!(collection_path, "Invalidating cache for collection.");
-            mem_cache.invalidate_all();
-            mem_cache.run_pending_tasks().await;
+            Self::release(mem_cache.clone()).await;
         }
         Ok(())
     }
@@ -550,66 +655,59 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
         Ok((count < self.max_capacity).then_some(count))
     }
 
-    async fn cached_document_ids(&self, collection_path: &str) -> FirestoreResult<Vec<String>> {
-        self.ensure_open()?;
-        Ok(self
-            .collection_cache(collection_path)
-            .map(|mem_cache| {
-                mem_cache
-                    .iter()
-                    .map(|(document_id, _)| document_id.to_string())
-                    .collect()
-            })
-            .unwrap_or_default())
+    fn supports_polling(&self) -> bool {
+        true
     }
 
-    async fn reconcile_collection(
+    async fn poll_collection(
         &self,
+        db: &FirestoreDb,
         collection_path: &str,
-        mut documents: BoxStream<'_, FirestoreResult<FirestoreDocument>>,
     ) -> FirestoreResult<()> {
         self.ensure_open()?;
-        let Some(mem_cache) = self.collection_cache(collection_path) else {
+        let config = self.config();
+        let (Some(collection_config), Some(mem_cache)) = (
+            config.collections.get(collection_path),
+            self.collection_cache(collection_path),
+        ) else {
             return Ok(());
         };
 
-        let mut read_ids = HashSet::new();
-        while let Some(document) = documents.try_next().await? {
-            let document_id = split_document_path(&document.name).1.to_string();
-            read_ids.insert(document_id.clone());
-            mem_cache.insert(document_id, document).await;
-        }
-
-        let unread_ids: Vec<Arc<String>> = mem_cache
+        // Taken before anything is read from Firestore, by iterating, which resets no document's
+        // idle time. A document the read misses is removed only while it still holds the version
+        // recorded here.
+        let cached_versions: HashMap<String, Option<Timestamp>> = mem_cache
             .iter()
-            .map(|(document_id, _)| document_id)
-            .filter(|document_id| !read_ids.contains(document_id.as_str()))
+            .map(|(document_id, document)| (document_id.to_string(), document.update_time))
             .collect();
-        for document_id in unread_ids {
-            mem_cache.remove(document_id.as_str()).await;
-        }
-        Ok(())
-    }
 
-    async fn reconcile_documents(
-        &self,
-        collection_path: &str,
-        mut documents: BoxStream<'_, FirestoreResult<(String, Option<FirestoreDocument>)>>,
-    ) -> FirestoreResult<()> {
-        self.ensure_open()?;
-        let Some(mem_cache) = self.collection_cache(collection_path) else {
-            return Ok(());
-        };
-
-        while let Some((document_id, document)) = documents.try_next().await? {
-            match document {
-                Some(document) => mem_cache.insert(document_id, document).await,
-                None => {
-                    mem_cache.remove(document_id.as_str()).await;
-                }
+        match collection_config.poll_read() {
+            FirestoreCachePollRead::Collection => {
+                let documents = collection_config.read_all_documents(db).await?;
+                Self::reconcile_collection(&mem_cache, &cached_versions, documents).await
+            }
+            FirestoreCachePollRead::WatchedDocuments(document_ids) => {
+                Self::reconcile_documents(
+                    db,
+                    collection_config,
+                    &mem_cache,
+                    &cached_versions,
+                    document_ids.to_vec(),
+                )
+                .await
+            }
+            FirestoreCachePollRead::CachedDocuments => {
+                let document_ids = cached_versions.keys().cloned().collect();
+                Self::reconcile_documents(
+                    db,
+                    collection_config,
+                    &mem_cache,
+                    &cached_versions,
+                    document_ids,
+                )
+                .await
             }
         }
-        Ok(())
     }
 
     async fn shutdown(&self) -> Result<(), FirestoreError> {
@@ -799,6 +897,52 @@ impl FirestoreCacheDocsByPathSupport for FirestoreMemoryCacheBackend {
             Ok(FirestoreCachedValue::SkipCache)
         }
     }
+}
+
+/// Stores a document a poll read, unless the cache holds the same or a later version of it, which
+/// a read through the cache may have written since the poll read.
+async fn store_polled(
+    mem_cache: &FirestoreMemCache,
+    document_id: String,
+    document: FirestoreDocument,
+) {
+    mem_cache
+        .entry(document_id)
+        .and_compute_with(|cached| {
+            let op = match cached {
+                Some(cached)
+                    if !is_later_version(
+                        document.update_time.as_ref(),
+                        cached.value().update_time.as_ref(),
+                    ) =>
+                {
+                    Op::Nop
+                }
+                _ => Op::Put(document),
+            };
+            std::future::ready(op)
+        })
+        .await;
+}
+
+/// Removes a document a poll found gone, unless the cache no longer holds `polled_version`, the
+/// version it held before the poll read: a read through the cache has written it since, so it
+/// exists again.
+async fn evict_polled(
+    mem_cache: &FirestoreMemCache,
+    document_id: &str,
+    polled_version: Option<Timestamp>,
+) {
+    mem_cache
+        .entry_by_ref(document_id)
+        .and_compute_with(|cached| {
+            let op = match cached {
+                Some(cached) if cached.value().update_time == polled_version => Op::Remove,
+                _ => Op::Nop,
+            };
+            std::future::ready(op)
+        })
+        .await;
 }
 
 #[cfg(test)]
@@ -2101,5 +2245,160 @@ mod tests {
             ],
         )
         .await;
+    }
+
+    fn versioned(id: &str, version: i64) -> FirestoreDocument {
+        FirestoreDocument {
+            update_time: Some(gcloud_sdk::prost_types::Timestamp {
+                seconds: version,
+                nanos: 0,
+            }),
+            ..document(id)
+        }
+    }
+
+    /// A backend caching the preloaded collection `a` of the database [`FakeFirestore`] serves.
+    fn polled_backend(options: FirestoreMemoryCacheOptions) -> FirestoreMemoryCacheBackend {
+        let config = FirestoreCacheConfiguration::new().add_collection_config_at(
+            FAKE_DOCS,
+            FirestoreCacheCollectionConfiguration::new(
+                "a",
+                FirestoreListenerTarget::new(1000),
+                FirestoreCacheCollectionLoadMode::PreloadAllDocs,
+            ),
+        );
+        FirestoreMemoryCacheBackend::with_options(config, options).expect("backend")
+    }
+
+    /// Answers every query with these versions of documents of `a`, `interval` apart.
+    async fn serving_versions(versions: &[(&str, i64)], interval: Duration) -> FakeFirestore {
+        let messages: Vec<Vec<u8>> = versions
+            .iter()
+            .map(|(id, version)| run_query_message(versioned(id, *version)))
+            .collect();
+        FakeFirestore::start(move |_, _| {
+            (
+                "RunQuery".to_string(),
+                FakeResponse::Paced(messages.clone(), interval),
+            )
+        })
+        .await
+    }
+
+    async fn poll_a(backend: &FirestoreMemoryCacheBackend, server: &FakeFirestore) {
+        backend
+            .poll_collection(&server.db, &format!("{FAKE_DOCS}/a"))
+            .await
+            .expect("polled");
+    }
+
+    async fn cached_version(
+        backend: &FirestoreMemoryCacheBackend,
+        id: &str,
+    ) -> Option<FirestoreDocument> {
+        backend
+            .get_doc_by_path(&document(id).name)
+            .await
+            .expect("cache lookup")
+    }
+
+    #[tokio::test]
+    async fn a_poll_leaves_an_unchanged_document_to_expire_from_when_it_was_written() {
+        let backend = polled_backend(
+            FirestoreMemoryCacheOptions::new().with_time_to_live(Duration::from_millis(300)),
+        );
+        let server = serving_versions(&[("one", 1)], Duration::ZERO).await;
+        backend
+            .update_doc_by_path(&versioned("one", 1))
+            .await
+            .expect("cached");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        poll_a(&backend, &server).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        assert_eq!(cached_version(&backend, "one").await, None);
+    }
+
+    #[tokio::test]
+    async fn a_poll_never_replaces_a_document_with_an_older_version() {
+        let backend = polled_backend(FirestoreMemoryCacheOptions::new());
+        let server = serving_versions(&[("one", 1)], Duration::ZERO).await;
+        backend
+            .update_doc_by_path(&versioned("one", 2))
+            .await
+            .expect("cached");
+
+        poll_a(&backend, &server).await;
+
+        assert_eq!(
+            cached_version(&backend, "one").await,
+            Some(versioned("one", 2))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_poll_keeps_a_document_written_back_while_it_read() {
+        let backend = polled_backend(FirestoreMemoryCacheOptions::new());
+        let server = serving_versions(&[("one", 1), ("two", 1)], Duration::from_millis(100)).await;
+
+        tokio::join!(poll_a(&backend, &server), async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            backend
+                .update_doc_by_path(&versioned("created", 1))
+                .await
+                .expect("a document read through the cache");
+        });
+
+        assert_eq!(
+            cached_version(&backend, "created").await,
+            Some(versioned("created", 1))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_poll_writes_nothing_into_a_collection_emptied_while_it_read() {
+        let backend = polled_backend(FirestoreMemoryCacheOptions::new());
+        let server = serving_versions(
+            &[("one", 1), ("two", 1), ("three", 1)],
+            Duration::from_millis(100),
+        )
+        .await;
+
+        tokio::join!(poll_a(&backend, &server), async {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            backend.invalidate_all().await.expect("invalidated");
+        });
+
+        for id in ["one", "two", "three"] {
+            assert_eq!(cached_version(&backend, id).await, None, "{id}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_poll_at_capacity_keeps_every_document_it_read() {
+        let backend = polled_backend(FirestoreMemoryCacheOptions::new().with_max_capacity(200));
+        for id in 0..200 {
+            backend
+                .update_doc_by_path(&versioned(&id.to_string(), 1))
+                .await
+                .expect("cached");
+        }
+        // The first hundred are gone and a hundred others are new.
+        let read: Vec<String> = (100..300).map(|id| id.to_string()).collect();
+        let versions: Vec<(&str, i64)> = read.iter().map(|id| (id.as_str(), 1)).collect();
+        let server = serving_versions(&versions, Duration::ZERO).await;
+
+        poll_a(&backend, &server).await;
+        backend
+            .collection_cache(&format!("{FAKE_DOCS}/a"))
+            .expect("collection a")
+            .run_pending_tasks()
+            .await;
+
+        for id in &read {
+            assert!(cached_version(&backend, id).await.is_some(), "{id}");
+        }
+        assert_eq!(cached_version(&backend, "0").await, None);
     }
 }

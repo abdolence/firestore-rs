@@ -145,6 +145,10 @@ mod load_modes {}
 #[doc = include_str!("../docs/src/caching/updates.md")]
 mod updates {}
 
+#[cfg(feature = "caching")]
+#[doc = include_str!("../docs/src/caching/polling.md")]
+mod polling {}
+
 #[cfg(feature = "admin")]
 #[doc = include_str!("../docs/src/index-management.md")]
 mod index_management {}

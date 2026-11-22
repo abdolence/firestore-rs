@@ -69,15 +69,16 @@ impl FirestoreError {
         ))
     }
 
-    /// Builds the [`CacheError`](FirestoreError::CacheError) of a cache backend that lacks
-    /// `operation`, one of the methods a cache that polls calls.
+    /// Builds the [`CacheError`](FirestoreError::CacheError) of a cache backend that does not
+    /// implement `operation`, a method of [`FirestoreCacheBackend`](crate::FirestoreCacheBackend)
+    /// the cache needs for what it was asked to do.
     #[cfg(feature = "caching")]
-    pub(crate) fn cache_polling_unsupported(operation: &str) -> Self {
+    pub(crate) fn cache_backend_unsupported(operation: &str) -> Self {
         FirestoreError::CacheError(FirestoreCacheError::new(
-            FirestoreErrorPublicGenericDetails::new("CachePollingUnsupported".into()),
+            FirestoreErrorPublicGenericDetails::new("CacheBackendUnsupported".into()),
             format!(
-                "This cache backend does not support `{operation}`. Implement it on your \
-                 FirestoreCacheBackend to keep the cache current by polling."
+                "This cache backend does not implement `{operation}`, which this cache needs. \
+                 Implement it on your FirestoreCacheBackend."
             ),
         ))
     }

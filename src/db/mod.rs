@@ -615,6 +615,16 @@ impl FirestoreDb {
         }
     }
 
+    /// Clones this `FirestoreDb` to read the latest state from Firestore itself: without the
+    /// session's cache or consistency selector, and with its request options.
+    #[cfg(feature = "caching")]
+    pub(crate) fn clone_reading_latest(&self) -> Self {
+        self.clone_with_session_params(
+            FirestoreDbSessionParams::new()
+                .opt_request_options(self.session_params.request_options.clone()),
+        )
+    }
+
     /// Clones the `FirestoreDb` instance with a specific cache mode.
     ///
     /// This method is only available if the `caching` feature is enabled.

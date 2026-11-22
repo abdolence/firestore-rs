@@ -307,7 +307,7 @@ where
     db: FirestoreDb,
     name: Option<FirestoreCacheName>,
     listener_params: Option<FirestoreListenerParams>,
-    sync_mode: FirestoreCacheSyncMode,
+    poll_params: Option<FirestoreCachePollParams>,
     listener_target_base: u32,
     collections: Vec<FirestoreCacheCollection>,
     backend_options: K::Options,
@@ -325,7 +325,7 @@ where
             db: db.clone(),
             name: None,
             listener_params: None,
-            sync_mode: FirestoreCacheSyncMode::Listen,
+            poll_params: None,
             listener_target_base: FIRESTORE_CACHE_DEFAULT_LISTENER_TARGET_BASE,
             collections: Vec::new(),
             backend_options: K::Options::default(),
@@ -420,8 +420,8 @@ where
         }
     }
 
-    /// Configures the cache's internal Firestore listener. Has no effect on a cache that
-    /// [polls](Self::poll_changes).
+    /// Configures the cache's internal Firestore listener. A cache that also
+    /// [polls](Self::poll_changes) fails to build.
     #[inline]
     pub fn listener_params(self, listener_params: FirestoreListenerParams) -> Self {
         Self {
@@ -433,11 +433,10 @@ where
     /// Keeps the cache current by reading its collections again every `interval`, instead of
     /// listening to them.
     ///
-    /// One background task reads every collection of the cache in turn, whatever their number.
-    /// A preloaded collection is read in full, a collection watched by document ID reads those
-    /// documents, and a lazily filled one reads only the documents it already holds. See
-    /// [`FirestoreCacheSyncMode::Poll`]. A zero `interval` makes [`build`](Self::build) fail with
-    /// [`FirestoreError::InvalidParametersError`].
+    /// One background task reads every collection of the cache in turn, whatever their number:
+    /// see [`FirestoreCacheBackend::poll_collection`] for what it reads. A zero `interval`, or
+    /// [`listener_params`](Self::listener_params) on the same builder, makes
+    /// [`build`](Self::build) fail with [`FirestoreError::InvalidParametersError`].
     ///
     /// ```rust,no_run
     /// # use firestore::*;
@@ -453,7 +452,7 @@ where
     #[inline]
     pub fn poll_changes(self, interval: std::time::Duration) -> Self {
         Self {
-            sync_mode: FirestoreCacheSyncMode::Poll(FirestoreCachePollParams::new(interval)),
+            poll_params: Some(FirestoreCachePollParams::new(interval)),
             ..self
         }
     }
@@ -471,7 +470,8 @@ where
         }
     }
 
-    /// Overrides where the internal listener stores its resume tokens.
+    /// Overrides where the internal listener stores its resume tokens. A cache that
+    /// [polls](Self::poll_changes) has no listener and never uses it.
     ///
     /// This changes the builder's type, so call it last.
     #[inline]
@@ -483,7 +483,7 @@ where
             db: self.db,
             name: self.name,
             listener_params: self.listener_params,
-            sync_mode: self.sync_mode,
+            poll_params: self.poll_params,
             listener_target_base: self.listener_target_base,
             collections: self.collections,
             backend_options: self.backend_options,
@@ -492,7 +492,7 @@ where
         }
     }
 
-    /// Creates the cache, loads it and starts listening for changes.
+    /// Creates the cache, loads it and starts listening for changes, or polling for them.
     pub async fn build(self) -> FirestoreResult<FirestoreCache<K::Backend, LS>> {
         let cache = self.build_without_load().await?;
         cache.load().await?;
@@ -505,6 +505,19 @@ where
     /// receives updates. Prefer [`build`](Self::build) unless you need to control when loading
     /// happens.
     pub async fn build_without_load(self) -> FirestoreResult<FirestoreCache<K::Backend, LS>> {
+        let sync_mode =
+            match (self.listener_params, self.poll_params) {
+                (Some(_), Some(_)) => return Err(FirestoreError::invalid_parameters(
+                    "listener_params",
+                    "A cache that polls has no listener to configure: call `listener_params` or \
+                     `poll_changes`, not both.",
+                )),
+                (listener_params, None) => FirestoreCacheSyncMode::Listen(
+                    listener_params.unwrap_or_else(FirestoreListenerParams::new),
+                ),
+                (None, Some(poll_params)) => FirestoreCacheSyncMode::Poll(poll_params),
+            };
+
         let config = build_configuration(
             self.db.get_documents_path(),
             self.listener_target_base,
@@ -512,17 +525,15 @@ where
             self.incomplete_collection_policy,
         )?;
 
-        let backend = K::create_backend(self.backend_options, config)?;
-
         let name = self
             .name
             .unwrap_or_else(|| FirestoreCacheName::new(FIRESTORE_CACHE_DEFAULT_NAME.to_string()));
+        let options = FirestoreCacheOptions::new(name).with_sync_mode(sync_mode);
 
-        let options = FirestoreCacheOptions::new(name)
-            .opt_listener_params(self.listener_params)
-            .with_sync_mode(self.sync_mode);
+        let sync = super::FirestoreCacheSync::new(&options, &self.db, self.storage).await?;
+        let backend = K::create_backend(self.backend_options, config)?;
 
-        FirestoreCache::create(options, &self.db, backend, self.storage).await
+        FirestoreCache::assemble(options, sync, &self.db, backend)
     }
 }
 

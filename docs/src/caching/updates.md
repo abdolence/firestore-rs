@@ -5,7 +5,7 @@
 - The Firestore listener updates the cache when a document changes, whether the change came from
   your application or from elsewhere;
 - A cache built with `poll_changes` reads its collections again on an interval instead of
-  listening, see [Polling instead of listening](../caching.md#polling-instead-of-listening);
+  listening, see [Polling instead of listening](./polling.md);
 - Preloading at startup.
 
 Cached results are eventually consistent: they reflect the last state the listener delivered, or
