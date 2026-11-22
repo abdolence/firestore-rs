@@ -300,16 +300,7 @@ impl FirestoreMemoryCacheBackend {
         // A collection watched by document ID is preloaded by reading exactly those documents,
         // rather than downloading the collection and throwing most of it away.
         if let Some(document_ids) = config.watched_document_ids() {
-            let selector = db
-                .fluent()
-                .select()
-                .by_id_in(config.collection_name.as_str());
-            let selector = match &config.parent {
-                Some(parent) => selector.parent(parent),
-                None => selector,
-            };
-
-            let mut stream = selector.batch_with_errors(document_ids.to_vec()).await?;
+            let mut stream = config.read_documents(db, document_ids.to_vec()).await?;
             while let Some(fetched) = stream.next().await {
                 if let (_, Some(doc)) = fetched? {
                     let (_, document_id) = split_document_path(&doc.name);
@@ -326,17 +317,8 @@ impl FirestoreMemoryCacheBackend {
             return Ok(());
         }
 
-        let params = if let Some(parent) = &config.parent {
-            db.fluent()
-                .select()
-                .from(config.collection_name.as_str())
-                .parent(parent)
-        } else {
-            db.fluent().select().from(config.collection_name.as_str())
-        };
-
-        params
-            .stream_query_with_errors()
+        config
+            .read_all_documents(db)
             .await?
             .try_for_each(|doc| async {
                 let (_, document_id) = split_document_path(&doc.name);
@@ -566,6 +548,68 @@ impl FirestoreCacheBackend for FirestoreMemoryCacheBackend {
 
         // At capacity a shortfall is eviction, not divergence.
         Ok((count < self.max_capacity).then_some(count))
+    }
+
+    async fn cached_document_ids(&self, collection_path: &str) -> FirestoreResult<Vec<String>> {
+        self.ensure_open()?;
+        Ok(self
+            .collection_cache(collection_path)
+            .map(|mem_cache| {
+                mem_cache
+                    .iter()
+                    .map(|(document_id, _)| document_id.to_string())
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    async fn reconcile_collection(
+        &self,
+        collection_path: &str,
+        mut documents: BoxStream<'_, FirestoreResult<FirestoreDocument>>,
+    ) -> FirestoreResult<()> {
+        self.ensure_open()?;
+        let Some(mem_cache) = self.collection_cache(collection_path) else {
+            return Ok(());
+        };
+
+        let mut read_ids = HashSet::new();
+        while let Some(document) = documents.try_next().await? {
+            let document_id = split_document_path(&document.name).1.to_string();
+            read_ids.insert(document_id.clone());
+            mem_cache.insert(document_id, document).await;
+        }
+
+        let unread_ids: Vec<Arc<String>> = mem_cache
+            .iter()
+            .map(|(document_id, _)| document_id)
+            .filter(|document_id| !read_ids.contains(document_id.as_str()))
+            .collect();
+        for document_id in unread_ids {
+            mem_cache.remove(document_id.as_str()).await;
+        }
+        Ok(())
+    }
+
+    async fn reconcile_documents(
+        &self,
+        collection_path: &str,
+        mut documents: BoxStream<'_, FirestoreResult<(String, Option<FirestoreDocument>)>>,
+    ) -> FirestoreResult<()> {
+        self.ensure_open()?;
+        let Some(mem_cache) = self.collection_cache(collection_path) else {
+            return Ok(());
+        };
+
+        while let Some((document_id, document)) = documents.try_next().await? {
+            match document {
+                Some(document) => mem_cache.insert(document_id, document).await,
+                None => {
+                    mem_cache.remove(document_id.as_str()).await;
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn shutdown(&self) -> Result<(), FirestoreError> {

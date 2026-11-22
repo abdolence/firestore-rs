@@ -2,7 +2,8 @@
 
 The library supports caching for collections and documents. A Firestore listener keeps the cache
 up to date when documents change, so updates are propagated across distributed instances
-automatically.
+automatically. A cache can also read its collections again on an interval instead, see
+[Polling instead of listening](#polling-instead-of-listening).
 
 This avoids reading, and paying for, the same documents repeatedly. It is particularly useful for
 dictionaries, configuration and other data that changes rarely, and can reduce both cost and
@@ -113,10 +114,47 @@ collection or `documents(..)`:
 `database()`, `+ - * / %`, `||`, `LOWER`, `UPPER`, `CHAR_LENGTH`, `LIKE`, `ILIKE`, `CASE`,
 `COALESCE`, `IFNULL`, `SUBSTR` and search run on Firestore.
 
+## Polling instead of listening
+
+A cache built with `poll_changes` opens no listener. It reads its collections again on an interval,
+for an application that does not use the listen API, or an Enterprise edition database created
+without real-time updates:
+
+```rust,no_run
+# use firestore::*;
+# async fn example(db: FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+let cache = FirestoreCache::memory(&db)
+    .preloaded_collection("countries")
+    .collection("users")
+    .poll_changes(std::time::Duration::from_secs(300))
+    .build()
+    .await?;
+# Ok(())
+# }
+```
+
+One background task polls every collection of the cache, one after another, in rounds. The
+interval is the pause between the end of one round and the start of the next, and the first round
+starts one interval after the cache loads. In each round the cache reads:
+
+- a preloaded collection in full. Changed documents are stored and the ones Firestore no longer
+  has are removed, while every document present before and after stays readable;
+- a collection watched by document ID: those documents;
+- a lazily filled collection: only the documents it already holds, so polling never fills it
+  further.
+
+A preloaded collection is read in full every round, so the reads a cache makes grow with its
+collections and with how often it polls. A collection that fails to be read keeps what it holds and
+is read again in the next round, and the error is logged. Collections added or removed at runtime
+are polled from the next round on. A persistent cache serves a collection that an earlier run
+finished downloading as it was stored until the first round. `listener_params` and
+`listen_state_storage` have no effect on a cache that polls.
+
 ## On the Enterprise edition
 
 The listener that keeps a cache current needs real-time updates on a database of the Enterprise
-edition. They are enabled when the database is created:
+edition. A cache that [polls](#polling-instead-of-listening) does not. Real-time updates are
+enabled when the database is created:
 
 ```sh
 gcloud firestore databases create --database=my-database --edition=enterprise \

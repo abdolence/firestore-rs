@@ -231,16 +231,7 @@ impl FirestorePersistentCacheBackend {
             return Ok(());
         };
 
-        let selector = db
-            .fluent()
-            .select()
-            .by_id_in(config.collection_name.as_str());
-        let selector = match &config.parent {
-            Some(parent) => selector.parent(parent),
-            None => selector,
-        };
-
-        let mut stream = selector.batch_with_errors(document_ids.to_vec()).await?;
+        let mut stream = config.read_documents(db, document_ids.to_vec()).await?;
         let mut found: Vec<Document> = Vec::new();
         while let Some(fetched) = stream.next().await {
             if let (_, Some(doc)) = fetched? {
@@ -385,17 +376,8 @@ impl FirestorePersistentCacheBackend {
         collection_path: &str,
         config: &FirestoreCacheCollectionConfiguration,
     ) -> FirestoreResult<()> {
-        let params = if let Some(parent) = &config.parent {
-            db.fluent()
-                .select()
-                .from(config.collection_name.as_str())
-                .parent(parent)
-        } else {
-            db.fluent().select().from(config.collection_name.as_str())
-        };
-
-        let mut chunks = params
-            .stream_query_with_errors()
+        let mut chunks = config
+            .read_all_documents(db)
             .await?
             .enumerate()
             .map(|(index, doc)| {
@@ -536,6 +518,75 @@ impl FirestorePersistentCacheBackend {
         Self::forget_preload(&tx, collection_path)?;
         tx.commit()?;
         Ok(existed)
+    }
+
+    /// Begins a write to a collection's table, or returns `None` once the collection is no longer
+    /// cached.
+    ///
+    /// Checked inside the transaction because `remove_collection` unpublishes a collection before
+    /// it drops the table in a transaction of its own: a write that still sees the collection
+    /// commits before the table is dropped, never after, so it cannot leave a table behind.
+    fn begin_cached_collection_write(
+        &self,
+        collection_path: &str,
+    ) -> FirestoreResult<Option<WriteTransaction>> {
+        let write_txn = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_write()?;
+        if self.config().collections.contains_key(collection_path) {
+            Ok(Some(write_txn))
+        } else {
+            write_txn.abort()?;
+            Ok(None)
+        }
+    }
+
+    /// Stores one chunk of a reconcile of the whole collection, and withdraws its marker in the
+    /// same transaction, so that a reconcile that does not finish leaves no marker vouching for
+    /// rows it rewrote only in part. Returns `false` once the collection is no longer cached.
+    fn write_reconciled_chunk(
+        &self,
+        collection_path: &str,
+        docs: Vec<Document>,
+    ) -> FirestoreResult<bool> {
+        let Some(write_txn) = self.begin_cached_collection_write(collection_path)? else {
+            return Ok(false);
+        };
+        {
+            let mut table =
+                write_txn.open_table(TableDefinition::<&str, &[u8]>::new(collection_path))?;
+            for doc in docs {
+                let (_, document_id) = split_document_path(&doc.name);
+                table.insert(document_id, Self::document_to_buf(&doc)?.as_slice())?;
+            }
+            Self::forget_preload(&write_txn, collection_path)?;
+        }
+        write_txn.commit()?;
+        Ok(true)
+    }
+
+    /// Ends a reconcile that read the whole collection: removes the rows it did not read, and
+    /// marks the collection complete in the same transaction.
+    fn finish_reconcile(
+        &self,
+        collection_path: &str,
+        read_ids: &HashSet<String>,
+    ) -> FirestoreResult<()> {
+        let Some(write_txn) = self.begin_cached_collection_write(collection_path)? else {
+            return Ok(());
+        };
+        {
+            write_txn
+                .open_table(TableDefinition::<&str, &[u8]>::new(collection_path))?
+                .retain(|document_id, _| read_ids.contains(document_id))?;
+            write_txn
+                .open_table(PRELOADED_COLLECTIONS)?
+                .insert(collection_path, ())?;
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
     /// Removes a collection's marker inside the transaction that changes or drops its table, so
@@ -812,6 +863,83 @@ impl FirestoreCacheBackend for FirestorePersistentCacheBackend {
         }
 
         Ok(self.table_len(collection_path).ok())
+    }
+
+    async fn cached_document_ids(&self, collection_path: &str) -> FirestoreResult<Vec<String>> {
+        if !self.config().collections.contains_key(collection_path) {
+            return Ok(Vec::new());
+        }
+
+        let read_tx = self
+            .open_db()?
+            .as_ref()
+            .expect("database checked open")
+            .begin_read()?;
+        let table = match read_tx.open_table(TableDefinition::<&str, &[u8]>::new(collection_path)) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(err) => return Err(err.into()),
+        };
+        let document_ids = table
+            .iter()?
+            .map(|record| Ok(record?.0.value().to_string()))
+            .collect();
+        document_ids
+    }
+
+    async fn reconcile_collection(
+        &self,
+        collection_path: &str,
+        documents: BoxStream<'_, FirestoreResult<FirestoreDocument>>,
+    ) -> FirestoreResult<()> {
+        let mut chunks = documents
+            .ready_chunks(100)
+            .map(|docs| docs.into_iter().collect::<FirestoreResult<Vec<_>>>());
+
+        let mut read_ids = HashSet::new();
+        while let Some(docs) = chunks.try_next().await? {
+            read_ids.extend(
+                docs.iter()
+                    .map(|doc| split_document_path(&doc.name).1.to_string()),
+            );
+            if !self.write_reconciled_chunk(collection_path, docs)? {
+                return Ok(());
+            }
+        }
+        self.finish_reconcile(collection_path, &read_ids)
+    }
+
+    async fn reconcile_documents(
+        &self,
+        collection_path: &str,
+        documents: BoxStream<'_, FirestoreResult<(String, Option<FirestoreDocument>)>>,
+    ) -> FirestoreResult<()> {
+        let documents: Vec<(String, Option<FirestoreDocument>)> = documents.try_collect().await?;
+
+        // One transaction, so the marker needs no withdrawing: a crash leaves the rows either as
+        // they were or fully updated.
+        let Some(write_txn) = self.begin_cached_collection_write(collection_path)? else {
+            return Ok(());
+        };
+        {
+            let mut table =
+                write_txn.open_table(TableDefinition::<&str, &[u8]>::new(collection_path))?;
+            for (document_id, document) in documents {
+                match document {
+                    Some(document) => {
+                        table.insert(
+                            document_id.as_str(),
+                            Self::document_to_buf(&document)?.as_slice(),
+                        )?;
+                    }
+                    None => {
+                        table.remove(document_id.as_str())?;
+                    }
+                }
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
     async fn shutdown(&self) -> Result<(), FirestoreError> {
@@ -1691,5 +1819,123 @@ mod tests {
             .await;
 
         assert!(read.is_err());
+    }
+
+    fn versioned(id: &str, version: i64) -> FirestoreDocument {
+        FirestoreDocument {
+            fields: std::collections::HashMap::from([(
+                "version".to_string(),
+                gcloud_sdk::google::firestore::v1::Value {
+                    value_type: Some(
+                        gcloud_sdk::google::firestore::v1::value::ValueType::IntegerValue(version),
+                    ),
+                },
+            )]),
+            ..fake_document(id)
+        }
+    }
+
+    async fn stored_ids(backend: &FirestorePersistentCacheBackend) -> Vec<String> {
+        let mut ids = backend
+            .cached_document_ids(&format!("{FAKE_DOCS}/a"))
+            .await
+            .expect("document IDs");
+        ids.sort();
+        ids
+    }
+
+    #[tokio::test]
+    async fn a_completed_reconcile_leaves_exactly_what_was_read_and_the_marker() {
+        let backend = backend_for(collection_a_loaded(
+            FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty,
+        ));
+        load_once(&backend, &serving(&["kept", "deleted"]).await)
+            .await
+            .expect("loaded");
+        let collection_path = format!("{FAKE_DOCS}/a");
+
+        backend
+            .reconcile_collection(
+                &collection_path,
+                Box::pin(futures::stream::iter([
+                    Ok(versioned("kept", 2)),
+                    Ok(versioned("created", 1)),
+                ])),
+            )
+            .await
+            .expect("reconciled");
+
+        assert_eq!(stored_ids(&backend).await, vec!["created", "kept"]);
+        assert_eq!(
+            backend
+                .get_doc_by_path(&fake_document("kept").name)
+                .await
+                .unwrap(),
+            Some(versioned("kept", 2))
+        );
+        assert!(backend.is_preloaded(&collection_path).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_reconcile_that_fails_partway_keeps_every_document_but_not_the_marker() {
+        let backend = backend_for(collection_a_loaded(
+            FirestoreCacheCollectionLoadMode::PreloadAllIfEmpty,
+        ));
+        load_once(&backend, &serving(&["kept", "deleted"]).await)
+            .await
+            .expect("loaded");
+        let collection_path = format!("{FAKE_DOCS}/a");
+        // More documents than one write chunk holds, so that part of them is committed before the
+        // read fails.
+        let read = (0..250)
+            .map(|id| Ok(fake_document(&id.to_string())))
+            .chain([Err(FirestoreError::system_error("read failed"))]);
+
+        let error = backend
+            .reconcile_collection(&collection_path, Box::pin(futures::stream::iter(read)))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, FirestoreError::SystemError(_)));
+        let ids = stored_ids(&backend).await;
+        assert!(ids.contains(&"kept".to_string()) && ids.contains(&"deleted".to_string()));
+        assert!(!backend.is_preloaded(&collection_path).unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_documents_reconcile_stores_the_found_and_evicts_the_missing() {
+        let backend = backend_for(collection_a_loaded(
+            FirestoreCacheCollectionLoadMode::PreloadNone,
+        ));
+        for id in ["kept", "deleted", "untouched"] {
+            backend
+                .update_doc_by_path(&versioned(id, 1))
+                .await
+                .expect("a document read through the cache");
+        }
+        assert_eq!(
+            stored_ids(&backend).await,
+            vec!["deleted", "kept", "untouched"]
+        );
+
+        backend
+            .reconcile_documents(
+                &format!("{FAKE_DOCS}/a"),
+                Box::pin(futures::stream::iter([
+                    Ok(("kept".to_string(), Some(versioned("kept", 2)))),
+                    Ok(("deleted".to_string(), None)),
+                ])),
+            )
+            .await
+            .expect("reconciled");
+
+        assert_eq!(stored_ids(&backend).await, vec!["kept", "untouched"]);
+        assert_eq!(
+            backend
+                .get_doc_by_path(&fake_document("kept").name)
+                .await
+                .unwrap(),
+            Some(versioned("kept", 2))
+        );
     }
 }

@@ -1,5 +1,6 @@
 use crate::errors::FirestoreError;
-use crate::{FirestoreDb, FirestoreListenerTarget, FirestoreResult};
+use crate::{FirestoreDb, FirestoreDocument, FirestoreListenerTarget, FirestoreResult};
+use futures::stream::BoxStream;
 use rvstruct::ValueStruct;
 use std::collections::HashMap;
 
@@ -403,6 +404,33 @@ impl FirestoreCacheCollectionConfiguration {
         match self.parent {
             Some(ref parent) => format!("{}/{}", parent, self.collection_name),
             None => format!("{}/{}", documents_path, self.collection_name),
+        }
+    }
+
+    /// Streams every document of this collection from Firestore. The stream ends at its first
+    /// error.
+    pub(crate) async fn read_all_documents<'b>(
+        &self,
+        db: &FirestoreDb,
+    ) -> FirestoreResult<BoxStream<'b, FirestoreResult<FirestoreDocument>>> {
+        let select = db.fluent().select().from(self.collection_name.as_str());
+        match &self.parent {
+            Some(parent) => select.parent(parent).stream_query_with_errors().await,
+            None => select.stream_query_with_errors().await,
+        }
+    }
+
+    /// Reads these documents of this collection from Firestore: the ID and the document for each
+    /// ID, with `None` for one Firestore does not have. The stream ends at its first error.
+    pub(crate) async fn read_documents<'a>(
+        &self,
+        db: &'a FirestoreDb,
+        document_ids: Vec<String>,
+    ) -> FirestoreResult<BoxStream<'a, FirestoreResult<(String, Option<FirestoreDocument>)>>> {
+        let select = db.fluent().select().by_id_in(self.collection_name.as_str());
+        match &self.parent {
+            Some(parent) => select.parent(parent).batch_with_errors(document_ids).await,
+            None => select.batch_with_errors(document_ids).await,
         }
     }
 }

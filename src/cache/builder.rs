@@ -307,6 +307,7 @@ where
     db: FirestoreDb,
     name: Option<FirestoreCacheName>,
     listener_params: Option<FirestoreListenerParams>,
+    sync_mode: FirestoreCacheSyncMode,
     listener_target_base: u32,
     collections: Vec<FirestoreCacheCollection>,
     backend_options: K::Options,
@@ -324,6 +325,7 @@ where
             db: db.clone(),
             name: None,
             listener_params: None,
+            sync_mode: FirestoreCacheSyncMode::Listen,
             listener_target_base: FIRESTORE_CACHE_DEFAULT_LISTENER_TARGET_BASE,
             collections: Vec::new(),
             backend_options: K::Options::default(),
@@ -418,11 +420,40 @@ where
         }
     }
 
-    /// Configures the cache's internal Firestore listener.
+    /// Configures the cache's internal Firestore listener. Has no effect on a cache that
+    /// [polls](Self::poll_changes).
     #[inline]
     pub fn listener_params(self, listener_params: FirestoreListenerParams) -> Self {
         Self {
             listener_params: Some(listener_params),
+            ..self
+        }
+    }
+
+    /// Keeps the cache current by reading its collections again every `interval`, instead of
+    /// listening to them.
+    ///
+    /// One background task reads every collection of the cache in turn, whatever their number.
+    /// A preloaded collection is read in full, a collection watched by document ID reads those
+    /// documents, and a lazily filled one reads only the documents it already holds. See
+    /// [`FirestoreCacheSyncMode::Poll`]. A zero `interval` makes [`build`](Self::build) fail with
+    /// [`FirestoreError::InvalidParametersError`].
+    ///
+    /// ```rust,no_run
+    /// # use firestore::*;
+    /// # async fn example(db: &FirestoreDb) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let cache = FirestoreCache::memory(db)
+    ///     .preloaded_collection("countries")
+    ///     .poll_changes(std::time::Duration::from_secs(60))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn poll_changes(self, interval: std::time::Duration) -> Self {
+        Self {
+            sync_mode: FirestoreCacheSyncMode::Poll(FirestoreCachePollParams::new(interval)),
             ..self
         }
     }
@@ -452,6 +483,7 @@ where
             db: self.db,
             name: self.name,
             listener_params: self.listener_params,
+            sync_mode: self.sync_mode,
             listener_target_base: self.listener_target_base,
             collections: self.collections,
             backend_options: self.backend_options,
@@ -486,7 +518,9 @@ where
             .name
             .unwrap_or_else(|| FirestoreCacheName::new(FIRESTORE_CACHE_DEFAULT_NAME.to_string()));
 
-        let options = FirestoreCacheOptions::new(name).opt_listener_params(self.listener_params);
+        let options = FirestoreCacheOptions::new(name)
+            .opt_listener_params(self.listener_params)
+            .with_sync_mode(self.sync_mode);
 
         FirestoreCache::create(options, &self.db, backend, self.storage).await
     }
