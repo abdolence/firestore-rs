@@ -37,10 +37,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d3c19927.js";
+            window.path_to_searchindex_js = "searchindex-5c95aa7c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-bf8dc4ac.js"></script>
+        <script src="toc-9adac9e1.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -4665,7 +4665,8 @@ writes it. The code is in <code>public.code</code>, a constant of <code>firestor
 <h1 id="caching"><a class="header" href="#caching">Caching</a></h1>
 <p>The library supports caching for collections and documents. A Firestore listener keeps the cache
 up to date when documents change, so updates are propagated across distributed instances
-automatically.</p>
+automatically. A cache can also read its collections again on an interval instead, see
+<a href="#polling-instead-of-listening">Polling instead of listening</a>.</p>
 <p>This avoids reading, and paying for, the same documents repeatedly. It is particularly useful for
 dictionaries, configuration and other data that changes rarely, and can reduce both cost and
 latency noticeably.</p>
@@ -4766,7 +4767,8 @@ collection or <code>documents(..)</code>:</p>
 <code>COALESCE</code>, <code>IFNULL</code>, <code>SUBSTR</code> and search run on Firestore.</p>
 <h2 id="on-the-enterprise-edition-6"><a class="header" href="#on-the-enterprise-edition-6">On the Enterprise edition</a></h2>
 <p>The listener that keeps a cache current needs real-time updates on a database of the Enterprise
-edition. They are enabled when the database is created:</p>
+edition. A cache that <a href="#polling-instead-of-listening">polls</a> does not. Real-time updates are
+enabled when the database is created:</p>
 <pre><code class="language-sh">gcloud firestore databases create --database=my-database --edition=enterprise \
   --location=nam5 --enable-firestore-data-access --enable-realtime-updates
 </code></pre>
@@ -5001,10 +5003,13 @@ acceptable, opt in with
 Firestore and cached;</li>
 <li>The Firestore listener updates the cache when a document changes, whether the change came from
 your application or from elsewhere;</li>
+<li>A cache built with <code>poll_changes</code> reads its collections again on an interval instead of
+listening, see <a href="#polling-instead-of-listening">Polling instead of listening</a>;</li>
 <li>Preloading at startup.</li>
 </ul>
-<p>Cached results are eventually consistent: they reflect the last state the listener delivered, so a
-write may take a moment to show up. Do not cache data that must be read at strong consistency.
+<p>Cached results are eventually consistent: they reflect the last state the listener delivered, or
+the last round of polling read, so a write may take a moment to show up. Do not cache data that
+must be read at strong consistency.
 This holds for pipeline and SQL reads that the cache answers too.</p>
 <p>Firestore also reports how many documents a target matches. When that disagrees with what a
 preloaded collection holds - which means changes were missed, typically deletes that happened while
@@ -5021,6 +5026,48 @@ than a listing that looks complete but is not.</p>
 setting chosen when the database is created, see <a href="#on-the-enterprise-edition-6">Caching</a>.</p>
 <p>Full examples are available <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/caching_memory_collections.rs">here</a>
 and <a href="https://github.com/abdolence/firestore-rs/blob/master/examples/caching_persistent_collections.rs">here</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="polling-instead-of-listening"><a class="header" href="#polling-instead-of-listening">Polling instead of listening</a></h1>
+<p>A cache built with <code>poll_changes</code>, on <code>FirestoreCache::memory</code> or <code>FirestoreCache::persistent</code>,
+opens no listener. It reads its collections again on an interval, for an application that does not
+use the listen API, or an Enterprise edition database created without real-time updates:</p>
+<pre><code class="language-rust no_run"><span class="boring">use firestore::*;
+</span><span class="boring">async fn example(db: FirestoreDb) -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+</span>let cache = FirestoreCache::memory(&amp;db)
+    .preloaded_collection("countries")
+    .collection("users")
+    .poll_changes(std::time::Duration::from_secs(300))
+    .build()
+    .await?;
+<span class="boring">Ok(())
+</span><span class="boring">}</span></code></pre>
+<p>One background task polls every collection of the cache, one after another, in rounds. The
+interval is the pause between the end of one round and the start of the next. The first round
+starts one interval after the cache loads, and a collection whose documents the load kept from an
+earlier run, rather than downloading them, is read at once. In each round the cache reads:</p>
+<ul>
+<li>a collection watched by document ID: those documents, whatever its load mode;</li>
+<li>any other preloaded collection: all its documents, and the ones Firestore no longer has are
+removed;</li>
+<li>any other collection: only the documents it already holds, so polling never fills a lazily
+filled collection further.</li>
+</ul>
+<p>A document is written only when its <code>update_time</code> differs from the one the cache held as the round
+began. An unchanged document keeps its <code>time_to_live</code> and <code>time_to_idle</code>, and a persistent cache
+rewrites nothing. A preloaded collection is read in full every round, so the reads a cache makes
+grow with its collections and with how often it polls. A collection that fails to be read keeps
+what it holds and is read again in the next round, and the error is logged. Collections added or
+removed at runtime are polled from the next round on.</p>
+<p><code>listener_params</code> together with <code>poll_changes</code> fails the build with an <code>InvalidParametersError</code>,
+and <code>listen_state_storage</code> has no effect on a cache that polls.</p>
+<h2 id="limits-1"><a class="header" href="#limits-1">Limits</a></h2>
+<ul>
+<li><code>invalidate_all</code>, or removing a collection and adding it again, while a round reads that
+collection can leave it partial or stale until the next round;</li>
+<li>a <code>load</code> or <code>add_collection</code> still running at <code>shutdown</code> runs to its end and then fails;</li>
+<li>a document read through the cache while a round runs can be replaced by the version the round
+read, until the next round.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="index-management"><a class="header" href="#index-management">Index management</a></h1>
 <p>Composite indexes, vector indexes, single-field overrides and TTL policy are usually managed

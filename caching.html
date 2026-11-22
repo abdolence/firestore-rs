@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "navy";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d3c19927.js";
+            window.path_to_searchindex_js = "searchindex-5c95aa7c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-bf8dc4ac.js"></script>
+        <script src="toc-9adac9e1.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,7 +181,8 @@
                         <h1 id="caching"><a class="header" href="#caching">Caching</a></h1>
 <p>The library supports caching for collections and documents. A Firestore listener keeps the cache
 up to date when documents change, so updates are propagated across distributed instances
-automatically.</p>
+automatically. A cache can also read its collections again on an interval instead, see
+<a href="./caching/polling.html">Polling instead of listening</a>.</p>
 <p>This avoids reading, and paying for, the same documents repeatedly. It is particularly useful for
 dictionaries, configuration and other data that changes rarely, and can reduce both cost and
 latency noticeably.</p>
@@ -282,7 +283,8 @@ collection or <code>documents(..)</code>:</p>
 <code>COALESCE</code>, <code>IFNULL</code>, <code>SUBSTR</code> and search run on Firestore.</p>
 <h2 id="on-the-enterprise-edition"><a class="header" href="#on-the-enterprise-edition">On the Enterprise edition</a></h2>
 <p>The listener that keeps a cache current needs real-time updates on a database of the Enterprise
-edition. They are enabled when the database is created:</p>
+edition. A cache that <a href="./caching/polling.html">polls</a> does not. Real-time updates are
+enabled when the database is created:</p>
 <pre><code class="language-sh">gcloud firestore databases create --database=my-database --edition=enterprise \
   --location=nam5 --enable-firestore-data-access --enable-realtime-updates
 </code></pre>
